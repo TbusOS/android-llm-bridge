@@ -1,0 +1,23 @@
+{
+  "_comment": "OpenAI Codex CLI MCP configuration. Path typically ~/.codex/config.json.",
+
+  "mcp_servers": [
+    {
+      "name": "alb",
+      "command": "uv",
+      "args": [
+        "run",
+        "alb-mcp"
+      ],
+      "cwd": "/path/to/android-llm-bridge",
+      "env": {
+        "ALB_WORKSPACE": "~/alb-workspace"
+      }
+    }
+  ],
+
+  "_notes": {
+    "format_note": "Codex CLI uses 'mcp_servers' (array) while Claude Code uses 'mcpServers' (object). Check your Codex version docs.",
+    "cwd_vs_--project": "Codex supports cwd to anchor the command; alternatively use uv run with --project pointing to the absolute path."
+  }
+}
