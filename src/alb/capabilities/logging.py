@@ -169,6 +169,67 @@ async def collect_logcat(
 
 
 # ─── dmesg ─────────────────────────────────────────────────────────
+async def capture_uart(
+    transport: Transport,
+    *,
+    duration: int = 30,
+    device: str | None = None,
+) -> Result[DmesgSummary]:
+    """Capture raw UART output for `duration` seconds. Requires SerialTransport.
+
+    LLM notes:
+        - UART bytes are written verbatim to workspace/.../logs/<ts>-uart.log.
+        - Use for: boot log, u-boot stage, kernel panic rescue.
+        - Returns DmesgSummary-shaped summary (lines + error-keyword count).
+    """
+    if transport.name != "serial":
+        return fail(
+            code="TRANSPORT_NOT_SUPPORTED",
+            message=f"capture_uart requires serial transport, got {transport.name}",
+            suggestion="Run: alb setup serial (method G)",
+            category="transport",
+        )
+    if duration < 1 or duration > 3600:
+        return fail(
+            code="INVALID_DURATION",
+            message=f"duration must be 1..3600, got {duration}",
+            suggestion="Use a value between 1 and 3600 seconds",
+            category="input",
+        )
+
+    artifact = workspace_path(
+        "logs",
+        f"{iso_timestamp()}-uart.log",
+        device=device,
+    )
+
+    start = perf_counter()
+    stats = _LineStats()
+    try:
+        async with asyncio.timeout(duration + 5):
+            await _drain_stream(
+                transport.stream_read("uart"),
+                artifact,
+                stats,
+                max_seconds=duration,
+                line_parser=_parse_dmesg_line,
+                topic="uart.line",
+            )
+    except asyncio.TimeoutError:
+        pass
+
+    duration_ms = int((perf_counter() - start) * 1000)
+    return ok(
+        data=DmesgSummary(
+            lines=stats.lines,
+            errors=stats.errors,
+            duration_captured_ms=duration_ms,
+        ),
+        artifacts=[artifact],
+        timing_ms=duration_ms,
+    )
+
+
 async def collect_dmesg(
     transport: Transport,
     *,

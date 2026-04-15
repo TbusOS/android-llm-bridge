@@ -10,9 +10,8 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from alb.infra.config import ActiveSettings, load_active
 from alb.infra.result import Result
-from alb.transport.adb import AdbTransport
+from alb.mcp.transport_factory import build_transport
 from alb.transport.base import Transport
 
 console = Console()
@@ -30,36 +29,21 @@ def run_async(coro: Any) -> Any:
 def get_transport(
     ctx: typer.Context,
     *,
-    settings: ActiveSettings | None = None,
     override: str | None = None,
     device_serial: str | None = None,
 ) -> Transport:
-    """Resolve the active transport.
+    """Resolve the active transport (shared with MCP layer).
 
     Priority:
-        explicit `override` arg > CLI --transport > profile.primary_transport
+        explicit `override` > CLI --transport > profile.primary_transport
     """
-    settings = settings or load_active(
-        getattr(ctx.obj, "profile", None) if ctx.obj else None
-    )
-    which = (
-        override
-        or (ctx.obj or {}).get("transport")
-        or settings.primary_transport
-    )
-
-    if which == "adb":
-        return AdbTransport(
-            serial=device_serial,
-            bin_path=settings.config.adb.bin_path,
-            server_socket=settings.config.adb.server_socket,
-        )
-    if which == "ssh":
-        raise typer.BadParameter("ssh transport not yet implemented (M1 WIP)")
-    if which == "serial":
-        raise typer.BadParameter("serial transport not yet implemented (M1 WIP)")
-
-    raise typer.BadParameter(f"Unknown transport: {which}")
+    which = override or (ctx.obj or {}).get("transport")
+    try:
+        return build_transport(override=which, device_serial=device_serial)
+    except NotImplementedError as e:
+        raise typer.BadParameter(str(e)) from e
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
 
 
 def print_result(ctx: typer.Context, result: Result[Any]) -> None:
