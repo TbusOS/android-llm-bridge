@@ -120,39 +120,65 @@
 
 ## 快速开始
 
-> ⚠️ **当前状态：M0（骨架 + 完整技术方案）**。代码实现在 M1 推进中。本仓库当前主要是**技术方案 + 架构文档**，详见 [`docs/project-plan.md`](./docs/project-plan.md) 了解里程碑进度。
+> ⚠️ **当前状态：M1 进行中（核心可用）**。方案 A (adb USB/WiFi) 已实现，方案 C (sshd) 和 G (UART) 在路上。代码可跑，但部分传输仍是占位。详见 [`docs/project-plan.md`](./docs/project-plan.md)。
 
-### 前置要求
+### 一键部署（推荐，完全用户态）
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv)（包管理）
-- 调试对象：一台 Android 设备 + 至少一种通道（USB 线 / 同网段 / 串口线）
-
-### 安装（M1 实现后）
+**不需要 root，不碰系统 Python**。uv 和 Python 3.11 装到 `~/.local/`，其他用户和其他项目完全不受影响。
 
 ```bash
 git clone https://github.com/<your>/android-llm-bridge
 cd android-llm-bridge
+./scripts/install.sh
+```
+
+装好后：
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+
+uv run alb describe          # 列出所有 transport 和 capability
+uv run alb status            # 环境健康检查
+uv run alb devices           # 列连接的设备
+```
+
+一键卸载：
+```bash
+./scripts/uninstall.sh               # 只删 .venv/ 和缓存
+./scripts/uninstall.sh --purge-workspace --remove-uv  # 彻底清理
+```
+
+详细隔离原理 + 故障排查见 [`docs/install.md`](./docs/install.md)。
+
+### 手动部署（如果已有 uv + Python 3.11）
+
+```bash
+cd android-llm-bridge
 uv sync                    # 装依赖
 uv run alb --help          # 看看能做什么
+uv run pytest -q           # 跑测试（60+ 用例）
 ```
 
 ### 配一种传输方案
 
-选一种先用起来（以方案 A 为例）：
+M1 的实际命令（`alb setup` 引导式配置仍在完善，以下按当前可用方式）：
 
 ```bash
-uv run alb setup adb       # 引导式：检测 platform-tools / 配环境变量 / 验证设备
-uv run alb devices         # 列出设备
+# 方案 A — adb USB（含 SSH 反向隧道场景）
+export ADB_SERVER_SOCKET=tcp:localhost:5037   # 远程 Xshell 隧道场景
+uv run alb devices
 uv run alb shell "getprop ro.build.version.sdk"
+uv run alb logcat --duration 30 --filter "*:E"
+uv run alb diag bugreport
+
+# 方案 B — adb WiFi (先经方案 A 授权一次)
+uv run alb shell "ip addr show wlan0"         # 拿 IP
+# TODO: alb setup wifi 命令在 M1 后期加
+
+# 方案 C — 板子内 sshd（M1-W3）
+# 方案 G — UART 串口（M1-W3）
 ```
 
-其他方案：
-```bash
-uv run alb setup ssh       # 板子跑 sshd（方案 C）
-uv run alb setup serial    # UART 串口（方案 G）
-uv run alb setup wifi      # adb over WiFi（方案 B）
-```
+配置方式详见 [`docs/methods/`](./docs/methods/)。
 
 ### 接入 Claude Code（MCP）
 
@@ -177,6 +203,7 @@ uv run alb setup wifi      # adb over WiFi（方案 B）
 | 类别 | 文档 | 给谁看 |
 |-----|------|-------|
 | **起步** | [README.md](./README.md) / [README.en.md](./README.en.md) | 所有人 |
+| **安装 / 卸载** | [docs/install.md](./docs/install.md) | 部署 / 运维 |
 | **总览** | [docs/00-overview.md](./docs/00-overview.md) | 先看这个 |
 | **架构** | [docs/architecture.md](./docs/architecture.md) | 想了解内部设计 |
 | **设计决策** | [docs/design-decisions.md](./docs/design-decisions.md) | 想知道为啥这么做 |
