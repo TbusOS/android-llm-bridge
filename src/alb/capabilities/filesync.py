@@ -163,21 +163,79 @@ async def rsync_sync(
     remote_dir: str,
     *,
     delete: bool = False,
+    extra_args: list[str] | None = None,
 ) -> Result[dict[str, Any]]:
-    """Incremental sync. Requires SshTransport (method C). M1 placeholder."""
-    # Concrete rsync implementation will arrive with SshTransport.
+    """Incremental directory sync. Requires SshTransport (method C).
+
+    Much faster than alb_push for large directories with few changes.
+    """
     if transport.name != "ssh":
         return fail(
             code="TRANSPORT_NOT_SUPPORTED",
-            message="rsync requires ssh transport (method C)",
-            suggestion="Run: alb setup ssh",
+            message=f"rsync requires ssh transport, got {transport.name}",
+            suggestion="Run: alb setup ssh  (or set ALB_TRANSPORT=ssh)",
             category="transport",
         )
-    return fail(
-        code="TRANSPORT_NOT_SUPPORTED",
-        message="rsync_sync is scheduled for M1-W3",
-        suggestion="Use alb push for now",
-        category="capability",
+    if not local_dir.exists():
+        return fail(
+            code="FILE_NOT_FOUND",
+            message=f"Local directory not found: {local_dir}",
+            suggestion="Check the path",
+            category="io",
+        )
+
+    perm = await transport.check_permissions(
+        "filesync.rsync",
+        {"local_dir": str(local_dir), "remote_dir": remote_dir, "delete": delete},
+    )
+    if perm.behavior == "deny":
+        return fail(
+            code="PERMISSION_DENIED",
+            message=perm.reason or "rsync blocked",
+            suggestion=perm.suggestion or "",
+            category="permission",
+        )
+    if perm.behavior == "ask":
+        return fail(
+            code="PERMISSION_DENIED",
+            message=perm.reason or "rsync needs confirmation",
+            suggestion=perm.suggestion or "Re-run with --allow-dangerous",
+            category="permission",
+            details={"behavior": "ask"},
+        )
+
+    # SshTransport exposes .rsync — avoid importing ssh transport here to
+    # keep this module transport-agnostic at import time.
+    if not hasattr(transport, "rsync"):
+        return fail(
+            code="TRANSPORT_NOT_SUPPORTED",
+            message="Active ssh transport does not expose rsync()",
+            suggestion="Upgrade alb; this should not happen",
+            category="capability",
+        )
+
+    r = await transport.rsync(
+        local_dir, remote_dir, delete=delete, extra_args=extra_args
+    )
+    if not r.ok:
+        return fail(
+            code=r.error_code or "SSH_COMMAND_FAILED",
+            message=(r.stderr or "").strip() or "rsync failed",
+            suggestion="Check rsync is installed on both host and device, and the remote path is writable",
+            category="transport",
+            details={"stdout": r.stdout, "stderr": r.stderr, "exit_code": r.exit_code},
+            timing_ms=r.duration_ms,
+        )
+
+    return ok(
+        data={
+            "local_dir": str(local_dir),
+            "remote_dir": remote_dir,
+            "delete": delete,
+            "stdout_tail": "\n".join(r.stdout.splitlines()[-10:]) if r.stdout else "",
+            "duration_ms": r.duration_ms,
+        },
+        timing_ms=r.duration_ms,
     )
 
 

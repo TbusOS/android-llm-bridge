@@ -51,8 +51,8 @@ TRANSPORTS: list[TransportSpec] = [
         name="ssh",
         impl_path="alb.transport.ssh.SshTransport",
         methods_supported=["C", "D", "F"],
-        status="planned",
-        requires=["ssh client"],
+        status="beta",
+        requires=["asyncssh", "rsync (for rsync_sync)"],
         description="On-device sshd. Rsync / tmux / sshfs / multi-user / port forwarding.",
     ),
     TransportSpec(
