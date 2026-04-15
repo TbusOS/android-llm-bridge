@@ -7,11 +7,16 @@
 
 ## [Unreleased]
 
-### M1 · 进行中
-- 计划：4 传输（A/B/C/G）实现
-- 计划：6 能力（shell/logging/filesync/diagnose/power/app）
-- 计划：权限系统
-- 计划：CLI + MCP 骨架 → 可用
+### M1 · 核心完成（W1-W3）
+- ✅ 4 个传输 beta：AdbTransport（A/B）、SshTransport（C）、SerialTransport（G），HybridTransport 仍规划中
+- ✅ 6 个能力 beta：shell / logging（含 UART）/ filesync（含 rsync）/ diagnose / power / app
+- ✅ 权限系统：黑名单 + 多层策略 + 每个 transport 自定义 check_permissions
+- ✅ CLI：21 个顶层命令 + 7 个子命令组
+- ✅ MCP 服务器：21 个工具全注册，stdio 运行
+- ✅ 一键安装 / 卸载脚本（完全用户态，不碰系统）
+- ✅ `alb setup {adb,wifi,ssh,serial}` 引导式配置
+- ✅ SKILL.md 自动生成（`alb skills generate`）
+- 🚧 剩余：HybridTransport / infra prompt-builder / 更多集成测试
 
 ---
 
