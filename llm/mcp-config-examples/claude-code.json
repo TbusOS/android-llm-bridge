@@ -1,0 +1,28 @@
+{
+  "_comment": "Claude Code MCP configuration for android-llm-bridge. Put this into ~/.claude/mcp-settings.json (or merge into mcpServers section of your existing file). Replace /path/to/android-llm-bridge with your actual clone path.",
+
+  "mcpServers": {
+    "alb": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "/path/to/android-llm-bridge",
+        "alb-mcp"
+      ],
+      "env": {
+        "ALB_WORKSPACE": "~/alb-workspace",
+        "ALB_PROFILE": "default",
+        "ALB_LOG_LEVEL": "info"
+      }
+    }
+  },
+
+  "_notes": {
+    "ALB_WORKSPACE": "Where collected logs/bugreports/anr land. Default ~/.alb-workspace if unset.",
+    "ALB_PROFILE": "Which profile in <workspace>/profiles/*.toml to activate.",
+    "ALB_LOG_LEVEL": "debug | info | warning | error. For troubleshooting set to debug.",
+    "first_run": "On first invocation, run: alb setup adb (or ssh / serial / wifi) interactively once. After that the MCP server can be started by Claude Code.",
+    "multiple_instances": "If you want multiple configs (e.g. lab and dev), register them with different names: 'alb-lab', 'alb-dev', each pointing to its own ALB_PROFILE."
+  }
+}
