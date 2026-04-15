@@ -19,7 +19,11 @@ from rich.table import Table
 from alb import __version__
 from alb.capabilities.logging import collect_dmesg, collect_logcat, search_logs, tail_log
 from alb.capabilities.shell import execute as shell_execute
+from alb.cli.app_cli import app as app_cli
 from alb.cli.common import get_transport, print_result, run_async
+from alb.cli.diagnose_cli import app as diagnose_cli
+from alb.cli.filesync_cli import app as filesync_cli
+from alb.cli.power_cli import app as power_cli
 from alb.infra.config import load_active
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
 
@@ -224,6 +228,18 @@ def dmesg(
     transport = get_transport(ctx, device_serial=device)
     result = run_async(collect_dmesg(transport, duration=duration, device=device))
     print_result(ctx, result)
+
+
+# ─── Subcommand groups ─────────────────────────────────────────────
+# Use explicit group names to keep the CLI discoverable:
+#   alb fs push / pull
+#   alb diag bugreport / devinfo / anr pull / tombstone pull
+#   alb power reboot / battery / wait-boot / sleep-wake
+#   alb app install / uninstall / start / stop / list / info / clear-data
+app.add_typer(filesync_cli, name="fs", help="File transfer commands (push/pull).")
+app.add_typer(diagnose_cli, name="diag", help="Diagnostic data (bugreport/anr/...)")
+app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-boot).")
+app.add_typer(app_cli, name="app", help="APK management.")
 
 
 # ─── Log tool group (search / tail) ────────────────────────────────
