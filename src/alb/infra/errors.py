@@ -44,6 +44,12 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Cannot reach adb server",
         "Check Xshell tunnel; run: ss -tlnp | grep 5037",
     ),
+    "ADB_COMMAND_FAILED": ErrorSpec(
+        "ADB_COMMAND_FAILED",
+        "transport",
+        "adb command returned a non-zero exit code",
+        "Read error.details.stderr for the underlying adb message",
+    ),
     "SSH_AUTH_FAILED": ErrorSpec(
         "SSH_AUTH_FAILED",
         "transport",
@@ -113,6 +119,37 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Run: alb workspace clean --older-than 7d",
     ),
 
+    # input
+    "INVALID_DURATION": ErrorSpec(
+        "INVALID_DURATION",
+        "input",
+        "duration out of range",
+        "Use a value between 1 and 3600 seconds",
+    ),
+    "INVALID_FILTER": ErrorSpec(
+        "INVALID_FILTER",
+        "input",
+        "filter expression is invalid",
+        "See docs/capabilities/logging.md for logcat filter syntax",
+    ),
+    "INVALID_DEVICE_SERIAL": ErrorSpec(
+        "INVALID_DEVICE_SERIAL",
+        "input",
+        "device serial is malformed",
+        "Use a serial returned by alb devices",
+    ),
+    "FILE_NOT_READABLE": ErrorSpec(
+        "FILE_NOT_READABLE",
+        "io",
+        "local file cannot be read",
+        "Check file permissions",
+    ),
+    "REMOTE_PATH_INVALID": ErrorSpec(
+        "REMOTE_PATH_INVALID",
+        "io",
+        "remote/local path is not allowed",
+        "Path must stay inside workspace; avoid traversal",
+    ),
     # system
     "SYSTEM_DEPENDENCY_MISSING": ErrorSpec(
         "SYSTEM_DEPENDENCY_MISSING",
