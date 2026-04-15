@@ -1,0 +1,113 @@
+# ─────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 分发 / 打包产物
+build/
+dist/
+wheels/
+*.whl
+*.tar.gz
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 测试 / 覆盖率
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+coverage.xml
+*.cover
+
+# 类型检查 / lint 缓存
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# ─────────────────────────────────────────────
+# uv
+# ─────────────────────────────────────────────
+# uv.lock 是必须提交的（锁版本),不要忽略
+# .python-version 是必须提交的（锁 Python 版本）
+# 唯一忽略的是 uv 的缓存
+.uv_cache/
+
+# ─────────────────────────────────────────────
+# IDE / 编辑器
+# ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─────────────────────────────────────────────
+# 项目运行时产物（核心）
+# ─────────────────────────────────────────────
+# workspace 是运行时目录：日志、拉下来的文件、快照、临时 PTY 等
+# 保留 workspace/ 目录本身（用 .gitkeep），但所有内容不提交
+workspace/*
+!workspace/.gitkeep
+
+# profile / 配置中的本地状态
+*.local.toml
+*.local.yaml
+config.local.*
+.alb-state
+
+# SSH key / 证书（严禁误提交）
+*.pem
+*.key
+*_rsa
+*_ed25519
+*_ecdsa
+!*.pub.example
+id_rsa*
+id_ed25519*
+
+# 下载的 platform-tools 等二进制（按需本地放）
+platform-tools/
+*.apk
+*.img
+
+# ─────────────────────────────────────────────
+# 日志 / 临时文件
+# ─────────────────────────────────────────────
+*.log
+logs/
+tmp/
+*.tmp
+
+# ─────────────────────────────────────────────
+# 前端（未来 Web UI 加进来时）
+# ─────────────────────────────────────────────
+node_modules/
+.next/
+.nuxt/
+.vite/
+.parcel-cache/
+
+# ─────────────────────────────────────────────
+# 文档构建产物（如果后续接 mkdocs/sphinx）
+# ─────────────────────────────────────────────
+docs/_build/
+docs/.cache/
+site/

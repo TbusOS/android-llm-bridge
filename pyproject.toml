@@ -1,0 +1,193 @@
+[project]
+name = "android-llm-bridge"
+version = "0.0.1"
+description = "A unified Android debugging bridge designed for LLM agents (MCP / CLI / Web API)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "sky", email = "skyzhangbinghua@gmail.com" },
+]
+keywords = ["android", "adb", "debug", "llm", "mcp", "agent", "serial", "uart", "ssh"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Hardware",
+]
+
+# ─────────────────────────────────────────────
+# Core runtime dependencies
+# ─────────────────────────────────────────────
+dependencies = [
+    # CLI
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+
+    # Config / serialization
+    "pydantic>=2.6.0",
+    "tomli-w>=1.0.0",              # tomllib 是 3.11 内置的读，写需额外
+
+    # Transport-related
+    "asyncssh>=2.14.0",             # SSH transport (方案 C/D/F)
+    "pyserial>=3.5",                # Serial transport (方案 G)
+    "pyserial-asyncio>=0.6",        # async 版
+
+    # MCP
+    "mcp>=0.9.0",                   # Model Context Protocol server
+
+    # Web API (M2 才真正实现，但骨架一起装)
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+
+    # 工具辅助
+    "anyio>=4.0.0",                 # asyncio 兼容层
+    "httpx>=0.26.0",                # 客户端 HTTP
+]
+
+[project.optional-dependencies]
+# 可选的日志全文检索（M2 起用）
+search = [
+    "whoosh>=2.7.4",
+]
+# 可选的性能采集绘图（M2 perf 能力）
+viz = [
+    "pandas>=2.2.0",
+    "plotly>=5.20.0",
+]
+# UI 自动化（M3）
+ui = [
+    "uiautomator2>=3.2.0",
+]
+# 所有可选
+all = [
+    "android-llm-bridge[search,viz,ui]",
+]
+
+# ─────────────────────────────────────────────
+# Entry points
+# ─────────────────────────────────────────────
+[project.scripts]
+alb = "alb.cli.main:main"
+alb-mcp = "alb.mcp.server:main"
+alb-api = "alb.api.server:main"
+
+[project.urls]
+Homepage = "https://github.com/skyzhangbinghua/android-llm-bridge"
+Documentation = "https://github.com/skyzhangbinghua/android-llm-bridge/tree/main/docs"
+Repository = "https://github.com/skyzhangbinghua/android-llm-bridge"
+Issues = "https://github.com/skyzhangbinghua/android-llm-bridge/issues"
+
+# ─────────────────────────────────────────────
+# Build system
+# ─────────────────────────────────────────────
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alb"]
+
+# ─────────────────────────────────────────────
+# uv dev dependencies
+# ─────────────────────────────────────────────
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+    "types-pyserial",
+    "pre-commit>=3.6.0",
+]
+
+# ─────────────────────────────────────────────
+# Ruff (lint + format)
+# ─────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplify
+    "ASYNC",    # async 最佳实践
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "E501",     # line length (ruff format 管)
+    "B008",     # function call in default (Typer 习惯用法)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ─────────────────────────────────────────────
+# Mypy (type checking)
+# ─────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+pretty = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["serial.*", "serial_asyncio.*", "mcp.*"]
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────
+# Pytest
+# ─────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=alb",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "integration: integration tests requiring a real device",
+    "slow: slow tests (> 5s)",
+    "mcp: MCP protocol tests",
+    "cli: CLI smoke tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/alb"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
