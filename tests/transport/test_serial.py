@@ -1,0 +1,181 @@
+"""Tests for SerialTransport — TCP (ser2net) mode using a local echo server."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
+
+import pytest
+
+from alb.transport.serial import (
+    SerialTransport,
+    _read_until_any,
+    _strip_echo_and_prompt,
+)
+
+
+# ─── Test fixture: a tiny fake ser2net ─────────────────────────────
+@asynccontextmanager
+async def _fake_ser2net(
+    handler: Callable[[asyncio.StreamReader, asyncio.StreamWriter], Coroutine],
+) -> AsyncIterator[tuple[str, int]]:
+    """Spawn an asyncio server on an ephemeral port; yield (host, port)."""
+    server = await asyncio.start_server(handler, host="127.0.0.1", port=0)
+    sock = server.sockets[0].getsockname()
+    host, port = sock[0], sock[1]
+    try:
+        yield host, port
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+# ─── Construction ──────────────────────────────────────────────────
+def test_requires_either_device_or_tcp() -> None:
+    with pytest.raises(ValueError):
+        SerialTransport()
+
+
+def test_rejects_both_device_and_tcp() -> None:
+    with pytest.raises(ValueError):
+        SerialTransport(device="/dev/ttyUSB0", tcp_host="localhost", tcp_port=9001)
+
+
+# ─── Helpers ───────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_read_until_any_hits_first_token() -> None:
+    r = asyncio.StreamReader()
+    r.feed_data(b"hello $ world")
+    r.feed_eof()
+    out = await _read_until_any(r, (b"$ ", b"# "))
+    assert out == b"hello $ "
+
+
+@pytest.mark.asyncio
+async def test_read_until_any_returns_all_on_eof() -> None:
+    r = asyncio.StreamReader()
+    r.feed_data(b"no prompt here")
+    r.feed_eof()
+    out = await _read_until_any(r, (b"$ ",))
+    assert out == b"no prompt here"
+
+
+def test_strip_echo_and_prompt_removes_echo_and_prompt() -> None:
+    raw = "ls /data\nfoo\nbar\n$ "
+    out = _strip_echo_and_prompt(raw, "ls /data", (b"$ ",))
+    # echo 'ls /data' removed from start, '$ ' removed from end
+    assert "ls /data" not in out.splitlines()[0]
+    assert "foo" in out
+    assert "bar" in out
+    assert "$" not in out[-3:]
+
+
+# ─── Health (no real endpoint) ─────────────────────────────────────
+@pytest.mark.asyncio
+async def test_health_reports_failure_when_endpoint_dead() -> None:
+    # Port 1 is reserved, never listening.
+    t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
+    info = await t.health()
+    assert info["ok"] is False
+    assert info["transport"] == "serial"
+    assert info["mode"] == "tcp"
+    assert "error" in info
+
+
+# ─── Shell round-trip over TCP ─────────────────────────────────────
+@pytest.mark.asyncio
+async def test_shell_roundtrip_over_tcp() -> None:
+    """A fake server that echoes a prompt, echoes the command, then replies."""
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        # Initial prompt when the client sends its warmup newline.
+        warmup = await reader.readline()  # the '\n' from _open()/warmup
+        assert warmup == b"\n"
+        writer.write(b"$ ")
+        await writer.drain()
+        # Read the real command line.
+        line = await reader.readline()
+        # Echo the command like a real shell would.
+        writer.write(line)  # echo
+        writer.write(b"output from fake shell\n")
+        writer.write(b"$ ")  # final prompt
+        await writer.drain()
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        r = await t.shell("echo hi", timeout=5)
+
+    assert r.ok
+    assert r.exit_code == 0
+    assert "output from fake shell" in r.stdout
+
+
+@pytest.mark.asyncio
+async def test_shell_timeout_over_tcp() -> None:
+    async def handler(reader, writer):  # noqa: ANN001
+        # Read warmup + command, but never send a prompt.
+        try:
+            await reader.readline()
+            await reader.readline()
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        r = await t.shell("sleep 30", timeout=1)
+
+    assert not r.ok
+    assert r.error_code == "TIMEOUT_SHELL"
+
+
+# ─── stream_read yields bytes until server closes ──────────────────
+@pytest.mark.asyncio
+async def test_stream_read_yields_until_close() -> None:
+    async def handler(reader, writer):  # noqa: ANN001
+        writer.write(b"[boot] step 1\n")
+        writer.write(b"[boot] step 2\n")
+        await writer.drain()
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        out = b""
+        async for chunk in t.stream_read("uart"):
+            out += chunk
+
+    assert b"[boot] step 1" in out
+    assert b"[boot] step 2" in out
+
+
+@pytest.mark.asyncio
+async def test_stream_read_yields_marker_when_endpoint_dead() -> None:
+    t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
+    collected = b""
+    async for chunk in t.stream_read("uart"):
+        collected += chunk
+    # Should have yielded a single diagnostic marker, not raised.
+    assert b"[alb serial open failed" in collected
+
+
+# ─── Unsupported operations ────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_push_unsupported() -> None:
+    from pathlib import Path
+
+    t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
+    r = await t.push(Path("/etc/hosts"), "/tmp/x")
+    assert not r.ok
+    assert r.error_code == "TRANSPORT_NOT_SUPPORTED"
+
+
+@pytest.mark.asyncio
+async def test_reboot_non_normal_unsupported() -> None:
+    t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
+    r = await t.reboot("recovery")
+    assert not r.ok
+    assert r.error_code == "TRANSPORT_NOT_SUPPORTED"

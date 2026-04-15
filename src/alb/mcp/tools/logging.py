@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from alb.capabilities.logging import (
+    capture_uart,
     collect_dmesg,
     collect_logcat,
     search_logs,
@@ -71,6 +72,33 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         t = build_transport(device_serial=device)
         r = await collect_dmesg(t, duration=duration, device=device)
+        return r.to_dict()
+
+    @mcp.tool()
+    async def alb_uart_capture(
+        duration: int = 30,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Capture raw UART output to workspace for `duration` seconds.
+
+        REQUIRES serial transport (method G). Call alb_setup or set
+        ALB_TRANSPORT=serial first.
+
+        When to use (UART's unique value — no other transport can do these):
+            - Device is bricked / hung / black-screen (adb/ssh are dead)
+            - Debugging boot stage: u-boot / kernel init / early userspace
+            - Capturing kernel panic stack traces
+            - Observing watchdog reset reasons
+            - Root-cause analysis for why adbd / sshd failed to start
+
+        LLM notes:
+            - Returns a summary with error-keyword count; full log is at
+              result.artifacts[0].
+            - Use alb_log_search(pattern="panic|oops|BUG|fail") to find
+              interesting sections in the full log.
+        """
+        t = build_transport(override="serial", device_serial=device)
+        r = await capture_uart(t, duration=duration, device=device)
         return r.to_dict()
 
     @mcp.tool()

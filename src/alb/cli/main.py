@@ -24,6 +24,7 @@ from alb.cli.common import get_transport, print_result, run_async
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.filesync_cli import app as filesync_cli
 from alb.cli.power_cli import app as power_cli
+from alb.cli.serial_cli import app as serial_cli
 from alb.infra.config import load_active
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
 
@@ -240,6 +241,7 @@ app.add_typer(filesync_cli, name="fs", help="File transfer commands (push/pull).
 app.add_typer(diagnose_cli, name="diag", help="Diagnostic data (bugreport/anr/...)")
 app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-boot).")
 app.add_typer(app_cli, name="app", help="APK management.")
+app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
 
 
 # ─── Log tool group (search / tail) ────────────────────────────────

@@ -10,6 +10,7 @@ import os
 from alb.infra.config import ActiveSettings, load_active
 from alb.transport.adb import AdbTransport
 from alb.transport.base import Transport
+from alb.transport.serial import SerialTransport
 
 
 _cached_settings: ActiveSettings | None = None
@@ -43,5 +44,23 @@ def build_transport(
     if which == "ssh":
         raise NotImplementedError("ssh transport not yet implemented (M1 WIP)")
     if which == "serial":
-        raise NotImplementedError("serial transport not yet implemented (M1 WIP)")
+        sc = settings.config.serial
+        # device_serial overrides the tcp port for local / tcp picks.
+        # Environment overrides: ALB_SERIAL_DEVICE / ALB_SERIAL_TCP
+        env_dev = os.environ.get("ALB_SERIAL_DEVICE")
+        env_tcp = os.environ.get("ALB_SERIAL_TCP")  # "host:port"
+        if env_dev:
+            return SerialTransport(device=env_dev, baud=sc.default_baud)
+        if env_tcp and ":" in env_tcp:
+            host, _, port = env_tcp.partition(":")
+            return SerialTransport(
+                tcp_host=host or sc.default_tcp_host,
+                tcp_port=int(port),
+                baud=sc.default_baud,
+            )
+        return SerialTransport(
+            tcp_host=sc.default_tcp_host,
+            tcp_port=sc.default_tcp_port,
+            baud=sc.default_baud,
+        )
     raise ValueError(f"Unknown transport: {which}")

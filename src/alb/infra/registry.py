@@ -43,7 +43,7 @@ TRANSPORTS: list[TransportSpec] = [
         name="adb",
         impl_path="alb.transport.adb.AdbTransport",
         methods_supported=["A", "B"],
-        status="planned",  # 'planned' in M0; becomes 'stable' when M1 lands
+        status="beta",
         requires=["adb binary"],
         description="adb USB / WiFi. Recommended for flashing, recovery, bootloader.",
     ),
@@ -59,8 +59,8 @@ TRANSPORTS: list[TransportSpec] = [
         name="serial",
         impl_path="alb.transport.serial.SerialTransport",
         methods_supported=["G"],
-        status="planned",
-        requires=["pyserial", "socat (Linux)", "ser2net (Windows, when remote)"],
+        status="beta",
+        requires=["pyserial-asyncio (for local /dev/tty*)", "ser2net (Windows side, for TCP mode)"],
         description="UART serial. Only method that can see boot log, u-boot, kernel panic.",
     ),
     TransportSpec(
@@ -81,7 +81,7 @@ CAPABILITIES: list[CapabilitySpec] = [
         cli_command="alb shell",
         mcp_tools=["alb_shell"],
         supported_transports=["adb", "ssh", "serial"],
-        status="planned",
+        status="beta",
         description="Execute shell command with structured output.",
     ),
     CapabilitySpec(
@@ -96,7 +96,7 @@ CAPABILITIES: list[CapabilitySpec] = [
             "alb_log_tail",
         ],
         supported_transports=["adb", "ssh", "serial"],
-        status="planned",
+        status="beta",
         description="Log collection, search, and paginated reading.",
     ),
     CapabilitySpec(
@@ -105,7 +105,7 @@ CAPABILITIES: list[CapabilitySpec] = [
         cli_command="alb push / pull / rsync",
         mcp_tools=["alb_push", "alb_pull", "alb_rsync"],
         supported_transports=["adb", "ssh"],
-        status="planned",
+        status="beta",
         description="File transfer with auto-routing (rsync / scp / adb push).",
     ),
     CapabilitySpec(
@@ -119,7 +119,7 @@ CAPABILITIES: list[CapabilitySpec] = [
             "alb_devinfo",
         ],
         supported_transports=["adb", "ssh"],
-        status="planned",
+        status="beta",
         description="Standard Android diagnostics (bugreport/ANR/tombstone).",
     ),
     CapabilitySpec(
@@ -133,7 +133,7 @@ CAPABILITIES: list[CapabilitySpec] = [
             "alb_wait_boot",
         ],
         supported_transports=["adb", "ssh", "serial"],
-        status="planned",
+        status="beta",
         description="Power state: reboot / sleep-wake / battery.",
     ),
     CapabilitySpec(
@@ -150,7 +150,7 @@ CAPABILITIES: list[CapabilitySpec] = [
             "alb_app_clear_data",
         ],
         supported_transports=["adb", "ssh"],
-        status="planned",
+        status="beta",
         description="APK management.",
     ),
     # M2+ 规划
