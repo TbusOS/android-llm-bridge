@@ -120,7 +120,7 @@
 
 ## 快速开始
 
-> ⚠️ **当前状态：M1 进行中（核心可用）**。方案 A (adb USB/WiFi) 已实现，方案 C (sshd) 和 G (UART) 在路上。代码可跑，但部分传输仍是占位。详见 [`docs/project-plan.md`](./docs/project-plan.md)。
+> ⚠️ **当前状态：M1 核心完成**。四种传输（A adb USB / B adb WiFi / C sshd / G UART）全部 beta；六个能力（shell / logging / filesync / diagnose / power / app）可用；21 个 MCP tool 注册完毕。详见 [`docs/project-plan.md`](./docs/project-plan.md) 和 [`CHANGELOG.md`](./CHANGELOG.md)。
 
 ### 一键部署（推荐，完全用户态）
 
@@ -160,22 +160,27 @@ uv run pytest -q           # 跑测试（60+ 用例）
 
 ### 配一种传输方案
 
-M1 的实际命令（`alb setup` 引导式配置仍在完善，以下按当前可用方式）：
-
 ```bash
-# 方案 A — adb USB（含 SSH 反向隧道场景）
-export ADB_SERVER_SOCKET=tcp:localhost:5037   # 远程 Xshell 隧道场景
+# 方案 A — adb USB（本地；或含 Xshell 反向隧道）
+export ADB_SERVER_SOCKET=tcp:localhost:5037   # 仅远程 Xshell 场景需要
+uv run alb setup adb                           # 引导式体检 + 验证
 uv run alb devices
 uv run alb shell "getprop ro.build.version.sdk"
 uv run alb logcat --duration 30 --filter "*:E"
 uv run alb diag bugreport
 
-# 方案 B — adb WiFi (先经方案 A 授权一次)
-uv run alb shell "ip addr show wlan0"         # 拿 IP
-# TODO: alb setup wifi 命令在 M1 后期加
+# 方案 B — adb WiFi（先经方案 A 授权一次）
+uv run alb setup wifi 192.168.1.42            # 自动跑 tcpip + connect
 
-# 方案 C — 板子内 sshd（M1-W3）
-# 方案 G — UART 串口（M1-W3）
+# 方案 C — 板子内 sshd
+uv run alb setup ssh 192.168.1.42 --key ~/.ssh/alb-device
+ALB_SSH_HOST=192.168.1.42 uv run alb --transport ssh shell 'uname -a'
+uv run alb fs rsync ~/out/system/ /system-dev/   # 方案 C 独占
+
+# 方案 G — UART 串口（TCP via ser2net + Xshell）
+uv run alb setup serial --tcp-host localhost --tcp-port 9001
+uv run alb serial capture --duration 30       # 抓启动 / panic / u-boot 日志
+uv run alb serial shell "dmesg | tail"
 ```
 
 配置方式详见 [`docs/methods/`](./docs/methods/)。

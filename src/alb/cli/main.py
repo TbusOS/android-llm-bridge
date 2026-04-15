@@ -25,6 +25,8 @@ from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.filesync_cli import app as filesync_cli
 from alb.cli.power_cli import app as power_cli
 from alb.cli.serial_cli import app as serial_cli
+from alb.cli.setup_cli import app as setup_cli
+from alb.cli.skills_cli import app as skills_cli
 from alb.infra.config import load_active
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
 
@@ -128,21 +130,8 @@ def status(ctx: typer.Context) -> None:
     console.print(table)
 
 
-@app.command()
-def setup(method: str = typer.Argument(..., help="adb | wifi | ssh | serial")) -> None:
-    """Interactive setup for a transport method. (WIP — stubs for now.)"""
-    console.print(
-        Panel.fit(
-            f"[yellow]`alb setup {method}` is not yet interactive.[/]\n\n"
-            "For now, follow the manual setup in [bold]docs/methods/[/]:\n"
-            "  • adb / wifi → docs/methods/01-ssh-tunnel-adb.md + 02-adb-wifi.md\n"
-            "  • ssh         → docs/methods/03-android-sshd.md\n"
-            "  • serial      → docs/methods/07-uart-serial.md\n\n"
-            "Once prerequisites are installed, alb will auto-detect on next run.",
-            title=f"alb setup {method}",
-            border_style="yellow",
-        )
-    )
+# `alb setup {adb,wifi,ssh,serial}` — guided setup (see setup_cli.py)
+app.add_typer(setup_cli, name="setup", help="Guided setup for each transport.")
 
 
 # ─── Device / transport commands ───────────────────────────────────
@@ -242,6 +231,7 @@ app.add_typer(diagnose_cli, name="diag", help="Diagnostic data (bugreport/anr/..
 app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-boot).")
 app.add_typer(app_cli, name="app", help="APK management.")
 app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
+app.add_typer(skills_cli, name="skills", help="SKILL.md generator for LLM clients.")
 
 
 # ─── Log tool group (search / tail) ────────────────────────────────
