@@ -11,6 +11,7 @@ from alb.infra.config import ActiveSettings, load_active
 from alb.transport.adb import AdbTransport
 from alb.transport.base import Transport
 from alb.transport.serial import SerialTransport
+from alb.transport.ssh import SshTransport
 
 
 _cached_settings: ActiveSettings | None = None
@@ -42,7 +43,32 @@ def build_transport(
             server_socket=settings.config.adb.server_socket,
         )
     if which == "ssh":
-        raise NotImplementedError("ssh transport not yet implemented (M1 WIP)")
+        sc = settings.config.ssh
+        host = os.environ.get("ALB_SSH_HOST")
+        if not host:
+            # Try to find a device entry in the active profile.
+            for d in settings.profile.devices:
+                if d.transport == "ssh" and d.ssh_host:
+                    host = d.ssh_host
+                    break
+        if not host:
+            raise ValueError(
+                "SSH transport needs a host. Set ALB_SSH_HOST or define a device "
+                "with transport='ssh' in your profile (workspace/profiles/*.toml)."
+            )
+        port_env = os.environ.get("ALB_SSH_PORT")
+        port = int(port_env) if port_env else sc.default_port
+        user = os.environ.get("ALB_SSH_USER") or sc.default_user
+        key = os.environ.get("ALB_SSH_KEY") or sc.key_path
+        known_hosts = os.environ.get("ALB_SSH_KNOWN_HOSTS") or sc.known_hosts
+        return SshTransport(
+            host=host,
+            port=port,
+            user=user,
+            key_path=key,
+            known_hosts=known_hosts,
+            connect_timeout=sc.connect_timeout,
+        )
     if which == "serial":
         sc = settings.config.serial
         # device_serial overrides the tcp port for local / tcp picks.
