@@ -2,7 +2,7 @@
 title: 关键设计决策记录 (ADR)
 type: design-doc
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 owner: sky
 tags: [adr, decisions, rationale]
 ---
@@ -293,6 +293,49 @@ tags: [adr, decisions, rationale]
 
 **代价**：
 - 需要 workspace 存快照，占磁盘 —— 用 TTL 清理
+
+---
+
+## ADR-016 · Agent 层：可插拔 LLM Backend + 本地小模型支持（架构预留）
+
+**状态**：M1 预留架构；实现分 M2 / M3 两阶段。
+
+**决策**：新增 `src/alb/agent/` 分层（L1.5，介于接入层和能力层之间），定义 `LLMBackend` ABC + `AgentLoop` + `ChatSession` 三件套，**M1 只预留骨架，M2/M3 实现具体 backend**。目标：让本工具在"服务器无显卡 / 无外网 / 不依赖 Claude Code"的场景下，也能通过 `alb chat` 或 Web `/chat` 端点用**本地小模型**（Ollama / llama.cpp / OpenAI 兼容）完成"抓日志 / 装 apk / 重启 / 升级"这类**工具路由**任务。
+
+**为什么**：
+1. **不是所有部署环境都能用 Claude Code / Claude API** —— 内网机 / 无显卡服务器 / 合规要求不能把设备信息外发的场景，需要**完全离线**的编排层
+2. **小模型对"工具路由"够用** —— Qwen2.5-3B / Llama-3.2-3B Q4 量化（纯 CPU，~3GB RAM）就能支持 function calling，把"帮我抓 30 秒 logcat"翻译成 `alb_logcat(duration=30)`；**只要不让它做日志分析**，准度足够
+3. **架构对称性** —— `Transport` ABC 解耦了"怎么连设备"，`LLMBackend` ABC 解耦"用哪个模型编排"，定位对称，学习成本低
+4. **和现有三种驱动方式互补**，不冲突：
+
+   | 场景 | 怎么驱动 | alb 这边需要什么 |
+   |------|----------|--------------------|
+   | Claude Code + MCP | `alb-mcp` stdio | M1 已就绪（21 tools） |
+   | Claude Code + Bash | `alb <cmd>` + `SKILL.md` | M1 已就绪（生成器已有） |
+   | **无 Claude Code（本 ADR）** | `alb chat` + 本地小模型 | M2/M3 实现本层 |
+
+5. **架构预留零成本** —— 现在只加 ABC + NotImplementedError 骨架，不装任何 LLM 依赖；M2/M3 实现时不需要动 capability / transport / MCP 层
+
+**范围约束**（重要）：
+- **shallow agent**：只做"tool routing"（意图 → 参数 → 调用），不做日志分析 / 自我反思 / 子 agent。用 3B 级小模型就够，避免把能力做到"比 Claude Code 差的山寨版"
+- **tool 复用 MCP registry**：Agent loop 的 `tool_executor` 直接复用 MCP server 的内部工具注册表，不单独维护一套工具定义
+- **长日志走 workspace**（ADR-007 不变）：小模型只看摘要 + 路径，不把日志塞进 context
+
+**替代考虑**：
+- **只做 MCP，不做 agent 层** ：最小改动；但离线无 Claude Code 场景无解
+- **直接集成 ollama 不抽象 ABC** ：最快；但锁死单 backend，llama.cpp / OpenAI 兼容 / 云 API 切换成本大
+- **集成 LangChain / LlamaIndex** ：生态齐全；但对一个"shallow tool-routing"需求过度设计，且把整个依赖树拖进来
+
+**代价**：
+- 多一层抽象（ABC + loop + session）—— 但每件事都只做一件事，骨架 ~300 行可控
+- M2/M3 实现时每个 backend 需要独立适配（ollama function-calling 格式和 OpenAI 有细节差异）—— `LLMBackend` ABC 统一协议包掉这个差异
+
+**交付分期**：
+- **M1（now）**：`src/alb/agent/{__init__,backend,loop,session}.py` 骨架 + `BackendSpec` + `BACKENDS` registry + `docs/agent.md` + 本 ADR
+- **M2**：`OllamaBackend` + `OpenAICompatBackend` + `alb chat` 终端 REPL + FastAPI `/chat` POST（非流式）
+- **M3**：`LlamaCppBackend`（嵌入式无守护进程）+ `AnthropicBackend`（大模型备选）+ `/chat/ws` 流式 + Web 简易聊天页
+
+**详见** [`agent.md`](./agent.md)。
 
 ---
 

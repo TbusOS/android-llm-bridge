@@ -2,7 +2,7 @@
 title: 项目计划 / 路线图
 type: roadmap
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 owner: sky
 tags: [roadmap, milestones, planning]
 ---
@@ -21,9 +21,9 @@ tags: [roadmap, milestones, planning]
 |-------|------|------|-----|
 | **M0** | 设计 | 架构设计、技术方案、文档、骨架 | ✅ 当前 |
 | **M1** | 核心可用 | 四传输 + 六能力 + 权限 + CLI + MCP | 🚧 |
-| **M2** | 扩展能力 | Web API + 长任务 + 子 Agent + 性能 + 跑分 | 📋 |
-| **M3** | 可视化 + 智能 | Web UI + LLM-assisted 分析 + 方案 D/E/F | 📋 |
-| **M4+** | 生态 | 插件机制 + 多语言 binding + 多板厂适配 | 💭 |
+| **M2** | 扩展能力 | 长任务 + 子 Agent + 性能 + 跑分 + 本地小模型 + Web Tier 1（Chat UI / 实时 logcat / 设备看板 / HITL / 产物栏） | 📋 |
+| **M3** | 可视化 + 智能 | Web UI 完整 Tier 2（scrcpy / perf 曲线 / ANR 时间线 / session 回放 / 文件浏览器） + LLM-assisted 分析 + 方案 D/E/F | 📋 |
+| **M4+** | 生态 | 插件机制 + 多语言 binding + 多板厂适配 + Web Tier 3（多人协作 / workflow builder / webhook / Slack-Discord bot / 设备组批量 / 审计 / Prometheus） | 💭 |
 
 ---
 
@@ -111,6 +111,7 @@ tags: [roadmap, milestones, planning]
 | `src/alb/mcp/tools/*.py` | 每个 capability 对应 MCP tool |
 | `src/alb/api/` | FastAPI 骨架（仅基础路由，M2 扩展） |
 | `src/alb/skills/` | `SKILL.md` 自动生成（`generator.py`） |
+| `src/alb/agent/` | **Agent 层骨架**（`LLMBackend` ABC + `AgentLoop` + `ChatSession`）—— M2/M3 落地具体 backend，详见 [agent.md](./agent.md) |
 
 #### 5. 引导脚本（`scripts/`）
 
@@ -177,9 +178,11 @@ tags: [roadmap, milestones, planning]
 ## 四、M2 · 扩展能力（📋 规划中）
 
 ### 目标
-支持**长任务 + 并发多设备 + 性能监控 + 跑分集成**。
+支持**长任务 + 并发多设备 + 性能监控 + 跑分集成 + 本地小模型编排 + Web Tier 1（让 LLM 和人能在浏览器里联动）**。
 
 ### 交付物
+
+#### 4.1 后端能力扩展
 
 | 类别 | 内容 |
 |-----|------|
@@ -193,27 +196,73 @@ tags: [roadmap, milestones, planning]
 | Web API 完整 | FastAPI 所有路由齐全，OpenAPI 规范完备 |
 | Undo / 快照 | 危险操作前快照（filesync.push 覆盖 / rm 等） |
 
+#### 4.2 Agent 层首批 backend（详见 [agent.md](./agent.md) §七）
+
+| 类别 | 内容 |
+|-----|------|
+| `OllamaBackend` | HTTP 调本地 Ollama，默认 `qwen2.5:3b-instruct-q4_K_M`（纯 CPU ~3GB RAM） |
+| `OpenAICompatBackend` | 兼容 vLLM / LM Studio / llamafile 的 `/v1/chat/completions` |
+| `AgentLoop.run()` | 完整 tool-calling 循环（含 max_turns / JSON-schema 校验 / session flush） |
+| `ChatSession` 落盘 | `messages.jsonl` + `meta.json` 真正写入 workspace/sessions/<id>/ |
+| `alb chat` CLI REPL | 终端聊天 subcommand，`/quit` `/clear` `/session <id>` 命令 |
+| `POST /chat` | FastAPI 非流式端点，请求体 `{session_id, message}` |
+| `docs/methods/08-local-llm.md` | 本地小模型选型 / 装 Ollama / tool-calling 限制说明 |
+
+#### 4.3 Web 前端 Tier 1（最不可替代的 5 项）
+
+| 功能 | 为什么 Web 独家价值 |
+|------|---------------------|
+| **Chat UI + tool-call 可视化** | LLM 每次调用画成可展开卡片（参数/返回/产物路径），比终端滚屏好 10 倍；是"LLM 与人联动"的核心界面 |
+| **实时 logcat 流 / 多窗口并排** | 终端只能 `tail -f` 一个 stream，Web 可同屏滚 N 台设备的 logcat |
+| **设备看板（grid）** | 一屏看全所有设备 serial / 型号 / 电量 / 最新 error 数；点卡片进详情 |
+| **人工批准（HITL）** | 权限 `ask` 动作从 CLI 弹窗升级为 Web 通知 + "批准/拒绝"按钮；LLM 远程跑时刚需 |
+| **产物侧边栏** | 列出当前 session 生成的 `logcat.txt` / `bugreport.zip` 等，点击预览或下载 |
+
+#### 4.4 前端技术栈（M2 基础选型）
+
+| 项 | 选择 |
+|----|------|
+| 框架 | React 18 + Vite + TypeScript |
+| UI | Tailwind CSS + shadcn/ui（轻量、可控） |
+| 状态 | Zustand（和 Redux 复杂度相比更匹配本项目规模） |
+| 实时 | WebSocket + 自动重连；event-bus 直推 `logcat.line` / `device.connected` |
+| 认证 | 本地部署不强制；远程部署用 API key header（M2 简单版，OAuth 留 M4） |
+
 ### 验收标准
+
+#### 后端
 - 能持续监控一台设备 1 小时 logcat 不丢行
 - 同时对 10 台设备并发 `app_install`，成功率 ≥ 99%
 - 性能采集数据可导出图表（CSV + 基础 plotly 脚本）
 - Web API OpenAPI 验证通过，docs 页面可访问
 
+#### Agent 层
+- `alb chat` + Qwen2.5-3B 能走完"抓日志 / 装 apk / 重启"三个典型工具路由
+- Agent loop 单元测试（mock backend + mock executor 跑 3 轮 tool call 通过）
+- Session JSONL 可重新 `load()` 继续对话
+
+#### Web Tier 1
+- 浏览器 Chrome / Firefox 能连 `alb-api`，Chat UI 调用本地 Ollama 完成一次 "抓 30s logcat" 对话
+- 看板显示 ≥ 3 台设备并能点击切换
+- logcat 流多窗口 5 分钟不断流不丢帧
+- HITL 批准界面触发后，CLI 侧不再弹权限问询
+
 ### 时间预估
-预估 4-6 周。
+预估 6-8 周（M2 从原来 4-6 周扩到 6-8 周，因为加了 Agent + Web Tier 1）。
 
 ---
 
 ## 五、M3 · 可视化 + 智能（📋 规划中）
 
 ### 目标
-给**人**一个直观看板；给 LLM 更智能的日志分析能力；落地剩余方案。
+给**人**一个直观看板；给 LLM 更智能的日志分析能力；落地剩余传输方案；**Web 联动体验进阶（Tier 2）**。
 
 ### 交付物
 
+#### 5.1 智能分析 + 传输方案
+
 | 类别 | 内容 |
 |-----|------|
-| Web UI | Vue 3 / React（二选一）+ TypeScript；设备卡片看板；实时 logcat 流；性能曲线；ANR 时间线 |
 | LLM-assisted 日志分析 | 后台任务提取 crash / ANR 关键事件（借鉴 MemGPT / Claude Code SessionMemory） |
 | 历史检索 | `alb log search` 全文索引 (用 Whoosh / sqlite FTS5) |
 | Known issues 记忆库 | 从 history.jsonl 自动沉淀（Evo-Memory） |
@@ -222,12 +271,42 @@ tags: [roadmap, milestones, planning]
 | 方案 F | frp / ngrok 云中转（客户现场调试） |
 | Docker 镜像 | 官方 Docker image，一键拉起 MCP + API + UI |
 
+#### 5.2 Agent 层完整体验（详见 [agent.md](./agent.md) §七）
+
+| 类别 | 内容 |
+|-----|------|
+| `LlamaCppBackend` | `llama-cpp-python` 嵌入 —— 无守护进程、纯进程内 |
+| `AnthropicBackend` | Claude API 备选（用户愿意用大模型时） |
+| 流式 `backend.stream()` | 所有 backend 支持 token 级流式输出 |
+| `WS /chat/ws` | WebSocket 流式端点（token + tool_call 事件并发推送） |
+| Session 自动摘要 | 每次聊天结束生成 `summary.md`（MemGPT 借鉴） |
+
+#### 5.3 Web 前端 Tier 2（让 Web 真正替代终端）
+
+| 功能 | 解决什么 |
+|------|----------|
+| **Scrcpy 嵌入屏幕** | 浏览器内看设备屏幕 + 点击/输入映射；和方案 E 一起落地 |
+| **性能曲线图（plotly）** | `perf` 能力采集的 CPU / MEM / FPS / 温度 实时画曲线，可导出 PNG/CSV |
+| **ANR / crash 时间线** | 可点击时间轴，跳 `traces.txt` 详情页；LLM-assisted 摘要嵌入 |
+| **Session 回放 + 分支** | 从某一步 pivot 重跑（工具调用历史树，Git 式分支） |
+| **文件浏览器** | 设备文件系统树，拖拽 push/pull；危险目录标红 |
+| **Chat UI 流式渲染** | backend.stream 接通后，逐 token 打字机效果 |
+| **产物富预览** | logcat 语法高亮 + 折行、bugreport 自动解包、tombstone 堆栈导航 |
+
 ### 验收标准
+
+#### 智能分析
 - Web UI 能在 Chrome / Firefox / Safari 正常运行
 - 打开设备页可看到实时 logcat 滚动
 - ANR 发生时 UI 能高亮并弹出分析报告
 - 方案 D/E/F 文档齐全、代码可用
 - LLM 在长对话中不再因 logcat context 爆炸
+
+#### Web Tier 2
+- scrcpy 屏幕嵌入 1080p 延迟 < 200ms
+- 性能曲线 5 分钟滑动窗口 60fps 不卡
+- Session 从任意 turn 分支新会话，历史保留
+- 文件浏览器 push/pull 1GB 大文件有进度条、可取消
 
 ### 时间预估
 预估 6-8 周（前端工作量大）。
@@ -238,11 +317,38 @@ tags: [roadmap, milestones, planning]
 
 可能方向（不承诺）：
 
+### 6.1 SDK / 插件生态
+
 - **插件机制** —— 第三方 transport / capability 通过 entry points 扩展
 - **多语言 binding** —— TypeScript / Go SDK 调用 Web API
 - **多板厂适配** —— Rockchip / Qualcomm / MediaTek 特定能力（如各家 bootloader 差异）
 - **iOS 支持** —— 扩展到 iOS 调试（与 libimobiledevice 集成）
 - **CI 模板** —— GitHub Actions / GitLab CI 一键接入
+
+### 6.2 Web 前端 Tier 3（协作与自动化）
+
+| 功能 | 用途 |
+|------|------|
+| **多人协作 session** | 分享 session URL，同事实时看你和 LLM 的对话 + tool 调用 |
+| **设备租借面板** | 多人共用设备池；"借用 30 分钟"机制，避免冲突 |
+| **Workflow builder** | 拖拽 tool 调用串成流水线（类似 n8n/Zapier），保存为模板 |
+| **Scheduled tasks** | cron 式定时任务："每晚 3am 对设备 X 跑 bench Y" |
+| **Webhook 触发** | `POST /api/trigger/<flow>` 外部系统触发预设 workflow（CI 集成） |
+| **Slack / Discord bot** | 聊天室里 `@alb 帮我抓设备 X 的 logcat`，复用同一 agent 层 |
+| **设备组批量操作** | 选 N 台设备 → 一条命令同时执行（安装 apk / 重启 / 跑 bench） |
+| **Public artifact URLs** | 生成短链分享 bugreport / 日志（带过期时间 + 访问控制） |
+| **Session annotations** | 在 logcat 流里标注"这里开始出问题"，供团队讨论 |
+| **OAuth / SSO** | 企业部署登录（Google / GitHub / OIDC） |
+
+### 6.3 可观测 / 审计（企业部署必需）
+
+| 功能 | 用途 |
+|------|------|
+| **Command audit log** | 记录谁在何时调用了什么工具、改变了什么状态（合规追溯） |
+| **Error dashboard** | 聚合失败的 tool calls，按错误码/设备/用户切片 |
+| **Prometheus metrics export** | 设备在线数 / 命令 QPS / 错误率 / backend 推理延迟等指标 |
+| **Grafana 预置面板** | 开箱即用的设备舰队看板 |
+| **分布式追踪** | OpenTelemetry 支持（一次 LLM → tool → transport → device 全链路 trace） |
 
 ---
 

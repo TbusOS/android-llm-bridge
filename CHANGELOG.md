@@ -18,6 +18,19 @@
 - ✅ SKILL.md 自动生成（`alb skills generate`）
 - 🚧 剩余：HybridTransport / infra prompt-builder / 更多集成测试
 
+### M1 · Agent 层架构预留（2026-04-16）
+- ✅ `src/alb/agent/` 骨架：`LLMBackend` ABC + `AgentLoop` + `ChatSession` + `Message`/`ToolCall`/`ToolSpec`/`ChatResponse` 数据原语
+- ✅ `BackendSpec` + `BACKENDS` registry（ollama / openai-compat / llama-cpp / anthropic，全部 planned）
+- ✅ ADR-016 · 可插拔 LLM Backend + 本地小模型支持
+- ✅ `docs/agent.md` 完整设计文档（模块 / 选型 / 接入 / 路线图 / 风险）
+- ✅ `docs/project-plan.md` M2/M3/M4+ 拆入 agent 落地 + Web 三层特性（Tier 1/2/3）
+- ✅ `docs/architecture.md` 分层图加入 L1.5 Agent 层
+
+### M1 · 开源中立清理（品牌示例字样统一）（2026-04-16）
+- ✅ 移除历史遗留的品牌示例字样，统一为 com.example（docs/capabilities/*, tests/capabilities/test_app.py, docs/methods/01-ssh-tunnel-adb.md）
+- ✅ `git-filter-repo` 精确改写历史，清理旧 commit diff 里的品牌示例残留（commit hash 已全部重生）
+- ✅ 保留 `backup-pre-filter` tag 作为历史回退点
+
 ---
 
 ## [0.0.1] · 2026-04-15
