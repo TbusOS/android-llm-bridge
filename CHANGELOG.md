@@ -16,7 +16,17 @@
 - ✅ 一键安装 / 卸载脚本（完全用户态，不碰系统）
 - ✅ `alb setup {adb,wifi,ssh,serial}` 引导式配置
 - ✅ SKILL.md 自动生成（`alb skills generate`）
-- 🚧 剩余：infra prompt-builder / 更多集成测试
+- 🚧 剩余：更多集成测试（M1 核心能力已全部完成）
+
+### M1 · prompt_builder（2026-04-16）
+- ✅ `src/alb/infra/prompt_builder.py` 系统提示词组装器
+  - `PromptBlock` / `Prompt` / `PromptBuilder`（链式 fluent 接口）
+  - 静态在前、动态在后的不变式（builder 强制检查，违反即 `PromptOrderError`）
+  - 三种输出：`as_text()` / `as_anthropic()`（cache_control 自动放在最后一个静态块）/ `as_openai()`
+  - `default_agent_prompt(device, transport, workspace, tool_count, extra_static, extra_dynamic)` 一行生成 agent 默认提示词
+  - 常量 `DEFAULT_ROLE` / `DEFAULT_SAFETY_RULES` / `DEFAULT_TOOL_NORMS`
+- ✅ `src/alb/agent/loop.py` 接线 prompt_builder（示例 docstring + 不再重复定义 DEFAULT_SYSTEM_PROMPT）
+- ✅ 25 单测：顺序不变式 / 三种输出格式 / cache_boundary 位置 / default 各字段组合
 
 ### M1 · HybridTransport beta（2026-04-16）
 - ✅ `src/alb/transport/hybrid.py` 智能路由：shell→primary；logcat→adb→ssh；uart→serial；dmesg/kmsg→adb→ssh→serial；push/pull→ssh→adb；forward→adb→ssh；reboot recovery/bootloader→adb only

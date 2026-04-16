@@ -80,6 +80,7 @@ tags: [roadmap, milestones, planning]
 | `workspace.py` | `workspace_path()` + ISO 时间戳 | - |
 | `config.py` | 读写 `config.toml` / profile | - |
 | `events.py` | 进程内 pub/sub（基础版） | - |
+| `prompt_builder.py` | LLM 系统提示词静态/动态分界 + cache 友好组装 | my-claude-cli |
 
 #### 2. 传输层（`src/alb/transport/`）
 

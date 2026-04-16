@@ -41,15 +41,22 @@ class AgentLoop:
 
     Example (future usage, not yet implemented)::
 
+        from alb.infra.prompt_builder import default_agent_prompt
+
         backend = OllamaBackend(model="qwen2.5:3b")
         tools = load_mcp_tool_specs()         # from alb.mcp.server
         executor = make_mcp_tool_executor()   # dispatch by name
+        prompt = default_agent_prompt(
+            device_serial="abc123",
+            transport_name="adb",
+            tool_count=len(tools),
+        )
 
         loop = AgentLoop(
             backend=backend,
             tools=tools,
             tool_executor=executor,
-            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            system_prompt=prompt.as_text(),  # or prompt.as_anthropic()
         )
 
         session = ChatSession.create()
@@ -91,18 +98,7 @@ class AgentLoop:
         raise NotImplementedError
 
 
-DEFAULT_SYSTEM_PROMPT = """\
-You are an Android-device assistant backed by the `alb` tool suite.
-
-You have tools to collect logs, transfer files, install apps, reboot devices,
-and inspect UART output.  Your job is to translate the user's request into
-one or more tool calls and report back concise results.
-
-Rules:
-  * Prefer calling tools over answering from memory.
-  * Do NOT analyse log contents — return the saved file path and let the
-    user / a larger model do the analysis.
-  * If a tool fails with a `suggestion`, follow the suggestion before
-    retrying.
-  * Reply in the user's language.
-"""
+# System prompt composition lives in `alb.infra.prompt_builder`.
+# M2 AgentLoop implementations should call `default_agent_prompt(...)` to
+# build a cache-friendly prompt with an explicit static/dynamic boundary,
+# then pass `prompt.as_anthropic()` or `prompt.as_text()` to the backend.
