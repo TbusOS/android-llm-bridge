@@ -36,7 +36,6 @@
 ### M1 · 开源中立清理（品牌示例字样统一）（2026-04-16）
 - ✅ 移除历史遗留的品牌示例字样，统一为 com.example（docs/capabilities/*, tests/capabilities/test_app.py, docs/methods/01-ssh-tunnel-adb.md）
 - ✅ `git-filter-repo` 精确改写历史，清理旧 commit diff 里的品牌示例残留（commit hash 已全部重生）
-- ✅ 保留 `backup-pre-filter` tag 作为历史回退点
 
 ---
 
