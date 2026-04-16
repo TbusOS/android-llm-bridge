@@ -2,9 +2,9 @@
 title: 架构设计
 type: design-doc
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 owner: sky
-tags: [architecture, design, transport, capability]
+tags: [architecture, design, transport, capability, agent]
 ---
 
 # 架构设计
@@ -20,10 +20,16 @@ tags: [architecture, design, transport, capability]
 │  L1 接入层（Interface layer）                             │
 │  ┌──────────┬──────────┬──────────┬──────────┐          │
 │  │   CLI    │   MCP    │ Web API  │  Web UI  │          │
-│  │ (typer)  │  Server  │(FastAPI) │ (future) │          │
+│  │ (typer)  │  Server  │(FastAPI) │ (M3)     │          │
 │  └────┬─────┴─────┬────┴────┬─────┴────┬─────┘          │
 │       └───────────┴─────────┴──────────┘                 │
 │                        ↓                                  │
+├──────────────────────────────────────────────────────────┤
+│  L1.5 Agent 层（可选，M2/M3 实现） 🆕                     │
+│  LLMBackend ABC + AgentLoop + ChatSession                │
+│  服务器无显卡/无外网时用本地小模型做 tool routing         │
+│  Ollama / llama.cpp / OpenAI-compat / Anthropic          │
+│                        ↓ tool_executor → MCP registry    │
 ├──────────────────────────────────────────────────────────┤
 │  L2 业务能力层（Capabilities layer）                      │
 │  纯 Python 函数，三层接入共享调用                         │
@@ -47,6 +53,8 @@ tags: [architecture, design, transport, capability]
 │  event-bus │ prompt-builder │ memory │ registry          │
 └──────────────────────────────────────────────────────────┘
 ```
+
+> L1.5 是**可选**层：外部 LLM 驱动（Claude Code + MCP / Claude Code + Bash）时不走 L1.5；只有 `alb chat` / Web `/chat` 这种"alb 内嵌 LLM 编排"场景才启用。详见 [`agent.md`](./agent.md) 和 ADR-016。
 
 ### 为啥这么分层
 

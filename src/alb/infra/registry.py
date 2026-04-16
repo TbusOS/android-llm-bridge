@@ -37,6 +37,23 @@ class CapabilitySpec:
     description: str = ""
 
 
+@dataclass(frozen=True)
+class BackendSpec:
+    """LLM backend for the agent layer (`alb.agent`).
+
+    Same shape as TransportSpec — lets `alb describe` enumerate what LLMs
+    the chat UI can talk to.  See docs/agent.md for the design rationale.
+    """
+
+    name: str
+    impl_path: str
+    runs_on_cpu: bool                  # True means no GPU required
+    supports_tool_calls: bool
+    status: Status
+    requires: list[str] = field(default_factory=list)
+    description: str = ""
+
+
 # ─── Transport registry ──────────────────────────────────────────────
 TRANSPORTS: list[TransportSpec] = [
     TransportSpec(
@@ -181,3 +198,50 @@ def transports_by_status(status: Status) -> list[TransportSpec]:
 
 def capabilities_by_status(status: Status) -> list[CapabilitySpec]:
     return [c for c in CAPABILITIES if c.status == status]
+
+
+# ─── Agent backend registry ──────────────────────────────────────────
+# All planned; concrete implementations land in M2 (ollama / openai-compat)
+# and M3 (llama.cpp / anthropic).  See docs/agent.md.
+BACKENDS: list[BackendSpec] = [
+    BackendSpec(
+        name="ollama",
+        impl_path="alb.agent.backends.ollama.OllamaBackend",
+        runs_on_cpu=True,
+        supports_tool_calls=True,
+        status="planned",
+        requires=["ollama daemon (HTTP)", "a pulled model (e.g. qwen2.5:3b)"],
+        description="Local Ollama HTTP API.  Recommended for CPU-only servers.",
+    ),
+    BackendSpec(
+        name="openai-compat",
+        impl_path="alb.agent.backends.openai_compat.OpenAICompatBackend",
+        runs_on_cpu=True,
+        supports_tool_calls=True,
+        status="planned",
+        requires=["OpenAI-compatible endpoint (vLLM / llamafile / LM Studio)"],
+        description="Any OpenAI-compatible chat/completions endpoint.",
+    ),
+    BackendSpec(
+        name="llama-cpp",
+        impl_path="alb.agent.backends.llama_cpp.LlamaCppBackend",
+        runs_on_cpu=True,
+        supports_tool_calls=True,
+        status="planned",
+        requires=["llama-cpp-python", "a local GGUF model file"],
+        description="Embedded llama.cpp — no daemon, pure in-process.",
+    ),
+    BackendSpec(
+        name="anthropic",
+        impl_path="alb.agent.backends.anthropic.AnthropicBackend",
+        runs_on_cpu=False,
+        supports_tool_calls=True,
+        status="planned",
+        requires=["anthropic SDK", "ANTHROPIC_API_KEY"],
+        description="Claude API — for users who want a larger model.",
+    ),
+]
+
+
+def backends_by_status(status: Status) -> list[BackendSpec]:
+    return [b for b in BACKENDS if b.status == status]
