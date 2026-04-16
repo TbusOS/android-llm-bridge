@@ -9,4 +9,7 @@ All ways of reaching an Android device are abstracted as `Transport`:
 See docs/architecture.md §二 for the full interface contract.
 """
 
-# Placeholder — actual classes implemented in M1.
+from alb.transport.base import ShellResult, Transport
+from alb.transport.hybrid import HybridTransport
+
+__all__ = ["HybridTransport", "ShellResult", "Transport"]

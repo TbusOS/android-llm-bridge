@@ -84,8 +84,10 @@ TRANSPORTS: list[TransportSpec] = [
         name="hybrid",
         impl_path="alb.transport.hybrid.HybridTransport",
         methods_supported=[],  # routes among others
-        status="planned",
-        description="Smart router: picks best sub-transport per operation.",
+        status="beta",
+        requires=["at least one concrete sub-transport (adb/ssh/serial)"],
+        description="Smart router: picks best sub-transport per op "
+                    "(logcat→adb, rsync→ssh, uart/bootloader→serial/adb).",
     ),
 ]
 
