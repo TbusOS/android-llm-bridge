@@ -453,7 +453,7 @@ async def _drain_stream(
             if parsed:
                 if topic == "logcat.line":
                     stats.update_logcat(parsed)
-                elif topic == "dmesg.line":
+                elif topic in ("dmesg.line", "uart.line"):
                     stats.update_dmesg(parsed)
             # Fan-out to any subscribers (CLI printer, Web UI, etc.)
             await event_bus.publish(topic, chunk)
