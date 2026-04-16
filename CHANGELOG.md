@@ -8,7 +8,7 @@
 ## [Unreleased]
 
 ### M1 · 核心完成（W1-W3）
-- ✅ 4 个传输 beta：AdbTransport（A/B）、SshTransport（C）、SerialTransport（G），HybridTransport 仍规划中
+- ✅ 4 个传输 beta：AdbTransport（A/B）、SshTransport（C）、SerialTransport（G）、HybridTransport（智能路由）
 - ✅ 6 个能力 beta：shell / logging（含 UART）/ filesync（含 rsync）/ diagnose / power / app
 - ✅ 权限系统：黑名单 + 多层策略 + 每个 transport 自定义 check_permissions
 - ✅ CLI：21 个顶层命令 + 7 个子命令组
@@ -16,7 +16,14 @@
 - ✅ 一键安装 / 卸载脚本（完全用户态，不碰系统）
 - ✅ `alb setup {adb,wifi,ssh,serial}` 引导式配置
 - ✅ SKILL.md 自动生成（`alb skills generate`）
-- 🚧 剩余：HybridTransport / infra prompt-builder / 更多集成测试
+- 🚧 剩余：infra prompt-builder / 更多集成测试
+
+### M1 · HybridTransport beta（2026-04-16）
+- ✅ `src/alb/transport/hybrid.py` 智能路由：shell→primary；logcat→adb→ssh；uart→serial；dmesg/kmsg→adb→ssh→serial；push/pull→ssh→adb；forward→adb→ssh；reboot recovery/bootloader→adb only
+- ✅ `pick_for(op, hint)` 公开接口 + 未覆盖能力走 `TRANSPORT_NOT_SUPPORTED` 拒绝
+- ✅ 聚合 supports_boot_log / supports_recovery + 聚合 health 快照
+- ✅ registry hybrid 状态 planned → beta
+- ✅ 30 单测，覆盖路由决策 + fallback + 拒绝路径 + 委托 check_permissions + health 聚合
 
 ### M1 · Agent 层架构预留（2026-04-16）
 - ✅ `src/alb/agent/` 骨架：`LLMBackend` ABC + `AgentLoop` + `ChatSession` + `Message`/`ToolCall`/`ToolSpec`/`ChatResponse` 数据原语
