@@ -19,6 +19,11 @@ from rich.table import Table
 from alb import __version__
 from alb.capabilities.logging import collect_dmesg, collect_logcat, search_logs, tail_log
 from alb.capabilities.shell import execute as shell_execute
+from alb.infra.env_loader import load_env_files
+
+# Load .env.local / .env at CLI startup so subcommands see the values
+# (typer's envvar= and os.environ.get both pick them up).
+load_env_files()
 from alb.cli.app_cli import app as app_cli
 from alb.cli.chat_cli import app as chat_cli
 from alb.cli.common import get_transport, print_result, run_async
