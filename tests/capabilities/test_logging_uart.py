@@ -63,3 +63,63 @@ async def test_capture_uart_happy_path(monkeypatch, tmp_path: Path) -> None:
     # Artifact should land under devices/abc/logs/
     assert "devices/abc/logs" in str(r.artifacts[0])
     assert r.artifacts[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_capture_uart_output_as_directory(monkeypatch, tmp_path: Path) -> None:
+    """--output <dir>/ (trailing slash): auto-create dir + <ts>-uart.log inside.
+
+    Users signal "this path is a directory" by either pre-creating it or
+    adding a trailing slash. Bare `Path('/x/y')` without trailing slash is
+    treated as a file path (UNIX convention).
+    """
+    out_dir = tmp_path / "my_logs"
+    t = _mk_serial_mock([b"ABC\n"])
+    r = await capture_uart(t, duration=1, output=str(out_dir) + "/")
+    assert r.ok
+    assert len(r.artifacts) == 1
+    art = Path(r.artifacts[0])
+    # Created inside our chosen directory, file name auto-generated
+    assert art.parent == out_dir
+    assert art.name.endswith("-uart.log")
+    assert art.exists()
+    assert art.read_bytes() == b"ABC\n"
+
+
+@pytest.mark.asyncio
+async def test_capture_uart_output_as_existing_directory(tmp_path: Path) -> None:
+    """If --output points at an existing dir (no trailing slash), still treated as dir."""
+    (tmp_path / "exists").mkdir()
+    t = _mk_serial_mock([b"XYZ\n"])
+    r = await capture_uart(t, duration=1, output=tmp_path / "exists")
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art.parent == tmp_path / "exists"
+    assert art.name.endswith("-uart.log")
+
+
+@pytest.mark.asyncio
+async def test_capture_uart_output_as_file_path(tmp_path: Path) -> None:
+    """--output <file.log>: log written to that exact file."""
+    target = tmp_path / "subdir" / "my-run.log"  # parent doesn't exist
+    t = _mk_serial_mock([b"hello world\n"])
+    r = await capture_uart(t, duration=1, output=target)
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art == target
+    assert art.exists()
+    assert art.read_bytes() == b"hello world\n"
+    # parent dir was created automatically
+    assert target.parent.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_capture_uart_output_trailing_slash(tmp_path: Path) -> None:
+    """String path with trailing slash → always treated as directory."""
+    out = str(tmp_path / "fresh_dir") + "/"
+    t = _mk_serial_mock([b"ok\n"])
+    r = await capture_uart(t, duration=1, output=out)
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art.parent == tmp_path / "fresh_dir"
+    assert art.name.endswith("-uart.log")
