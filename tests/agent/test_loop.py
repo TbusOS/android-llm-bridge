@@ -24,10 +24,15 @@ from alb.agent.session import ChatSession
 
 
 class FakeBackend(LLMBackend):
-    """Scripted backend: pops a queue of ChatResponse objects per chat() call."""
+    """Scripted backend: pops a queue of ChatResponse objects per chat() call.
+
+    Also exposes a stream() method for run_stream() tests that converts each
+    scripted ChatResponse into token + done events.
+    """
 
     name = "fake"
     supports_tool_calls = True
+    supports_streaming = True
 
     def __init__(self, scripted: list[ChatResponse | Exception]) -> None:
         self.model = "fake"
@@ -48,6 +53,34 @@ class FakeBackend(LLMBackend):
         if isinstance(item, Exception):
             raise item
         return item
+
+    async def stream(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ):
+        self.calls.append([Message(**m.__dict__) for m in messages])
+        item = self._queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        # For tool-call turns we buffer silently (no token events);
+        # for plain turns, emit each char as a delta to prove char-level streaming.
+        if item.content and not item.tool_calls:
+            for ch in item.content:
+                yield {"type": "token", "delta": ch}
+        yield {
+            "type": "done",
+            "content": item.content,
+            "tool_calls": [tc.to_dict() for tc in item.tool_calls],
+            "finish_reason": item.finish_reason,
+            "usage": item.usage or {},
+            "model": item.model or self.model,
+            "thinking": getattr(item, "thinking", ""),
+        }
 
 
 def _tc(name: str, args: dict[str, Any], tc_id: str = "tc_X") -> ToolCall:
@@ -309,3 +342,86 @@ async def test_supports_tool_calls_false_suppresses_tools() -> None:
     # Tool list still reaches backend.chat's tools param, but as None per loop logic.
     # We can't inspect tools arg from FakeBackend.chat without extending it, so just
     # verify a successful run without tool_calls.
+
+
+# ─── Streaming (run_stream) ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_stream_simple_reply() -> None:
+    """Plain chat: expect char-level token events + final done."""
+    b = FakeBackend([_final("你好")])
+
+    async def exec_nothing(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("should not be called")
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_nothing)
+    events = []
+    async for ev in loop.run_stream("hi"):
+        events.append(ev)
+
+    token_events = [e for e in events if e["type"] == "token"]
+    done_events = [e for e in events if e["type"] == "done"]
+    assert "".join(e["delta"] for e in token_events) == "你好"
+    assert len(done_events) == 1
+    done = done_events[0]
+    assert done["ok"] is True
+    assert done["data"] == "你好"
+    assert done["artifacts"] == []
+
+
+@pytest.mark.asyncio
+async def test_run_stream_tool_call_then_reply() -> None:
+    """Tool-decision turn streams silently, tool events fire, final turn streams tokens."""
+    b = FakeBackend(
+        [
+            _calls(_tc("alb_logcat", {"lines": 50}, tc_id="tc_1")),
+            _final("日志已抓"),
+        ]
+    )
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "data": {"lines": args.get("lines", 0)}}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_)
+    events = []
+    async for ev in loop.run_stream("抓日志"):
+        events.append(ev)
+
+    types = [e["type"] for e in events]
+    # Expected sequence: tool_call_start, tool_call_end, then token*, done
+    assert types[0] == "tool_call_start"
+    assert types[1] == "tool_call_end"
+    assert events[0]["name"] == "alb_logcat"
+    assert events[0]["arguments"] == {"lines": 50}
+    assert events[1]["result"]["ok"] is True
+    # Last event must be done with ok=True
+    assert types[-1] == "done"
+    assert events[-1]["ok"] is True
+    assert events[-1]["data"] == "日志已抓"
+    # In between there should be at least one token
+    assert any(t == "token" for t in types[2:-1])
+
+
+@pytest.mark.asyncio
+async def test_run_stream_max_turns_exceeded() -> None:
+    """Infinite tool-call loop → should terminate with AGENT_MAX_TURNS_EXCEEDED."""
+    b = FakeBackend(
+        [
+            _calls(_tc("alb_logcat", {}, tc_id="t1")),
+            _calls(_tc("alb_logcat", {}, tc_id="t2")),
+            _calls(_tc("alb_logcat", {}, tc_id="t3")),
+        ]
+    )
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_, max_turns=2)
+    events = []
+    async for ev in loop.run_stream("loop"):
+        events.append(ev)
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["ok"] is False
+    assert events[-1]["error"]["code"] == "AGENT_MAX_TURNS_EXCEEDED"

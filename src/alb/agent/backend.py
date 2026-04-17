@@ -179,13 +179,28 @@ class LLMBackend(ABC):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
-        """Streaming completion.  Default: NotImplementedError.
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streaming completion — yield StreamEvent dicts.
+
+        Event shapes (all dict[str, Any] for Python's sake — contract below):
+
+            {"type": "token",  "delta": "部分文本"}
+                — only emitted for the final assistant turn's content;
+                  tool-call turns buffer silently until done.
+
+            {"type": "done",
+             "content":       "完整回复 (delta 的拼接)",
+             "tool_calls":    [{"id","name","arguments"}, ...],
+             "finish_reason": "stop"|"tool_calls"|"length"|"error",
+             "usage":         {"input_tokens","output_tokens","total_tokens"},
+             "model":         "...",
+             "thinking":      "..."}
+                — always the terminal event for one chat turn.
 
         Subclasses with `supports_streaming = True` override this.
         """
         raise NotImplementedError(f"{self.name} does not support streaming")
-        yield ""  # pragma: no cover — makes this an async generator for typing
+        yield {}  # pragma: no cover — makes this an async generator for typing
 
     async def health(self) -> dict[str, Any]:
         """Connectivity & model-loaded snapshot for `alb status`."""

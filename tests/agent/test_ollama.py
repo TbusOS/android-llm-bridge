@@ -294,3 +294,126 @@ async def test_health_unreachable() -> None:
     snap = await b.health()
     assert snap["reachable"] is False
     assert "error" in snap
+
+
+# ─── Streaming ───────────────────────────────────────────────────────
+
+
+def _ndjson(*chunks: dict[str, Any]) -> bytes:
+    return ("\n".join(json.dumps(c) for c in chunks) + "\n").encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_stream_plain_tokens() -> None:
+    """Plain chat: tokens arrive as {type:token,delta:...} + final {type:done}."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert json.loads(req.content)["stream"] is True
+        body = _ndjson(
+            {"model": "qwen2.5:3b", "message": {"content": "he"}, "done": False},
+            {"model": "qwen2.5:3b", "message": {"content": "llo"}, "done": False},
+            {
+                "model": "qwen2.5:3b",
+                "message": {"content": ""},
+                "done": True,
+                "done_reason": "stop",
+                "prompt_eval_count": 5,
+                "eval_count": 2,
+            },
+        )
+        return httpx.Response(200, content=body)
+
+    b = OllamaBackend(model="qwen2.5:3b", transport=_mock_transport(handler))
+    events: list[dict[str, Any]] = []
+    async for ev in b.stream([Message(role="user", content="hi")]):
+        events.append(ev)
+
+    token_events = [e for e in events if e["type"] == "token"]
+    done_events = [e for e in events if e["type"] == "done"]
+    assert [e["delta"] for e in token_events] == ["he", "llo"]
+    assert len(done_events) == 1
+    done = done_events[0]
+    assert done["content"] == "hello"
+    assert done["finish_reason"] == "stop"
+    assert done["tool_calls"] == []
+    assert done["usage"]["output_tokens"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_call_buffered_until_done() -> None:
+    """Tool-call turn emits no tokens but surfaces tool_calls in done event."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = _ndjson(
+            {"model": "qwen2.5:3b", "message": {"content": ""}, "done": False},
+            {
+                "model": "qwen2.5:3b",
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {"name": "alb_logcat", "arguments": {"lines": 50}}
+                        }
+                    ],
+                },
+                "done": True,
+                "done_reason": "stop",
+                "eval_count": 7,
+            },
+        )
+        return httpx.Response(200, content=body)
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    events = []
+    async for ev in b.stream(
+        [Message(role="user", content="grab log")],
+        tools=[ToolSpec(name="alb_logcat", description="x", parameters={"type": "object"})],
+    ):
+        events.append(ev)
+
+    assert [e["type"] for e in events] == ["done"]  # no token events
+    done = events[0]
+    assert done["finish_reason"] == "tool_calls"
+    assert len(done["tool_calls"]) == 1
+    tc = done["tool_calls"][0]
+    assert tc["name"] == "alb_logcat"
+    assert tc["arguments"] == {"lines": 50}
+
+
+@pytest.mark.asyncio
+async def test_stream_http_error_raises_backend_error() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, content=b'{"error":"boom"}')
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    with pytest.raises(BackendError) as ei:
+        async for _ in b.stream([Message(role="user", content="hi")]):
+            pass
+    assert ei.value.code == "BACKEND_HTTP_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_stream_thinking_promoted_when_content_empty() -> None:
+    """Reasoning-model edge case: content empty, thinking has text."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = _ndjson(
+            {"message": {"content": "", "thinking": "I think "}, "done": False},
+            {"message": {"content": "", "thinking": "PONG"}, "done": False},
+            {
+                "message": {"content": ""},
+                "done": True,
+                "done_reason": "stop",
+                "eval_count": 3,
+            },
+        )
+        return httpx.Response(200, content=body)
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    events = []
+    async for ev in b.stream([Message(role="user", content="say pong")]):
+        events.append(ev)
+    done = [e for e in events if e["type"] == "done"][0]
+    # No content tokens at all, but done.content should be promoted from thinking
+    assert done["content"] == "I think PONG"
+    assert done["thinking"] == "I think PONG"
