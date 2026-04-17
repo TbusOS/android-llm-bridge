@@ -19,6 +19,10 @@ from fastapi import FastAPI
 
 from alb import __version__
 from alb.api.chat_route import router as chat_router
+from alb.infra.env_loader import load_env_files
+
+# Load .env.local / .env so ALB_* values reach FastAPI request handlers.
+load_env_files()
 
 
 def create_app() -> FastAPI:
