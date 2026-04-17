@@ -174,13 +174,21 @@ async def capture_uart(
     *,
     duration: int = 30,
     device: str | None = None,
+    output: Path | str | None = None,
 ) -> Result[DmesgSummary]:
     """Capture raw UART output for `duration` seconds. Requires SerialTransport.
 
     LLM notes:
-        - UART bytes are written verbatim to workspace/.../logs/<ts>-uart.log.
+        - UART bytes are written verbatim to the artifact file.
         - Use for: boot log, u-boot stage, kernel panic rescue.
         - Returns DmesgSummary-shaped summary (lines + error-keyword count).
+
+    Args:
+        output: Optional override for the artifact path.
+            - None (default) → workspace/.../logs/<ts>-uart.log
+            - An existing directory or a path ending with "/" → that dir +
+              "<ts>-uart.log" (directory is created if missing)
+            - Anything else → treated as the exact file path
     """
     if transport.name != "serial":
         return fail(
@@ -197,8 +205,8 @@ async def capture_uart(
             category="input",
         )
 
-    artifact = workspace_path(
-        "logs",
+    artifact = _resolve_capture_path(
+        output,
         f"{iso_timestamp()}-uart.log",
         device=device,
     )
@@ -459,6 +467,34 @@ async def _drain_stream(
             await event_bus.publish(topic, chunk)
             if perf_counter() - start >= max_seconds:
                 break
+
+
+def _resolve_capture_path(
+    output: Path | str | None,
+    default_name: str,
+    *,
+    device: str | None = None,
+) -> Path:
+    """Decide where a capture artifact lands.
+
+    Rules:
+        - output=None        → workspace/.../logs/<default_name>
+        - output is an existing dir or ends with "/"  → <dir>/<default_name>
+          (directory is created if missing)
+        - otherwise → treat as exact file path (parent is created)
+    """
+    if output is None:
+        return workspace_path("logs", default_name, device=device)
+
+    p = Path(output).expanduser()
+    # Treat trailing slash or existing dir as "put file inside this dir".
+    # Everything else is a concrete file path.
+    looks_like_dir = p.is_dir() or str(output).endswith(("/", "\\"))
+    if looks_like_dir:
+        p.mkdir(parents=True, exist_ok=True)
+        return p / default_name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def _resolve_search_targets(path: Path | None, device: str | None) -> list[Path]:

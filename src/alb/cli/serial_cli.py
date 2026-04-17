@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from alb.capabilities.logging import capture_uart
@@ -24,10 +26,19 @@ def cmd_capture(
     ctx: typer.Context,
     duration: int = typer.Option(30, "--duration", "-d"),
     device: str | None = typer.Option(None, "--device"),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help=(
+            "Output path: either a directory (log goes inside as "
+            "<ts>-uart.log) or a full file path. Default: workspace/logs/."
+        ),
+    ),
 ) -> None:
-    """Capture UART bytes to workspace for N seconds."""
+    """Capture UART bytes for N seconds (default: workspace/logs/, or --output to override)."""
     t = _force_serial(ctx, device)
-    result = run_async(capture_uart(t, duration=duration, device=device))
+    result = run_async(capture_uart(t, duration=duration, device=device, output=output))
     print_result(ctx, result)
 
 
