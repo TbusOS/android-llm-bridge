@@ -42,8 +42,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field, ValidationError
 
 from alb.agent.backends import get_backend
 from alb.agent.loop import AgentLoop
@@ -77,61 +77,14 @@ class ChatResponse(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     """Run one agent turn and return the reply + session metadata."""
-    # Env-var defaults (mirror CLI behaviour)
-    model = req.model or os.environ.get("ALB_OLLAMA_MODEL")
-    ollama_url = req.ollama_url or os.environ.get("ALB_OLLAMA_URL")
-
-    backend_kwargs: dict[str, Any] = {}
-    if model:
-        backend_kwargs["model"] = model
-    if ollama_url and req.backend == "ollama":
-        backend_kwargs["base_url"] = ollama_url
-
-    try:
-        llm = get_backend(req.backend, **backend_kwargs)
-    except (ValueError, ImportError) as e:
+    built = await _build_agent(req)
+    if isinstance(built, dict):  # error payload
         return ChatResponse(
             ok=False,
-            session_id="",
-            error={"code": "BACKEND_INIT_FAILED", "message": str(e)},
+            session_id=built.get("session_id", ""),
+            error=built["error"],
         )
-
-    specs: list = []
-    executor = _empty_executor
-    if req.tools:
-        from alb.mcp.executor import make_agent_tools
-
-        specs, executor = await make_agent_tools()
-
-    prompt = default_agent_prompt(
-        device_serial=None,
-        transport_name="auto",
-        workspace_root=Path.cwd() / "workspace",
-        tool_count=len(specs),
-    )
-
-    if req.session_id:
-        session = ChatSession.load(req.session_id)
-        if not session.meta_file.exists():
-            return ChatResponse(
-                ok=False,
-                session_id=req.session_id,
-                error={
-                    "code": "SESSION_NOT_FOUND",
-                    "message": f"no session: {req.session_id}",
-                    "suggestion": "omit session_id to start a new one",
-                },
-            )
-    else:
-        session = ChatSession.create(backend=llm.name, model=llm.model)
-
-    loop = AgentLoop(
-        backend=llm,
-        tools=specs,
-        tool_executor=executor,
-        max_turns=req.max_turns,
-        system_prompt=prompt.as_text(),
-    )
+    loop, session, llm = built
 
     result = await loop.run(req.message, session=session)
 
@@ -158,6 +111,121 @@ async def chat(req: ChatRequest) -> ChatResponse:
         model=llm.model,
         backend=llm.name,
     )
+
+
+@router.websocket("/chat/ws")
+async def chat_ws(ws: WebSocket) -> None:
+    """Streaming chat over WebSocket.
+
+    Protocol:
+        C → S: JSON body matching ChatRequest schema.
+        S → C: A stream of StreamEvent dicts (see AgentLoop.run_stream
+               docstring) terminated by a single {"type": "done", ...} event.
+        S closes after 'done'. Either side may close early.
+    """
+    await ws.accept()
+    try:
+        raw = await ws.receive_json()
+        try:
+            req = ChatRequest.model_validate(raw)
+        except ValidationError as e:
+            await ws.send_json(
+                {
+                    "type": "done",
+                    "ok": False,
+                    "error": {"code": "INVALID_REQUEST", "message": str(e)},
+                    "session_id": "",
+                }
+            )
+            return
+
+        built = await _build_agent(req)
+        if isinstance(built, dict):  # error payload
+            await ws.send_json(
+                {
+                    "type": "done",
+                    "ok": False,
+                    "error": built["error"],
+                    "session_id": built.get("session_id", ""),
+                }
+            )
+            return
+        loop, session, llm = built
+
+        async for event in loop.run_stream(req.message, session=session):
+            # Enrich terminal event with backend metadata for client convenience
+            if event.get("type") == "done":
+                event.setdefault("model", llm.model)
+                event.setdefault("backend", llm.name)
+            await ws.send_json(event)
+    except WebSocketDisconnect:
+        return
+    finally:
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001 — already disconnected is fine
+            pass
+
+
+async def _build_agent(
+    req: ChatRequest,
+) -> tuple[AgentLoop, ChatSession, Any] | dict[str, Any]:
+    """Shared setup for POST /chat and WS /chat/ws.
+
+    Returns (loop, session, llm) on success, or {"error": {...}, "session_id": "..."}
+    on failure (same shape both callers expect to wrap).
+    """
+    # Env-var defaults (mirror CLI behaviour)
+    model = req.model or os.environ.get("ALB_OLLAMA_MODEL")
+    ollama_url = req.ollama_url or os.environ.get("ALB_OLLAMA_URL")
+
+    backend_kwargs: dict[str, Any] = {}
+    if model:
+        backend_kwargs["model"] = model
+    if ollama_url and req.backend == "ollama":
+        backend_kwargs["base_url"] = ollama_url
+
+    try:
+        llm = get_backend(req.backend, **backend_kwargs)
+    except (ValueError, ImportError) as e:
+        return {"error": {"code": "BACKEND_INIT_FAILED", "message": str(e)}, "session_id": ""}
+
+    specs: list = []
+    executor = _empty_executor
+    if req.tools:
+        from alb.mcp.executor import make_agent_tools
+
+        specs, executor = await make_agent_tools()
+
+    prompt = default_agent_prompt(
+        device_serial=None,
+        transport_name="auto",
+        workspace_root=Path.cwd() / "workspace",
+        tool_count=len(specs),
+    )
+
+    if req.session_id:
+        session = ChatSession.load(req.session_id)
+        if not session.meta_file.exists():
+            return {
+                "error": {
+                    "code": "SESSION_NOT_FOUND",
+                    "message": f"no session: {req.session_id}",
+                    "suggestion": "omit session_id to start a new one",
+                },
+                "session_id": req.session_id,
+            }
+    else:
+        session = ChatSession.create(backend=llm.name, model=llm.model)
+
+    loop = AgentLoop(
+        backend=llm,
+        tools=specs,
+        tool_executor=executor,
+        max_turns=req.max_turns,
+        system_prompt=prompt.as_text(),
+    )
+    return loop, session, llm
 
 
 async def _empty_executor(name: str, args: dict) -> dict:

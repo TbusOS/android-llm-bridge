@@ -167,8 +167,60 @@ async def _load_tools(no_tools: bool):
 
 
 def _run_turn(loop: AgentLoop, user_input: str, session: ChatSession) -> None:
-    with console.status("[dim]thinking…[/]", spinner="dots"):
-        result = run_async(loop.run(user_input, session=session))
+    """Stream one turn: live token output + tool-call progress markers."""
+    if loop.backend.supports_streaming:
+        run_async(_stream_turn(loop, user_input, session))
+    else:
+        # Fallback for backends that don't support streaming yet
+        with console.status("[dim]thinking…[/]", spinner="dots"):
+            result = run_async(loop.run(user_input, session=session))
+        _render_nonstream_result(result)
+
+
+async def _stream_turn(loop: AgentLoop, user_input: str, session: ChatSession) -> None:
+    """Drive AgentLoop.run_stream and render events live."""
+    printed_prefix = False
+    async for ev in loop.run_stream(user_input, session=session):
+        etype = ev.get("type")
+        if etype == "token":
+            if not printed_prefix:
+                console.print("[bold green]alb »[/] ", end="")
+                printed_prefix = True
+            console.print(ev.get("delta", ""), end="", highlight=False)
+        elif etype == "tool_call_start":
+            if printed_prefix:
+                console.print()
+                printed_prefix = False
+            args_preview = _shorten(ev.get("arguments", {}), 80)
+            console.print(f"[dim cyan]→ tool[/] [bold]{ev['name']}[/] {args_preview}")
+        elif etype == "tool_call_end":
+            result = ev.get("result", {})
+            ok = result.get("ok")
+            if ok is True:
+                console.print(f"[dim green]  ← ok[/]")
+            elif ok is False:
+                err = (result.get("error") or {}).get("code", "FAIL")
+                console.print(f"[dim red]  ← {err}[/]")
+        elif etype == "done":
+            if printed_prefix:
+                console.print()  # close token line
+            if not ev.get("ok", True):
+                err = ev.get("error") or {}
+                console.print(f"[red]✗ {err.get('code', 'ERROR')}[/] — {err.get('message', '')}")
+                if err.get("suggestion"):
+                    console.print(f"[yellow]suggestion:[/] {err['suggestion']}")
+                return
+            artifacts = ev.get("artifacts") or []
+            if artifacts:
+                console.print("[dim]artifacts:[/]")
+                for a in artifacts:
+                    console.print(f"  • {a}")
+            timing = ev.get("timing_ms", 0)
+            if timing:
+                console.print(f"[dim]{timing / 1000:.1f}s[/]")
+
+
+def _render_nonstream_result(result) -> None:
     if result.ok:
         console.print(Panel(result.data or "[dim](empty reply)[/]", title="alb", border_style="green"))
         if result.artifacts:
@@ -182,6 +234,14 @@ def _run_turn(loop: AgentLoop, user_input: str, session: ChatSession) -> None:
         console.print(f"[red]✗ {err.code}[/] — {err.message}")
         if err.suggestion:
             console.print(f"[yellow]suggestion:[/] {err.suggestion}")
+
+
+def _shorten(obj: dict, limit: int) -> str:
+    """Compact single-line preview of tool arguments."""
+    import json
+
+    s = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
 def _print_banner(llm, session: ChatSession, tool_count: int, no_tools: bool) -> None:
