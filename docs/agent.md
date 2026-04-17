@@ -337,13 +337,13 @@ MCP server 改了工具，`alb chat` 自动跟着变，不漂移。
 
 ### M2 · 可用最小版本
 
-- [ ] `OllamaBackend` —— HTTP 调 `/api/chat`，支持 tool_calls（Ollama 0.4+）
+- [x] `OllamaBackend` —— HTTP 调 `/api/chat`，支持 tool_calls（Ollama 0.4+）
 - [ ] `OpenAICompatBackend` —— 兼容 vLLM / LM Studio / llamafile 的 /v1/chat/completions
-- [ ] `AgentLoop.run()` 完整实现（循环 / tool dispatch / session flush）
-- [ ] `ChatSession` 落盘 JSONL + `load()` 解析
+- [x] `AgentLoop.run()` 完整实现（循环 / tool dispatch / session flush）
+- [x] `ChatSession` 落盘 JSONL + `load()` 解析
 - [ ] `alb chat` CLI subcommand（`src/alb/cli/chat_cli.py`）
 - [ ] FastAPI `POST /chat` 路由（非流式）
-- [ ] 单元测试：mock backend + mock executor 跑完整循环
+- [x] 单元测试：mock backend + mock executor 跑完整循环（Ollama HTTP mock + FakeBackend 三轮 tool_call）
 - [ ] 文档：`docs/methods/08-local-llm.md` 使用指南（装 ollama / 选模型 / 限制）
 
 ### M3 · 完整体验

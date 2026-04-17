@@ -45,6 +45,10 @@ class ToolCall:
     def to_dict(self) -> dict[str, Any]:
         return {"id": self.id, "name": self.name, "arguments": self.arguments}
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "ToolCall":
+        return cls(id=d["id"], name=d["name"], arguments=d.get("arguments") or {})
+
 
 @dataclass(frozen=True)
 class Message:
@@ -70,6 +74,17 @@ class Message:
         if self.name is not None:
             d["name"] = self.name
         return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Message":
+        tcs = [ToolCall.from_dict(tc) for tc in d.get("tool_calls") or []]
+        return cls(
+            role=d["role"],
+            content=d.get("content", "") or "",
+            tool_calls=tcs,
+            tool_call_id=d.get("tool_call_id"),
+            name=d.get("name"),
+        )
 
 
 @dataclass(frozen=True)
