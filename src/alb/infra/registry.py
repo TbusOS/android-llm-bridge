@@ -211,7 +211,7 @@ BACKENDS: list[BackendSpec] = [
         impl_path="alb.agent.backends.ollama.OllamaBackend",
         runs_on_cpu=True,
         supports_tool_calls=True,
-        status="planned",
+        status="beta",
         requires=["ollama daemon (HTTP)", "a pulled model (e.g. qwen2.5:3b)"],
         description="Local Ollama HTTP API.  Recommended for CPU-only servers.",
     ),

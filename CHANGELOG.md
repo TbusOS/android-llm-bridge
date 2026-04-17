@@ -18,6 +18,17 @@
 - ✅ SKILL.md 自动生成（`alb skills generate`）
 - 🚧 剩余：更多集成测试（M1 核心能力已全部完成）
 
+### M2 · Agent 首批落地 · 后端 step 1（2026-04-16）
+- ✅ `src/alb/agent/backends/ollama.py` OllamaBackend（POST `/api/chat`，tool_calls 支持，5 种错误映射：unreachable/timeout/http-error，health 查 `/api/tags`）
+- ✅ `src/alb/agent/backends/__init__.py` `get_backend(name, **kwargs)` lazy 工厂
+- ✅ `src/alb/agent/loop.py` AgentLoop.run() 完整实现（ReAct-lite 循环、max_turns 熔断、tool 分发、artifacts 提取、BackendError → Result 翻译）
+- ✅ `src/alb/agent/session.py` ChatSession JSONL 落盘 + load 解析 + `clear()`
+- ✅ `src/alb/agent/backend.py` Message/ToolCall 增 `from_dict`（支持 session load）
+- ✅ `pyproject.toml` GitHub URL 从 skyzhangbinghua → TbusOS
+- ✅ registry ollama 状态 planned → beta
+- ✅ 31 单测（16 Ollama HTTP mock / 7 Session JSONL / 8 AgentLoop）
+- 🚧 剩余 step 2：`alb chat` CLI + FastAPI `/chat` POST（下一轮）
+
 ### M1 · prompt_builder（2026-04-16）
 - ✅ `src/alb/infra/prompt_builder.py` 系统提示词组装器
   - `PromptBlock` / `Prompt` / `PromptBuilder`（链式 fluent 接口）
