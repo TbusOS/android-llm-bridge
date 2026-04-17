@@ -113,3 +113,76 @@ def test_chat_env_var_model_override(client, monkeypatch):
     r = client.post("/chat", json={"message": "hi", "tools": False})
     assert r.status_code == 200
     assert captured.get("model") == "gemma4:26b"
+
+
+# ─── WebSocket /chat/ws ──────────────────────────────────────────────
+
+
+class _StreamingFakeBackend(_FakeBackend):
+    supports_streaming = True
+
+    async def stream(self, messages, **kwargs):
+        for ch in self._reply:
+            yield {"type": "token", "delta": ch}
+        yield {
+            "type": "done",
+            "content": self._reply,
+            "tool_calls": [],
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 1, "output_tokens": len(self._reply), "total_tokens": 1 + len(self._reply)},
+            "model": self.model,
+            "thinking": "",
+        }
+
+
+def test_chat_ws_streams_tokens_then_done(client, monkeypatch):
+    def _factory(name: str, **kwargs):
+        return _StreamingFakeBackend(reply="hello")
+
+    monkeypatch.setattr("alb.api.chat_route.get_backend", _factory)
+
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "hi", "tools": False})
+        events = []
+        while True:
+            try:
+                ev = ws.receive_json()
+            except Exception:
+                break
+            events.append(ev)
+            if ev.get("type") == "done":
+                break
+
+    tokens = [e for e in events if e["type"] == "token"]
+    dones = [e for e in events if e["type"] == "done"]
+    assert "".join(e["delta"] for e in tokens) == "hello"
+    assert len(dones) == 1
+    assert dones[0]["ok"] is True
+    assert dones[0]["data"] == "hello"
+    assert dones[0]["model"] == "fake-model"
+    assert dones[0]["backend"] == "fake"
+
+
+def test_chat_ws_invalid_request_emits_error_done(client):
+    with client.websocket_connect("/chat/ws") as ws:
+        # Missing required `message` field
+        ws.send_json({"tools": False})
+        ev = ws.receive_json()
+
+    assert ev["type"] == "done"
+    assert ev["ok"] is False
+    assert ev["error"]["code"] == "INVALID_REQUEST"
+
+
+def test_chat_ws_session_not_found(client, monkeypatch):
+    monkeypatch.setattr(
+        "alb.api.chat_route.get_backend",
+        lambda name, **kw: _StreamingFakeBackend(reply="x"),
+    )
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "hi", "tools": False, "session_id": "nope"})
+        ev = ws.receive_json()
+
+    assert ev["type"] == "done"
+    assert ev["ok"] is False
+    assert ev["error"]["code"] == "SESSION_NOT_FOUND"
