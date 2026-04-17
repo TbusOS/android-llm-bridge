@@ -21,7 +21,7 @@ Design notes:
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -174,6 +174,154 @@ class AgentLoop:
             category="system",
             timing_ms=int((perf_counter() - start) * 1000),
         )
+
+    async def run_stream(
+        self,
+        user_input: str,
+        *,
+        session: ChatSession | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streaming variant of run(): yield StreamEvent dicts.
+
+        Event types (subset + agent-loop additions):
+            {"type": "token", "delta": "..."}
+                Content token from the *final* assistant turn (one that stops
+                without tool_calls).  Tool-decision turns stream silently.
+
+            {"type": "tool_call_start", "id": "...", "name": "...", "arguments": {...}}
+            {"type": "tool_call_end",   "id": "...", "name": "...", "result": {...}}
+
+            {"type": "done", "ok": true, "data": "...", "session_id": "...",
+             "artifacts": ["..."], "timing_ms": N, "model": "...", "usage": {...}}
+            {"type": "done", "ok": false, "error": {"code","message","suggestion"}, ...}
+
+        Requires backend.supports_streaming == True.  Otherwise raises
+        NotImplementedError at first turn (mirrors backend.stream behaviour).
+        """
+        start = perf_counter()
+        artifacts: list[Path] = []
+
+        messages: list[Message] = []
+        if self.system_prompt:
+            messages.append(Message(role="system", content=self.system_prompt))
+        if session is not None:
+            messages.extend(session.messages())
+
+        user_msg = Message(role="user", content=user_input)
+        messages.append(user_msg)
+        if session is not None:
+            session.append(user_msg)
+
+        tools = self.tools if self.backend.supports_tool_calls else None
+        last_content = ""
+        last_usage: dict[str, int] = {}
+        last_model = self.backend.model
+
+        for _turn in range(self.max_turns):
+            # Drain one streamed turn into (content, tool_calls, usage)
+            turn_content = ""
+            turn_tool_calls: list[ToolCall] = []
+            turn_usage: dict[str, int] = {}
+            turn_thinking = ""
+            try:
+                async for ev in self.backend.stream(messages, tools=tools):
+                    etype = ev.get("type")
+                    if etype == "token":
+                        # Peek: if this turn will end with tool_calls, we
+                        # can't know yet.  Buffer and only forward if the
+                        # done event has no tool_calls.
+                        turn_content += ev.get("delta", "")
+                    elif etype == "done":
+                        turn_content = ev.get("content", turn_content)
+                        turn_thinking = ev.get("thinking", "")
+                        turn_usage = ev.get("usage", {}) or {}
+                        last_model = ev.get("model", last_model)
+                        for tcd in ev.get("tool_calls") or []:
+                            turn_tool_calls.append(ToolCall.from_dict(tcd))
+            except BackendError as e:
+                yield {
+                    "type": "done",
+                    "ok": False,
+                    "error": {
+                        "code": e.code,
+                        "message": str(e),
+                        "suggestion": e.suggestion,
+                    },
+                    "session_id": session.session_id if session else "",
+                    "timing_ms": int((perf_counter() - start) * 1000),
+                }
+                return
+
+            # Record assistant turn
+            asst_msg = Message(
+                role="assistant",
+                content=turn_content,
+                tool_calls=list(turn_tool_calls),
+            )
+            messages.append(asst_msg)
+            if session is not None:
+                session.append(asst_msg)
+
+            last_content = turn_content or last_content
+            last_usage = turn_usage or last_usage
+
+            if not turn_tool_calls:
+                # Final turn — this is the one users see; stream the collected
+                # content as tokens (one delta = full content; backends that
+                # want true char-level streaming can re-yield during the loop)
+                if turn_content:
+                    yield {"type": "token", "delta": turn_content}
+                yield {
+                    "type": "done",
+                    "ok": True,
+                    "data": turn_content,
+                    "session_id": session.session_id if session else "",
+                    "artifacts": [str(p) for p in artifacts],
+                    "timing_ms": int((perf_counter() - start) * 1000),
+                    "model": last_model,
+                    "usage": last_usage,
+                    "thinking": turn_thinking,
+                }
+                return
+
+            # Dispatch tool calls
+            for tc in turn_tool_calls:
+                yield {
+                    "type": "tool_call_start",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                }
+                tool_result = await self._dispatch(tc)
+                artifacts.extend(_extract_artifacts(tool_result))
+                yield {
+                    "type": "tool_call_end",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "result": tool_result,
+                }
+                tool_msg = Message(
+                    role="tool",
+                    content=json.dumps(tool_result, ensure_ascii=False, default=str),
+                    tool_call_id=tc.id,
+                    name=tc.name,
+                )
+                messages.append(tool_msg)
+                if session is not None:
+                    session.append(tool_msg)
+
+        # max_turns exhausted
+        yield {
+            "type": "done",
+            "ok": False,
+            "error": {
+                "code": "AGENT_MAX_TURNS_EXCEEDED",
+                "message": f"agent did not finish within {self.max_turns} turns",
+                "suggestion": "raise max_turns or simplify the request",
+            },
+            "session_id": session.session_id if session else "",
+            "timing_ms": int((perf_counter() - start) * 1000),
+        }
 
     # ── Internal ─────────────────────────────────────────────────
     async def _dispatch(self, tc: ToolCall) -> dict[str, Any]:

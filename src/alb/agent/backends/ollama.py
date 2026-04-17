@@ -33,6 +33,8 @@ finish_reason="stop".
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
@@ -73,7 +75,7 @@ class OllamaBackend(LLMBackend):
 
     name = "ollama"
     supports_tool_calls = True
-    supports_streaming = False  # streaming lands in M3; chat() only for now
+    supports_streaming = True
     runs_on_cpu = True
 
     def __init__(
@@ -107,6 +109,121 @@ class OllamaBackend(LLMBackend):
         body = self._build_body(messages, tools, temperature, max_tokens, kwargs)
         raw = await self._post("/api/chat", body)
         return self._parse_response(raw)
+
+    async def stream(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream chat response as NDJSON from Ollama's /api/chat.
+
+        Yields StreamEvent dicts (see LLMBackend.stream docstring).  Content
+        deltas are emitted as {"type": "token", "delta": ...}.  Tool-call
+        requests (Ollama emits the tool_calls list only on `done: true`)
+        surface via the terminal {"type": "done", "tool_calls": [...]} event.
+        """
+        body = self._build_body(messages, tools, temperature, max_tokens, kwargs)
+        body["stream"] = True
+
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        finish_reason: FinishReason = "stop"
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        model_reply = self.model
+
+        url = f"{self.base_url}/api/chat"
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout, transport=self._transport
+            ) as client:
+                async with client.stream("POST", url, json=body) as r:
+                    if r.status_code >= 400:
+                        text = (await r.aread()).decode("utf-8", errors="replace")[:500]
+                        raise BackendError(
+                            "BACKEND_HTTP_ERROR",
+                            f"ollama stream returned {r.status_code}: {text}",
+                            suggestion="check model name and stream support",
+                        )
+                    async for line in r.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        msg = chunk.get("message") or {}
+                        delta_c = msg.get("content", "") or ""
+                        delta_t = msg.get("thinking", "") or ""
+                        if delta_c:
+                            content_parts.append(delta_c)
+                            yield {"type": "token", "delta": delta_c}
+                        if delta_t:
+                            thinking_parts.append(delta_t)
+                        if chunk.get("model"):
+                            model_reply = chunk["model"]
+                        if chunk.get("done"):
+                            # Terminal chunk: tool_calls (if any) + usage
+                            for tc in msg.get("tool_calls") or []:
+                                fn = tc.get("function") or {}
+                                name = fn.get("name") or ""
+                                args = fn.get("arguments") or {}
+                                if isinstance(args, str):
+                                    try:
+                                        args = json.loads(args) if args.strip() else {}
+                                    except json.JSONDecodeError:
+                                        args = {"__raw__": args}
+                                if not name:
+                                    continue
+                                tool_calls.append(
+                                    ToolCall(
+                                        id=tc.get("id") or f"tc_{uuid4().hex[:8]}",
+                                        name=name,
+                                        arguments=args,
+                                    )
+                                )
+                            finish_reason = (
+                                "tool_calls" if tool_calls else _classify_done(chunk)
+                            )
+                            usage = {
+                                "input_tokens": int(chunk.get("prompt_eval_count") or 0),
+                                "output_tokens": int(chunk.get("eval_count") or 0),
+                                "total_tokens": int(chunk.get("prompt_eval_count") or 0)
+                                + int(chunk.get("eval_count") or 0),
+                            }
+                            break
+        except httpx.ConnectError as e:
+            raise BackendError(
+                "BACKEND_UNREACHABLE",
+                f"ollama daemon not reachable at {self.base_url}: {e}",
+                suggestion="start ollama (`ollama serve`) or set base_url",
+            ) from e
+        except httpx.TimeoutException as e:
+            raise BackendError(
+                "BACKEND_TIMEOUT",
+                f"ollama stream timed out after {self.timeout}s: {e}",
+                suggestion="raise timeout or pick a smaller model",
+            ) from e
+
+        content = "".join(content_parts)
+        thinking = "".join(thinking_parts)
+        # Same content/thinking promotion rule as chat()
+        if not content and thinking:
+            content = thinking
+
+        yield {
+            "type": "done",
+            "content": content,
+            "tool_calls": [tc.to_dict() for tc in tool_calls],
+            "finish_reason": finish_reason,
+            "usage": usage,
+            "model": model_reply,
+            "thinking": thinking,
+        }
 
     async def health(self) -> dict[str, Any]:
         """Hit `/api/tags` to check connectivity + whether our model is present."""
