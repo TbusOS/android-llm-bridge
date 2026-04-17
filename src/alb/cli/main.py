@@ -20,6 +20,7 @@ from alb import __version__
 from alb.capabilities.logging import collect_dmesg, collect_logcat, search_logs, tail_log
 from alb.capabilities.shell import execute as shell_execute
 from alb.cli.app_cli import app as app_cli
+from alb.cli.chat_cli import app as chat_cli
 from alb.cli.common import get_transport, print_result, run_async
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.filesync_cli import app as filesync_cli
@@ -232,6 +233,7 @@ app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-bo
 app.add_typer(app_cli, name="app", help="APK management.")
 app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
 app.add_typer(skills_cli, name="skills", help="SKILL.md generator for LLM clients.")
+app.add_typer(chat_cli, name="chat", help="Interactive LLM agent REPL.")
 
 
 # ─── Log tool group (search / tail) ────────────────────────────────

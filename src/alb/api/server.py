@@ -1,22 +1,64 @@
 """FastAPI server entry point (`alb-api` command).
 
-M0 skeleton. Real API lands in M2.
+M2 beta — ships `GET /health` and `POST /chat` (non-streaming).
+
+Streaming (`GET /chat/ws`), OpenAPI fine-tuning, and auth come in M3.
+
+Usage:
+    alb-api                       # defaults: 0.0.0.0:8765
+    alb-api --port 9000           # (via env ALB_API_PORT)
+    uvicorn alb.api.server:app    # bring your own ASGI runner
 """
 
 from __future__ import annotations
 
+import os
 import sys
+
+from fastapi import FastAPI
+
+from alb import __version__
+from alb.api.chat_route import router as chat_router
+
+
+def create_app() -> FastAPI:
+    """Build the FastAPI app (kept as a factory so tests can get a fresh instance)."""
+    app = FastAPI(
+        title="android-llm-bridge API",
+        version=__version__,
+        description=(
+            "Local HTTP API for alb: health, chat agent, capabilities. "
+            "Pairs with the MCP server (`alb-mcp`) and CLI (`alb`) — same "
+            "underlying capability layer."
+        ),
+    )
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"ok": "true", "version": __version__, "api": "alb"}
+
+    app.include_router(chat_router)
+    return app
+
+
+# Module-level app for `uvicorn alb.api.server:app`
+app = create_app()
 
 
 def main() -> None:
     """Entry point referenced by pyproject.toml `[project.scripts]`."""
-    print(
-        "[alb-api] M0 skeleton — not implemented yet.\n"
-        "M2 will ship a FastAPI server with full OpenAPI + WebSocket streaming.\n"
-        "See docs/project-plan.md.",
-        file=sys.stderr,
-    )
-    sys.exit(0)
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "[alb-api] uvicorn not installed. Run: uv sync  (or: pip install uvicorn[standard])",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    host = os.environ.get("ALB_API_HOST", "0.0.0.0")
+    port = int(os.environ.get("ALB_API_PORT", "8765"))
+    uvicorn.run("alb.api.server:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":
