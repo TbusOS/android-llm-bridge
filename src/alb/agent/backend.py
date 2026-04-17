@@ -109,13 +109,21 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class ChatResponse:
-    """Unified backend reply."""
+    """Unified backend reply.
+
+    `thinking` carries the model's chain-of-thought channel when the backend
+    supports it (gpt-oss, qwen3-thinking, claude extended thinking). Empty
+    for non-reasoning models. `content` is always the final answer — backends
+    must promote thinking to content if the model returns only a thinking
+    trace (e.g. some gpt-oss + Ollama combinations).
+    """
 
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: FinishReason = "stop"
     usage: dict[str, int] = field(default_factory=dict)  # input_tokens / output_tokens / total
     model: str = ""
+    thinking: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +132,7 @@ class ChatResponse:
             "finish_reason": self.finish_reason,
             "usage": self.usage,
             "model": self.model,
+            "thinking": self.thinking,
         }
 
 

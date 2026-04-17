@@ -51,6 +51,7 @@ from alb.agent.backend import (
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5:3b"
 DEFAULT_TIMEOUT = 120.0  # CPU inference on 3B can legitimately take 60-90s
+DEFAULT_THINK = False  # reasoning models (gpt-oss, qwen3-thinking) — skip chain-of-thought by default for agent/tool use
 
 
 class OllamaBackend(LLMBackend):
@@ -62,6 +63,12 @@ class OllamaBackend(LLMBackend):
         timeout: per-request timeout in seconds; CPU inference is slow.
         default_options: extra fields for the `options` object
             (see Ollama API ModelFile options).
+        think: whether to enable the model's chain-of-thought / reasoning
+            channel (Ollama 0.9+, for models like gpt-oss, qwen3-thinking).
+            Default False — for tool-calling agents, reasoning traces just
+            waste output tokens. Pass `think=True` for interactive chat where
+            the user wants to see the model's reasoning. Ignored by
+            non-thinking models.
     """
 
     name = "ollama"
@@ -76,12 +83,14 @@ class OllamaBackend(LLMBackend):
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT,
         default_options: dict[str, Any] | None = None,
+        think: bool = DEFAULT_THINK,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.default_options: dict[str, Any] = default_options or {}
+        self.think = think
         # Testing hook: inject httpx.MockTransport to avoid real network.
         self._transport = transport
 
@@ -145,6 +154,7 @@ class OllamaBackend(LLMBackend):
             "model": self.model,
             "messages": [_message_to_ollama(m) for m in messages],
             "stream": False,
+            "think": extra.get("think", self.think),
             "options": options,
         }
         if tools:
@@ -188,6 +198,12 @@ class OllamaBackend(LLMBackend):
     def _parse_response(self, raw: dict[str, Any]) -> ChatResponse:
         msg = raw.get("message") or {}
         content: str = msg.get("content", "") or ""
+        thinking: str = msg.get("thinking", "") or ""
+        # Some reasoning models (gpt-oss with Ollama 0.18) return the final
+        # answer in `thinking` rather than `content` even when think=false.
+        # Promote so AgentLoop sees a non-empty reply.
+        if not content and thinking:
+            content = thinking
 
         tool_calls: list[ToolCall] = []
         for tc in msg.get("tool_calls") or []:
@@ -221,6 +237,7 @@ class OllamaBackend(LLMBackend):
             finish_reason=finish_reason,
             usage=usage,
             model=raw.get("model") or self.model,
+            thinking=thinking,
         )
 
 
