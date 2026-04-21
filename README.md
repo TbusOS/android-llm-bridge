@@ -213,6 +213,8 @@ uv run alb serial shell "dmesg | tail"
 | **架构** | [docs/architecture.md](./docs/architecture.md) | 想了解内部设计 |
 | **设计决策** | [docs/design-decisions.md](./docs/design-decisions.md) | 想知道为啥这么做 |
 | **LLM 集成** | [docs/llm-integration.md](./docs/llm-integration.md) | Agent / AI 开发者 |
+| **Agent 层设计** | [docs/agent.md](./docs/agent.md) | 宿主端 agent / backend 选型 |
+| **设备端模型选型** | [docs/on-device-model-selection.md](./docs/on-device-model-selection.md) | 全球商用场景选型(许可 + SoC 硬件) |
 | **权限系统** | [docs/permissions.md](./docs/permissions.md) | 安全 / 部署人员 |
 | **错误码** | [docs/errors.md](./docs/errors.md) | LLM / 排错时查表 |
 | **Tool 写法** | [docs/tool-writing-guide.md](./docs/tool-writing-guide.md) | 贡献者 |
