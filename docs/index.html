@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>android-llm-bridge — Let LLM agents debug real Android devices</title>
+    <meta name="description" content="An open-source LLM-first debugging suite for Android. Unified adb / ssh / UART transports, MCP · CLI · Web integration, streaming agent loop. Built for Claude Code, Cursor, and any MCP-capable agent.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      .lang-toggle{
+        font-family:var(--font-heading); font-size:13px; font-weight:500;
+        color:var(--anth-text-secondary); background:transparent;
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-pill);
+        padding:6px 14px; cursor:pointer;
+        transition:border-color var(--duration-sm) var(--ease-anth),color var(--duration-sm) var(--ease-anth);
+      }
+      .lang-toggle:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
+      .status-pill{
+        display:inline-block; font-family:var(--font-heading);
+        font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;
+        padding:3px 10px; border-radius:var(--radius-pill);
+      }
+      .status-pill--done{background:rgba(120,140,93,0.18); color:#5d7043;}
+      .status-pill--wip{background:rgba(217,119,87,0.20); color:#a8502f;}
+      .status-pill--plan{background:var(--anth-light-gray); color:var(--anth-text-secondary);}
+      .feature-icon{
+        width:56px; height:56px; border-radius:var(--radius-md);
+        display:grid; place-items:center; margin-bottom:var(--space-4);
+      }
+      .timeline-col{position:relative; padding:var(--space-6) var(--space-5);
+        background:#ffffff; border:1px solid var(--anth-light-gray); border-radius:var(--radius-lg);
+        box-shadow:var(--shadow-card);
+      }
+      .timeline-col h3{font-size:22px; margin:0 0 var(--space-4) 0;}
+      .timeline-col ul{margin:0; padding-left:0; list-style:none;}
+      .timeline-col li{
+        font-family:var(--font-body); font-size:15px; line-height:1.55;
+        padding:8px 0; border-bottom:1px solid var(--anth-light-gray);
+      }
+      .timeline-col li:last-child{border-bottom:none;}
+      .timeline-col li strong{
+        font-family:var(--font-heading); font-weight:600;
+        color:var(--anth-text); display:block; font-size:14px; margin-bottom:2px;
+      }
+      .step-num{
+        font-family:var(--font-heading); font-weight:600; font-size:14px;
+        width:28px; height:28px; border-radius:var(--radius-pill);
+        background:var(--anth-orange); color:#fff;
+        display:inline-grid; place-items:center; margin-right:var(--space-3);
+      }
+      .on-device-card{
+        background:linear-gradient(135deg,#faf9f5 0%, #f0ede3 100%);
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-lg);
+        padding:var(--space-8); display:grid;
+        grid-template-columns:1.1fr 1fr; gap:var(--space-7); align-items:center;
+      }
+      @media (max-width:900px){
+        .on-device-card{grid-template-columns:1fr;}
+      }
+      [data-lang-hidden]{display:none !important;}
+      html[lang="en"] .lang-zh,
+      html[lang^="zh"] .lang-en { display:none !important; }
+      html[lang^="zh"] body,
+      html[lang^="zh"] p,
+      html[lang^="zh"] li,
+      html[lang^="zh"] h1,
+      html[lang^="zh"] h2,
+      html[lang^="zh"] h3 {
+        font-family:"Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="anth-nav">
+      <div class="anth-nav-inner">
+        <a href="./" style="font-family:var(--font-heading); font-weight:600; font-size:18px; letter-spacing:-0.01em;">android-llm-bridge</a>
+        <nav aria-label="Primary" style="display:flex; align-items:center;">
+          <a href="#features" data-i18n="nav.features">Features</a>
+          <a href="#methods" data-i18n="nav.methods">Methods</a>
+          <a href="#architecture" data-i18n="nav.architecture">Architecture</a>
+          <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+          <a href="on-device-agent.html" data-i18n="nav.onDevice">On-device Agent</a>
+        </nav>
+        <div style="display:flex; align-items:center; gap:var(--space-3);">
+          <button class="lang-toggle" onclick="toggleLang()" id="langBtn" aria-label="Toggle language">中文</button>
+          <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge" data-i18n="nav.cta">View on GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="anth-container" style="padding-top:var(--space-5);">
+        <div class="anth-banner">
+          <span class="anth-badge" style="background:var(--anth-orange); color:#ffffff;" data-i18n="banner.badge">New</span>
+          <span data-i18n="banner.text">M2 Agent is live — <code>alb chat</code> REPL, streaming WebSocket, and Ollama / local-LLM backends.</span>
+          <a class="anth-link" href="#roadmap" style="margin-left:auto;" data-i18n="banner.link">See what's next</a>
+        </div>
+      </div>
+
+      <section class="anth-hero">
+        <div class="anth-container">
+          <h1>
+            <span class="lang-en">Let LLM agents debug real Android devices.</span>
+            <span class="lang-zh">让 LLM Agent 在线调试真实安卓设备。</span>
+          </h1>
+          <p style="font-family:var(--font-body); font-size:22px; line-height:1.5; color:var(--anth-text-secondary); max-width:720px; margin:var(--space-5) auto var(--space-6);">
+            <span class="lang-en">One CLI, one MCP server, one Web API — across USB adb, Wi-Fi adb, on-board sshd, and UART serial. Structured outputs, built-in permissions, workspace artifacts. Ready for Claude Code, Cursor, and any agent that speaks tools.</span>
+            <span class="lang-zh">一套 CLI、一个 MCP server、一个 Web API —— 打通 USB adb / Wi-Fi adb / 板子 sshd / UART 串口。结构化输出、内置权限系统、产物落盘。开箱适配 Claude Code、Cursor 以及任何懂 tool call 的 agent。</span>
+          </p>
+          <div style="display:flex; gap:var(--space-3); justify-content:center; margin-bottom:var(--space-8); flex-wrap:wrap;">
+            <a class="anth-button" href="#quickstart" data-i18n="hero.cta1">Get started</a>
+            <a class="anth-button anth-button--ghost" href="https://github.com/TbusOS/android-llm-bridge" data-i18n="hero.cta2">View on GitHub →</a>
+          </div>
+
+          <!-- Hero abstract composition -->
+          <div class="hero-svg-wrap" style="max-width:1100px; margin:0 auto;">
+            <svg role="img" aria-label="Bridge between LLM agents and real Android devices" viewBox="0 0 1200 460" style="display:block; width:100%; height:auto; border-radius:var(--radius-lg); background:linear-gradient(135deg,#faf9f5 0%,#f0ede3 100%);">
+              <!-- grain dots -->
+              <g fill="#d97757" opacity="0.18">
+                <circle cx="90" cy="80" r="3"/><circle cx="180" cy="50" r="2"/><circle cx="300" cy="90" r="2.5"/>
+                <circle cx="1050" cy="60" r="3"/><circle cx="1130" cy="120" r="2"/><circle cx="940" cy="40" r="2.5"/>
+              </g>
+              <g fill="#6a9bcc" opacity="0.15">
+                <circle cx="140" cy="400" r="3"/><circle cx="260" cy="430" r="2"/><circle cx="1100" cy="390" r="3"/><circle cx="980" cy="420" r="2"/>
+              </g>
+
+              <!-- LEFT: Agent cluster (rounded squares = Claude / agents) -->
+              <g>
+                <rect x="100" y="130" width="130" height="130" rx="26" fill="#d97757"/>
+                <rect x="75" y="250" width="100" height="100" rx="20" fill="#6a9bcc" opacity="0.85"/>
+                <rect x="195" y="260" width="80" height="80" rx="16" fill="#788c5d" opacity="0.85"/>
+                <text x="165" y="202" text-anchor="middle" font-family="Poppins" font-size="20" font-weight="600" fill="#ffffff">agent</text>
+              </g>
+
+              <!-- ORANGE BRIDGE ARC -->
+              <path d="M 280 220 Q 600 60 920 220" stroke="#d97757" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+              <path d="M 280 220 Q 600 380 920 220" stroke="#6a9bcc" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.8"/>
+
+              <!-- CENTER: alb bridge node -->
+              <g>
+                <rect x="510" y="175" width="180" height="90" rx="22" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="600" y="212" text-anchor="middle" font-family="Poppins" font-size="22" font-weight="600" fill="#141413">alb</text>
+                <text x="600" y="240" text-anchor="middle" font-family="Poppins" font-size="14" fill="#6b6a5f">bridge · transport · permissions</text>
+              </g>
+
+              <!-- RIGHT: Device cluster -->
+              <g>
+                <circle cx="1010" cy="200" r="80" fill="#788c5d"/>
+                <rect x="955" y="270" width="120" height="68" rx="16" fill="#d97757" opacity="0.9"/>
+                <circle cx="1115" cy="290" r="32" fill="#6a9bcc" opacity="0.85"/>
+                <text x="1010" y="207" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#ffffff">device</text>
+              </g>
+
+              <!-- Stage labels -->
+              <text x="165" y="385" text-anchor="middle" font-family="Poppins" font-size="15" font-weight="500" fill="#6b6a5f">Claude · GPT · Gemma · local</text>
+              <text x="600" y="320" text-anchor="middle" font-family="Poppins" font-size="15" font-weight="500" fill="#6b6a5f">adb · ssh · UART · hybrid</text>
+              <text x="1010" y="385" text-anchor="middle" font-family="Poppins" font-size="15" font-weight="500" fill="#6b6a5f">USB · Wi-Fi · serial · on-board</text>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ FEATURES ============ -->
+      <section class="anth-section" id="features">
+        <div class="anth-container">
+          <div style="text-align:center; max-width:720px; margin:0 auto var(--space-7);">
+            <h2 data-i18n="features.title">A debugging suite, not just a wrapper.</h2>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="features.subtitle">Traditional adb and ssh were built for humans. <em>alb</em> is built for agents — every command returns structured data, every risky action passes a permission gate, every long log flows to a per-device workspace.</p>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-5);">
+            <article class="anth-card">
+              <div class="feature-icon" style="background:var(--anth-orange);">
+                <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+                  <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 16 L12 16"/><path d="M20 16 L28 16"/>
+                    <circle cx="16" cy="16" r="4"/>
+                    <circle cx="4" cy="16" r="1.5" fill="#ffffff"/><circle cx="28" cy="16" r="1.5" fill="#ffffff"/>
+                  </g>
+                </svg>
+              </div>
+              <h3 data-i18n="features.card1.title">Unified transports</h3>
+              <p data-i18n="features.card1.body">USB adb, Wi-Fi adb, on-board sshd, UART serial — and a hybrid router that auto-picks the right one. One command, five ways onto the device.</p>
+              <a class="anth-link" href="#methods" data-i18n="features.card1.link">See the methods table</a>
+            </article>
+
+            <article class="anth-card">
+              <div class="feature-icon" style="background:var(--anth-blue);">
+                <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+                  <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="6" y="6" width="20" height="20" rx="3"/>
+                    <path d="M10 12 L14 12"/><path d="M10 16 L20 16"/><path d="M10 20 L18 20"/>
+                  </g>
+                </svg>
+              </div>
+              <h3 data-i18n="features.card2.title">LLM-first API</h3>
+              <p data-i18n="features.card2.body">Every response is <code>{ok, data, error, artifacts}</code>. Five-category error codes. Self-describing tool specs for MCP. Long logs flow to workspace, not context.</p>
+              <a class="anth-link" href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md" data-i18n="features.card2.link">Read the spec</a>
+            </article>
+
+            <article class="anth-card">
+              <div class="feature-icon" style="background:var(--anth-green);">
+                <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+                  <g fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="10" cy="10" r="4"/><circle cx="22" cy="10" r="4"/><circle cx="16" cy="22" r="4"/>
+                    <path d="M13 11 L19 11"/><path d="M11 13 L15 19"/><path d="M21 13 L17 19"/>
+                  </g>
+                </svg>
+              </div>
+              <h3 data-i18n="features.card3.title">Three ways to plug in</h3>
+              <p data-i18n="features.card3.body">Use it from the terminal (<code>alb</code>), from any MCP-capable agent (Claude Code, Cursor), or from a Web API (FastAPI, WebSocket streaming). Same business layer underneath.</p>
+              <a class="anth-link" href="#quickstart" data-i18n="features.card3.link">Quick start</a>
+            </article>
+          </div>
+
+          <!-- Secondary feature row -->
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-5); margin-top:var(--space-5);">
+            <article class="anth-card">
+              <h3 style="font-size:18px;" data-i18n="features.mini1.title">Permission gate</h3>
+              <p style="font-size:15px;" data-i18n="features.mini1.body">Dangerous commands (<code>rm -rf</code>, <code>reboot bootloader</code>) are blocked by default, overridable by allow / ask / deny policy.</p>
+            </article>
+            <article class="anth-card">
+              <h3 style="font-size:18px;" data-i18n="features.mini2.title">Workspace artifacts</h3>
+              <p style="font-size:15px;" data-i18n="features.mini2.body">logcat, ANR traces, bugreports, perf dumps — all land under <code>workspace/devices/&lt;serial&gt;/…</code>, organized and searchable.</p>
+            </article>
+            <article class="anth-card">
+              <h3 style="font-size:18px;" data-i18n="features.mini3.title">Streaming agent loop</h3>
+              <p style="font-size:15px;" data-i18n="features.mini3.body">ReAct-lite loop with tool calls, max-turn circuit breaker, token streaming over WebSocket, JSONL session persistence.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ METHODS TABLE ============ -->
+      <section class="anth-section anth-section--subtle" id="methods">
+        <div class="anth-container anth-container--wide">
+          <div style="text-align:center; max-width:720px; margin:0 auto var(--space-7);">
+            <h2 data-i18n="methods.title">Four ways onto the device.</h2>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="methods.subtitle">Every physical link has a failure mode. <em>alb</em> supports four today (A · B · C · G) and reserves three (D · E · F) for later. Pick by scenario, or let <code>hybrid</code> pick for you.</p>
+          </div>
+
+          <table class="anth-table" style="margin:0 auto; max-width:1040px;">
+            <thead>
+              <tr>
+                <th data-i18n="methods.col.method">Method</th>
+                <th data-i18n="methods.col.channel">Channel</th>
+                <th style="text-align:center;" data-i18n="methods.col.boot">Boot log</th>
+                <th style="text-align:center;" data-i18n="methods.col.uboot">U-Boot</th>
+                <th style="text-align:center;" data-i18n="methods.col.nonet">No network</th>
+                <th style="text-align:center;" data-i18n="methods.col.panic">Kernel panic</th>
+                <th data-i18n="methods.col.use">Best for</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>A</strong> · adb USB</td>
+                <td>adb protocol</td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="check">✓</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td data-i18n="methods.row.a">Baseline; works in recovery</td>
+              </tr>
+              <tr>
+                <td><strong>B</strong> · adb Wi-Fi</td>
+                <td>TCP</td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td data-i18n="methods.row.b">Cable-free, multi-device CI</td>
+              </tr>
+              <tr>
+                <td><strong>C</strong> · on-board sshd</td>
+                <td>SSH</td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td style="text-align:center;"><span class="cross">—</span></td>
+                <td data-i18n="methods.row.c">rsync / long sessions / tmux</td>
+              </tr>
+              <tr style="background:rgba(217,119,87,0.06);">
+                <td><strong>G</strong> · UART serial</td>
+                <td data-i18n="methods.row.g.ch">serial (TCP bridge on Windows)</td>
+                <td style="text-align:center;"><span class="check">✓</span></td>
+                <td style="text-align:center;"><span class="check">✓</span></td>
+                <td style="text-align:center;"><span class="check">✓</span></td>
+                <td style="text-align:center;"><span class="check">✓</span></td>
+                <td data-i18n="methods.row.g">Last resort · bring-up · panic</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p style="text-align:center; margin-top:var(--space-5); font-size:14px; color:var(--anth-text-secondary);" data-i18n="methods.foot">D USB-tethered IP · E scrcpy mirroring · F frp public relay — reserved for later milestones.</p>
+        </div>
+      </section>
+
+      <!-- ============ ARCHITECTURE ============ -->
+      <section class="anth-section" id="architecture">
+        <div class="anth-container anth-container--wide">
+          <div style="text-align:center; max-width:720px; margin:0 auto var(--space-6);">
+            <h2 data-i18n="arch.title">Three integration tiers, one business layer.</h2>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="arch.subtitle">MCP for chat-based agents. CLI for humans and shell scripts. Web API (POST + WebSocket) for the browser UI we're building. All share the same capability functions, transports, and permission system.</p>
+          </div>
+
+          <figure style="margin:var(--space-6) auto 0; max-width:1200px;">
+            <svg role="img" aria-label="alb architecture: agents connect via MCP/CLI/Web to a unified capability layer, which routes to devices via adb/ssh/UART" viewBox="0 0 1200 680" style="display:block; width:100%; height:auto;">
+              <rect x="0" y="0" width="1200" height="680" fill="#faf9f5"/>
+
+              <!-- Tier labels -->
+              <text x="40" y="54" font-family="Poppins" font-size="16" font-weight="600" fill="#6b6a5f" letter-spacing="0.06em">AGENTS</text>
+              <text x="40" y="258" font-family="Poppins" font-size="16" font-weight="600" fill="#6b6a5f" letter-spacing="0.06em">INTEGRATIONS</text>
+              <text x="40" y="410" font-family="Poppins" font-size="16" font-weight="600" fill="#6b6a5f" letter-spacing="0.06em">CAPABILITY LAYER</text>
+              <text x="40" y="570" font-family="Poppins" font-size="16" font-weight="600" fill="#6b6a5f" letter-spacing="0.06em">TRANSPORTS &amp; DEVICES</text>
+
+              <!-- Agents row (3 blocks) -->
+              <g>
+                <rect x="150" y="65" width="270" height="130" rx="20" fill="#d97757"/>
+                <text x="285" y="115" text-anchor="middle" font-family="Poppins" font-size="20" font-weight="600" fill="#ffffff">Claude Code · Cursor</text>
+                <text x="285" y="148" text-anchor="middle" font-family="Poppins" font-size="15" fill="#ffffff" opacity="0.95">MCP client agents</text>
+                <text x="285" y="172" text-anchor="middle" font-family="Poppins" font-size="15" fill="#ffffff" opacity="0.95">tool calls · reasoning</text>
+
+                <rect x="465" y="65" width="270" height="130" rx="20" fill="#6a9bcc"/>
+                <text x="600" y="115" text-anchor="middle" font-family="Poppins" font-size="20" font-weight="600" fill="#ffffff">alb chat REPL</text>
+                <text x="600" y="148" text-anchor="middle" font-family="Poppins" font-size="15" fill="#ffffff" opacity="0.95">local LLM loop</text>
+                <text x="600" y="172" text-anchor="middle" font-family="Poppins" font-size="15" fill="#ffffff" opacity="0.95">Ollama · OpenAI-compat</text>
+
+                <rect x="780" y="65" width="270" height="130" rx="20" fill="#788c5d"/>
+                <text x="915" y="115" text-anchor="middle" font-family="Poppins" font-size="20" font-weight="600" fill="#ffffff">Web UI</text>
+                <text x="915" y="148" text-anchor="middle" font-family="Poppins" font-size="15" fill="#ffffff" opacity="0.95">browser · WebSocket</text>
+                <text x="915" y="172" text-anchor="middle" font-family="Poppins" font-size="15" fill="#ffffff" opacity="0.95">streaming · live dashboard</text>
+              </g>
+
+              <!-- Integrations row (3 APIs) -->
+              <g>
+                <rect x="170" y="260" width="230" height="100" rx="18" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="285" y="300" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#141413">MCP server</text>
+                <text x="285" y="328" text-anchor="middle" font-family="Poppins" font-size="14" fill="#6b6a5f">28 tools · stdio / WebSocket</text>
+
+                <rect x="485" y="260" width="230" height="100" rx="18" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="600" y="300" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#141413">CLI (alb)</text>
+                <text x="600" y="328" text-anchor="middle" font-family="Poppins" font-size="14" fill="#6b6a5f">typer · config.toml · .env.local</text>
+
+                <rect x="800" y="260" width="230" height="100" rx="18" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="915" y="300" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#141413">HTTP / WS</text>
+                <text x="915" y="328" text-anchor="middle" font-family="Poppins" font-size="14" fill="#6b6a5f">FastAPI · /chat · /chat/ws</text>
+              </g>
+
+              <!-- Capability row -->
+              <g>
+                <rect x="150" y="425" width="900" height="110" rx="22" fill="#f0ede3" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="600" y="462" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#141413">Capability Layer</text>
+                <g font-family="Poppins" font-size="15" fill="#6b6a5f">
+                  <text x="220" y="505" font-weight="500">shell</text>
+                  <text x="300" y="505" font-weight="500">logcat</text>
+                  <text x="390" y="505" font-weight="500">dmesg</text>
+                  <text x="480" y="505" font-weight="500">filesync</text>
+                  <text x="585" y="505" font-weight="500">capture-uart</text>
+                  <text x="720" y="505" font-weight="500">diagnose</text>
+                  <text x="820" y="505" font-weight="500">power</text>
+                  <text x="895" y="505" font-weight="500">app</text>
+                  <text x="970" y="505" font-weight="500">permissions</text>
+                </g>
+              </g>
+
+              <!-- Transports row -->
+              <g>
+                <rect x="150" y="590" width="180" height="78" rx="16" fill="#d97757"/>
+                <text x="240" y="620" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">adb (USB / Wi-Fi)</text>
+                <text x="240" y="644" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">A · B</text>
+
+                <rect x="345" y="590" width="150" height="78" rx="16" fill="#6a9bcc"/>
+                <text x="420" y="620" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">ssh (on-board)</text>
+                <text x="420" y="644" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">C</text>
+
+                <rect x="510" y="590" width="170" height="78" rx="16" fill="#788c5d"/>
+                <text x="595" y="620" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">UART serial</text>
+                <text x="595" y="644" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">G · panic / bring-up</text>
+
+                <rect x="695" y="590" width="160" height="78" rx="16" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="775" y="620" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#141413">hybrid router</text>
+                <text x="775" y="644" text-anchor="middle" font-family="Poppins" font-size="13" fill="#6b6a5f">auto-pick transport</text>
+
+                <rect x="870" y="590" width="180" height="78" rx="16" fill="#ffffff" stroke="#d97757" stroke-width="1.5" stroke-dasharray="5 5"/>
+                <text x="960" y="620" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#d97757">on-device agent</text>
+                <text x="960" y="644" text-anchor="middle" font-family="Poppins" font-size="13" fill="#d97757">Roadmap · M4+</text>
+              </g>
+
+              <!-- connectors (simple vertical lines) -->
+              <g stroke="#b0aea5" stroke-width="1.2" stroke-dasharray="3 4">
+                <line x1="285" y1="195" x2="285" y2="260"/>
+                <line x1="600" y1="195" x2="600" y2="260"/>
+                <line x1="915" y1="195" x2="915" y2="260"/>
+                <line x1="285" y1="360" x2="285" y2="425"/>
+                <line x1="600" y1="360" x2="600" y2="425"/>
+                <line x1="915" y1="360" x2="915" y2="425"/>
+                <line x1="240" y1="535" x2="240" y2="590"/>
+                <line x1="420" y1="535" x2="420" y2="590"/>
+                <line x1="595" y1="535" x2="595" y2="590"/>
+                <line x1="775" y1="535" x2="775" y2="590"/>
+                <line x1="960" y1="535" x2="960" y2="590"/>
+              </g>
+            </svg>
+            <figcaption class="anth-caption" style="text-align:center;" data-i18n="arch.caption">Four layers. Swap any tier without touching the others.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ============ QUICK START ============ -->
+      <section class="anth-section anth-section--subtle" id="quickstart">
+        <div class="anth-container anth-container--wide">
+          <div style="text-align:center; max-width:720px; margin:0 auto var(--space-6);">
+            <h2 data-i18n="qs.title">Three steps to your first agent turn.</h2>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="qs.subtitle">Install, pick a model, attach a device. That's it.</p>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-5);">
+            <article class="anth-card">
+              <span class="step-num">1</span>
+              <h3 style="display:inline-block; font-size:18px; margin:0;" data-i18n="qs.s1.title">Install</h3>
+              <pre class="anth-code" style="margin-top:var(--space-3); font-size:13px;"><code>git clone https://github.com/TbusOS/android-llm-bridge
+cd android-llm-bridge
+uv sync</code></pre>
+            </article>
+
+            <article class="anth-card">
+              <span class="step-num">2</span>
+              <h3 style="display:inline-block; font-size:18px; margin:0;" data-i18n="qs.s2.title">Point to a model</h3>
+              <pre class="anth-code" style="margin-top:var(--space-3); font-size:13px;"><code># local Ollama
+export ALB_OLLAMA_URL=http://host:11434
+export ALB_OLLAMA_MODEL=gemma4:26b
+
+# or any OpenAI-compatible
+# vLLM · LM Studio · OpenRouter</code></pre>
+            </article>
+
+            <article class="anth-card">
+              <span class="step-num">3</span>
+              <h3 style="display:inline-block; font-size:18px; margin:0;" data-i18n="qs.s3.title">Chat with your device</h3>
+              <pre class="anth-code" style="margin-top:var(--space-3); font-size:13px;"><code>uv run alb chat \
+  "grab a logcat and tell me \
+   why WebView is crashing"</code></pre>
+            </article>
+          </div>
+
+          <p style="text-align:center; margin-top:var(--space-6);">
+            <a class="anth-link" href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md" data-i18n="qs.more">Full installation and configuration guide</a>
+          </p>
+        </div>
+      </section>
+
+      <!-- ============ ROADMAP / STATUS ============ -->
+      <section class="anth-section" id="roadmap">
+        <div class="anth-container anth-container--wide">
+          <div style="text-align:center; max-width:760px; margin:0 auto var(--space-7);">
+            <h2 data-i18n="road.title">Where we are, and where we're going.</h2>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="road.subtitle">M1 transports are stable. M2 agent loop is shipping. M3 unlocks perf and UI. M4+ takes us to on-device agents — the part that changes the game for field debugging.</p>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-5);">
+            <div class="timeline-col">
+              <span class="status-pill status-pill--done" data-i18n="road.status.done">Available now</span>
+              <h3 style="margin-top:var(--space-3);" data-i18n="road.now.title">M1 · M2 step 3</h3>
+              <ul>
+                <li><strong data-i18n="road.now.i1.t">5 transports</strong><span data-i18n="road.now.i1.b">adb USB · adb Wi-Fi · ssh · UART · hybrid router</span></li>
+                <li><strong data-i18n="road.now.i2.t">6 capabilities</strong><span data-i18n="road.now.i2.b">shell · logging (with UART) · filesync · diagnose · power · app</span></li>
+                <li><strong data-i18n="road.now.i3.t">21 MCP tools + 234 tests</strong><span data-i18n="road.now.i3.b">structured errors, permission gate, workspace artifacts</span></li>
+                <li><strong data-i18n="road.now.i4.t">Agent loop (M2)</strong><span data-i18n="road.now.i4.b">ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws streaming</span></li>
+                <li><strong data-i18n="road.now.i5.t">Ollama backend</strong><span data-i18n="road.now.i5.b">think-field parser · 5-category error mapping · tool calls · streaming</span></li>
+                <li><strong data-i18n="road.now.i6.t">Config and env</strong><span data-i18n="road.now.i6.b">~/.config/alb/config.toml · .env.local · cross-project MCP export</span></li>
+              </ul>
+            </div>
+
+            <div class="timeline-col" style="border-color:var(--anth-orange);">
+              <span class="status-pill status-pill--wip" data-i18n="road.status.wip">In progress</span>
+              <h3 style="margin-top:var(--space-3);" data-i18n="road.wip.title">M2 step 4 · M3 opening</h3>
+              <ul>
+                <li><strong data-i18n="road.wip.i1.t">OpenAI-compatible backend</strong><span data-i18n="road.wip.i1.b">one backend for GPT · Claude via OpenRouter · vLLM · LM Studio · MLX · DeepSeek</span></li>
+                <li><strong data-i18n="road.wip.i2.t">Web Tier 1 — chat UI</strong><span data-i18n="road.wip.i2.b">browser chat with streaming, device dashboard, live logcat pane, HITL confirms, artifact panel</span></li>
+                <li><strong data-i18n="road.wip.i3.t">Long-task framework</strong><span data-i18n="road.wip.i3.b">SSE / BackgroundTask for perf captures, bugreports, multi-minute agent jobs</span></li>
+                <li><strong data-i18n="road.wip.i4.t">perf · benchmark · network · ui</strong><span data-i18n="road.wip.i4.b">fresh capability families on top of M1 transports</span></li>
+                <li><strong data-i18n="road.wip.i5.t">Undo &amp; snapshots</strong><span data-i18n="road.wip.i5.b">roll back file pushes, app installs, permission changes</span></li>
+              </ul>
+            </div>
+
+            <div class="timeline-col">
+              <span class="status-pill status-pill--plan" data-i18n="road.status.plan">Roadmap</span>
+              <h3 style="margin-top:var(--space-3);" data-i18n="road.plan.title">M3 late · M4+ vision</h3>
+              <ul>
+                <li><strong data-i18n="road.plan.i1.t">🌟 On-device agent</strong><span data-i18n="road.plan.i1.b">alb-mobile Android app + Gemini Nano / AICore. Host brain, device reflex — jump to the deep dive below.</span></li>
+                <li><strong data-i18n="road.plan.i2.t">Web Tier 2</strong><span data-i18n="road.plan.i2.b">embedded scrcpy · perf curves · ANR timeline · session replay · file browser</span></li>
+                <li><strong data-i18n="road.plan.i3.t">More backends</strong><span data-i18n="road.plan.i3.b">llama.cpp native · Anthropic SDK · session auto-summary · known-issues memory</span></li>
+                <li><strong data-i18n="road.plan.i4.t">Web Tier 3</strong><span data-i18n="road.plan.i4.b">multi-user collaboration · workflow builder · webhooks · Slack / Discord bot</span></li>
+                <li><strong data-i18n="road.plan.i5.t">Plugins &amp; bindings</strong><span data-i18n="road.plan.i5.b">third-party capability plugins · multi-language bindings · multi-vendor SoC adapters</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ ON-DEVICE AGENT HIGHLIGHT ============ -->
+      <section class="anth-section anth-section--subtle" id="on-device">
+        <div class="anth-container anth-container--wide">
+          <div class="on-device-card">
+            <div>
+              <span class="anth-badge" style="background:var(--anth-orange); color:#ffffff;" data-i18n="od.badge">Vision · M4+</span>
+              <h2 style="margin-top:var(--space-3); font-size:36px;" data-i18n="od.title">An agent on the device itself.</h2>
+              <p style="font-family:var(--font-body); font-size:18px; line-height:1.65; margin-top:var(--space-4); color:var(--anth-text);" data-i18n="od.body1">
+                adb round-trips add 50–200&nbsp;ms each. Boot-time hangs happen before adb exists. ANR triggers fire faster than a host LLM can react. A small agent <em>on the device</em> — Gemini Nano via AICore, or Gemma 4 via LiteRT — closes that loop.
+              </p>
+              <p style="font-family:var(--font-body); font-size:18px; line-height:1.65; margin-top:var(--space-3); color:var(--anth-text-secondary);" data-i18n="od.body2">
+                The host still owns heavy reasoning, cross-session memory, and code edits. The device owns reflex: per-thread signals, perfetto traces, local triage, offline autonomy. A WebSocket channel keeps them in lockstep.
+              </p>
+              <p style="margin-top:var(--space-5);">
+                <a class="anth-button" href="on-device-agent.html" data-i18n="od.cta">Read the deep dive →</a>
+              </p>
+            </div>
+            <div>
+              <svg role="img" aria-label="alb host with on-device agent collaboration" viewBox="0 0 560 500" style="display:block; width:100%; height:auto;">
+                <!-- host side -->
+                <rect x="35" y="40" width="220" height="160" rx="22" fill="#d97757"/>
+                <text x="145" y="85" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#ffffff">alb host</text>
+                <text x="145" y="112" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">Claude · GPT · Gemma</text>
+                <text x="145" y="134" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">heavy reasoning</text>
+                <text x="145" y="156" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">cross-session memory</text>
+                <text x="145" y="178" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">tool orchestration</text>
+
+                <!-- device side -->
+                <rect x="305" y="40" width="220" height="160" rx="22" fill="#6a9bcc"/>
+                <text x="415" y="85" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#ffffff">alb-mobile</text>
+                <text x="415" y="112" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">Gemini Nano · AICore</text>
+                <text x="415" y="134" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">reflex · zero latency</text>
+                <text x="415" y="156" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">perfetto · /proc · probes</text>
+                <text x="415" y="178" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">offline autonomy</text>
+
+                <!-- bidirectional arrows -->
+                <path d="M 255 110 L 305 110" stroke="#141413" stroke-width="2.5" marker-end="url(#arrowR)" fill="none"/>
+                <path d="M 305 140 L 255 140" stroke="#141413" stroke-width="2.5" marker-end="url(#arrowL)" fill="none"/>
+                <defs>
+                  <marker id="arrowR" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#141413"/>
+                  </marker>
+                  <marker id="arrowL" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                    <path d="M 10 0 L 0 5 L 10 10 z" fill="#141413"/>
+                  </marker>
+                </defs>
+                <text x="280" y="100" text-anchor="middle" font-family="Poppins" font-size="13" font-weight="600" fill="#6b6a5f">RPC</text>
+                <text x="280" y="158" text-anchor="middle" font-family="Poppins" font-size="13" font-weight="600" fill="#6b6a5f">events</text>
+
+                <!-- WS channel label -->
+                <rect x="160" y="230" width="240" height="52" rx="14" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
+                <text x="280" y="262" text-anchor="middle" font-family="Poppins" font-size="15" font-weight="600" fill="#141413">WebSocket channel</text>
+
+                <!-- board below -->
+                <rect x="120" y="320" width="320" height="150" rx="22" fill="#788c5d"/>
+                <text x="280" y="362" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#ffffff">Android device</text>
+                <text x="280" y="390" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">USB · Wi-Fi · UART · on-board ssh</text>
+                <text x="280" y="414" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">adb fallback always available</text>
+                <text x="280" y="438" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">kernel · framework · apps</text>
+
+                <!-- connector host → device -->
+                <path d="M 145 200 L 145 290 L 210 290 L 210 320" stroke="#b0aea5" stroke-width="1.2" stroke-dasharray="4 5" fill="none"/>
+                <path d="M 415 200 L 415 290 L 350 290 L 350 320" stroke="#b0aea5" stroke-width="1.2" stroke-dasharray="4 5" fill="none"/>
+                <text x="75" y="280" font-family="Poppins" font-size="12" font-weight="500" fill="#6b6a5f">adb/ssh/uart</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ COMMUNITY / CTA ============ -->
+      <section class="anth-section">
+        <div class="anth-container" style="text-align:center;">
+          <h2 data-i18n="cta.title">Open source. Neutral. Built in the open.</h2>
+          <p style="color:var(--anth-text-secondary); max-width:560px; margin:var(--space-3) auto var(--space-6);" data-i18n="cta.body">
+            No vendor lock-in. No brand-specific hooks. The whole codebase is readable, scriptable, and extensible — issues, PRs, and ideas welcome.
+          </p>
+          <div style="display:flex; gap:var(--space-3); justify-content:center; flex-wrap:wrap;">
+            <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge" data-i18n="cta.b1">Star on GitHub</a>
+            <a class="anth-button anth-button--ghost" href="https://github.com/TbusOS/android-llm-bridge/issues" data-i18n="cta.b2">File an issue</a>
+            <a class="anth-button anth-button--ghost" href="on-device-agent.html" data-i18n="cta.b3">On-device agent design</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="anth-footer">
+      <div class="anth-footer-grid">
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.product">Product</h5>
+          <a href="#features" data-i18n="ft.p1">Features</a>
+          <a href="#methods" data-i18n="ft.p2">Methods</a>
+          <a href="#architecture" data-i18n="ft.p3">Architecture</a>
+          <a href="#roadmap" data-i18n="ft.p4">Roadmap</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.docs">Docs</h5>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/00-overview.md" data-i18n="ft.d1">Overview</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md" data-i18n="ft.d2">Install</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/agent.md" data-i18n="ft.d3">Agent layer</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/methods" data-i18n="ft.d4">Methods A–G</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.vision">Vision</h5>
+          <a href="on-device-agent.html" data-i18n="ft.v1">On-device agent</a>
+          <a href="#roadmap" data-i18n="ft.v2">Roadmap</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.community">Community</h5>
+          <a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/issues">Issues</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/pulls">Pull requests</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.legal">License</h5>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">MIT</a>
+        </div>
+      </div>
+      <div class="anth-footer-legal">
+        <span data-i18n="ft.copy">© 2026 android-llm-bridge contributors · open source · MIT</span>
+        <span class="anth-social">
+          <a href="https://github.com/TbusOS/android-llm-bridge" aria-label="GitHub" style="color:inherit; text-decoration:none;">GitHub</a>
+        </span>
+      </div>
+    </footer>
+
+    <script>
+      // ===== i18n dictionary =====
+      const I18N = {
+        "nav.features":"Features","nav.methods":"Methods","nav.architecture":"Architecture","nav.roadmap":"Roadmap","nav.onDevice":"On-device Agent","nav.cta":"View on GitHub",
+        "banner.badge":"New","banner.text":"M2 Agent is live — alb chat REPL, streaming WebSocket, and Ollama / local-LLM backends.","banner.link":"See what's next →",
+        "hero.title":"Let LLM agents debug real Android devices.",
+        "hero.subtitle":"One CLI, one MCP server, one Web API — across USB adb, Wi-Fi adb, on-board sshd, and UART serial. Structured outputs, built-in permissions, workspace artifacts. Ready for Claude Code, Cursor, and any agent that speaks tools.",
+        "hero.cta1":"Get started","hero.cta2":"View on GitHub →",
+        "features.title":"A debugging suite, not just a wrapper.",
+        "features.subtitle":"Traditional adb and ssh were built for humans. alb is built for agents — every command returns structured data, every risky action passes a permission gate, every long log flows to a per-device workspace.",
+        "features.card1.title":"Unified transports","features.card1.body":"USB adb, Wi-Fi adb, on-board sshd, UART serial — and a hybrid router that auto-picks the right one. One command, five ways onto the device.","features.card1.link":"See the methods table →",
+        "features.card2.title":"LLM-first API","features.card2.body":"Every response is {ok, data, error, artifacts}. Five-category error codes. Self-describing tool specs for MCP. Long logs flow to workspace, not context.","features.card2.link":"Read the spec →",
+        "features.card3.title":"Three ways to plug in","features.card3.body":"Use it from the terminal (alb), from any MCP-capable agent (Claude Code, Cursor), or from a Web API (FastAPI, WebSocket streaming). Same business layer underneath.","features.card3.link":"Quick start →",
+        "features.mini1.title":"Permission gate","features.mini1.body":"Dangerous commands (rm -rf, reboot bootloader) are blocked by default, overridable by allow / ask / deny policy.",
+        "features.mini2.title":"Workspace artifacts","features.mini2.body":"logcat, ANR traces, bugreports, perf dumps — all land under workspace/devices/<serial>/…, organized and searchable.",
+        "features.mini3.title":"Streaming agent loop","features.mini3.body":"ReAct-lite loop with tool calls, max-turn circuit breaker, token streaming over WebSocket, JSONL session persistence.",
+        "methods.title":"Four ways onto the device.",
+        "methods.subtitle":"Every physical link has a failure mode. alb supports four today (A · B · C · G) and reserves three (D · E · F) for later. Pick by scenario, or let hybrid pick for you.",
+        "methods.col.method":"Method","methods.col.channel":"Channel","methods.col.boot":"Boot log","methods.col.uboot":"U-Boot","methods.col.nonet":"No network","methods.col.panic":"Kernel panic","methods.col.use":"Best for",
+        "methods.row.a":"Baseline; works in recovery",
+        "methods.row.b":"Cable-free, multi-device CI",
+        "methods.row.c":"rsync / long sessions / tmux",
+        "methods.row.g.ch":"serial (TCP bridge on Windows)",
+        "methods.row.g":"Last resort · bring-up · panic",
+        "methods.foot":"D USB-tethered IP · E scrcpy mirroring · F frp public relay — reserved for later milestones.",
+        "arch.title":"Three integration tiers, one business layer.",
+        "arch.subtitle":"MCP for chat-based agents. CLI for humans and shell scripts. Web API (POST + WebSocket) for the browser UI we're building. All share the same capability functions, transports, and permission system.",
+        "arch.caption":"Four layers. Swap any tier without touching the others.",
+        "qs.title":"Three steps to your first agent turn.","qs.subtitle":"Install, pick a model, attach a device. That's it.",
+        "qs.s1.title":"Install","qs.s2.title":"Point to a model","qs.s3.title":"Chat with your device","qs.more":"Full installation and configuration guide →",
+        "road.title":"Where we are, and where we're going.",
+        "road.subtitle":"M1 transports are stable. M2 agent loop is shipping. M3 unlocks perf and UI. M4+ takes us to on-device agents — the part that changes the game for field debugging.",
+        "road.status.done":"Available now","road.status.wip":"In progress","road.status.plan":"Roadmap",
+        "road.now.title":"M1 · M2 step 3",
+        "road.now.i1.t":"5 transports","road.now.i1.b":"adb USB · adb Wi-Fi · ssh · UART · hybrid router",
+        "road.now.i2.t":"6 capabilities","road.now.i2.b":"shell · logging (with UART) · filesync · diagnose · power · app",
+        "road.now.i3.t":"21 MCP tools + 234 tests","road.now.i3.b":"structured errors, permission gate, workspace artifacts",
+        "road.now.i4.t":"Agent loop (M2)","road.now.i4.b":"ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws streaming",
+        "road.now.i5.t":"Ollama backend","road.now.i5.b":"think-field parser · 5-category error mapping · tool calls · streaming",
+        "road.now.i6.t":"Config and env","road.now.i6.b":"~/.config/alb/config.toml · .env.local · cross-project MCP export",
+        "road.wip.title":"M2 step 4 · M3 opening",
+        "road.wip.i1.t":"OpenAI-compatible backend","road.wip.i1.b":"one backend for GPT · Claude via OpenRouter · vLLM · LM Studio · MLX · DeepSeek",
+        "road.wip.i2.t":"Web Tier 1 — chat UI","road.wip.i2.b":"browser chat with streaming, device dashboard, live logcat pane, HITL confirms, artifact panel",
+        "road.wip.i3.t":"Long-task framework","road.wip.i3.b":"SSE / BackgroundTask for perf captures, bugreports, multi-minute agent jobs",
+        "road.wip.i4.t":"perf · benchmark · network · ui","road.wip.i4.b":"fresh capability families on top of M1 transports",
+        "road.wip.i5.t":"Undo & snapshots","road.wip.i5.b":"roll back file pushes, app installs, permission changes",
+        "road.plan.title":"M3 late · M4+ vision",
+        "road.plan.i1.t":"🌟 On-device agent","road.plan.i1.b":"alb-mobile Android app + Gemini Nano / AICore. Host brain, device reflex — jump to the deep dive below.",
+        "road.plan.i2.t":"Web Tier 2","road.plan.i2.b":"embedded scrcpy · perf curves · ANR timeline · session replay · file browser",
+        "road.plan.i3.t":"More backends","road.plan.i3.b":"llama.cpp native · Anthropic SDK · session auto-summary · known-issues memory",
+        "road.plan.i4.t":"Web Tier 3","road.plan.i4.b":"multi-user collaboration · workflow builder · webhooks · Slack / Discord bot",
+        "road.plan.i5.t":"Plugins & bindings","road.plan.i5.b":"third-party capability plugins · multi-language bindings · multi-vendor SoC adapters",
+        "od.badge":"Vision · M4+",
+        "od.title":"An agent on the device itself.",
+        "od.body1":"adb round-trips add 50–200 ms each. Boot-time hangs happen before adb exists. ANR triggers fire faster than a host LLM can react. A small agent on the device — Gemini Nano via AICore, or Gemma 4 via LiteRT — closes that loop.",
+        "od.body2":"The host still owns heavy reasoning, cross-session memory, and code edits. The device owns reflex: per-thread signals, perfetto traces, local triage, offline autonomy. A WebSocket channel keeps them in lockstep.",
+        "od.cta":"Read the deep dive →",
+        "cta.title":"Open source. Neutral. Built in the open.",
+        "cta.body":"No vendor lock-in. No brand-specific hooks. The whole codebase is readable, scriptable, and extensible — issues, PRs, and ideas welcome.",
+        "cta.b1":"Star on GitHub","cta.b2":"File an issue","cta.b3":"On-device agent design →",
+        "ft.product":"Product","ft.p1":"Features","ft.p2":"Methods","ft.p3":"Architecture","ft.p4":"Roadmap",
+        "ft.docs":"Docs","ft.d1":"Overview","ft.d2":"Install","ft.d3":"Agent layer","ft.d4":"Methods A–G",
+        "ft.vision":"Vision","ft.v1":"On-device agent","ft.v2":"Roadmap",
+        "ft.community":"Community","ft.legal":"License",
+        "ft.copy":"© 2026 android-llm-bridge contributors · open source · MIT"
+      };
+
+      const ZH = {
+        "nav.features":"特性","nav.methods":"方案","nav.architecture":"架构","nav.roadmap":"路线图","nav.onDevice":"设备端 Agent","nav.cta":"GitHub",
+        "banner.badge":"新","banner.text":"M2 Agent 已上线 —— alb chat REPL、WebSocket 流式、Ollama 本地 LLM 全打通。","banner.link":"看下一步 →",
+        "hero.title":"让 LLM Agent 在线调试真实安卓设备。",
+        "hero.subtitle":"一套 CLI、一个 MCP server、一个 Web API —— 打通 USB adb / Wi-Fi adb / 板子 sshd / UART 串口。结构化输出、内置权限系统、产物落盘。开箱适配 Claude Code、Cursor 以及任何懂 tool call 的 agent。",
+        "hero.cta1":"开始使用","hero.cta2":"在 GitHub 查看 →",
+        "features.title":"一套调试套件，不是 adb 的再包装。",
+        "features.subtitle":"传统 adb / ssh 是给人用的。alb 是给 agent 用的 —— 每条命令返回结构化数据，每个危险动作过权限闸门，每段长日志入设备级 workspace。",
+        "features.card1.title":"多传输统一抽象","features.card1.body":"USB adb、Wi-Fi adb、板子内 sshd、UART 串口 —— 外加一个 hybrid 智能路由自动选最合适的。一个命令，五条通路上板。","features.card1.link":"查看方案对比表 →",
+        "features.card2.title":"LLM-first API","features.card2.body":"每次返回都是 {ok, data, error, artifacts}。五大类错误码。MCP 自描述 tool spec。长日志流进 workspace，不塞 context。","features.card2.link":"阅读接口规范 →",
+        "features.card3.title":"三种接入方式","features.card3.body":"终端直接用（alb）、给任何 MCP agent（Claude Code / Cursor）用、走 Web API（FastAPI · WebSocket 流式）用 —— 底下共享同一套能力层。","features.card3.link":"快速上手 →",
+        "features.mini1.title":"权限闸门","features.mini1.body":"危险命令（rm -rf、reboot bootloader）默认拦截，支持 allow / ask / deny 多层策略覆盖。",
+        "features.mini2.title":"产物规范化","features.mini2.body":"logcat、ANR trace、bugreport、perf dump —— 统一入 workspace/devices/<serial>/…，可搜可归档。",
+        "features.mini3.title":"流式 Agent loop","features.mini3.body":"ReAct-lite 循环、max-turn 熔断、WebSocket 逐字流式、JSONL session 持久化。",
+        "methods.title":"四条通路上板。",
+        "methods.subtitle":"每条物理链路都有失效模式。alb 已落地 A · B · C · G 四种，D · E · F 接口预留。按场景选，或让 hybrid 帮你选。",
+        "methods.col.method":"方案","methods.col.channel":"通道","methods.col.boot":"启动日志","methods.col.uboot":"U-Boot","methods.col.nonet":"无网可用","methods.col.panic":"内核 panic","methods.col.use":"适用场景",
+        "methods.row.a":"系统级基础，recovery 下仍可用",
+        "methods.row.b":"免线，多设备 CI",
+        "methods.row.c":"rsync / 长 session / tmux",
+        "methods.row.g.ch":"串口（Windows 通过 TCP 桥）",
+        "methods.row.g":"最后底牌 · bring-up · panic 救援",
+        "methods.foot":"D USB 网络共享 · E scrcpy 屏幕镜像 · F frp 公网中转 —— 后续里程碑实现。",
+        "arch.title":"三层接入，一套业务层。",
+        "arch.subtitle":"MCP 面向聊天 agent、CLI 面向人类和 shell 脚本、Web API（POST + WebSocket）面向正在建设的浏览器 UI。三层共享同一套能力函数、传输层和权限系统。",
+        "arch.caption":"四层解耦。任何一层替换都不影响其他层。",
+        "qs.title":"三步启动你的第一次 agent turn。","qs.subtitle":"装好、指一个模型、接一台设备，就这么简单。",
+        "qs.s1.title":"安装","qs.s2.title":"指向一个模型","qs.s3.title":"跟设备对话","qs.more":"完整安装与配置指南 →",
+        "road.title":"我们到了哪，接下来去哪。",
+        "road.subtitle":"M1 传输层稳定。M2 agent loop 正在落地。M3 解锁性能 + UI。M4+ 迈向设备端 agent —— 这一步才真正改变现场调试的形态。",
+        "road.status.done":"已可用","road.status.wip":"开发中","road.status.plan":"规划中",
+        "road.now.title":"M1 · M2 step 3",
+        "road.now.i1.t":"5 种传输","road.now.i1.b":"adb USB · adb Wi-Fi · ssh · UART · hybrid 路由",
+        "road.now.i2.t":"6 类能力","road.now.i2.b":"shell · logging（含 UART）· filesync · diagnose · power · app",
+        "road.now.i3.t":"21 个 MCP tool + 234 条测试","road.now.i3.b":"结构化错误、权限闸门、产物落盘",
+        "road.now.i4.t":"Agent loop（M2）","road.now.i4.b":"ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws 流式",
+        "road.now.i5.t":"Ollama 后端","road.now.i5.b":"think 字段解析 · 5 种错误映射 · tool call · 流式",
+        "road.now.i6.t":"配置 + 环境","road.now.i6.b":"~/.config/alb/config.toml · .env.local · 跨项目 MCP 导出",
+        "road.wip.title":"M2 step 4 · M3 起步",
+        "road.wip.i1.t":"OpenAI 兼容后端","road.wip.i1.b":"一个后端对接 GPT · OpenRouter 上的 Claude · vLLM · LM Studio · MLX · DeepSeek",
+        "road.wip.i2.t":"Web Tier 1 · 浏览器 Chat UI","road.wip.i2.b":"浏览器流式对话、设备看板、实时 logcat、HITL 确认、产物面板",
+        "road.wip.i3.t":"长任务框架","road.wip.i3.b":"SSE / BackgroundTask 跑 perf 采集、bugreport、多分钟 agent 任务",
+        "road.wip.i4.t":"perf · benchmark · network · ui","road.wip.i4.b":"基于 M1 传输层的新能力族",
+        "road.wip.i5.t":"Undo & 快照","road.wip.i5.b":"回滚 push 的文件、装过的 app、改过的权限",
+        "road.plan.title":"M3 后期 · M4+ 愿景",
+        "road.plan.i1.t":"🌟 设备端 Agent","road.plan.i1.b":"alb-mobile 安卓 app + Gemini Nano / AICore。宿主当大脑、设备当反射 —— 下方详细展开。",
+        "road.plan.i2.t":"Web Tier 2","road.plan.i2.b":"嵌入 scrcpy · perf 曲线 · ANR 时间线 · session 回放 · 文件浏览器",
+        "road.plan.i3.t":"更多后端","road.plan.i3.b":"llama.cpp 原生 · Anthropic SDK · session 自动摘要 · 已知问题记忆库",
+        "road.plan.i4.t":"Web Tier 3","road.plan.i4.b":"多人协作 · workflow builder · webhook · Slack / Discord bot",
+        "road.plan.i5.t":"插件 & 绑定","road.plan.i5.b":"第三方能力插件 · 多语言 binding · 多 SoC 厂商适配",
+        "od.badge":"愿景 · M4+",
+        "od.title":"一个跑在设备上的 Agent。",
+        "od.body1":"一次 adb 往返 50–200 毫秒。启动 hang 发生在 adb 还没起来之前。ANR 触发比宿主 LLM 决策更快。一个跑在设备上的小 agent —— Gemini Nano 走 AICore、或 Gemma 4 走 LiteRT —— 把这个响应闭环关上。",
+        "od.body2":"宿主继续管重推理、跨 session 记忆、代码修改。设备管反射：逐线程信号、perfetto trace、本地 triage、离线 autonomy。两端用 WebSocket 通道对齐。",
+        "od.cta":"阅读架构详解 →",
+        "cta.title":"开源、中立、在公开场下构建。",
+        "cta.body":"不绑定厂商、不挂品牌钩子。整份代码可读、可脚本、可扩展 —— issue、PR、想法都欢迎。",
+        "cta.b1":"在 GitHub star","cta.b2":"提 issue","cta.b3":"设备端 Agent 设计 →",
+        "ft.product":"产品","ft.p1":"特性","ft.p2":"方案","ft.p3":"架构","ft.p4":"路线图",
+        "ft.docs":"文档","ft.d1":"总览","ft.d2":"安装","ft.d3":"Agent 层","ft.d4":"方案 A–G",
+        "ft.vision":"愿景","ft.v1":"设备端 Agent","ft.v2":"路线图",
+        "ft.community":"社区","ft.legal":"许可",
+        "ft.copy":"© 2026 android-llm-bridge contributors · 开源 · MIT"
+      };
+
+      function applyLang(lang){
+        const dict = lang === "zh" ? ZH : I18N;
+        document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+        document.querySelectorAll("[data-i18n]").forEach(el => {
+          const key = el.getAttribute("data-i18n");
+          if(dict[key] !== undefined) el.textContent = dict[key];
+        });
+        const btn = document.getElementById("langBtn");
+        if(btn) btn.textContent = lang === "zh" ? "English" : "中文";
+        try{ localStorage.setItem("alb.lang", lang); }catch(e){}
+      }
+      function toggleLang(){
+        const cur = (localStorage.getItem("alb.lang") || "en");
+        applyLang(cur === "zh" ? "en" : "zh");
+      }
+      (function init(){
+        let stored = null;
+        try{ stored = localStorage.getItem("alb.lang"); }catch(e){}
+        const prefer = stored || (navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
+        if(prefer === "zh") applyLang("zh");
+      })();
+    </script>
+  </body>
+</html>
