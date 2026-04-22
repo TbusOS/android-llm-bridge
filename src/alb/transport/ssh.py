@@ -20,6 +20,7 @@ from time import perf_counter
 from typing import Any
 
 from alb.infra.permissions import PermissionResult, default_check
+from alb.infra.process import run as proc_run
 from alb.transport.base import ShellResult, Transport
 
 
@@ -364,36 +365,31 @@ class SshTransport(Transport):
         dst = f"{self.spec.user}@{self.spec.host}:{remote_dir.rstrip('/')}/"
         args.extend([src, dst])
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_b, stderr_b = await proc.communicate()
-            duration_ms = int((perf_counter() - start) * 1000)
-            stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
-            stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
-            if (proc.returncode or 0) != 0:
-                return ShellResult(
-                    ok=False,
-                    exit_code=proc.returncode or 0,
-                    stdout=stdout, stderr=stderr,
-                    duration_ms=duration_ms,
-                    error_code="SSH_COMMAND_FAILED",
-                )
-            return ShellResult(
-                ok=True, exit_code=0,
-                stdout=stdout, stderr=stderr,
-                duration_ms=duration_ms,
-            )
-        except FileNotFoundError:
+        # Elapsed already tracked inside proc_run; `start` kept for
+        # backward-compat but not consulted further.
+        _ = start
+        r = await proc_run(*args, timeout=3600)
+
+        if r.binary_missing:
             return ShellResult(
                 ok=False, exit_code=-1,
                 stderr="rsync/ssh binary missing from PATH",
                 error_code="SYSTEM_DEPENDENCY_MISSING",
-                duration_ms=int((perf_counter() - start) * 1000),
+                duration_ms=r.duration_ms,
             )
+        if r.exit_code != 0:
+            return ShellResult(
+                ok=False,
+                exit_code=r.exit_code,
+                stdout=r.stdout, stderr=r.stderr,
+                duration_ms=r.duration_ms,
+                error_code="SSH_COMMAND_FAILED",
+            )
+        return ShellResult(
+            ok=True, exit_code=0,
+            stdout=r.stdout, stderr=r.stderr,
+            duration_ms=r.duration_ms,
+        )
 
 
 # ─── Error classification ──────────────────────────────────────────

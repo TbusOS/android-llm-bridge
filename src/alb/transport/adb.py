@@ -6,16 +6,15 @@ scenario (A, see docs/methods/01-ssh-tunnel-adb.md) works transparently.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
 from typing import Any
 
 from alb.infra.permissions import PermissionResult, default_check
+from alb.infra.process import run as proc_run, spawn_stream
 from alb.transport.base import ShellResult, Transport
 
 
@@ -76,63 +75,53 @@ class AdbTransport(Transport):
         timeout: int = 30,
         stdin: bytes | None = None,
     ) -> ShellResult:
-        start = perf_counter()
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *self._base_cmd(),
-                *args,
-                stdin=asyncio.subprocess.PIPE if stdin else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=self._env(),
-            )
-        except FileNotFoundError:
+        """Run an adb subcommand via the unified ProcessRunner.
+
+        Maps generic :class:`ProcessResult` → adb-specific
+        :class:`ShellResult` with transport-level error codes.
+        """
+        r = await proc_run(
+            *self._base_cmd(),
+            *args,
+            timeout=timeout,
+            stdin=stdin,
+            env=self._env(),
+        )
+
+        if r.binary_missing:
             return ShellResult(
                 ok=False,
                 exit_code=-1,
                 stderr=f"adb binary not found: {self._bin}",
                 error_code="ADB_BINARY_NOT_FOUND",
-                duration_ms=int((perf_counter() - start) * 1000),
+                duration_ms=r.duration_ms,
             )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=stdin),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+        if r.timed_out:
             return ShellResult(
                 ok=False,
                 exit_code=-1,
                 stderr=f"adb command timed out after {timeout}s",
                 error_code="TIMEOUT_SHELL",
-                duration_ms=int((perf_counter() - start) * 1000),
+                duration_ms=r.duration_ms,
             )
 
-        duration_ms = int((perf_counter() - start) * 1000)
-        exit_code = proc.returncode or 0
-        out = stdout.decode("utf-8", errors="replace") if stdout else ""
-        err = stderr.decode("utf-8", errors="replace") if stderr else ""
-
-        if exit_code != 0:
-            code = _classify_stderr(err)
+        if r.exit_code != 0:
             return ShellResult(
                 ok=False,
-                exit_code=exit_code,
-                stdout=out,
-                stderr=err,
-                duration_ms=duration_ms,
-                error_code=code,
+                exit_code=r.exit_code,
+                stdout=r.stdout,
+                stderr=r.stderr,
+                duration_ms=r.duration_ms,
+                error_code=_classify_stderr(r.stderr),
             )
 
         return ShellResult(
             ok=True,
-            exit_code=exit_code,
-            stdout=out,
-            stderr=err,
-            duration_ms=duration_ms,
+            exit_code=0,
+            stdout=r.stdout,
+            stderr=r.stderr,
+            duration_ms=r.duration_ms,
         )
 
     # ── Transport interface ───────────────────────────────────────
@@ -163,28 +152,17 @@ class AdbTransport(Transport):
         else:
             raise ValueError(f"Unknown stream source: {source}")
 
-        proc = await asyncio.create_subprocess_exec(
+        async with spawn_stream(
             *self._base_cmd(),
             *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
             env=self._env(),
-        )
-        try:
+        ) as proc:
             assert proc.stdout is not None
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     break
                 yield line
-        finally:
-            if proc.returncode is None:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=2)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
 
     async def push(self, local: Path, remote: str) -> ShellResult:
         if not local.exists():

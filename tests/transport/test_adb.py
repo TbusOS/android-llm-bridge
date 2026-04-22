@@ -133,6 +133,7 @@ async def test_shell_timeout_returns_structured_error() -> None:
             return b"", b""
 
         proc.communicate = slow  # type: ignore[method-assign]
+        proc.terminate = lambda: None  # type: ignore[method-assign]
         proc.kill = lambda: None  # type: ignore[method-assign]
         proc.wait = AsyncMock(return_value=0)  # type: ignore[method-assign]
         return proc
