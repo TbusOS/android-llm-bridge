@@ -376,6 +376,7 @@ class SerialTransport(Transport):
             exit_code=exit_code,
             stdout=stdout,
             stderr=stderr,
+            error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
             duration_ms=int((perf_counter() - start) * 1000),
         )
 
