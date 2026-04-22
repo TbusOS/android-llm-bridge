@@ -499,6 +499,14 @@ class SerialTransport(Transport):
             if _is_decisive(sm.state):
                 break
 
+        # An endpoint that emitted literally nothing across the whole
+        # handshake window is ``IDLE`` — semantically richer than the
+        # default ``UNKNOWN`` (which means "saw bytes but couldn't
+        # classify"). Most common causes of IDLE: board powered off,
+        # UART not wired on the device side, or some OTHER program
+        # holding the COM port exclusively on the remote end.
+        if not sm.buffer_tail and sm.state == SerialState.UNKNOWN:
+            return SerialState.IDLE
         return sm.state
 
     def _reject_for_state(
