@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,18 @@ _SHELL_CAPABLE = frozenset({
     SerialState.RECOVERY,
     SerialState.CRASH,     # soft crash — shell may still work; we warn
     SerialState.UNKNOWN,   # nothing matched — fall back to best-effort
+})
+
+
+# Subset of shell-capable states that are POSIX-like — they support
+# command chaining with ``;`` and ``$?`` exit-code introspection. We
+# use marker-based wrapping on these to recover real exit codes and
+# precise command boundaries. U-Boot and Recovery don't qualify
+# (u-boot has no ``$?``; Android recovery has a reduced shell).
+_POSIX_SHELL_STATES = frozenset({
+    SerialState.SHELL_USER,
+    SerialState.SHELL_ROOT,
+    SerialState.CRASH,   # kernel crashed but userspace shell still POSIX
 })
 
 
@@ -244,60 +257,182 @@ class SerialTransport(Transport):
             if initial_state not in _SHELL_CAPABLE:
                 return self._reject_for_state(initial_state, sm, start)
 
-            # ── Step 3: send command ───────────────────────────────
-            payload = (cmd + "\n").encode("utf-8", errors="replace")
-            link.writer.write(payload)
-            await link.writer.drain()
+            # ── Step 3: dispatch on state ──────────────────────────
+            # POSIX shells → marker-based wrapper, real exit codes,
+            # precise command boundaries even with printk noise.
+            # Everything else → legacy "send + read until prompt" path.
+            if initial_state in _POSIX_SHELL_STATES:
+                return await self._run_with_marker(
+                    link, sm, cmd, timeout, start, initial_state,
+                )
+            return await self._run_legacy(link, sm, cmd, timeout, start)
+        finally:
+            await self._close(link)
 
-            # ── Step 4: read until prompt returns ──────────────────
+    # ── Command execution strategies ────────────────────────────────
+
+    async def _run_with_marker(
+        self,
+        link: _SerialLink,
+        sm: SerialStateMachine,
+        cmd: str,
+        timeout: int,
+        start: float,
+        initial_state: SerialState,
+    ) -> ShellResult:
+        """Execute ``cmd`` in a POSIX shell and capture real exit code.
+
+        Wraps the user's command with BEGIN/END sentinel lines plus
+        ``$?`` capture::
+
+            echo __ALB_BEG_<nonce>__; <user_cmd>; echo __ALB_END_<nonce>__=$?
+
+        Reads until the END marker line appears (with its ``=N`` suffix)
+        or we time out. The nonce is a fresh UUID hex for every call,
+        so collision with user content is practically impossible.
+
+        Why this is better than the legacy path:
+
+        - Real exit code in ``ShellResult.exit_code`` (non-zero → ``ok=False``).
+        - Command boundaries are exact; printk lines spraying into the
+          middle of output do not break stripping logic.
+        - Multi-line or specially-quoted commands round-trip cleanly —
+          the shell just runs them between our markers.
+
+        If the END marker never appears before timeout, we fall back to
+        a :code:`TIMEOUT_SHELL` result with whatever output arrived.
+        """
+        nonce = uuid.uuid4().hex[:12]
+        beg_marker = f"__ALB_BEG_{nonce}__"
+        end_marker = f"__ALB_END_{nonce}__"
+        wrapped = (
+            f"echo {beg_marker}; {cmd}; echo {end_marker}=$?\n"
+        ).encode("utf-8", errors="replace")
+
+        link.writer.write(wrapped)
+        await link.writer.drain()
+
+        deadline = perf_counter() + timeout
+        response = bytearray()
+        end_line_re = re.compile(
+            re.escape(end_marker).encode("ascii") + rb"=(\d+)\r?\n"
+        )
+        match: re.Match[bytes] | None = None
+
+        while perf_counter() < deadline:
+            remaining = max(0.05, deadline - perf_counter())
             try:
-                raw = await asyncio.wait_for(
-                    _read_until_any(link.reader, self.prompts),
-                    timeout=timeout,
+                chunk = await asyncio.wait_for(
+                    link.reader.read(self.read_chunk), timeout=remaining,
                 )
             except asyncio.TimeoutError:
-                return ShellResult(
-                    ok=False,
-                    exit_code=-1,
-                    stderr=f"Serial shell timed out after {timeout}s",
-                    error_code="TIMEOUT_SHELL",
-                    duration_ms=int((perf_counter() - start) * 1000),
-                )
+                break
+            if not chunk:
+                break
+            response.extend(chunk)
+            sm.feed(chunk)
 
-            # Feed accumulated bytes into the state machine so we notice
-            # mid-command panics / crashes.
-            sm.feed(raw)
-
-            text = raw.decode("utf-8", errors="replace")
-            stdout = _strip_echo_and_prompt(text, cmd, self.prompts)
-
-            # ── Step 5: detect post-command state anomalies ────────
+            # Mid-command panic — return what we have.
             if sm.state == SerialState.PANIC:
                 return ShellResult(
                     ok=False,
                     exit_code=-1,
-                    stdout=stdout,
+                    stdout=bytes(response).decode("utf-8", errors="replace"),
                     stderr="kernel panic during command execution",
                     error_code="BOARD_PANICKED",
                     duration_ms=int((perf_counter() - start) * 1000),
                 )
 
-            stderr = ""
-            if sm.state == SerialState.CRASH and initial_state != SerialState.CRASH:
-                stderr = (
-                    "warning: kernel crash trace observed during command; "
-                    "shell is still up but state may be unstable"
-                )
+            match = end_line_re.search(response)
+            if match:
+                break
 
+        if not match:
             return ShellResult(
-                ok=True,
-                exit_code=0,  # marker-based real exit codes come in Phase 2
-                stdout=stdout,
-                stderr=stderr,
+                ok=False,
+                exit_code=-1,
+                stdout=bytes(response).decode("utf-8", errors="replace"),
+                stderr=(
+                    f"Serial shell timed out after {timeout}s; "
+                    f"end marker {end_marker} never arrived"
+                ),
+                error_code="TIMEOUT_SHELL",
                 duration_ms=int((perf_counter() - start) * 1000),
             )
-        finally:
-            await self._close(link)
+
+        exit_code = int(match.group(1))
+        text = bytes(response).decode("utf-8", errors="replace")
+        stdout = _extract_between_markers(text, beg_marker, end_marker)
+
+        stderr = ""
+        if sm.state == SerialState.CRASH and initial_state != SerialState.CRASH:
+            stderr = (
+                "warning: kernel crash trace observed during command; "
+                "shell is still up but state may be unstable"
+            )
+
+        return ShellResult(
+            ok=(exit_code == 0),
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=int((perf_counter() - start) * 1000),
+        )
+
+    async def _run_legacy(
+        self,
+        link: _SerialLink,
+        sm: SerialStateMachine,
+        cmd: str,
+        timeout: int,
+        start: float,
+    ) -> ShellResult:
+        """Best-effort path for non-POSIX states (u-boot, recovery, unknown).
+
+        Sends the command, reads until any legacy prompt pattern shows
+        up at the tail, strips the echoed command line and trailing
+        prompt. Exit code is always 0 (these environments don't report
+        one) — ``ok=True`` means "we got a complete response", not
+        "the command succeeded".
+        """
+        payload = (cmd + "\n").encode("utf-8", errors="replace")
+        link.writer.write(payload)
+        await link.writer.drain()
+
+        try:
+            raw = await asyncio.wait_for(
+                _read_until_any(link.reader, self.prompts),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return ShellResult(
+                ok=False,
+                exit_code=-1,
+                stderr=f"Serial shell timed out after {timeout}s",
+                error_code="TIMEOUT_SHELL",
+                duration_ms=int((perf_counter() - start) * 1000),
+            )
+
+        sm.feed(raw)
+
+        if sm.state == SerialState.PANIC:
+            return ShellResult(
+                ok=False,
+                exit_code=-1,
+                stdout=raw.decode("utf-8", errors="replace"),
+                stderr="kernel panic during command execution",
+                error_code="BOARD_PANICKED",
+                duration_ms=int((perf_counter() - start) * 1000),
+            )
+
+        text = raw.decode("utf-8", errors="replace")
+        stdout = _strip_echo_and_prompt(text, cmd, self.prompts)
+        return ShellResult(
+            ok=True,
+            exit_code=0,
+            stdout=stdout,
+            duration_ms=int((perf_counter() - start) * 1000),
+        )
 
     # ── State machine plumbing ──────────────────────────────────────
 
@@ -618,6 +753,48 @@ def _strip_echo_and_prompt(
     # Filter trailing empty lines
     out = "".join(lines)
     return re.sub(r"\r\n", "\n", out).strip("\n") + ("\n" if out.endswith("\n") else "")
+
+
+def _extract_between_markers(text: str, beg: str, end: str) -> str:
+    """Pull the user command's stdout from between BEG/END marker lines.
+
+    Raw text layout when a POSIX shell echoes back a wrapped command::
+
+        echo __ALB_BEG_abc__; some_cmd; echo __ALB_END_abc__=$?
+        __ALB_BEG_abc__
+        user output line 1
+        user output line 2
+        __ALB_END_abc__=0
+        root@host:/ #
+
+    We want only lines 2-3 — everything between the BEG line (which
+    the shell printed via ``echo``) and the END line (ditto).
+
+    The first line (the echoed command itself) contains BOTH markers
+    in substring form; we must skip it. Using a start-of-line anchor
+    on both markers distinguishes the echo from the real output lines.
+
+    Returns the extracted stdout. If markers aren't found on their own
+    line, returns ``""`` (safer than garbage).
+    """
+    beg_match = re.search(
+        rf"(?:^|\n){re.escape(beg)}\r?\n", text,
+    )
+    if beg_match is None:
+        return ""
+    body_start = beg_match.end()
+
+    end_match = re.search(
+        rf"(?:^|\n){re.escape(end)}=\d+\s*$",
+        text[body_start:], flags=re.MULTILINE,
+    )
+    if end_match is None:
+        # End marker missing — unusual, return whatever came after BEG
+        return text[body_start:].rstrip("\r\n")
+
+    body = text[body_start : body_start + end_match.start()]
+    # Strip trailing newlines leftover from the line break before END
+    return body.rstrip("\r\n")
 
 
 def _is_decisive(state: SerialState) -> bool:
