@@ -470,6 +470,64 @@ class SerialTransport(Transport):
             )
         return await self.shell("reboot", timeout=5)
 
+    async def detect_state(self) -> dict[str, Any]:
+        """Connect, run handshake, and return a state snapshot.
+
+        This is the programmatic entry point behind ``alb serial status``
+        and the Web UI's device-state pill. It doesn't run a command —
+        just classifies what the endpoint is currently doing.
+
+        Returns a dict:
+
+        - ``ok`` — True if connect + handshake completed (even if
+          the state ended up UNKNOWN or IDLE).
+        - ``connected`` — True if the transport reached the endpoint.
+        - ``state`` — :class:`SerialState` value (string).
+        - ``tail`` — last ~256 bytes as utf-8 text (human-readable).
+        - ``history`` — list of transitions during the handshake.
+        - ``endpoint`` — ``host:port`` or device path.
+        - ``baud`` — configured baud rate.
+        - ``duration_ms`` — handshake wall time.
+        - On failure: ``error`` and ``error_code``.
+        """
+        start = perf_counter()
+        info: dict[str, Any] = {
+            "transport": "serial",
+            "mode": "tcp" if self.tcp_host else "local",
+            "endpoint": (
+                f"{self.tcp_host}:{self.tcp_port}"
+                if self.tcp_host else self.device
+            ),
+            "baud": self.baud,
+        }
+
+        try:
+            link = await self._open()
+        except (ConnectionError, FileNotFoundError, ImportError) as e:
+            info["ok"] = False
+            info["connected"] = False
+            info["error"] = str(e)
+            info["error_code"] = _classify_connect_error(e)
+            info["duration_ms"] = int((perf_counter() - start) * 1000)
+            return info
+
+        try:
+            sm = SerialStateMachine(patterns=self.patterns)
+            state = await self._handshake(link, sm)
+            snap = sm.snapshot()
+            info.update(
+                ok=True,
+                connected=True,
+                state=state.value,
+                tail=snap["tail"],
+                history=snap["history"],
+                buffer_bytes=snap["buffer_bytes"],
+                duration_ms=int((perf_counter() - start) * 1000),
+            )
+            return info
+        finally:
+            await self._close(link)
+
     async def health(self) -> dict[str, Any]:
         info: dict[str, Any] = {
             "transport": "serial",
