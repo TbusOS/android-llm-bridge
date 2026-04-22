@@ -10,6 +10,7 @@ import pytest
 
 from alb.transport.serial import (
     SerialTransport,
+    _extract_between_markers,
     _read_until_any,
     _strip_echo_and_prompt,
 )
@@ -83,28 +84,41 @@ async def test_health_reports_failure_when_endpoint_dead() -> None:
     assert "error" in info
 
 
-# ─── Shell round-trip over TCP ─────────────────────────────────────
+# ─── Shell round-trip over TCP (simulates a real POSIX shell) ──────
 @pytest.mark.asyncio
 async def test_shell_roundtrip_over_tcp() -> None:
-    """A fake server that echoes a prompt, echoes the command, then replies."""
+    """POSIX-shell state path: marker wrapper + real exit code extraction.
+
+    The fake server pretends to be a real ``sh``: it echoes the
+    wrapped command line, then prints the BEG marker, the user
+    output, and the END marker with ``=0`` (because ``echo``
+    succeeded).
+    """
+    import re as _re
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        # Initial prompt when the client sends its warmup newline.
-        warmup = await reader.readline()  # the '\n' from _open()/warmup
+        warmup = await reader.readline()
         assert warmup == b"\n"
-        writer.write(b"$ ")
+        writer.write(b"$ ")                  # triggers SHELL_USER state
         await writer.drain()
-        # Read the real command line.
-        line = await reader.readline()
-        # Echo the command like a real shell would.
-        writer.write(line)  # echo
+
+        line = await reader.readline()       # wrapped command
+        m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", line)
+        assert m, f"expected a BEG marker in {line!r}"
+        nonce = m.group(1)
+        beg = b"__ALB_BEG_" + nonce + b"__"
+        end = b"__ALB_END_" + nonce + b"__"
+
+        writer.write(line)                   # echo the command line
+        writer.write(beg + b"\n")            # echo BEG sentinel
         writer.write(b"output from fake shell\n")
-        writer.write(b"$ ")  # final prompt
+        writer.write(end + b"=0\n")          # echo END=0 sentinel
+        writer.write(b"$ ")
         await writer.drain()
         writer.close()
 
     async with _fake_ser2net(handler) as (host, port):
-        t = SerialTransport(tcp_host=host, tcp_port=port)
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
         r = await t.shell("echo hi", timeout=5)
 
     assert r.ok
@@ -297,6 +311,193 @@ async def test_shell_proceeds_when_uboot_prompt_present() -> None:
 
     assert r.ok
     assert "bootargs=console=ttyS0" in r.stdout
+
+
+# ─── Marker extraction helper ──────────────────────────────────────
+
+
+def test_extract_between_markers_strips_echo_and_end_line() -> None:
+    """The echoed command line (which contains both markers as substrings)
+    must be skipped; only the lines between marker OUTPUT lines count.
+    """
+    raw = (
+        "echo __ALB_BEG_abc__; ls /; echo __ALB_END_abc__=$?\n"   # echoed cmd
+        "__ALB_BEG_abc__\n"                                       # BEG echo output
+        "bin\n"
+        "etc\n"
+        "usr\n"
+        "__ALB_END_abc__=0\n"                                     # END output
+        "root@h:/ # "                                             # next prompt
+    )
+    out = _extract_between_markers(raw, "__ALB_BEG_abc__", "__ALB_END_abc__")
+    assert out == "bin\netc\nusr"
+
+
+def test_extract_between_markers_missing_end() -> None:
+    """When END marker is missing, return everything after BEG."""
+    raw = "__ALB_BEG_x__\nstuff\nmore stuff\n"
+    out = _extract_between_markers(raw, "__ALB_BEG_x__", "__ALB_END_x__")
+    assert out == "stuff\nmore stuff"
+
+
+def test_extract_between_markers_no_beg_returns_empty() -> None:
+    raw = "no markers at all\njust text\n"
+    out = _extract_between_markers(raw, "__ALB_BEG_x__", "__ALB_END_x__")
+    assert out == ""
+
+
+def test_extract_between_markers_handles_crlf() -> None:
+    raw = (
+        "__ALB_BEG_zz__\r\n"
+        "windows line endings\r\n"
+        "__ALB_END_zz__=7\r\n"
+    )
+    out = _extract_between_markers(raw, "__ALB_BEG_zz__", "__ALB_END_zz__")
+    assert out == "windows line endings"
+
+
+# ─── Marker-based command execution ────────────────────────────────
+
+
+async def _fake_posix_shell_handler(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    *,
+    body: bytes = b"",
+    exit_code: int = 0,
+    injection: bytes = b"",
+) -> None:
+    """Fake shell server that honours BEG/END marker protocol.
+
+    - body:       bytes returned as the user command's stdout
+    - exit_code:  emitted as ``=N`` after the END marker
+    - injection:  printk-style bytes emitted BEFORE the BEG line
+                  (simulates kernel messages interleaving with command
+                  output — real boards do this constantly)
+    """
+    import re as _re
+
+    await reader.readline()  # handshake nudge
+    writer.write(b"$ ")
+    await writer.drain()
+
+    wrapped = await reader.readline()
+    m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped)
+    nonce = m.group(1) if m else b"xxx"
+    beg = b"__ALB_BEG_" + nonce + b"__"
+    end = b"__ALB_END_" + nonce + b"__"
+
+    writer.write(wrapped)                                 # echo
+    if injection:
+        writer.write(injection)
+    writer.write(beg + b"\n")
+    writer.write(body)
+    writer.write(end + b"=" + str(exit_code).encode() + b"\n")
+    writer.write(b"$ ")
+    await writer.drain()
+    writer.close()
+
+
+@pytest.mark.asyncio
+async def test_shell_returns_real_exit_code_on_success() -> None:
+    async def handler(r, w):  # noqa: ANN001
+        await _fake_posix_shell_handler(r, w, body=b"hello\n", exit_code=0)
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("true", timeout=5)
+
+    assert r.ok
+    assert r.exit_code == 0
+    assert r.stdout == "hello"
+
+
+@pytest.mark.asyncio
+async def test_shell_returns_real_exit_code_on_failure() -> None:
+    """Non-zero exit → ok=False AND the specific exit code is surfaced."""
+    async def handler(r, w):  # noqa: ANN001
+        await _fake_posix_shell_handler(r, w, body=b"not found\n", exit_code=127)
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("nonexistent_cmd", timeout=5)
+
+    assert not r.ok
+    assert r.exit_code == 127
+    assert "not found" in r.stdout
+
+
+@pytest.mark.asyncio
+async def test_shell_printk_injection_does_not_break_output_extraction() -> None:
+    """Simulated kernel printk lines interleaving should not confuse
+    marker extraction — the extracted stdout comes only from between
+    BEG and END markers, not before BEG.
+    """
+    async def handler(r, w):  # noqa: ANN001
+        await _fake_posix_shell_handler(
+            r, w,
+            body=b"my real output\n",
+            exit_code=0,
+            injection=b"[   42.123456] wlan0: link up\n",
+        )
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("ls", timeout=5)
+
+    assert r.ok
+    # The printk line must not be in the extracted stdout
+    assert "wlan0" not in r.stdout
+    assert r.stdout == "my real output"
+
+
+@pytest.mark.asyncio
+async def test_shell_multiline_command_roundtrips_cleanly() -> None:
+    """Commands with semicolons / multi-line output work end-to-end."""
+    async def handler(r, w):  # noqa: ANN001
+        await _fake_posix_shell_handler(
+            r, w,
+            body=b"line-1\nline-2\nline-3\n",
+            exit_code=0,
+        )
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("for i in 1 2 3; do echo line-$i; done", timeout=5)
+
+    assert r.ok
+    assert r.stdout == "line-1\nline-2\nline-3"
+
+
+@pytest.mark.asyncio
+async def test_shell_uses_fresh_nonce_per_call() -> None:
+    """Two back-to-back calls must use independent marker nonces."""
+    nonces: list[bytes] = []
+
+    async def handler(r, w):  # noqa: ANN001
+        import re as _re
+        await r.readline()
+        w.write(b"$ ")
+        await w.drain()
+        wrapped = await r.readline()
+        m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped)
+        nonce = m.group(1) if m else b"xxx"
+        nonces.append(nonce)
+        beg = b"__ALB_BEG_" + nonce + b"__"
+        end = b"__ALB_END_" + nonce + b"__"
+        w.write(wrapped)
+        w.write(beg + b"\nok\n" + end + b"=0\n")
+        w.write(b"$ ")
+        await w.drain()
+        w.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        await t.shell("echo 1", timeout=5)
+        await t.shell("echo 2", timeout=5)
+
+    assert len(nonces) == 2
+    assert nonces[0] != nonces[1]
 
 
 # ─── detect_state() API ────────────────────────────────────────────
