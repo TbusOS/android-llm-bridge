@@ -81,7 +81,7 @@ async def execute(
 
     if not r.ok:
         return fail(
-            code=r.error_code or "ADB_COMMAND_FAILED",
+            code=r.error_code or "SHELL_NONZERO_EXIT",
             message=r.stderr.strip() or "Command failed",
             suggestion=_suggest_for(r.error_code),
             category="transport",

@@ -196,6 +196,15 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Board is in fastboot mode — shell commands are not applicable",
         "Use adb / fastboot tools to leave fastboot, then retry",
     ),
+    # Generic shell error — any transport (adb / ssh / serial) can raise
+    # this when the command ran to completion but exited non-zero. The
+    # specific exit_code is on ShellResult.exit_code.
+    "SHELL_NONZERO_EXIT": ErrorSpec(
+        "SHELL_NONZERO_EXIT",
+        "transport",
+        "Shell command exited with a non-zero status",
+        "Inspect exit_code + stderr; fix the command or handle the failure",
+    ),
 }
 
 
