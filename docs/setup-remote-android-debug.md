@@ -107,7 +107,35 @@ Windows 串口是**严格独占**：一个 COM 口同时只能被一个程序打
 
 ---
 
-## 三、Xshell 配 2 条反向隧道
+## 三、打两条反向隧道（两种方法任选）
+
+两条隧道都要：
+
+| 用途 | 方向 | Windows | Linux |
+|---|---|---|---|
+| ADB | Remote (-R) | :5037 | :5037 |
+| Serial | Remote (-R) | :19001 | :19001 |
+
+⚠️ **一定是 Remote（-R）不是 Local（-L）** —— 让 Linux 访问 Windows 上的服务。
+
+### 方法 A（推荐 · 最简）：PowerShell 原生 ssh，一行搞定
+
+Windows 10 build 1809+ / Windows 11 自带 OpenSSH。一条命令开会话 + 同时建两条反向隧道：
+
+```powershell
+ssh -R 5037:localhost:5037 -R 19001:localhost:19001 <user>@<linux-host>
+```
+
+好处：
+
+- 不用配 GUI，参数写在命令里看得见
+- 命令历史能记住，下次 `↑` 一下就行
+- 没有"添加规则但没重连"这种静默失效的坑
+- 任何带 OpenSSH 的 Windows 都能用，不依赖第三方终端
+
+保持这个 PowerShell 窗口**不关**（关掉隧道就断）。想多开几个 Linux 终端？再开别的 PowerShell 继续 ssh（不带 `-R`）或者直接用 tmux。
+
+### 方法 B：Xshell GUI 配置
 
 会话属性 → 连接 → SSH → 隧道 → **添加**两条：
 
@@ -116,9 +144,18 @@ Windows 串口是**严格独占**：一个 COM 口同时只能被一个程序打
 | 1 (ADB) | **Remote** | localhost | 5037 | localhost | 5037 | adb-tunnel |
 | 2 (Serial) | **Remote** | localhost | 19001 | localhost | 19001 | serial-tunnel |
 
-⚠️ **一定选 Remote（-R）不是 Local（-L）** — 反向隧道方向：让 Linux 访问 Windows 上的服务。
-
 保存 → **断开当前会话 → 重新 ssh 上 Linux**（这一步必须重连，隧道才生效）。
+
+### 验证隧道真活着（Linux 侧必须看到两个 listener）
+
+```bash
+ss -tln | grep -E ":5037|:19001"
+# 预期：
+#   LISTEN  127.0.0.1:5037
+#   LISTEN  127.0.0.1:19001
+```
+
+**如果只看到其中一个或都看不到**：方法 A 检查命令有没有打全；方法 B 检查规则类型（必须 Remote）+ 有没有重连会话。
 
 ---
 
