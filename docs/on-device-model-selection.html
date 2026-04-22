@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>On-device Model Selection — android-llm-bridge</title>
+    <meta name="description" content="Which local LLM to ship on commercial Android devices worldwide. License hygiene, ARM SoC tiers, SKU planning, and a 5-second field check.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      .lang-toggle{
+        font-family:var(--font-heading); font-size:13px; font-weight:500;
+        color:var(--anth-text-secondary); background:transparent;
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-pill);
+        padding:6px 14px; cursor:pointer;
+        transition:border-color var(--duration-sm) var(--ease-anth), color var(--duration-sm) var(--ease-anth);
+      }
+      .lang-toggle:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display:none !important; }
+      html[lang^="zh"] body, html[lang^="zh"] p, html[lang^="zh"] li,
+      html[lang^="zh"] h1, html[lang^="zh"] h2, html[lang^="zh"] h3 {
+        font-family:"Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+      }
+      .tldr-card{
+        background:linear-gradient(135deg,#faf9f5 0%, #f0ede3 100%);
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-lg);
+        padding:var(--space-7); margin-top:var(--space-6);
+      }
+      .tldr-card h3{font-size:22px; margin:0 0 var(--space-3);}
+      .pill{
+        display:inline-block; font-family:var(--font-heading);
+        font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;
+        padding:3px 10px; border-radius:var(--radius-pill);
+        background:var(--anth-orange); color:#ffffff;
+      }
+      .pill-green{background:rgba(120,140,93,0.22); color:#5d7043;}
+      .pill-gray{background:var(--anth-light-gray); color:var(--anth-text-secondary);}
+      .soc-card{
+        background:#ffffff; border:1px solid var(--anth-light-gray);
+        border-radius:var(--radius-lg); padding:var(--space-6);
+        box-shadow:var(--shadow-card);
+      }
+      .soc-card h3{font-size:20px; margin:var(--space-3) 0 var(--space-3);}
+      .soc-card ul{margin:var(--space-3) 0 0; padding-left:18px; font-size:15px; line-height:1.6;}
+      .soc-card li{margin-bottom:4px;}
+      .sku-num{
+        display:inline-grid; place-items:center;
+        width:38px; height:38px; border-radius:var(--radius-pill);
+        background:var(--anth-orange); color:#ffffff;
+        font-family:var(--font-heading); font-weight:700; font-size:16px;
+      }
+      .stars{color:var(--anth-orange); letter-spacing:1px;}
+    </style>
+  </head>
+  <body>
+    <header class="anth-nav">
+      <div class="anth-nav-inner">
+        <a href="./" style="font-family:var(--font-heading); font-weight:600; font-size:18px;">android-llm-bridge</a>
+        <nav aria-label="Primary" style="display:flex; align-items:center;">
+          <a href="index.html#features" data-i18n="nav.features">Features</a>
+          <a href="index.html#architecture" data-i18n="nav.architecture">Architecture</a>
+          <a href="index.html#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+          <a href="on-device-agent.html" data-i18n="nav.onDevice">On-device Agent</a>
+          <a href="on-device-model-selection.html" style="color:var(--anth-orange);" data-i18n="nav.model">Model selection</a>
+        </nav>
+        <div style="display:flex; align-items:center; gap:var(--space-3);">
+          <button class="lang-toggle" onclick="toggleLang()" id="langBtn" aria-label="Toggle language">中文</button>
+          <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge" data-i18n="nav.cta">View on GitHub</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="anth-hero">
+        <div class="anth-container" style="max-width:820px;">
+          <ul class="anth-breadcrumbs" style="margin-bottom:var(--space-4);">
+            <li><a href="index.html" data-i18n="bc.home">Home</a></li>
+            <li><a href="on-device-agent.html" data-i18n="bc.agent">On-device Agent</a></li>
+            <li data-i18n="bc.now">Model selection</li>
+          </ul>
+          <span class="pill" data-i18n="hero.badge">Design doc · M4+ reference</span>
+          <h1 style="margin-top:var(--space-4);">
+            <span class="lang-en">Picking the on-device model for a commercial Android product, worldwide.</span>
+            <span class="lang-zh">全球商用场景下，设备端 Agent 的模型怎么选。</span>
+          </h1>
+          <p class="anth-caption" data-i18n="hero.meta">Design note · 2026-04-21 · owner: sky · status: recommendation</p>
+          <p style="font-family:var(--font-body); font-size:20px; line-height:1.6; color:var(--anth-text-secondary); margin-top:var(--space-5);">
+            <span class="lang-en">Companion to the <a href="on-device-agent.html">on-device agent design note</a>. That page answers <em>why</em> and <em>how the host talks to the device</em>. This page answers <em>which model, and what hardware it needs</em> — for products shipped globally, with a 5–8 year lifetime, and legal teams that read licenses carefully.</span>
+            <span class="lang-zh">这是 <a href="on-device-agent.html">设备端 Agent 设计笔记</a>的配套文档。那一页讲"为什么做"和"host ↔ device 协议"；本文讲"设备端那个本地模型具体选哪个、需要什么硬件"—— 面向全球销售、5–8 年生命周期、法务会仔细看许可的硬件产品。</span>
+          </p>
+        </div>
+      </section>
+
+      <!-- TL;DR -->
+      <section class="anth-section" style="padding-top:var(--space-5);">
+        <div class="anth-container" style="max-width:820px;">
+          <div class="tldr-card">
+            <span class="pill" data-i18n="tldr.tag">TL;DR</span>
+            <h2 style="margin-top:var(--space-3); font-size:28px;" data-i18n="tldr.title">Phi-3.5-mini (MIT) + llama.cpp, on ARMv8.2 devices with ≥4 GB RAM.</h2>
+            <ul style="margin:var(--space-3) 0 0; padding-left:18px; font-size:16px; line-height:1.65;">
+              <li data-i18n="tldr.b1"><strong>Default:</strong> Microsoft Phi-3.5-mini Q4_K_M (~2.4 GB). MIT license, strong English reasoning, tool calling works.</li>
+              <li data-i18n="tldr.b2"><strong>RAM-constrained (≤3 GB):</strong> IBM Granite 3.2-2B (Apache 2.0). Explicit patent grant, enterprise-friendly.</li>
+              <li data-i18n="tldr.b3"><strong>Hard floor:</strong> ARMv8.2-A <code>dotprod</code> + 3 GB RAM + arm64 Android 10+. Below that, don't ship on-device agent — route everything to host.</li>
+              <li data-i18n="tldr.b4"><strong>Avoid for 5–8 year global SKUs:</strong> Gemma (unilateral policy changes), Llama (700M MAU clause), Mistral non-commercial, Apple OpenELM (distribution restricted).</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Constraints -->
+      <section class="anth-section">
+        <div class="anth-container" style="max-width:820px;">
+          <h2 data-i18n="c.title">Four constraints that rule everything else out.</h2>
+          <p data-i18n="c.lead">
+            Global + commercial + hardware is stricter than most LLM demos ever face. These four, in order, decide what is even on the table.
+          </p>
+          <ol style="font-size:17px; line-height:1.7;">
+            <li data-i18n="c.l1"><strong>Licensing legal can greenlight at a glance.</strong> No "700M MAU and we renegotiate" (Llama), no unilaterally-updatable Prohibited Use Policy (Gemma), no "Built with X" branding obligation. Once a device ships, you cannot chase changed terms back.</li>
+            <li data-i18n="c.l2"><strong>Hardware ceilings vary wildly.</strong> Entry-level devices have 2–4 GB RAM, mid 4–6, high 8+. SoCs span Snapdragon 8 to Allwinner A53 — many orders of magnitude apart. Industrial and kiosk builds usually have no GMS or AICore, which kicks Google's on-device stack out of contention.</li>
+            <li data-i18n="c.l3"><strong>What the device actually has to do.</strong> English is enough (host translates). Structured output + tool calling is the core job. Chinese and other languages are the host's problem, not the device's.</li>
+            <li data-i18n="c.l4"><strong>Product lifetime, not demo lifetime.</strong> Hardware lives 5–8 years in the field. Weights and licenses have to last that long. A model that depends on a vendor portal still being up in 2032 is already a risk.</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Candidates -->
+      <section class="anth-section anth-section--subtle">
+        <div class="anth-container anth-container--wide">
+          <div style="max-width:820px; margin:0 auto var(--space-6);">
+            <h2 data-i18n="m.title">Candidates worth shipping.</h2>
+            <p style="color:var(--anth-text-secondary);" data-i18n="m.lead">All rows below are MIT or Apache 2.0 — clean enough for a BOM review without a special legal cycle.</p>
+          </div>
+          <div style="overflow-x:auto;">
+          <table class="anth-table" style="max-width:1040px; margin:0 auto;">
+            <thead>
+              <tr>
+                <th data-i18n="m.col.model">Model</th>
+                <th data-i18n="m.col.params">Params</th>
+                <th data-i18n="m.col.lic">License</th>
+                <th style="text-align:center;" data-i18n="m.col.score">Clean</th>
+                <th data-i18n="m.col.cap">Capability</th>
+                <th data-i18n="m.col.fit">Hardware fit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="background:rgba(217,119,87,0.06);">
+                <td><strong>Phi-3.5-mini-instruct</strong></td>
+                <td>3.8B</td>
+                <td><strong>MIT</strong></td>
+                <td style="text-align:center;"><span class="stars">★★★★★</span></td>
+                <td data-i18n="m.r1.cap">Top-tier English reasoning at size, tool calling</td>
+                <td data-i18n="m.r1.fit">Q4_K_M ≈ 2.4 GB · 4 GB+ RAM</td>
+              </tr>
+              <tr>
+                <td><strong>Phi-4-mini-instruct</strong></td>
+                <td>3.8B</td>
+                <td><strong>MIT</strong></td>
+                <td style="text-align:center;"><span class="stars">★★★★★</span></td>
+                <td data-i18n="m.r2.cap">Stronger than 3.5, native function calling</td>
+                <td data-i18n="m.r2.fit">Same as above</td>
+              </tr>
+              <tr>
+                <td><strong>IBM Granite 3.2-2B</strong></td>
+                <td>2B</td>
+                <td><strong>Apache 2.0</strong></td>
+                <td style="text-align:center;"><span class="stars">★★★★★</span></td>
+                <td data-i18n="m.r3.cap">Enterprise-trained; structured output + tools are the focus</td>
+                <td data-i18n="m.r3.fit">Q4 ≈ 1.3 GB · 3 GB RAM works</td>
+              </tr>
+              <tr>
+                <td><strong>IBM Granite 3.2-8B</strong></td>
+                <td>8B</td>
+                <td><strong>Apache 2.0</strong></td>
+                <td style="text-align:center;"><span class="stars">★★★★★</span></td>
+                <td data-i18n="m.r4.cap">Strong</td>
+                <td data-i18n="m.r4.fit">Q4 ≈ 4.5 GB · 8 GB+ RAM</td>
+              </tr>
+              <tr>
+                <td><strong>SmolLM2-1.7B-Instruct</strong></td>
+                <td>1.7B</td>
+                <td><strong>Apache 2.0</strong></td>
+                <td style="text-align:center;"><span class="stars">★★★★★</span></td>
+                <td data-i18n="m.r5.cap">Modest, but fully open: weights + data + training code</td>
+                <td data-i18n="m.r5.fit">Q4 ≈ 1.0 GB · 2–3 GB RAM</td>
+              </tr>
+              <tr>
+                <td>Qwen2.5-3B-Instruct</td>
+                <td>3B</td>
+                <td>Apache 2.0</td>
+                <td style="text-align:center;"><span class="stars" style="opacity:0.7;">★★★★☆</span></td>
+                <td data-i18n="m.r6.cap">Excellent English, best-in-class tool calling</td>
+                <td data-i18n="m.r6.fit">Q4 ≈ 1.9 GB · Alibaba origin — extra legal question in some markets</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+
+          <div style="max-width:820px; margin:var(--space-7) auto 0;">
+            <h3 style="font-size:22px;" data-i18n="nm.title">Why these are <em>off</em> the table.</h3>
+            <table class="anth-table" style="margin-top:var(--space-4);">
+              <thead>
+                <tr>
+                  <th data-i18n="nm.col.model">Model</th>
+                  <th data-i18n="nm.col.lic">License</th>
+                  <th data-i18n="nm.col.why">Why not, for a 5–8 year global SKU</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Gemma 3 family</strong></td><td>Gemma Terms</td><td data-i18n="nm.r1">Google reserves the right to update the Prohibited Use Policy. Unsafe over a multi-year lifetime.</td></tr>
+                <tr><td><strong>Llama 3.2 1B / 3B</strong></td><td>Llama Community License</td><td data-i18n="nm.r2">700M MAU clause + AUP + "Built with Llama" labeling — every legal pass is a fresh review.</td></tr>
+                <tr><td><strong>Mistral Ministral 3B</strong></td><td>Research-only</td><td data-i18n="nm.r3">No commercial grant.</td></tr>
+                <tr><td><strong>OpenELM (Apple)</strong></td><td>Apple Sample Code License</td><td data-i18n="nm.r4">Redistribution restricted — cannot be shipped inside an app.</td></tr>
+                <tr><td><strong>Gemini Nano (AICore)</strong></td><td>Google AICore Terms</td><td data-i18n="nm.r5">Requires Pixel 8+ / AICore-blessed GMS device. Most commercial hardware does not qualify.</td></tr>
+              </tbody>
+            </table>
+
+            <aside class="anth-admonition" style="margin-top:var(--space-6);">
+              <h5 data-i18n="nm.mit.t">MIT vs Apache 2.0 for hardware vendors</h5>
+              <p data-i18n="nm.mit.b">MIT is the most minimal permissive license — no explicit patent grant, only an implicit one. Apache 2.0 <em>does</em> grant patents explicitly, <em>and</em> revokes if you sue someone over those patents. For hardware shipped worldwide and exposed to patent trolls, Apache 2.0's patent clause is the friendlier posture. MIT is still enough (Microsoft ships Phi under MIT deliberately) and every corporate legal team knows it.</p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hardware -->
+      <section class="anth-section">
+        <div class="anth-container" style="max-width:820px;">
+          <h2 data-i18n="hw.title">Hardware — not every Android SoC can host an LLM.</h2>
+
+          <h3 style="margin-top:var(--space-6);" data-i18n="hw.floor">Hard floor (below this, on-device agent is off the table)</h3>
+          <table class="anth-table">
+            <thead><tr><th data-i18n="hw.col.item">Item</th><th data-i18n="hw.col.min">Minimum</th><th data-i18n="hw.col.why">Why</th></tr></thead>
+            <tbody>
+              <tr><td data-i18n="hw.h1.t">ARM architecture</td><td><strong>ARMv8-A 64-bit</strong></td><td data-i18n="hw.h1.y">32-bit will not run</td></tr>
+              <tr><td data-i18n="hw.h2.t">ARMv8.2-A <code>dotprod</code> (<code>sdot</code> / <code>udot</code>)</td><td data-i18n="hw.h2.m"><strong>Required</strong></td><td data-i18n="hw.h2.y">Core of INT8 quantized matmul. Without it, INT8 is <em>slower</em> than FP32. This is the real go/no-go line.</td></tr>
+              <tr><td>RAM</td><td data-i18n="hw.h3.m">≥3 GB (1.7–2B model) · ≥4 GB (3B model)</td><td data-i18n="hw.h3.y">Weights + KV cache + Android + app</td></tr>
+              <tr><td data-i18n="hw.h4.t">Storage</td><td data-i18n="hw.h4.m">≥8 GB (leave 4 GB for model + OTA)</td><td data-i18n="hw.h4.y">Q4 weights are 1–2.5 GB</td></tr>
+              <tr><td data-i18n="hw.h5.t">Android version</td><td data-i18n="hw.h5.m"><strong>Android 10+, 64-bit userspace</strong></td><td data-i18n="hw.h5.y">NDK inference libs are arm64-v8a only</td></tr>
+            </tbody>
+          </table>
+
+          <h3 style="margin-top:var(--space-7);" data-i18n="hw.accel">Accelerators (nice to have, not required)</h3>
+          <table class="anth-table">
+            <thead><tr><th data-i18n="hw.col.item">Feature</th><th data-i18n="hw.col.speed">Speedup</th></tr></thead>
+            <tbody>
+              <tr><td>ARMv8.2 FP16 (<code>fphp</code> + <code>asimdhp</code>)</td><td data-i18n="hw.a1">1.5–2× for mixed precision</td></tr>
+              <tr><td>ARMv8.6-A <code>i8mm</code> (Cortex-A715 / X3+)</td><td data-i18n="hw.a2">2–3× more on INT8 matmul</td></tr>
+              <tr><td>ARMv9 SVE2</td><td data-i18n="hw.a3">Higher throughput than NEON</td></tr>
+              <tr><td data-i18n="hw.a4.t">NPU (Hexagon / MTK APU / RK NPU)</td><td data-i18n="hw.a4.s">3–10× on INT8, significantly lower power</td></tr>
+              <tr><td data-i18n="hw.a5.t">GPU OpenCL / Vulkan (Adreno / Mali)</td><td data-i18n="hw.a5.s">Moderate speedup</td></tr>
+            </tbody>
+          </table>
+
+          <h3 style="margin-top:var(--space-7);" data-i18n="hw.none">Explicitly not needed</h3>
+          <p data-i18n="hw.none.b">Root. GMS / Google Play Services. AICore / Gemini Nano. NNAPI (being deprecated — use vendor NPU SDKs directly). Network connectivity.</p>
+        </div>
+      </section>
+
+      <!-- SoC tiers -->
+      <section class="anth-section anth-section--subtle">
+        <div class="anth-container anth-container--wide">
+          <div style="max-width:820px; margin:0 auto var(--space-6);">
+            <h2 data-i18n="soc.title">Android SoCs in three tiers.</h2>
+            <p style="color:var(--anth-text-secondary);" data-i18n="soc.lead">A rough map of what to expect from a given SoC family. Test on actual hardware before freezing the BOM — silicon revisions matter.</p>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-5); max-width:1200px; margin:0 auto;">
+            <article class="soc-card">
+              <span class="pill pill-green" data-i18n="soc.a.tag">Tier A · smooth</span>
+              <h3><span class="lang-en">Runs Phi-3.5-mini (3.8B) comfortably</span><span class="lang-zh">流畅跑 Phi-3.5-mini (3.8B)</span></h3>
+              <p style="font-size:14px; color:var(--anth-text-secondary);" data-i18n="soc.a.sig">Cortex-A76/A78 big cores + A55, ARMv8.2 dotprod + FP16, often i8mm, with NPU, 4–8 GB RAM</p>
+              <ul>
+                <li><strong>Qualcomm:</strong> SD 6 Gen 1, 7 Gen 1, 8-series, <strong>QCM6490</strong> (IoT), QCM8550</li>
+                <li><strong>MediaTek:</strong> Dimensity 700 / 800 / 900 / 9000, Helio G99</li>
+                <li><strong>Rockchip:</strong> <strong>RK3588 / RK3588S</strong> (6 TOPS NPU — industrial / edge flagship)</li>
+                <li><strong>Amlogic:</strong> A311D2, S905X4</li>
+              </ul>
+              <p style="font-size:13px; color:var(--anth-text-secondary); margin-top:var(--space-4);" data-i18n="soc.a.perf">Measured Phi-3.5-mini Q4_K_M: 6–15 tok/s on CPU, 20–40 tok/s on Hexagon / NPU.</p>
+            </article>
+
+            <article class="soc-card">
+              <span class="pill" style="background:rgba(217,119,87,0.22); color:#a8502f;" data-i18n="soc.b.tag">Tier B · feasible</span>
+              <h3><span class="lang-en">Fits Granite 3.2-2B or SmolLM2-1.7B</span><span class="lang-zh">跑 Granite 3.2-2B 或 SmolLM2-1.7B</span></h3>
+              <p style="font-size:14px; color:var(--anth-text-secondary);" data-i18n="soc.b.sig">All-A55 (dotprod + FP16, no big cores) or A73+A53, 3–4 GB RAM, weak or no NPU</p>
+              <ul>
+                <li><strong>Qualcomm:</strong> QCM4290, SD 4 Gen 2, SD 680 / 685</li>
+                <li><strong>MediaTek:</strong> Helio G85, G37</li>
+                <li><strong>Rockchip:</strong> RK3566 / RK3568 (0.8 TOPS NPU)</li>
+                <li><strong>UNISOC:</strong> T610 / T618 / T620 / T606 / T616 (global mid-tier workhorses)</li>
+              </ul>
+              <p style="font-size:13px; color:var(--anth-text-secondary); margin-top:var(--space-4);" data-i18n="soc.b.perf">2B Q4 on CPU: 3–7 tok/s. Phi-3.5-mini fits but 4 GB RAM frequently OOMs.</p>
+            </article>
+
+            <article class="soc-card">
+              <span class="pill pill-gray" data-i18n="soc.c.tag">Tier C · skip</span>
+              <h3><span class="lang-en">Do not ship on-device LLM here</span><span class="lang-zh">不要上 on-device LLM</span></h3>
+              <p style="font-size:14px; color:var(--anth-text-secondary);" data-i18n="soc.c.sig">Cortex-A53 only (<strong>no dotprod</strong>) or older, or RAM &lt; 3 GB</p>
+              <ul>
+                <li><strong>Qualcomm:</strong> SD 439 / 450 / 460 and older 4xx</li>
+                <li><strong>MediaTek:</strong> MT6765 / 6762, Helio A22 / A25</li>
+                <li><strong>UNISOC:</strong> SC9863A</li>
+                <li><strong>Rockchip:</strong> RK3326, PX30, RK3399 (A72+A53 — transitional)</li>
+                <li><strong>Allwinner:</strong> A133, A64, H616 — all A53, skip</li>
+              </ul>
+              <p style="font-size:13px; color:var(--anth-text-secondary); margin-top:var(--space-4);" data-i18n="soc.c.perf">It technically boots, but 1–2 tok/s is not an interactive experience. Route to host via adb / ssh / UART instead.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- SKU planning -->
+      <section class="anth-section">
+        <div class="anth-container anth-container--wide">
+          <div style="max-width:820px; margin:0 auto var(--space-6);">
+            <h2 data-i18n="sku.title">Plan three SKUs. Don't try to pick one model for everything.</h2>
+            <p style="color:var(--anth-text-secondary);" data-i18n="sku.lead">Hardware lines span tiers. Map each tier to the model it can actually run, write the requirements into the BOM, and fall back to host-only on the lowest end.</p>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-5); max-width:1200px; margin:0 auto;">
+            <article class="soc-card">
+              <p><span class="sku-num">1</span></p>
+              <h3><span class="lang-en">SKU 1 · AI-Ready</span><span class="lang-zh">SKU 1 · AI-Ready</span></h3>
+              <p style="font-size:14px; color:var(--anth-text-secondary);" data-i18n="sku.1.audience">High-end / current generation</p>
+              <ul>
+                <li data-i18n="sku.1.l1">ARMv8.2-A + <code>dotprod</code> + FP16</li>
+                <li data-i18n="sku.1.l2">≥4 GB RAM (8 GB recommended)</li>
+                <li data-i18n="sku.1.l3">≥8 GB eMMC / UFS</li>
+                <li>Android 11+</li>
+                <li data-i18n="sku.1.l5">NPU (Hexagon / RK NPU)</li>
+              </ul>
+              <p style="margin-top:var(--space-4); font-size:14px;"><strong data-i18n="sku.ships">Ships:</strong> <span data-i18n="sku.1.ships">Phi-3.5-mini (MIT) GGUF Q4_K_M</span></p>
+              <p style="font-size:13px; color:var(--anth-text-secondary);" data-i18n="sku.1.soc">QCM6490 · SD 6 Gen 1 · Dimensity 700+ · RK3588 · A311D2</p>
+            </article>
+
+            <article class="soc-card">
+              <p><span class="sku-num">2</span></p>
+              <h3><span class="lang-en">SKU 2 · Light AI</span><span class="lang-zh">SKU 2 · Light AI</span></h3>
+              <p style="font-size:14px; color:var(--anth-text-secondary);" data-i18n="sku.2.audience">Mid-range</p>
+              <ul>
+                <li data-i18n="sku.2.l1">ARMv8.2-A + <code>dotprod</code> (no pure A53)</li>
+                <li data-i18n="sku.2.l2">≥3 GB RAM</li>
+                <li data-i18n="sku.2.l3">≥4 GB eMMC</li>
+                <li>Android 10+</li>
+                <li data-i18n="sku.2.l5">NPU optional</li>
+              </ul>
+              <p style="margin-top:var(--space-4); font-size:14px;"><strong data-i18n="sku.ships">Ships:</strong> <span data-i18n="sku.2.ships">IBM Granite 3.2-2B <em>or</em> SmolLM2-1.7B (Apache 2.0)</span></p>
+              <p style="font-size:13px; color:var(--anth-text-secondary);" data-i18n="sku.2.soc">QCM4290 · SD 4 Gen 2 · Helio G85/G99 · UNISOC T618 · RK3566</p>
+            </article>
+
+            <article class="soc-card">
+              <p><span class="sku-num">3</span></p>
+              <h3><span class="lang-en">SKU 3 · Host-only</span><span class="lang-zh">SKU 3 · 纯 Host</span></h3>
+              <p style="font-size:14px; color:var(--anth-text-secondary);" data-i18n="sku.3.audience">Entry-level / legacy</p>
+              <p style="margin-top:var(--space-3); font-size:15px; line-height:1.65;" data-i18n="sku.3.body">
+                Pure A53 or &lt; 3 GB RAM does not ship on-device agent. Host owns the loop — device streams logs over adb / ssh / UART. For "daily checks, remote diagnosis, failure reports" this is usually more than enough.
+              </p>
+              <p style="margin-top:var(--space-4); font-size:14px;"><strong data-i18n="sku.ships">Ships:</strong> <span data-i18n="sku.3.ships">No local model. Uses alb host transports only.</span></p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- Inference stack -->
+      <section class="anth-section anth-section--subtle">
+        <div class="anth-container" style="max-width:820px;">
+          <h2 data-i18n="inf.title">The inference stack.</h2>
+          <table class="anth-table">
+            <thead><tr><th data-i18n="inf.col.layer">Layer</th><th data-i18n="inf.col.pick">Pick</th><th data-i18n="inf.col.lic">License</th><th data-i18n="inf.col.note">Note</th></tr></thead>
+            <tbody>
+              <tr><td data-i18n="inf.r1.l"><strong>Engine (default)</strong></td><td><strong>llama.cpp</strong></td><td>MIT</td><td data-i18n="inf.r1.n">ARM NEON / dotprod / i8mm tuning is mature. GGUF is the universal format. Qualcomm QNN fork in progress.</td></tr>
+              <tr><td data-i18n="inf.r2.l">Engine (NPU-first)</td><td>ONNX Runtime Mobile</td><td>MIT</td><td data-i18n="inf.r2.n">Hexagon / QNN EP is the most mature. Official Phi support.</td></tr>
+              <tr><td data-i18n="inf.r3.l">Engine (PyTorch)</td><td>ExecuTorch</td><td>BSD</td><td data-i18n="inf.r3.n">Meta's new mobile stack. Useful when you already live in PyTorch.</td></tr>
+              <tr><td data-i18n="inf.r4.l">Engine (Google ecosystem)</td><td>LiteRT (ex-TFLite)</td><td>Apache 2.0</td><td data-i18n="inf.r4.n">Phi / Granite tooling is further along in llama.cpp. LiteRT is best for Gemma, which we are not shipping.</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:var(--space-5);" data-i18n="inf.recco"><strong>Recommended combo:</strong> <strong>llama.cpp + GGUF Q4_K_M</strong>. Runs everywhere with small code footprint. If a specific SKU has Hexagon and you want peak throughput, ship a separate ONNX Runtime + QNN variant for that one.</p>
+        </div>
+      </section>
+
+      <!-- 5-second test -->
+      <section class="anth-section">
+        <div class="anth-container" style="max-width:820px;">
+          <h2 data-i18n="test.title">Five-second field check.</h2>
+          <p data-i18n="test.lead">Given an engineering sample, four commands decide whether on-device agent is viable:</p>
+          <pre class="anth-code"><code>adb shell cat /proc/cpuinfo | grep -E "asimddp|fphp|i8mm|sve"
+adb shell cat /proc/meminfo | grep MemTotal
+adb shell getprop ro.build.version.release    # need ≥ 10
+adb shell getprop ro.product.cpu.abi          # need arm64-v8a</code></pre>
+          <ul style="margin-top:var(--space-4); font-size:16px; line-height:1.65;">
+            <li data-i18n="test.l1"><strong><code>asimddp</code></strong> (= <code>dotprod</code>) — present means INT8 inference is on the table. Absent → tier C.</li>
+            <li data-i18n="test.l2"><strong><code>fphp</code> + <code>asimdhp</code></strong> — FP16 available, another 1.5–2× speedup.</li>
+            <li data-i18n="test.l3"><strong><code>i8mm</code></strong> — top-shelf (Cortex-A715 / X3+). Rare in shipping products today.</li>
+            <li data-i18n="test.l4"><strong><code>sve</code> / <code>sve2</code></strong> — ARMv9. Effectively absent from Android devices right now.</li>
+            <li data-i18n="test.l5"><strong>MemTotal ≥ 3.5 GB</strong> → tier B starting point. <strong>≥ 7 GB</strong> → tier A.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Bottom line -->
+      <section class="anth-section anth-section--subtle">
+        <div class="anth-container" style="max-width:820px;">
+          <blockquote class="anth-quote" data-i18n="bl.quote">
+            For a global commercial SKU with a 5–8 year lifetime: Phi-3.5-mini (MIT) + llama.cpp, on ARMv8.2 devices with ≥ 4 GB RAM. Squeeze down to Granite 3.2-2B (Apache 2.0) when RAM is tight. Below ARMv8.2 <code>dotprod</code>, don't bother — route to host.
+          </blockquote>
+          <p style="margin-top:var(--space-5);" data-i18n="bl.body">
+            Chinese and other languages are handled by the host-side LLM (Qwen2.5-3B, Claude, GPT). The device only speaks structured English. Clean division of labor, no language-training tax on the device fleet.
+          </p>
+        </div>
+      </section>
+
+      <section class="anth-section">
+        <div class="anth-container" style="text-align:center;">
+          <h2 data-i18n="cta.title">Related reading</h2>
+          <p style="color:var(--anth-text-secondary); max-width:560px; margin:var(--space-3) auto var(--space-6);" data-i18n="cta.body">The full Markdown version of this note (with verbatim source, tags, status) lives next to the HTML.</p>
+          <div style="display:flex; gap:var(--space-3); justify-content:center; flex-wrap:wrap;">
+            <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/on-device-model-selection.md" data-i18n="cta.b1">Full Markdown source</a>
+            <a class="anth-button anth-button--ghost" href="on-device-agent.html" data-i18n="cta.b2">Back to on-device agent</a>
+            <a class="anth-button anth-button--ghost" href="index.html" data-i18n="cta.b3">Home</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="anth-footer">
+      <div class="anth-footer-grid">
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.product">Product</h5>
+          <a href="index.html#features" data-i18n="ft.p1">Features</a>
+          <a href="index.html#methods" data-i18n="ft.p2">Methods</a>
+          <a href="index.html#architecture" data-i18n="ft.p3">Architecture</a>
+          <a href="index.html#roadmap" data-i18n="ft.p4">Roadmap</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.docs">Docs</h5>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/00-overview.md" data-i18n="ft.d1">Overview</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md" data-i18n="ft.d2">Install</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/agent.md" data-i18n="ft.d3">Agent layer</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.vision">Vision</h5>
+          <a href="on-device-agent.html" data-i18n="ft.v1">On-device agent</a>
+          <a href="on-device-model-selection.html" data-i18n="ft.v2">Model selection</a>
+          <a href="index.html#roadmap" data-i18n="ft.v3">Roadmap</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.community">Community</h5>
+          <a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
+          <a href="https://github.com/TbusOS/android-llm-bridge/issues">Issues</a>
+        </div>
+        <div class="anth-footer-group">
+          <h5 data-i18n="ft.legal">License</h5>
+          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">MIT</a>
+        </div>
+      </div>
+      <div class="anth-footer-legal">
+        <span data-i18n="ft.copy">© 2026 android-llm-bridge contributors · open source · MIT</span>
+        <span class="anth-social">
+          <a href="https://github.com/TbusOS/android-llm-bridge" aria-label="GitHub" style="color:inherit; text-decoration:none;">GitHub</a>
+        </span>
+      </div>
+    </footer>
+
+    <script>
+      const I18N = {
+        "nav.features":"Features","nav.architecture":"Architecture","nav.roadmap":"Roadmap","nav.onDevice":"On-device Agent","nav.model":"Model selection","nav.cta":"View on GitHub",
+        "bc.home":"Home","bc.agent":"On-device Agent","bc.now":"Model selection",
+        "hero.badge":"Design doc · M4+ reference","hero.meta":"Design note · 2026-04-21 · owner: sky · status: recommendation",
+        "tldr.tag":"TL;DR",
+        "tldr.title":"Phi-3.5-mini (MIT) + llama.cpp, on ARMv8.2 devices with ≥ 4 GB RAM.",
+        "tldr.b1":"Default: Microsoft Phi-3.5-mini Q4_K_M (~2.4 GB). MIT license, strong English reasoning, tool calling works.",
+        "tldr.b2":"RAM-constrained (≤ 3 GB): IBM Granite 3.2-2B (Apache 2.0). Explicit patent grant, enterprise-friendly.",
+        "tldr.b3":"Hard floor: ARMv8.2-A dotprod + 3 GB RAM + arm64 Android 10+. Below that, don't ship on-device agent — route everything to host.",
+        "tldr.b4":"Avoid for 5–8 year global SKUs: Gemma (unilateral policy changes), Llama (700M MAU clause), Mistral non-commercial, Apple OpenELM (distribution restricted).",
+        "c.title":"Four constraints that rule everything else out.",
+        "c.lead":"Global + commercial + hardware is stricter than most LLM demos ever face. These four, in order, decide what is even on the table.",
+        "c.l1":"Licensing legal can greenlight at a glance. No \"700M MAU and we renegotiate\" (Llama), no unilaterally-updatable Prohibited Use Policy (Gemma), no \"Built with X\" branding obligation. Once a device ships, you cannot chase changed terms back.",
+        "c.l2":"Hardware ceilings vary wildly. Entry-level devices have 2–4 GB RAM, mid 4–6, high 8+. SoCs span Snapdragon 8 to Allwinner A53 — many orders of magnitude apart. Industrial and kiosk builds usually have no GMS or AICore, which kicks Google's on-device stack out of contention.",
+        "c.l3":"What the device actually has to do. English is enough (host translates). Structured output + tool calling is the core job. Chinese and other languages are the host's problem, not the device's.",
+        "c.l4":"Product lifetime, not demo lifetime. Hardware lives 5–8 years in the field. Weights and licenses have to last that long. A model that depends on a vendor portal still being up in 2032 is already a risk.",
+        "m.title":"Candidates worth shipping.",
+        "m.lead":"All rows below are MIT or Apache 2.0 — clean enough for a BOM review without a special legal cycle.",
+        "m.col.model":"Model","m.col.params":"Params","m.col.lic":"License","m.col.score":"Clean","m.col.cap":"Capability","m.col.fit":"Hardware fit",
+        "m.r1.cap":"Top-tier English reasoning at size, tool calling","m.r1.fit":"Q4_K_M ≈ 2.4 GB · 4 GB+ RAM",
+        "m.r2.cap":"Stronger than 3.5, native function calling","m.r2.fit":"Same as above",
+        "m.r3.cap":"Enterprise-trained; structured output + tools are the focus","m.r3.fit":"Q4 ≈ 1.3 GB · 3 GB RAM works",
+        "m.r4.cap":"Strong","m.r4.fit":"Q4 ≈ 4.5 GB · 8 GB+ RAM",
+        "m.r5.cap":"Modest, but fully open: weights + data + training code","m.r5.fit":"Q4 ≈ 1.0 GB · 2–3 GB RAM",
+        "m.r6.cap":"Excellent English, best-in-class tool calling","m.r6.fit":"Q4 ≈ 1.9 GB · Alibaba origin — extra legal question in some markets",
+        "nm.title":"Why these are off the table.",
+        "nm.col.model":"Model","nm.col.lic":"License","nm.col.why":"Why not, for a 5–8 year global SKU",
+        "nm.r1":"Google reserves the right to update the Prohibited Use Policy. Unsafe over a multi-year lifetime.",
+        "nm.r2":"700M MAU clause + AUP + \"Built with Llama\" labeling — every legal pass is a fresh review.",
+        "nm.r3":"No commercial grant.",
+        "nm.r4":"Redistribution restricted — cannot be shipped inside an app.",
+        "nm.r5":"Requires Pixel 8+ / AICore-blessed GMS device. Most commercial hardware does not qualify.",
+        "nm.mit.t":"MIT vs Apache 2.0 for hardware vendors",
+        "nm.mit.b":"MIT is the most minimal permissive license — no explicit patent grant, only an implicit one. Apache 2.0 does grant patents explicitly, and revokes if you sue someone over those patents. For hardware shipped worldwide and exposed to patent trolls, Apache 2.0's patent clause is the friendlier posture. MIT is still enough (Microsoft ships Phi under MIT deliberately) and every corporate legal team knows it.",
+        "hw.title":"Hardware — not every Android SoC can host an LLM.",
+        "hw.floor":"Hard floor (below this, on-device agent is off the table)",
+        "hw.col.item":"Item","hw.col.min":"Minimum","hw.col.why":"Why","hw.col.speed":"Speedup",
+        "hw.h1.t":"ARM architecture","hw.h1.y":"32-bit will not run",
+        "hw.h2.m":"Required","hw.h2.y":"Core of INT8 quantized matmul. Without it, INT8 is slower than FP32. This is the real go/no-go line.",
+        "hw.h3.m":"≥ 3 GB (1.7–2B model) · ≥ 4 GB (3B model)","hw.h3.y":"Weights + KV cache + Android + app",
+        "hw.h4.t":"Storage","hw.h4.m":"≥ 8 GB (leave 4 GB for model + OTA)","hw.h4.y":"Q4 weights are 1–2.5 GB",
+        "hw.h5.t":"Android version","hw.h5.m":"Android 10+, 64-bit userspace","hw.h5.y":"NDK inference libs are arm64-v8a only",
+        "hw.accel":"Accelerators (nice to have, not required)",
+        "hw.a1":"1.5–2× for mixed precision","hw.a2":"2–3× more on INT8 matmul","hw.a3":"Higher throughput than NEON",
+        "hw.a4.t":"NPU (Hexagon / MTK APU / RK NPU)","hw.a4.s":"3–10× on INT8, significantly lower power",
+        "hw.a5.t":"GPU OpenCL / Vulkan (Adreno / Mali)","hw.a5.s":"Moderate speedup",
+        "hw.none":"Explicitly not needed",
+        "hw.none.b":"Root. GMS / Google Play Services. AICore / Gemini Nano. NNAPI (being deprecated — use vendor NPU SDKs directly). Network connectivity.",
+        "soc.title":"Android SoCs in three tiers.",
+        "soc.lead":"A rough map of what to expect from a given SoC family. Test on actual hardware before freezing the BOM — silicon revisions matter.",
+        "soc.a.tag":"Tier A · smooth",
+        "soc.a.sig":"Cortex-A76/A78 big cores + A55, ARMv8.2 dotprod + FP16, often i8mm, with NPU, 4–8 GB RAM",
+        "soc.a.perf":"Measured Phi-3.5-mini Q4_K_M: 6–15 tok/s on CPU, 20–40 tok/s on Hexagon / NPU.",
+        "soc.b.tag":"Tier B · feasible",
+        "soc.b.sig":"All-A55 (dotprod + FP16, no big cores) or A73+A53, 3–4 GB RAM, weak or no NPU",
+        "soc.b.perf":"2B Q4 on CPU: 3–7 tok/s. Phi-3.5-mini fits but 4 GB RAM frequently OOMs.",
+        "soc.c.tag":"Tier C · skip",
+        "soc.c.sig":"Cortex-A53 only (no dotprod) or older, or RAM < 3 GB",
+        "soc.c.perf":"It technically boots, but 1–2 tok/s is not an interactive experience. Route to host via adb / ssh / UART instead.",
+        "sku.title":"Plan three SKUs. Don't try to pick one model for everything.",
+        "sku.lead":"Hardware lines span tiers. Map each tier to the model it can actually run, write the requirements into the BOM, and fall back to host-only on the lowest end.",
+        "sku.ships":"Ships:",
+        "sku.1.audience":"High-end / current generation",
+        "sku.1.l1":"ARMv8.2-A + dotprod + FP16","sku.1.l2":"≥ 4 GB RAM (8 GB recommended)","sku.1.l3":"≥ 8 GB eMMC / UFS","sku.1.l5":"NPU (Hexagon / RK NPU)",
+        "sku.1.ships":"Phi-3.5-mini (MIT) GGUF Q4_K_M",
+        "sku.1.soc":"QCM6490 · SD 6 Gen 1 · Dimensity 700+ · RK3588 · A311D2",
+        "sku.2.audience":"Mid-range",
+        "sku.2.l1":"ARMv8.2-A + dotprod (no pure A53)","sku.2.l2":"≥ 3 GB RAM","sku.2.l3":"≥ 4 GB eMMC","sku.2.l5":"NPU optional",
+        "sku.2.ships":"IBM Granite 3.2-2B or SmolLM2-1.7B (Apache 2.0)",
+        "sku.2.soc":"QCM4290 · SD 4 Gen 2 · Helio G85/G99 · UNISOC T618 · RK3566",
+        "sku.3.audience":"Entry-level / legacy",
+        "sku.3.body":"Pure A53 or < 3 GB RAM does not ship on-device agent. Host owns the loop — device streams logs over adb / ssh / UART. For \"daily checks, remote diagnosis, failure reports\" this is usually more than enough.",
+        "sku.3.ships":"No local model. Uses alb host transports only.",
+        "inf.title":"The inference stack.",
+        "inf.col.layer":"Layer","inf.col.pick":"Pick","inf.col.lic":"License","inf.col.note":"Note",
+        "inf.r1.l":"Engine (default)","inf.r1.n":"ARM NEON / dotprod / i8mm tuning is mature. GGUF is the universal format. Qualcomm QNN fork in progress.",
+        "inf.r2.l":"Engine (NPU-first)","inf.r2.n":"Hexagon / QNN EP is the most mature. Official Phi support.",
+        "inf.r3.l":"Engine (PyTorch)","inf.r3.n":"Meta's new mobile stack. Useful when you already live in PyTorch.",
+        "inf.r4.l":"Engine (Google ecosystem)","inf.r4.n":"Phi / Granite tooling is further along in llama.cpp. LiteRT is best for Gemma, which we are not shipping.",
+        "inf.recco":"Recommended combo: llama.cpp + GGUF Q4_K_M. Runs everywhere with small code footprint. If a specific SKU has Hexagon and you want peak throughput, ship a separate ONNX Runtime + QNN variant for that one.",
+        "test.title":"Five-second field check.",
+        "test.lead":"Given an engineering sample, four commands decide whether on-device agent is viable:",
+        "test.l1":"asimddp (= dotprod) — present means INT8 inference is on the table. Absent → tier C.",
+        "test.l2":"fphp + asimdhp — FP16 available, another 1.5–2× speedup.",
+        "test.l3":"i8mm — top-shelf (Cortex-A715 / X3+). Rare in shipping products today.",
+        "test.l4":"sve / sve2 — ARMv9. Effectively absent from Android devices right now.",
+        "test.l5":"MemTotal ≥ 3.5 GB → tier B starting point. ≥ 7 GB → tier A.",
+        "bl.quote":"For a global commercial SKU with a 5–8 year lifetime: Phi-3.5-mini (MIT) + llama.cpp, on ARMv8.2 devices with ≥ 4 GB RAM. Squeeze down to Granite 3.2-2B (Apache 2.0) when RAM is tight. Below ARMv8.2 dotprod, don't bother — route to host.",
+        "bl.body":"Chinese and other languages are handled by the host-side LLM (Qwen2.5-3B, Claude, GPT). The device only speaks structured English. Clean division of labor, no language-training tax on the device fleet.",
+        "cta.title":"Related reading",
+        "cta.body":"The full Markdown version of this note (with verbatim source, tags, status) lives next to the HTML.",
+        "cta.b1":"Full Markdown source","cta.b2":"Back to on-device agent","cta.b3":"Home",
+        "ft.product":"Product","ft.p1":"Features","ft.p2":"Methods","ft.p3":"Architecture","ft.p4":"Roadmap",
+        "ft.docs":"Docs","ft.d1":"Overview","ft.d2":"Install","ft.d3":"Agent layer",
+        "ft.vision":"Vision","ft.v1":"On-device agent","ft.v2":"Model selection","ft.v3":"Roadmap",
+        "ft.community":"Community","ft.legal":"License",
+        "ft.copy":"© 2026 android-llm-bridge contributors · open source · MIT"
+      };
+      const ZH = {
+        "nav.features":"特性","nav.architecture":"架构","nav.roadmap":"路线图","nav.onDevice":"设备端 Agent","nav.model":"模型选型","nav.cta":"GitHub",
+        "bc.home":"首页","bc.agent":"设备端 Agent","bc.now":"模型选型",
+        "hero.badge":"设计笔记 · M4+ 参考","hero.meta":"设计笔记 · 2026-04-21 · 作者：sky · 状态：recommendation",
+        "tldr.tag":"一句话结论",
+        "tldr.title":"Phi-3.5-mini (MIT) + llama.cpp，跑在 ARMv8.2、≥ 4 GB RAM 的设备上。",
+        "tldr.b1":"默认：Microsoft Phi-3.5-mini Q4_K_M（~2.4 GB）。MIT 许可、英文推理强、tool calling 可用。",
+        "tldr.b2":"RAM 受限（≤ 3 GB）：IBM Granite 3.2-2B（Apache 2.0）。显式专利授权，企业法务好过。",
+        "tldr.b3":"硬门槛：ARMv8.2-A dotprod + 3 GB RAM + arm64 Android 10+。不达标不要上 on-device agent，全部走宿主端。",
+        "tldr.b4":"5–8 年全球 SKU 慎用：Gemma（条款可单方变动）、Llama（700M MAU 条款）、Mistral 非商用、Apple OpenELM（分发受限）。",
+        "c.title":"四条约束，把大多数候选过滤掉。",
+        "c.lead":"全球 + 商用 + 硬件，比大多数 LLM demo 场景严得多。下面四条决定了什么东西能上桌。",
+        "c.l1":"许可要干净到法务一眼放行。不能有 \"700M MAU 要另谈\"（Llama）、不能有事后可单方改的 Prohibited Use Policy（Gemma）、不能有 \"Built with X\" 品牌标注义务。硬件一旦出厂，条款变了你也追不回。",
+        "c.l2":"硬件天花板差异极大。入门 2–4 GB RAM，中端 4–6，高端 8+。SoC 从骁龙 8 系到 Allwinner A53 跨几个数量级。工控 / 车机 / IoT 多数没有 GMS 或 AICore —— Google 的 on-device 方案直接出局。",
+        "c.l3":"设备真正要干的事。英文够用（宿主翻译）。核心任务是结构化输出 + tool calling。中文和其他语言是宿主问题，不是设备问题。",
+        "c.l4":"产品生命周期不是 demo 生命周期。硬件在现场活 5–8 年，权重和许可也要撑这么久。依赖某个厂商门户 2032 年还活着的模型，就是一个风险。",
+        "m.title":"值得出货的候选。",
+        "m.lead":"下面所有行要么 MIT 要么 Apache 2.0 —— 法务过 BOM 时不用单独搞一轮审查。",
+        "m.col.model":"模型","m.col.params":"参数","m.col.lic":"许可","m.col.score":"干净度","m.col.cap":"能力","m.col.fit":"硬件适配",
+        "m.r1.cap":"同规模英文推理头部，tool calling 可用","m.r1.fit":"Q4_K_M ≈ 2.4 GB · 4 GB+ RAM",
+        "m.r2.cap":"比 3.5 更强，原生 function calling","m.r2.fit":"同上",
+        "m.r3.cap":"企业级训练，结构化输出 + tools 是重点","m.r3.fit":"Q4 ≈ 1.3 GB · 3 GB RAM 够",
+        "m.r4.cap":"强","m.r4.fit":"Q4 ≈ 4.5 GB · 8 GB+ RAM",
+        "m.r5.cap":"能力一般，但权重 + 数据 + 训练代码全开","m.r5.fit":"Q4 ≈ 1.0 GB · 2–3 GB RAM",
+        "m.r6.cap":"英文也强，tool calling 业界最好","m.r6.fit":"Q4 ≈ 1.9 GB · Alibaba 出身 —— 部分市场法务要多问一轮",
+        "nm.title":"为什么这些不上桌。",
+        "nm.col.model":"模型","nm.col.lic":"许可","nm.col.why":"5–8 年全球 SKU 为什么不合适",
+        "nm.r1":"Google 保留单方更新 Prohibited Use Policy 的权利。多年生命周期下不安全。",
+        "nm.r2":"700M MAU 条款 + AUP + \"Built with Llama\" 标注 —— 每次法务都要重新评估。",
+        "nm.r3":"不授予商用权。",
+        "nm.r4":"分发受限 —— 不能随 app 一起上架。",
+        "nm.r5":"需要 Pixel 8+ / 带 AICore 的 GMS 设备。多数商用硬件不符合。",
+        "nm.mit.t":"硬件厂商视角：MIT vs Apache 2.0",
+        "nm.mit.b":"MIT 是最简洁的宽松许可 —— 没有显式专利授权，只有默示。Apache 2.0 显式授予专利，且有专利反制条款（你告我专利，授权自动失效）。对\"全球出货容易被专利钓鱼\"的硬件，Apache 2.0 的专利条款更友好。MIT 也完全够用（微软主动选了 MIT 发 Phi），每家企业法务都熟。",
+        "hw.title":"硬件 —— 不是所有安卓 SoC 都能跑。",
+        "hw.floor":"硬门槛（达不到直接 on-device agent 出局）",
+        "hw.col.item":"项","hw.col.min":"最低","hw.col.why":"原因","hw.col.speed":"加速",
+        "hw.h1.t":"ARM 架构","hw.h1.y":"32-bit 跑不起来",
+        "hw.h2.m":"必须","hw.h2.y":"INT8 量化矩阵乘的核心。没有它，INT8 比 FP32 还慢。这是能/不能的分水岭。",
+        "hw.h3.m":"≥ 3 GB（跑 1.7–2B）· ≥ 4 GB（跑 3B）","hw.h3.y":"权重 + KV cache + Android + app",
+        "hw.h4.t":"存储","hw.h4.m":"≥ 8 GB（留 4 GB 给模型 + OTA）","hw.h4.y":"Q4 权重 1–2.5 GB",
+        "hw.h5.t":"Android 版本","hw.h5.m":"Android 10+，64-bit userspace","hw.h5.y":"NDK 推理库只支持 arm64-v8a",
+        "hw.accel":"加速项（有则快，无不影响）",
+        "hw.a1":"混合精度快 1.5–2×","hw.a2":"INT8 矩阵乘再快 2–3×","hw.a3":"比 NEON 吞吐更高",
+        "hw.a4.t":"NPU（Hexagon / MTK APU / RK NPU）","hw.a4.s":"INT8 再快 3–10×，显著省电",
+        "hw.a5.t":"GPU OpenCL / Vulkan（Adreno / Mali）","hw.a5.s":"中等提速",
+        "hw.none":"明确不需要",
+        "hw.none.b":"Root。GMS / Google Play Services。AICore / Gemini Nano。NNAPI（正在弃用 —— 直接用厂商 NPU SDK）。联网。",
+        "soc.title":"安卓 SoC 分三档。",
+        "soc.lead":"对 SoC 家族的粗略映射。冻 BOM 前拿实际硬件跑一下 —— 硅片 revision 会有差别。",
+        "soc.a.tag":"A 档 · 流畅",
+        "soc.a.sig":"Cortex-A76/A78 大核 + A55，ARMv8.2 dotprod + FP16，常带 i8mm，带 NPU，4–8 GB RAM",
+        "soc.a.perf":"实测 Phi-3.5-mini Q4_K_M：CPU 6–15 tok/s，Hexagon / NPU 上 20–40 tok/s。",
+        "soc.b.tag":"B 档 · 可行",
+        "soc.b.sig":"全 A55（dotprod + FP16，无大核）或 A73+A53，3–4 GB RAM，NPU 弱或无",
+        "soc.b.perf":"2B Q4 CPU：3–7 tok/s。Phi-3.5-mini 能装下但 4 GB RAM 经常 OOM。",
+        "soc.c.tag":"C 档 · 跳过",
+        "soc.c.sig":"仅 Cortex-A53（无 dotprod）或更老，或 RAM < 3 GB",
+        "soc.c.perf":"硬跑能启动，但 1–2 tok/s 根本没法做交互。走 adb / ssh / UART 上宿主端。",
+        "sku.title":"按三条 SKU 规划。不要一个模型打天下。",
+        "sku.lead":"硬件产品线跨多档位。把每档映射到它真能跑的模型，要求写进 BOM，最低档退到\"纯 host\"即可。",
+        "sku.ships":"装载：",
+        "sku.1.audience":"高端 / 现款",
+        "sku.1.l1":"ARMv8.2-A + dotprod + FP16","sku.1.l2":"≥ 4 GB RAM（推荐 8 GB）","sku.1.l3":"≥ 8 GB eMMC / UFS","sku.1.l5":"NPU（Hexagon / RK NPU）",
+        "sku.1.ships":"Phi-3.5-mini (MIT) GGUF Q4_K_M",
+        "sku.1.soc":"QCM6490 · SD 6 Gen 1 · Dimensity 700+ · RK3588 · A311D2",
+        "sku.2.audience":"中端",
+        "sku.2.l1":"ARMv8.2-A + dotprod（淘汰纯 A53）","sku.2.l2":"≥ 3 GB RAM","sku.2.l3":"≥ 4 GB eMMC","sku.2.l5":"NPU 可选",
+        "sku.2.ships":"IBM Granite 3.2-2B 或 SmolLM2-1.7B (Apache 2.0)",
+        "sku.2.soc":"QCM4290 · SD 4 Gen 2 · Helio G85/G99 · UNISOC T618 · RK3566",
+        "sku.3.audience":"入门 / 老款",
+        "sku.3.body":"纯 A53 或 < 3 GB RAM 不上 on-device agent。宿主端拿 loop —— 设备 adb / ssh / UART 回传日志。做\"日终巡检、远程诊断、故障上报\"之类需求完全够。",
+        "sku.3.ships":"不装本地模型，只走 alb 宿主端传输。",
+        "inf.title":"推理栈。",
+        "inf.col.layer":"层","inf.col.pick":"选择","inf.col.lic":"许可","inf.col.note":"备注",
+        "inf.r1.l":"引擎（首选）","inf.r1.n":"ARM NEON / dotprod / i8mm 优化成熟。GGUF 通吃。高通 QNN 分支在推进。",
+        "inf.r2.l":"引擎（NPU 优先）","inf.r2.n":"Hexagon / QNN EP 最成熟。官方支持 Phi。",
+        "inf.r3.l":"引擎（PyTorch）","inf.r3.n":"Meta 新移动栈。如果你已经在 PyTorch 生态里用得上。",
+        "inf.r4.l":"引擎（Google 生态）","inf.r4.n":"Phi / Granite 工具链在 llama.cpp 更成熟。LiteRT 最适合 Gemma，而我们不出 Gemma。",
+        "inf.recco":"推荐组合：llama.cpp + GGUF Q4_K_M。代码量小，所有档位都跑得起来。某款 SKU 有 Hexagon 且要极限速度时，单独做 ONNX Runtime + QNN 的 variant。",
+        "test.title":"五秒现场验收。",
+        "test.lead":"拿到一台工程样机，四条命令决定能不能上 on-device agent：",
+        "test.l1":"asimddp（= dotprod）—— 有：能上 INT8 推理。没有直接 C 档。",
+        "test.l2":"fphp + asimdhp —— FP16 可用，再快 1.5–2×。",
+        "test.l3":"i8mm —— 顶配（Cortex-A715 / X3+）。目前量产设备极少见。",
+        "test.l4":"sve / sve2 —— ARMv9。当下安卓设备基本没有。",
+        "test.l5":"MemTotal ≥ 3.5 GB → B 档起步。≥ 7 GB → A 档。",
+        "bl.quote":"全球商用、5–8 年生命周期：Phi-3.5-mini (MIT) + llama.cpp，跑在 ARMv8.2、≥ 4 GB RAM 的设备上。RAM 紧时退到 Granite 3.2-2B (Apache 2.0)。ARMv8.2 dotprod 以下 —— 别折腾，全部走宿主端。",
+        "bl.body":"中文和其它语言由宿主端大模型（Qwen2.5-3B / Claude / GPT）承担。设备只说结构化英文。分工干净，设备端零语言学习税。",
+        "cta.title":"延伸阅读",
+        "cta.body":"这份笔记的完整 Markdown 版本（原始内容、标签、状态一应俱全）就在 HTML 旁边。",
+        "cta.b1":"完整 Markdown 源","cta.b2":"返回设备端 Agent","cta.b3":"首页",
+        "ft.product":"产品","ft.p1":"特性","ft.p2":"方案","ft.p3":"架构","ft.p4":"路线图",
+        "ft.docs":"文档","ft.d1":"总览","ft.d2":"安装","ft.d3":"Agent 层",
+        "ft.vision":"愿景","ft.v1":"设备端 Agent","ft.v2":"模型选型","ft.v3":"路线图",
+        "ft.community":"社区","ft.legal":"许可",
+        "ft.copy":"© 2026 android-llm-bridge contributors · 开源 · MIT"
+      };
+      function applyLang(lang){
+        const dict = lang === "zh" ? ZH : I18N;
+        document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+        document.querySelectorAll("[data-i18n]").forEach(el => {
+          const k = el.getAttribute("data-i18n");
+          if(dict[k] !== undefined) el.textContent = dict[k];
+        });
+        const btn = document.getElementById("langBtn");
+        if(btn) btn.textContent = lang === "zh" ? "English" : "中文";
+        try{ localStorage.setItem("alb.lang", lang); }catch(e){}
+      }
+      function toggleLang(){
+        const cur = (localStorage.getItem("alb.lang") || "en");
+        applyLang(cur === "zh" ? "en" : "zh");
+      }
+      (function init(){
+        let stored = null;
+        try{ stored = localStorage.getItem("alb.lang"); }catch(e){}
+        const prefer = stored || (navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
+        if(prefer === "zh") applyLang("zh");
+      })();
+    </script>
+  </body>
+</html>

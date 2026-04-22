@@ -81,6 +81,7 @@
           <a href="#architecture" data-i18n="nav.architecture">Architecture</a>
           <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
           <a href="on-device-agent.html" data-i18n="nav.onDevice">On-device Agent</a>
+          <a href="on-device-model-selection.html"><span class="lang-en">Model selection</span><span class="lang-zh">模型选型</span></a>
         </nav>
         <div style="display:flex; align-items:center; gap:var(--space-3);">
           <button class="lang-toggle" onclick="toggleLang()" id="langBtn" aria-label="Toggle language">中文</button>
@@ -512,8 +513,9 @@ export ALB_OLLAMA_MODEL=gemma4:26b
               <p style="font-family:var(--font-body); font-size:18px; line-height:1.65; margin-top:var(--space-3); color:var(--anth-text-secondary);" data-i18n="od.body2">
                 The host still owns heavy reasoning, cross-session memory, and code edits. The device owns reflex: per-thread signals, perfetto traces, local triage, offline autonomy. A WebSocket channel keeps them in lockstep.
               </p>
-              <p style="margin-top:var(--space-5);">
+              <p style="margin-top:var(--space-5); display:flex; gap:var(--space-3); flex-wrap:wrap;">
                 <a class="anth-button" href="on-device-agent.html" data-i18n="od.cta">Read the deep dive →</a>
+                <a class="anth-button anth-button--ghost" href="on-device-model-selection.html"><span class="lang-en">Model selection →</span><span class="lang-zh">模型选型 →</span></a>
               </p>
             </div>
             <div>
@@ -604,6 +606,7 @@ export ALB_OLLAMA_MODEL=gemma4:26b
         <div class="anth-footer-group">
           <h5 data-i18n="ft.vision">Vision</h5>
           <a href="on-device-agent.html" data-i18n="ft.v1">On-device agent</a>
+          <a href="on-device-model-selection.html"><span class="lang-en">Model selection</span><span class="lang-zh">模型选型</span></a>
           <a href="#roadmap" data-i18n="ft.v2">Roadmap</a>
         </div>
         <div class="anth-footer-group">
