@@ -4,14 +4,14 @@ type: setup-guide
 audience: dev
 created: 2026-04-17
 updated: 2026-04-17
-tags: [setup, arm-soc, adb, uart, xshell, ssh-tunnel]
+tags: [setup, board, adb, uart, xshell, ssh-tunnel]
 ---
 
 # 远程板子调试打通指南
 
 > **场景**：Android 板子用 USB + UART 连在 Windows 上，你想在一台 Linux 服务器（通过 xshell/ssh 登录）上跑 `alb` / Claude Code / 其他 MCP 客户端来操作它。板子**完全无需联网**。
 
-本文覆盖 **ADB + UART 两条路径同时打通**，架构统一为 **Xshell 反向隧道 + Windows 端桥**。2026-04-17 首次端到端打通 arm-soc。
+本文覆盖 **ADB + UART 两条路径同时打通**，架构统一为 **Xshell 反向隧道 + Windows 端桥**。2026-04-17 首次端到端打通一块高速 UART (1500000 baud) 的 Android 板子。
 
 ---
 
@@ -52,7 +52,7 @@ Linux 上 alb 的实际数据流：
 #### 前置：找到 COM 口号 + 波特率
 
 - **COM 口号**：设备管理器 → 端口 (COM 和 LPT)，插上 USB 转串口能看到新的 `COMxx`
-- **arm-soc 常用波特率**：`1500000`（1.5 Mbaud）；其他平台多数 `115200`
+- **高速 UART 常用波特率**：`1500000`（1.5 Mbaud，多见于中高端 ARM SoC）；大多数平台 `115200`
 
 #### 步骤 1：装 Python 3 + pyserial
 
@@ -89,7 +89,7 @@ python windows_serial_bridge.py --com COM27 --baud 1500000
 
 参数替换：
 - `--com`：你的实际 COM 号
-- `--baud`：板子 UART 波特率（arm-soc: `1500000`）
+- `--baud`：板子 UART 波特率（高速板常用 `1500000`，多数 SoC 是 `115200`）
 
 成功输出：
 ```
@@ -234,7 +234,7 @@ alb shell 'reboot' &                         # 走 ADB 触发重启
 alb serial capture --duration 30             # 立即切 UART 抓完整启动过程
 ```
 
-### 预期捕获样例（arm-soc 启动日志片段）
+### 预期捕获样例（某 ARM 安卓板启动日志片段）
 
 ```
 U-Boot SPL 2017.09-... (Jun 09 2025 - 11:08:59), fwver: v1.08
@@ -314,7 +314,7 @@ netsh interface ipv4 show excludedportrange protocol=tcp  :: 查 Windows 保留�
 ### 问题 4：`nc localhost 19001` 能连但敲字符无响应
 
 - COM 号错了（设备管理器再确认一次）
-- 波特率错了（arm-soc 用 1500000，别的 SoC 可能是 115200/921600/9600）
+- 波特率错了（高速板常用 1500000，别的 SoC 可能是 115200 / 921600 / 9600）
 - 板子此刻挂了 / 板子 UART RX 未接 / TX RX 接反
 - Android 起来后 UART console **默认静默** —— 这是正常现象。按板子 reset 键 / 断电上电再 capture，启动日志会刷屏
 
@@ -392,7 +392,7 @@ Linux alb profile 里两套 device 各写自己的 `serial_tcp_port`。
 
 | 日期 | 变更 | 作者 |
 |---|---|---|
-| 2026-04-17 | 初稿 — 覆盖 arm-soc + Windows Python 桥 + Xshell 隧道全流程 | sky |
+| 2026-04-17 | 初稿 — 覆盖 Android 板（USB + 1500000 baud UART）+ Windows Python 桥 + Xshell 隧道全流程 | sky |
 | 2026-04-17 | 端到端打通后补坑点：Windows 9001 保留 → 19001；串口独占说明；config.toml schema（`[transport.serial]`）；全局安装 alb；常见问题扩到 11 条 | sky |
 
 ## 参考

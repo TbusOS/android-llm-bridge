@@ -122,3 +122,17 @@ docs/reference/
 # ─────────────────────────────────────────────
 .env.local
 .env.*.local
+
+# ─────────────────────────────────────────────
+# Secrets / personal / machine-specific — NEVER commit
+# ─────────────────────────────────────────────
+# Claude Code local settings (may contain internal IPs, hosts, paths)
+.claude/
+# Personal operating guides kept out of the open-source repo
+adb-via-ssh-tunnel-guide*.md
+# Anything in a user's home directory tree
+**/home/*/
+
+# Misc local log outputs
+logs/
+*.jsonl

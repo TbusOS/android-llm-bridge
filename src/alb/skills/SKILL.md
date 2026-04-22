@@ -5,7 +5,7 @@ description: >
   UART over a single interface; exposes structured tools via MCP, CLI,
   and a future Web API.
 version: 0.0.1
-homepage: https://github.com/skyzhangbinghua/android-llm-bridge
+homepage: https://github.com/TbusOS/android-llm-bridge
 license: MIT
 ---
 
