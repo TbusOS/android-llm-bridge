@@ -248,7 +248,7 @@ alb serial connect --baud 1500000    # 某些 Rockchip
 |-------|---------|
 | 115200 | 通用（绝大多数 SoC） |
 | 921600 | 高速 debug（MTK / 部分 Qualcomm） |
-| 1500000 | Rockchip rk3576 等高速 UART |
+| 1500000 | 某些 SoC 高速 UART（Rockchip / MediaTek / Qualcomm 高端档） |
 | 9600 | 老旧设备 |
 
 ### 问题 3 · 输入了命令，但板子看不到

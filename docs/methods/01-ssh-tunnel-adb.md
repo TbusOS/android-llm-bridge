@@ -246,4 +246,3 @@ rm -rf ~/platform-tools
 
 ## 参考
 - [Google platform-tools 官方](https://developer.android.com/tools/adb)
-- 祖本：`/home/zhangbh/adb-via-ssh-tunnel-guide.md`

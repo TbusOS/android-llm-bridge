@@ -14,7 +14,7 @@ Why this instead of ser2net:
 Setup (Windows):
     1. pip install pyserial
     2. python windows_serial_bridge.py --com COM3 --baud 1500000 --port 19001
-       (RK3576 UART typically 1500000; most other SoCs 115200)
+       (e.g. 1500000 for high-speed UART boards, 115200 for most SoCs)
        (Port 9001 is often reserved by WinNAT/Hyper-V on Windows 10+ —
         pick something >10000 if 9001 gives WinError 10013.)
     3. In Xshell: Connection → SSH → Tunnelling → Add
