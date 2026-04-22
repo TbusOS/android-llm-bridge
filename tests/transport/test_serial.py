@@ -12,6 +12,7 @@ from alb.transport.serial import (
     SerialTransport,
     _extract_between_markers,
     _read_until_any,
+    _split_printk,
     _strip_echo_and_prompt,
 )
 
@@ -503,6 +504,183 @@ async def test_shell_uses_fresh_nonce_per_call() -> None:
 
     assert len(nonces) == 2
     assert nonces[0] != nonces[1]
+
+
+# ─── printk filtering (C5) ─────────────────────────────────────────
+
+
+def test_split_printk_extracts_kernel_lines() -> None:
+    body = (
+        "real stdout line 1\n"
+        "[   42.123456] wlan0: link up\n"
+        "real stdout line 2\n"
+        "[   42.234567] cfg80211: regulatory\n"
+        "real stdout line 3\n"
+    )
+    stdout, kernel = _split_printk(body)
+    assert stdout == "real stdout line 1\nreal stdout line 2\nreal stdout line 3"
+    assert "wlan0: link up" in kernel
+    assert "cfg80211: regulatory" in kernel
+    # kernel lines preserve their printk prefix
+    assert "[   42.123456]" in kernel
+
+
+def test_split_printk_all_stdout_when_no_kernel() -> None:
+    body = "one\ntwo\nthree"
+    stdout, kernel = _split_printk(body)
+    assert stdout == body
+    assert kernel == ""
+
+
+def test_split_printk_all_kernel_when_no_stdout() -> None:
+    body = (
+        "[    1.234567] msg 1\n"
+        "[    2.345678] msg 2\n"
+    )
+    stdout, kernel = _split_printk(body)
+    assert stdout == ""
+    assert "msg 1" in kernel and "msg 2" in kernel
+
+
+def test_split_printk_ignores_lookalike_lines() -> None:
+    """Lines that vaguely resemble printk (but lack 6-digit fraction
+    or non-space after the bracket) must NOT be treated as kernel."""
+    body = (
+        "[1.23] not printk\n"
+        "[   10.123] not printk either (5 digits)\n"
+        "[INFO] not printk (word not number)\n"
+    )
+    stdout, kernel = _split_printk(body)
+    assert kernel == ""
+    assert stdout == body.rstrip("\n")
+
+
+@pytest.mark.asyncio
+async def test_shell_isolates_printk_into_stderr() -> None:
+    """End-to-end: kernel printk interleaved between BEG and END markers
+    must NOT appear in stdout; instead it's annotated into stderr.
+    """
+    import re as _re
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(b"$ ")
+        await writer.drain()
+
+        wrapped = await reader.readline()
+        m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped)
+        nonce = m.group(1)
+        beg = b"__ALB_BEG_" + nonce + b"__"
+        end = b"__ALB_END_" + nonce + b"__"
+
+        writer.write(wrapped)                          # echo
+        writer.write(beg + b"\n")
+        writer.write(b"real line 1\n")
+        writer.write(b"[   50.123456] kernel noise A\n")
+        writer.write(b"real line 2\n")
+        writer.write(b"[   50.234567] kernel noise B\n")
+        writer.write(end + b"=0\n")
+        writer.write(b"$ ")
+        await writer.drain()
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("whatever", timeout=5)
+
+    assert r.ok
+    assert r.exit_code == 0
+    assert r.stdout == "real line 1\nreal line 2"
+    assert "kernel noise A" in r.stderr
+    assert "kernel noise B" in r.stderr
+
+
+# ─── Ctrl-C abort on timeout (C5) ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_shell_sends_ctrl_c_when_command_times_out() -> None:
+    """On TIMEOUT_SHELL, the transport sends 0x03 to the board. The
+    fake server here acknowledges the Ctrl-C by returning a prompt,
+    so the stderr annotation says "board acknowledged".
+    """
+    import re as _re
+
+    ctrl_c_seen = asyncio.Event()
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(b"$ ")
+        await writer.drain()
+
+        # Read the wrapped command — begin a slow/stuck fake response
+        wrapped = await reader.readline()
+        m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped)
+        nonce = m.group(1)
+        beg = b"__ALB_BEG_" + nonce + b"__"
+        writer.write(wrapped)                 # echo
+        writer.write(beg + b"\n")             # BEG only — no END
+        await writer.drain()
+
+        # Now listen for Ctrl-C (0x03)
+        while True:
+            byte = await reader.read(1)
+            if not byte:
+                return
+            if byte == b"\x03":
+                ctrl_c_seen.set()
+                # Pretend the shell interrupted and re-printed a prompt
+                writer.write(b"^C\n$ ")
+                await writer.drain()
+                return
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("sleep 999", timeout=1)
+
+    assert not r.ok
+    assert r.error_code == "TIMEOUT_SHELL"
+    assert ctrl_c_seen.is_set(), "transport did not send Ctrl-C to board"
+    assert "Ctrl-C (board acknowledged)" in r.stderr
+
+
+@pytest.mark.asyncio
+async def test_shell_reports_when_board_ignores_ctrl_c() -> None:
+    """When Ctrl-C is sent but the board does NOT respond with a
+    prompt, stderr annotates that so the user knows a reboot is likely.
+    """
+    import re as _re
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(b"$ ")
+        await writer.drain()
+
+        wrapped = await reader.readline()
+        m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped)
+        nonce = m.group(1)
+        beg = b"__ALB_BEG_" + nonce + b"__"
+        writer.write(wrapped)
+        writer.write(beg + b"\n")
+        await writer.drain()
+
+        # Swallow Ctrl-C but never reply
+        try:
+            while True:
+                byte = await reader.read(1)
+                if not byte:
+                    return
+                # ignore
+        except Exception:
+            pass
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.shell("sleep 999", timeout=1)
+
+    assert not r.ok
+    assert r.error_code == "TIMEOUT_SHELL"
+    assert "did not acknowledge" in r.stderr
 
 
 # ─── detect_state() API ────────────────────────────────────────────
