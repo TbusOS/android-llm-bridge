@@ -911,14 +911,26 @@ async def _abort_with_ctrl_c(
 def _is_decisive(state: SerialState) -> bool:
     """True when the state is conclusive enough to stop the handshake.
 
-    "Decisive" means either:
-      - we've seen a prompt (the command can run, or we can reject
-        specifically),
-      - the endpoint is clearly broken (panic / corrupted),
-      - the endpoint is clearly pre-shell (fastboot / login / boot).
+    "Decisive" means we have a definitive picture of what's on the
+    other end:
 
-    UNKNOWN / IDLE / CRASH are NOT decisive — we keep reading in hope
-    of a clearer signal.
+    - **Prompts** (SHELL_*/UBOOT/RECOVERY/FASTBOOT/LOGIN_PROMPT): the
+      most recent emission ends with a specific prompt character, so
+      the endpoint is ready to receive a command (or clearly pre-shell
+      and waiting for something specific).
+    - **Broken** (PANIC/CORRUPTED): nothing we could do will make a
+      command run until the board is physically reset / the baud is
+      re-negotiated.
+
+    Boot-phase states (KERNEL_BOOT / LINUX_INIT / SPL) are
+    **intentionally NOT decisive** —— they're weak signals: a fully-
+    booted running system keeps emitting `init:` lines, `type=AVC`
+    denials, occasional `Starting kernel` strings in motd banners,
+    etc. Short-circuiting on them would misclassify a healthy shell
+    as "still booting" just because printk flowed through the handshake
+    window. Instead we keep reading until either a prompt appears
+    (overrides the boot-phase classification) or the deadline hits
+    (then the boot-phase state sticks — we tried).
     """
     return state in (
         SerialState.SHELL_USER,
@@ -929,9 +941,6 @@ def _is_decisive(state: SerialState) -> bool:
         SerialState.LOGIN_PROMPT,
         SerialState.PANIC,
         SerialState.CORRUPTED,
-        SerialState.KERNEL_BOOT,
-        SerialState.LINUX_INIT,
-        SerialState.SPL,
     )
 
 
