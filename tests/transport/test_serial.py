@@ -299,6 +299,96 @@ async def test_shell_proceeds_when_uboot_prompt_present() -> None:
     assert "bootargs=console=ttyS0" in r.stdout
 
 
+# ─── detect_state() API ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_detect_state_reports_shell_ready() -> None:
+    """When the endpoint offers a root prompt, detect_state() classifies it."""
+
+    async def handler(reader, writer):  # noqa: ANN001
+        # Wait for the handshake nudge, then respond with a root prompt
+        await reader.readline()
+        writer.write(b"\nroot@host:/ # ")
+        await writer.drain()
+        await asyncio.sleep(0.3)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        info = await t.detect_state()
+
+    assert info["ok"]
+    assert info["connected"]
+    assert info["state"] == "shell_root"
+    assert "#" in info["tail"]
+    assert info["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_detect_state_classifies_kernel_boot() -> None:
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(b"[    0.000000] Booting Linux on physical CPU 0x0\n")
+        await writer.drain()
+        await asyncio.sleep(0.5)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        info = await t.detect_state()
+
+    assert info["state"] == "kernel_boot"
+
+
+@pytest.mark.asyncio
+async def test_detect_state_reports_connect_error() -> None:
+    """A closed port → info['ok'] = False with structured error."""
+    t = SerialTransport(
+        tcp_host="127.0.0.1", tcp_port=59, handshake_timeout=0.5,
+    )
+    info = await t.detect_state()
+    assert info["ok"] is False
+    assert info["connected"] is False
+    assert info["error_code"] in {"SERIAL_PORT_NOT_FOUND", "SYSTEM_DEPENDENCY_MISSING"}
+
+
+# ─── Pattern overrides from config ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_custom_patterns_make_handshake_recognize_board_prompt() -> None:
+    """Custom prompt regex lets a non-standard shell be classified as SHELL_ROOT."""
+    from alb.transport.serial_state import PatternSet
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(b"myboard:~# ")
+        await writer.drain()
+        await asyncio.sleep(0.3)
+        writer.close()
+
+    # Default shell_root pattern would still match this (ends in #)
+    # so we force override to something stricter that ONLY matches
+    # "myboard:~#" to prove the override path works.
+    patterns = PatternSet.from_mapping(
+        {"shell_root": r"myboard:~\s*#\s*$"}
+    )
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port,
+            patterns=patterns, handshake_timeout=1.0,
+        )
+        info = await t.detect_state()
+
+    assert info["state"] == "shell_root"
+
+
 @pytest.mark.asyncio
 async def test_shell_reboot_non_normal_unsupported() -> None:
     t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)

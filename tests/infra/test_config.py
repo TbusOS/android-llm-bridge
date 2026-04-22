@@ -42,6 +42,44 @@ def test_load_config_reads_toml(monkeypatch, tmp_path: Path) -> None:
     assert cfg.permissions.mode == "strict"
 
 
+def test_load_config_parses_serial_prompts_override(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """[transport.serial.prompts] in TOML becomes SerialConfig.prompts."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        """
+        [transport.serial]
+        default_baud = 1500000
+        handshake_timeout = 3.5
+
+        [transport.serial.prompts]
+        shell_root = "myboard:~\\\\s*#\\\\s*$"
+        uboot = "MYBOOT>\\\\s*$"
+        """
+    )
+    monkeypatch.setenv("ALB_CONFIG", str(cfg_file))
+    cfg = load_config()
+    assert cfg.serial.default_baud == 1500000
+    assert cfg.serial.handshake_timeout == 3.5
+    assert cfg.serial.prompts == {
+        "shell_root": r"myboard:~\s*#\s*$",
+        "uboot": r"MYBOOT>\s*$",
+    }
+
+
+def test_load_config_serial_prompts_default_empty(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Config without [transport.serial.prompts] yields empty dict."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[transport.serial]\ndefault_baud = 115200\n")
+    monkeypatch.setenv("ALB_CONFIG", str(cfg_file))
+    cfg = load_config()
+    assert cfg.serial.prompts == {}
+    assert cfg.serial.handshake_timeout == 2.0   # default
+
+
 def test_load_profile_returns_empty_when_absent(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
     prof = load_profile("nonexistent")

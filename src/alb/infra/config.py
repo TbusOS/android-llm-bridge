@@ -43,6 +43,16 @@ class SerialConfig:
     default_tcp_host: str = "localhost"
     default_tcp_port: int = 9001
     pty_link_dir: str = ""  # resolves to workspace/cache/pty if empty
+    # Per-state prompt regex overrides. Populated from
+    # ``[transport.serial.prompts]`` in config.toml. Keys must match one
+    # of :data:`alb.transport.serial_state.DEFAULT_PATTERNS`; invalid
+    # keys cause load_config() to raise at startup so typos are caught
+    # early rather than silently falling back to defaults.
+    prompts: dict[str, str] = field(default_factory=dict)
+    # How long :meth:`SerialTransport._handshake` waits before declaring
+    # UNKNOWN. 2s is enough for a ser2net endpoint; bump for very
+    # remote links.
+    handshake_timeout: float = 2.0
 
 
 @dataclass(frozen=True)
