@@ -127,24 +127,29 @@ async def test_shell_roundtrip_over_tcp() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shell_timeout_over_tcp() -> None:
+async def test_shell_fails_fast_when_endpoint_silent() -> None:
+    """An endpoint that sends zero bytes during handshake is IDLE,
+    which shell() must reject with ``BOARD_UNREACHABLE`` — a far more
+    useful diagnosis than a generic timeout.
+    """
     async def handler(reader, writer):  # noqa: ANN001
-        # Read warmup + command, but never send a prompt.
+        # Read warmup + command, but never send anything back.
         try:
             await reader.readline()
-            await reader.readline()
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
         except asyncio.CancelledError:
             pass
         finally:
             writer.close()
 
     async with _fake_ser2net(handler) as (host, port):
-        t = SerialTransport(tcp_host=host, tcp_port=port)
-        r = await t.shell("sleep 30", timeout=1)
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=0.5,
+        )
+        r = await t.shell("whatever", timeout=2)
 
     assert not r.ok
-    assert r.error_code == "TIMEOUT_SHELL"
+    assert r.error_code == "BOARD_UNREACHABLE"
 
 
 # ─── stream_read yields bytes until server closes ──────────────────
