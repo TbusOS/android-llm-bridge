@@ -348,13 +348,23 @@ class SerialTransport(Transport):
                 break
 
         if not match:
+            # Attempt graceful abort so the board doesn't keep running
+            # our wrapped command after we drop the connection — the
+            # next shell() would otherwise reconnect into a busy shell
+            # whose prompt arrives late and confuses state detection.
+            aborted = await _abort_with_ctrl_c(link, sm)
+            abort_note = (
+                "; sent Ctrl-C (board acknowledged)"
+                if aborted
+                else "; sent Ctrl-C (board did not acknowledge — may need reboot)"
+            )
             return ShellResult(
                 ok=False,
                 exit_code=-1,
                 stdout=bytes(response).decode("utf-8", errors="replace"),
                 stderr=(
                     f"Serial shell timed out after {timeout}s; "
-                    f"end marker {end_marker} never arrived"
+                    f"end marker {end_marker} never arrived" + abort_note
                 ),
                 error_code="TIMEOUT_SHELL",
                 duration_ms=int((perf_counter() - start) * 1000),
@@ -362,20 +372,26 @@ class SerialTransport(Transport):
 
         exit_code = int(match.group(1))
         text = bytes(response).decode("utf-8", errors="replace")
-        stdout = _extract_between_markers(text, beg_marker, end_marker)
+        body = _extract_between_markers(text, beg_marker, end_marker)
+        stdout, kernel_logs = _split_printk(body)
 
-        stderr = ""
+        stderr_parts: list[str] = []
         if sm.state == SerialState.CRASH and initial_state != SerialState.CRASH:
-            stderr = (
+            stderr_parts.append(
                 "warning: kernel crash trace observed during command; "
                 "shell is still up but state may be unstable"
+            )
+        if kernel_logs:
+            stderr_parts.append(
+                "[kernel_logs observed during command, filtered from stdout]\n"
+                + kernel_logs
             )
 
         return ShellResult(
             ok=(exit_code == 0),
             exit_code=exit_code,
             stdout=stdout,
-            stderr=stderr,
+            stderr="\n\n".join(stderr_parts),
             error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
             duration_ms=int((perf_counter() - start) * 1000),
         )
@@ -804,6 +820,92 @@ def _extract_between_markers(text: str, beg: str, end: str) -> str:
     body = text[body_start : body_start + end_match.start()]
     # Strip trailing newlines leftover from the line break before END
     return body.rstrip("\r\n")
+
+
+# Kernel printk timestamp prefix: ``[   123.456789] …``. Variable
+# leading whitespace, fractional seconds 6 digits. Strict — avoids
+# matching bracketed notes that look vaguely similar.
+_PRINTK_LINE_RE = re.compile(r"^\[\s*\d+\.\d{6}\]\s")
+
+
+def _split_printk(body: str) -> tuple[str, str]:
+    """Separate kernel-printk lines from normal command stdout.
+
+    Android / Linux kernels spray timestamped printk into the UART
+    stream regardless of what's running. When those lines land between
+    our BEG/END markers they pollute the user's stdout and make the
+    output look noisy to an LLM trying to parse it.
+
+    This helper splits each body line into either:
+
+    - **stdout** — lines that do NOT start with the printk timestamp
+      prefix ``[   123.456789]``.
+    - **kernel_logs** — lines that do.
+
+    Preserves line order within each side. Returns two strings
+    (stripped of trailing newlines).
+    """
+    stdout_lines: list[str] = []
+    kernel_lines: list[str] = []
+    for line in body.splitlines():
+        if _PRINTK_LINE_RE.match(line):
+            kernel_lines.append(line)
+        else:
+            stdout_lines.append(line)
+    return "\n".join(stdout_lines), "\n".join(kernel_lines)
+
+
+async def _abort_with_ctrl_c(
+    link: _SerialLink,
+    sm: SerialStateMachine,
+    *,
+    grace_s: float = 1.0,
+) -> bool:
+    """Try to gracefully abort whatever command is running on the board.
+
+    Sends a single ``\\x03`` (Ctrl-C) byte and waits briefly for the
+    shell to re-emit its prompt. This prevents the common hang-over
+    scenario:
+
+    1. ``shell()`` times out while the command is still producing output.
+    2. We close the TCP socket — but the board shell is still running
+       the command and piping bytes into an abandoned ser2net endpoint.
+    3. Next ``shell()`` reconnects; the handshake reads tail bytes from
+       that orphan output and misclassifies the state.
+
+    A Ctrl-C interrupts the command in the normal POSIX way, the
+    prompt re-appears, and a subsequent connection sees a clean state.
+
+    Returns ``True`` if a prompt came back within ``grace_s``, ``False``
+    otherwise. Failure is non-fatal — we've still tried, and the caller
+    shouldn't delay its error response on a stuck board.
+    """
+    try:
+        link.writer.write(b"\x03")
+        await link.writer.drain()
+    except (ConnectionResetError, BrokenPipeError):
+        return False
+
+    deadline = perf_counter() + grace_s
+    while perf_counter() < deadline:
+        remaining = max(0.05, deadline - perf_counter())
+        try:
+            chunk = await asyncio.wait_for(
+                link.reader.read(256), timeout=remaining,
+            )
+        except asyncio.TimeoutError:
+            break
+        if not chunk:
+            break
+        sm.feed(chunk)
+        if sm.state in (
+            SerialState.SHELL_USER,
+            SerialState.SHELL_ROOT,
+            SerialState.UBOOT,
+            SerialState.RECOVERY,
+        ):
+            return True
+    return False
 
 
 def _is_decisive(state: SerialState) -> bool:
