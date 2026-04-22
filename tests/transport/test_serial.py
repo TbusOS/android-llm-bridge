@@ -173,8 +173,134 @@ async def test_push_unsupported() -> None:
     assert r.error_code == "TRANSPORT_NOT_SUPPORTED"
 
 
+# ─── State-based routing (Phase 1 — handshake + reject) ────────────
+
+
 @pytest.mark.asyncio
-async def test_reboot_non_normal_unsupported() -> None:
+async def test_shell_rejects_when_board_is_panicked() -> None:
+    """Handshake sees a kernel panic → shell() fails with BOARD_PANICKED
+    and includes the panic tail in stdout for diagnostics.
+    """
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()  # swallow the handshake nudge
+        writer.write(
+            b"[   42.112345] BUG: unable to handle page fault\n"
+            b"[   42.113456] Kernel panic - not syncing: Fatal exception\n"
+            b"[   42.114567] CPU: 0 PID: 1 Comm: init\n"
+        )
+        await writer.drain()
+        await asyncio.sleep(5)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        r = await t.shell("echo hi", timeout=3)
+
+    assert not r.ok
+    assert r.error_code == "BOARD_PANICKED"
+    assert "Kernel panic" in r.stdout
+
+
+@pytest.mark.asyncio
+async def test_shell_rejects_when_board_is_booting() -> None:
+    """Handshake sees kernel-boot markers → BOARD_BOOTING, no command sent."""
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(
+            b"[    0.000000] Booting Linux on physical CPU 0x0\n"
+            b"[    0.012345] Linux version 6.1\n"
+            b"[    0.023456] CPU features: detected: DCP\n"
+        )
+        await writer.drain()
+        await asyncio.sleep(5)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        r = await t.shell("echo hi", timeout=3)
+
+    assert not r.ok
+    assert r.error_code == "BOARD_BOOTING"
+
+
+@pytest.mark.asyncio
+async def test_shell_rejects_when_baud_corrupted() -> None:
+    """Non-printable garbage → SERIAL_BAUD_MISMATCH."""
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(bytes(range(128, 200)) * 20)  # high-byte noise
+        await writer.drain()
+        await asyncio.sleep(5)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        r = await t.shell("echo hi", timeout=3)
+
+    assert not r.ok
+    assert r.error_code == "SERIAL_BAUD_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_shell_rejects_when_login_prompt_waiting() -> None:
+    """login: prompt → BOARD_NEEDS_LOGIN (not a generic error)."""
+
+    async def handler(reader, writer):  # noqa: ANN001
+        await reader.readline()
+        writer.write(b"Debian GNU/Linux 12 host ttyS0\nlogin: ")
+        await writer.drain()
+        await asyncio.sleep(5)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        r = await t.shell("uptime", timeout=3)
+
+    assert not r.ok
+    assert r.error_code == "BOARD_NEEDS_LOGIN"
+
+
+@pytest.mark.asyncio
+async def test_shell_proceeds_when_uboot_prompt_present() -> None:
+    """U-Boot prompt → handshake passes, u-boot command runs."""
+
+    async def handler(reader, writer):  # noqa: ANN001
+        # Swallow the handshake nudge + respond with u-boot prompt
+        await reader.readline()
+        writer.write(b"\n=> ")
+        await writer.drain()
+        # Read the real command
+        cmd_line = await reader.readline()
+        assert b"printenv" in cmd_line
+        writer.write(cmd_line)  # echo
+        writer.write(b"bootargs=console=ttyS0,1500000 root=/dev/mmcblk0p7\n")
+        writer.write(b"=> ")  # final prompt
+        await writer.drain()
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(
+            tcp_host=host, tcp_port=port, handshake_timeout=1.0,
+        )
+        r = await t.shell("printenv bootargs", timeout=5)
+
+    assert r.ok
+    assert "bootargs=console=ttyS0" in r.stdout
+
+
+@pytest.mark.asyncio
+async def test_shell_reboot_non_normal_unsupported() -> None:
     t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
     r = await t.reboot("recovery")
     assert not r.ok

@@ -157,6 +157,45 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Missing system dependency",
         "Install the missing tool per error.details",
     ),
+    # serial state (raised by SerialTransport when shell() is called in
+    # a state that can't accept a command). See transport/serial_state.py
+    # for the full state taxonomy.
+    "BOARD_PANICKED": ErrorSpec(
+        "BOARD_PANICKED",
+        "transport",
+        "Board is in kernel panic; no further commands can run",
+        "Capture the tail (alb serial capture --duration 10) and reboot",
+    ),
+    "BOARD_BOOTING": ErrorSpec(
+        "BOARD_BOOTING",
+        "transport",
+        "Board is still in a boot phase (SPL / kernel / init); shell not yet available",
+        "Wait a few seconds and retry, or use alb stream_read to watch progress",
+    ),
+    "BOARD_UNREACHABLE": ErrorSpec(
+        "BOARD_UNREACHABLE",
+        "transport",
+        "No output observed on UART after handshake",
+        "Check power, UART wiring, baud rate, and the bridge / ser2net status",
+    ),
+    "SERIAL_BAUD_MISMATCH": ErrorSpec(
+        "SERIAL_BAUD_MISMATCH",
+        "transport",
+        "UART stream is mostly non-printable — likely baud-rate mismatch",
+        "Try common baud rates (115200 / 921600 / 1500000) or run `alb serial probe`",
+    ),
+    "BOARD_NEEDS_LOGIN": ErrorSpec(
+        "BOARD_NEEDS_LOGIN",
+        "transport",
+        "Login prompt is waiting for a username",
+        "Send a username via `alb serial send`, then retry the command",
+    ),
+    "BOARD_IN_FASTBOOT": ErrorSpec(
+        "BOARD_IN_FASTBOOT",
+        "transport",
+        "Board is in fastboot mode — shell commands are not applicable",
+        "Use adb / fastboot tools to leave fastboot, then retry",
+    ),
 }
 
 

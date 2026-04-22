@@ -31,6 +31,11 @@ from time import perf_counter
 from typing import Any
 
 from alb.transport.base import ShellResult, Transport
+from alb.transport.serial_state import (
+    PatternSet,
+    SerialState,
+    SerialStateMachine,
+)
 
 
 # ─── Constants ─────────────────────────────────────────────────────
@@ -40,6 +45,32 @@ DEFAULT_PROMPTS = (
     b"=> ",   # u-boot
     b"> ",    # some bootloaders
 )
+
+
+# States where :meth:`SerialTransport.shell` can send a command and
+# expect a meaningful response. Everything outside this set is rejected
+# fast with a specific error code.
+_SHELL_CAPABLE = frozenset({
+    SerialState.SHELL_USER,
+    SerialState.SHELL_ROOT,
+    SerialState.UBOOT,
+    SerialState.RECOVERY,
+    SerialState.CRASH,     # soft crash — shell may still work; we warn
+    SerialState.UNKNOWN,   # nothing matched — fall back to best-effort
+})
+
+
+# Map from non-shell-capable state → error code for shell() rejection.
+_STATE_REJECT: dict[SerialState, str] = {
+    SerialState.PANIC: "BOARD_PANICKED",
+    SerialState.IDLE: "BOARD_UNREACHABLE",
+    SerialState.CORRUPTED: "SERIAL_BAUD_MISMATCH",
+    SerialState.SPL: "BOARD_BOOTING",
+    SerialState.KERNEL_BOOT: "BOARD_BOOTING",
+    SerialState.LINUX_INIT: "BOARD_BOOTING",
+    SerialState.LOGIN_PROMPT: "BOARD_NEEDS_LOGIN",
+    SerialState.FASTBOOT: "BOARD_IN_FASTBOOT",
+}
 
 
 @dataclass(frozen=True)
@@ -65,9 +96,31 @@ class SerialTransport(Transport):
         tcp_port: int | None = None,        # e.g. 9001
         baud: int = 115200,
         prompts: tuple[bytes, ...] = DEFAULT_PROMPTS,
+        patterns: PatternSet | None = None,
         newline: bytes = b"\n",
         read_chunk: int = 4096,
+        handshake_timeout: float = 2.0,
     ) -> None:
+        """SerialTransport — UART + optional ser2net TCP bridge.
+
+        Parameters
+        ----------
+        patterns
+            Regex set used by the :class:`SerialStateMachine` to classify
+            what's at the other end (shell / u-boot / kernel panic / etc).
+            Pass ``None`` to use the built-in defaults, or build a custom
+            set from ``config.toml`` via
+            :meth:`PatternSet.from_mapping`.
+        handshake_timeout
+            How long to wait during the initial probe before giving up
+            and declaring UNKNOWN. 2s is enough for ser2net even over a
+            slow tunnel; bump for very remote links.
+        prompts
+            Legacy byte-level prompt list used by the best-effort
+            ``_read_until_any`` / ``_strip_echo_and_prompt`` fallback
+            path (state = UNKNOWN). New deployments should rely on
+            ``patterns`` instead.
+        """
         if device and (tcp_host or tcp_port):
             raise ValueError("Pass either `device` or `tcp_host`+`tcp_port`, not both")
         if not device and not (tcp_host and tcp_port):
@@ -80,8 +133,10 @@ class SerialTransport(Transport):
         self.tcp_port = tcp_port
         self.baud = baud
         self.prompts = prompts
+        self.patterns = patterns if patterns is not None else PatternSet.default()
         self.newline = newline
         self.read_chunk = read_chunk
+        self.handshake_timeout = handshake_timeout
         self._link: _SerialLink | None = None
 
     # ── Connection management ────────────────────────────────────
@@ -131,14 +186,41 @@ class SerialTransport(Transport):
 
     # ── Transport interface ──────────────────────────────────────
     async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
-        """Prompt-based shell wrapper. Best-effort.
+        """Run a command on the UART endpoint.
 
         Flow:
-            1. Connect (ser2net/local) fresh.
-            2. Drain anything pending.
-            3. Send the command + newline.
-            4. Read until we hit a known prompt or timeout.
-            5. Strip the echoed command and return what's between.
+
+        1. Connect.
+        2. **Handshake** — probe for up to ``handshake_timeout`` seconds,
+           feeding all bytes into a :class:`SerialStateMachine`.
+           Classify the initial state.
+        3. **Route on state**:
+
+           * :data:`SerialState.PANIC` → fail with ``BOARD_PANICKED``,
+             return the panic tail as ``stdout`` for diagnostic value.
+           * :data:`SerialState.IDLE` → ``BOARD_UNREACHABLE`` (no bytes
+             observed at all — check power / cable / baud).
+           * :data:`SerialState.CORRUPTED` → ``SERIAL_BAUD_MISMATCH``.
+           * SPL / KERNEL_BOOT / LINUX_INIT → ``BOARD_BOOTING``.
+           * :data:`SerialState.LOGIN_PROMPT` → ``BOARD_NEEDS_LOGIN``.
+           * :data:`SerialState.FASTBOOT` → ``BOARD_IN_FASTBOOT``.
+           * SHELL / UBOOT / RECOVERY / CRASH / UNKNOWN → proceed.
+
+        4. Send ``cmd``.
+        5. Read until a legacy prompt pattern reappears (for now).
+           The richer marker-based exit-code handling lands in a later
+           commit; this one preserves the existing output-stripping
+           behaviour so all legacy tests keep passing.
+
+        Notes
+        -----
+        - UNKNOWN falls through to the best-effort path instead of
+          erroring. This preserves behaviour on weird endpoints that
+          don't emit a classifiable prompt (custom bootloaders, bespoke
+          RTOS shells), and matches the pre-state-machine contract.
+        - If the state transitions INTO a panic during command execution,
+          we return ``BOARD_PANICKED`` and include whatever we captured
+          in ``stdout``.
         """
         start = perf_counter()
         try:
@@ -153,23 +235,21 @@ class SerialTransport(Transport):
             )
 
         try:
-            # Nudge a newline so a fresh prompt shows up — this helps when the
-            # device was idle and no marker is pending.
-            link.writer.write(self.newline)
-            await link.writer.drain()
-            try:
-                await asyncio.wait_for(
-                    _read_until_any(link.reader, self.prompts), timeout=3
-                )
-            except asyncio.TimeoutError:
-                # No prompt — could be u-boot without one, or stuck. Continue
-                # anyway; we'll collect what the command emits within timeout.
-                pass
+            sm = SerialStateMachine(patterns=self.patterns)
 
+            # ── Step 1: handshake ─────────────────────────────────
+            initial_state = await self._handshake(link, sm)
+
+            # ── Step 2: reject early if state can't run a command ─
+            if initial_state not in _SHELL_CAPABLE:
+                return self._reject_for_state(initial_state, sm, start)
+
+            # ── Step 3: send command ───────────────────────────────
             payload = (cmd + "\n").encode("utf-8", errors="replace")
             link.writer.write(payload)
             await link.writer.drain()
 
+            # ── Step 4: read until prompt returns ──────────────────
             try:
                 raw = await asyncio.wait_for(
                     _read_until_any(link.reader, self.prompts),
@@ -184,16 +264,148 @@ class SerialTransport(Transport):
                     duration_ms=int((perf_counter() - start) * 1000),
                 )
 
+            # Feed accumulated bytes into the state machine so we notice
+            # mid-command panics / crashes.
+            sm.feed(raw)
+
             text = raw.decode("utf-8", errors="replace")
             stdout = _strip_echo_and_prompt(text, cmd, self.prompts)
+
+            # ── Step 5: detect post-command state anomalies ────────
+            if sm.state == SerialState.PANIC:
+                return ShellResult(
+                    ok=False,
+                    exit_code=-1,
+                    stdout=stdout,
+                    stderr="kernel panic during command execution",
+                    error_code="BOARD_PANICKED",
+                    duration_ms=int((perf_counter() - start) * 1000),
+                )
+
+            stderr = ""
+            if sm.state == SerialState.CRASH and initial_state != SerialState.CRASH:
+                stderr = (
+                    "warning: kernel crash trace observed during command; "
+                    "shell is still up but state may be unstable"
+                )
+
             return ShellResult(
                 ok=True,
-                exit_code=0,  # UART can't reliably report exit codes
+                exit_code=0,  # marker-based real exit codes come in Phase 2
                 stdout=stdout,
+                stderr=stderr,
                 duration_ms=int((perf_counter() - start) * 1000),
             )
         finally:
             await self._close(link)
+
+    # ── State machine plumbing ──────────────────────────────────────
+
+    async def _handshake(
+        self,
+        link: _SerialLink,
+        sm: SerialStateMachine,
+    ) -> SerialState:
+        """Probe the endpoint to determine the initial state.
+
+        Strategy, in order:
+
+        1. Opportunistic read: gobble up anything already buffered
+           (e.g., a prompt the device printed before we connected).
+           Short per-chunk timeout keeps this from blocking.
+        2. If that's inconclusive, send ``self.newline`` to nudge the
+           device. Most shells respond with a fresh prompt.
+        3. Read with the remaining handshake budget, feeding the state
+           machine on every chunk. Stop early on decisive states
+           (prompts, panic, corrupted).
+
+        Returns the final classified state.
+        """
+        deadline = perf_counter() + self.handshake_timeout
+
+        # Step 1: opportunistic pre-read of pending bytes
+        for _ in range(5):
+            remaining = deadline - perf_counter()
+            if remaining <= 0:
+                break
+            try:
+                chunk = await asyncio.wait_for(
+                    link.reader.read(self.read_chunk), timeout=0.1,
+                )
+            except asyncio.TimeoutError:
+                break
+            if not chunk:
+                break
+            sm.feed(chunk)
+
+        if _is_decisive(sm.state):
+            return sm.state
+
+        # Step 2: nudge with newline
+        try:
+            link.writer.write(self.newline)
+            await link.writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            # Writer died during nudge; fall through with whatever we have.
+            return sm.state
+
+        # Step 3: drain until decisive or deadline
+        while perf_counter() < deadline:
+            remaining = max(0.05, deadline - perf_counter())
+            try:
+                chunk = await asyncio.wait_for(
+                    link.reader.read(self.read_chunk), timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                break
+            if not chunk:
+                break
+            sm.feed(chunk)
+            if _is_decisive(sm.state):
+                break
+
+        return sm.state
+
+    def _reject_for_state(
+        self,
+        state: SerialState,
+        sm: SerialStateMachine,
+        start: float,
+    ) -> ShellResult:
+        """Build a structured :class:`ShellResult` for a non-runnable state.
+
+        The panic case deserves special care: we include the tail of
+        the buffer as ``stdout`` so the caller (or LLM) can see the
+        panic message without a second round-trip.
+        """
+        code = _STATE_REJECT[state]
+        duration = int((perf_counter() - start) * 1000)
+
+        stdout = ""
+        if state == SerialState.PANIC:
+            stdout = sm.snapshot(tail_bytes=800)["tail"]
+
+        # Default messages come from errors.py via the ShellResult
+        # pipeline, but a state-specific stderr makes the returned
+        # payload self-describing at a glance.
+        stderr_map = {
+            SerialState.PANIC:        "board is in kernel panic; only reboot can recover",
+            SerialState.IDLE:         "no output observed on UART after handshake",
+            SerialState.CORRUPTED:    "UART stream is mostly non-printable (wrong baud?)",
+            SerialState.SPL:          "board is still in SPL / pre-u-boot phase",
+            SerialState.KERNEL_BOOT:  "board is still in kernel boot phase",
+            SerialState.LINUX_INIT:   "board is running init / systemd; no shell yet",
+            SerialState.LOGIN_PROMPT: "login prompt waiting for a username",
+            SerialState.FASTBOOT:     "board is in fastboot mode",
+        }
+        return ShellResult(
+            ok=False,
+            exit_code=-1,
+            stdout=stdout,
+            stderr=stderr_map[state],
+            error_code=code,
+            duration_ms=duration,
+        )
 
     async def stream_read(
         self, source: str, **kwargs: Any
@@ -348,6 +560,33 @@ def _strip_echo_and_prompt(
     # Filter trailing empty lines
     out = "".join(lines)
     return re.sub(r"\r\n", "\n", out).strip("\n") + ("\n" if out.endswith("\n") else "")
+
+
+def _is_decisive(state: SerialState) -> bool:
+    """True when the state is conclusive enough to stop the handshake.
+
+    "Decisive" means either:
+      - we've seen a prompt (the command can run, or we can reject
+        specifically),
+      - the endpoint is clearly broken (panic / corrupted),
+      - the endpoint is clearly pre-shell (fastboot / login / boot).
+
+    UNKNOWN / IDLE / CRASH are NOT decisive — we keep reading in hope
+    of a clearer signal.
+    """
+    return state in (
+        SerialState.SHELL_USER,
+        SerialState.SHELL_ROOT,
+        SerialState.UBOOT,
+        SerialState.RECOVERY,
+        SerialState.FASTBOOT,
+        SerialState.LOGIN_PROMPT,
+        SerialState.PANIC,
+        SerialState.CORRUPTED,
+        SerialState.KERNEL_BOOT,
+        SerialState.LINUX_INIT,
+        SerialState.SPL,
+    )
 
 
 def _classify_connect_error(exc: Exception) -> str:
