@@ -196,9 +196,13 @@ DEFAULT_PATTERNS: dict[str, bytes] = {
     "uboot": rb"(?:U-Boot\s*>|=>|boot>)\s*$",
     # Very-early bootloader signatures. Match anywhere, not anchored.
     "spl": rb"(?:U-Boot SPL|BL1:|BL2:|BL31:|DDR init|PMIC init)",
-    # Kernel boot-stage signatures. The ``[    x.yyyyyy]`` timestamp
-    # format is the most reliable marker.
-    "kernel_boot": rb"(?:Booting Linux|Starting kernel|Linux version|\[\s*\d+\.\d{6}\])",
+    # Kernel boot-stage signatures. We only match the canonical early-
+    # boot text markers — a bare printk timestamp ``[ 420.306232]``
+    # keeps arriving on a fully-booted system too (wifi up/down,
+    # thermal events, any dmesg activity), so matching it alone would
+    # mis-classify a perfectly healthy shell as "still booting".
+    # If the board is REALLY booting, one of these phrases will appear.
+    "kernel_boot": rb"(?:Booting Linux|Starting kernel|Linux version\s+\d)",
     # Init / systemd / rc.d traces.
     "linux_init": rb"(?:systemd\[|init:|Running early|Reached target|type=AVC)",
     # ``login:`` / ``Username:`` — anchored so we don't catch the
