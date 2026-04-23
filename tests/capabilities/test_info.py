@@ -21,6 +21,7 @@ from alb.capabilities.info import (
     _parse_meminfo,
     _parse_mounts_for_fstype,
     _parse_proc_partitions,
+    _parse_soc_props,
     _parse_thermal_zones,
     _sniff_ufs_spec,
     all_info,
@@ -170,6 +171,18 @@ def test_parse_by_name_listing() -> None:
     assert d["sda17"] == "system_a"
 
 
+def test_parse_by_name_listing_skips_self_link() -> None:
+    # Some boards ship `/dev/block/by-name/mmcblk0 -> /dev/block/mmcblk0`.
+    # That's meaningless — don't tag the whole disk with a by_name label.
+    s = (
+        "lrwxrwxrwx 1 root root 18 2000-01-15 mmcblk0 -> /dev/block/mmcblk0\n"
+        "lrwxrwxrwx 1 root root 21 2000-01-15 boot_a -> /dev/block/mmcblk0p11\n"
+    )
+    d = _parse_by_name_listing(s)
+    assert "mmcblk0" not in d
+    assert d["mmcblk0p11"] == "boot_a"
+
+
 def test_parse_proc_partitions_basic() -> None:
     s = (
         "major minor  #blocks  name\n"
@@ -182,6 +195,44 @@ def test_parse_proc_partitions_basic() -> None:
     assert out[0].name == "sda"
     assert out[0].size_kb == 62500000
     assert out[1].by_name == "boot_a"
+
+
+def test_parse_proc_partitions_filters_ram_loop_zram() -> None:
+    s = (
+        "major minor  #blocks  name\n"
+        "   1        0      8192 ram0\n"
+        "   1        7      8192 ram7\n"
+        "   7        0     32768 loop0\n"
+        " 253        0   4050000 zram0\n"
+        "   8        0  62500000 mmcblk0\n"
+        "   8       11    107520 mmcblk0p11\n"
+    )
+    # Default: noise filtered
+    out = _parse_proc_partitions(s, {})
+    names = [p.name for p in out]
+    assert names == ["mmcblk0", "mmcblk0p11"]
+
+    # Opt in for full list
+    full = _parse_proc_partitions(s, {}, include_virtual=True)
+    full_names = [p.name for p in full]
+    assert "ram0" in full_names
+    assert "loop0" in full_names
+    assert "zram0" in full_names
+
+
+def test_parse_soc_props_ordering() -> None:
+    s = "SOC_X100\nGenericVendor\ngeneric-board\n"
+    assert _parse_soc_props(s) == ("SOC_X100", "GenericVendor")
+
+
+def test_parse_soc_props_fallback_to_board_platform() -> None:
+    # ro.soc.model empty → fall back to ro.board.platform
+    s = "\nGenericVendor\nboard_xyz\n"
+    assert _parse_soc_props(s) == ("board_xyz", "GenericVendor")
+
+
+def test_parse_soc_props_all_empty() -> None:
+    assert _parse_soc_props("\n\n\n") == ("", "")
 
 
 def test_sniff_ufs_spec_detection() -> None:
@@ -356,6 +407,9 @@ async def test_cpu_happy_path() -> None:
             ok=True,
             stdout="processor\t: 0\nprocessor\t: 1\nHardware\t: Generic\nFeatures\t: fp asimd\n",
         ),
+        "ro.soc.model": ShellResult(
+            ok=True, stdout="SOC_X100\nAcmeCorp\nsoc_x100\n",
+        ),
         "cpufreq": ShellResult(
             ok=True,
             stdout="/sys/devices/system/cpu/cpu0/cpufreq:\n1800000\n2200000\n408000\nschedutil\n",
@@ -369,10 +423,36 @@ async def test_cpu_happy_path() -> None:
     assert r.ok
     assert r.data.processor_count == 2
     assert r.data.model == "Generic"
+    assert r.data.soc_model == "SOC_X100"
+    assert r.data.soc_manufacturer == "AcmeCorp"
     assert len(r.data.cores) == 1
     assert r.data.cores[0].freq_khz_current == 1800000
     assert len(r.data.thermal_zones) == 1
     assert r.data.thermal_zones[0].temp_c == 52.1
+
+
+@pytest.mark.asyncio
+async def test_cpu_aarch64_no_hardware_line_but_getprop_has_soc() -> None:
+    # Simulates real Android aarch64 where /proc/cpuinfo has no Hardware/
+    # model name — only CPU implementer/part numerics. model is "" but
+    # soc_model comes back filled from getprop.
+    t = _mk_transport({
+        "/proc/cpuinfo": ShellResult(
+            ok=True,
+            stdout=(
+                "processor\t: 0\nBogoMIPS\t: 2000.00\n"
+                "Features\t: fp asimd aes\nCPU implementer\t: 0x41\n"
+            ),
+        ),
+        "ro.soc.model": ShellResult(
+            ok=True, stdout="AcmeSOC-9000\nAcmeCorp\nacmeboard\n",
+        ),
+    })
+    r = await cpu(t)
+    assert r.ok
+    assert r.data.model == ""
+    assert r.data.soc_model == "AcmeSOC-9000"
+    assert r.data.soc_manufacturer == "AcmeCorp"
 
 
 @pytest.mark.asyncio
@@ -397,6 +477,21 @@ async def test_battery_no_dumpsys() -> None:
     assert not r.ok
     assert r.error is not None
     assert r.error.code == "BATTERY_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_battery_no_physical_battery() -> None:
+    # Dev board: dumpsys responds but every field is zero / present=false.
+    t = _mk_transport({
+        "dumpsys battery": ShellResult(
+            ok=True,
+            stdout="present: false\nlevel: 0\nvoltage: 0\nstatus: 1\n",
+        ),
+    })
+    r = await battery(t)
+    assert not r.ok
+    assert r.error is not None
+    assert r.error.code == "NO_BATTERY"
 
 
 @pytest.mark.asyncio
@@ -465,6 +560,26 @@ async def test_network_happy_path() -> None:
     assert "aa:bb:cc:dd:ee:ff" == wlan.mac
     assert r.data.default_route.startswith("default via 192.168.1.1")
     assert "8.8.8.8" in r.data.dns
+
+
+@pytest.mark.asyncio
+async def test_network_dns_fallback_to_resolv_conf() -> None:
+    # Android 10+ no longer exposes DNS via getprop — should fall back
+    # to /etc/resolv.conf.
+    t = _mk_transport({
+        "ip -o addr": ShellResult(ok=True, stdout=""),
+        "ip -o link": ShellResult(ok=True, stdout=""),
+        "ip route": ShellResult(ok=True, stdout=""),
+        "net.dns1": ShellResult(ok=True, stdout="\n\n"),  # empty
+        "/etc/resolv.conf": ShellResult(
+            ok=True,
+            stdout="# auto-generated\nnameserver 10.0.0.1\nnameserver 10.0.0.2\n",
+        ),
+    })
+    r = await network(t)
+    assert r.ok
+    assert "10.0.0.1" in r.data.dns
+    assert "10.0.0.2" in r.data.dns
 
 
 # ─── all_info + panel_names ──────────────────────────────────────
