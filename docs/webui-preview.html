@@ -1,0 +1,1115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web UI Preview — android-llm-bridge</title>
+    <meta name="description" content="Static mockup of the upcoming browser UI for android-llm-bridge: Chat, Terminal, Model Playground, Devices, System Info, and real-time charts. Placeholder data only — click through to decide the scope.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      /* ---- Shared mock styles ---- */
+      .lang-toggle{
+        font-family:var(--font-heading); font-size:13px; font-weight:500;
+        color:var(--anth-text-secondary); background:transparent;
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-pill);
+        padding:6px 14px; cursor:pointer;
+        transition:border-color var(--duration-sm) var(--ease-anth),color var(--duration-sm) var(--ease-anth);
+      }
+      .lang-toggle:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
+
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display:none !important; }
+      html[lang^="zh"] body, html[lang^="zh"] p, html[lang^="zh"] li,
+      html[lang^="zh"] h1, html[lang^="zh"] h2, html[lang^="zh"] h3 {
+        font-family:"Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+      }
+
+      .status-pill{
+        display:inline-block; font-family:var(--font-heading);
+        font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;
+        padding:3px 10px; border-radius:var(--radius-pill);
+      }
+      .status-pill--done{background:rgba(120,140,93,0.18); color:#5d7043;}
+      .status-pill--wip{background:rgba(217,119,87,0.20); color:#a8502f;}
+      .status-pill--plan{background:var(--anth-light-gray); color:var(--anth-text-secondary);}
+
+      .need-pill{
+        display:inline-block; font-family:var(--font-mono); font-size:11px;
+        color:var(--anth-text-secondary); background:var(--anth-bg-subtle);
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm);
+        padding:2px 8px; margin:2px 4px 2px 0;
+      }
+
+      .section-head{
+        display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--space-3);
+        margin-bottom:var(--space-2);
+      }
+      .section-head h2{font-size:32px; margin:0;}
+      .section-sub{
+        color:var(--anth-text-secondary); font-size:16px;
+        margin-bottom:var(--space-4);
+      }
+      .need-row{margin-bottom:var(--space-5);}
+
+      /* ---- Sticky tab nav ---- */
+      .tab-chips{
+        position:sticky; top:72px; z-index:40;
+        background:var(--anth-bg); padding:var(--space-3) 0;
+        border-bottom:1px solid var(--anth-light-gray);
+        margin-bottom:var(--space-7);
+      }
+      .tab-chips-inner{display:flex; flex-wrap:wrap; gap:var(--space-2);}
+      .tab-chip{
+        font-family:var(--font-heading); font-size:13px; font-weight:500;
+        color:var(--anth-text-secondary);
+        border:1px solid var(--anth-light-gray); background:#ffffff;
+        border-radius:var(--radius-pill); padding:6px 14px;
+        text-decoration:none;
+        transition:border-color var(--duration-sm) var(--ease-anth), color var(--duration-sm) var(--ease-anth);
+      }
+      .tab-chip:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
+
+      /* ---- Generic card ---- */
+      .mock-card{
+        background:#ffffff; border:1px solid var(--anth-light-gray);
+        border-radius:var(--radius-lg); box-shadow:var(--shadow-card);
+        padding:var(--space-5);
+      }
+
+      /* ---- Chat mock ---- */
+      .chat-window{display:flex; flex-direction:column; gap:var(--space-4);}
+      .bubble{
+        max-width:78%; padding:var(--space-3) var(--space-4);
+        border-radius:var(--radius-md); font-size:15px; line-height:1.55;
+      }
+      .bubble--user{
+        align-self:flex-end; background:var(--anth-orange); color:#ffffff;
+      }
+      .bubble--assistant{
+        align-self:flex-start; background:var(--anth-bg-subtle);
+        color:var(--anth-text);
+      }
+      .bubble--assistant code{
+        font-family:var(--font-mono); font-size:13px;
+        background:rgba(20,20,19,0.06); padding:1px 6px; border-radius:4px;
+      }
+      .tool-call{
+        align-self:flex-start; max-width:82%;
+        background:#ffffff; border:1px dashed var(--anth-mid-gray);
+        border-radius:var(--radius-md); padding:var(--space-3) var(--space-4);
+        font-family:var(--font-mono); font-size:13px; color:var(--anth-text);
+      }
+      .tool-call-head{
+        display:flex; align-items:center; gap:var(--space-2);
+        font-weight:600; margin-bottom:var(--space-2);
+      }
+      .tool-call-body{white-space:pre-wrap; color:var(--anth-text-secondary);}
+      .artifact-chip{
+        display:inline-flex; align-items:center; gap:var(--space-2);
+        font-family:var(--font-heading); font-size:12px;
+        background:var(--anth-bg-subtle); border:1px solid var(--anth-light-gray);
+        border-radius:var(--radius-pill); padding:4px 12px;
+        color:var(--anth-text);
+      }
+      .typing-dots span{
+        display:inline-block; width:6px; height:6px; margin:0 1px;
+        background:var(--anth-mid-gray); border-radius:50%;
+        animation:typing 1.2s infinite;
+      }
+      .typing-dots span:nth-child(2){animation-delay:0.2s;}
+      .typing-dots span:nth-child(3){animation-delay:0.4s;}
+      @keyframes typing{
+        0%,80%,100%{opacity:0.3;} 40%{opacity:1;}
+      }
+      .chat-input{
+        display:flex; gap:var(--space-2); margin-top:var(--space-4);
+        padding:var(--space-3);
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-md);
+        background:var(--anth-bg);
+      }
+      .chat-input input{
+        flex:1; border:none; background:transparent; outline:none;
+        font-family:var(--font-body); font-size:15px; color:var(--anth-text);
+      }
+
+      /* ---- Terminal mock ---- */
+      .term-frame{
+        background:#1e1d1a; border-radius:var(--radius-md);
+        overflow:hidden; border:1px solid #3a3832;
+      }
+      .term-titlebar{
+        display:flex; align-items:center; gap:var(--space-2);
+        background:#2a2825; padding:8px 14px;
+        font-family:var(--font-heading); font-size:12px;
+        color:#c9c6bd;
+        border-bottom:1px solid #3a3832;
+      }
+      .term-dot{width:10px; height:10px; border-radius:50%;}
+      .term-body{
+        padding:var(--space-4); font-family:var(--font-mono); font-size:13px;
+        color:#e8e6dc; line-height:1.55;
+        white-space:pre-wrap;
+        min-height:280px;
+      }
+      .term-prompt{color:#b0c490;}
+      .term-path{color:#6a9bcc;}
+      .term-out{color:#c9c6bd;}
+      .term-err{color:#d97757;}
+      .term-caret{
+        display:inline-block; width:8px; height:14px; background:#e8e6dc;
+        vertical-align:middle; animation:blink 1s steps(2) infinite;
+      }
+      @keyframes blink{50%{opacity:0;}}
+
+      .hitl-banner{
+        margin-top:var(--space-3); padding:var(--space-3) var(--space-4);
+        background:rgba(161,66,56,0.10); border:1px solid var(--anth-danger);
+        border-radius:var(--radius-md); font-size:14px;
+      }
+      .hitl-banner strong{color:var(--anth-danger); font-family:var(--font-heading);}
+      .hitl-actions{margin-top:var(--space-2); display:flex; gap:var(--space-2);}
+      .hitl-btn{
+        font-family:var(--font-heading); font-size:12px; font-weight:600;
+        padding:6px 14px; border-radius:var(--radius-pill); cursor:pointer;
+        border:1px solid var(--anth-light-gray); background:#ffffff;
+      }
+      .hitl-btn--deny{border-color:var(--anth-danger); color:var(--anth-danger);}
+      .hitl-btn--allow{border-color:var(--anth-green); color:var(--anth-green);}
+
+      /* ---- Playground mock ---- */
+      .pg-grid{display:grid; grid-template-columns:320px 1fr; gap:var(--space-5);}
+      @media(max-width:900px){.pg-grid{grid-template-columns:1fr;}}
+      .param-row{
+        display:grid; grid-template-columns:110px 1fr 48px;
+        align-items:center; gap:var(--space-2);
+        padding:var(--space-2) 0;
+        border-bottom:1px dashed var(--anth-light-gray);
+        font-family:var(--font-heading); font-size:13px;
+      }
+      .param-row:last-child{border-bottom:none;}
+      .param-row label{color:var(--anth-text-secondary);}
+      .param-row input[type=range]{
+        -webkit-appearance:none; appearance:none;
+        width:100%; height:4px; background:var(--anth-light-gray);
+        border-radius:var(--radius-pill); outline:none;
+      }
+      .param-row input[type=range]::-webkit-slider-thumb{
+        -webkit-appearance:none; appearance:none;
+        width:14px; height:14px; background:var(--anth-orange);
+        border-radius:50%; cursor:pointer;
+      }
+      .param-row input[type=range]::-moz-range-thumb{
+        width:14px; height:14px; background:var(--anth-orange);
+        border-radius:50%; cursor:pointer; border:none;
+      }
+      .param-row .val{
+        font-family:var(--font-mono); font-size:12px; color:var(--anth-text);
+        text-align:right;
+      }
+      .param-row select, .param-row input[type=number], .param-row input[type=text]{
+        font-family:var(--font-mono); font-size:12px;
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm);
+        padding:4px 8px; background:#ffffff; color:var(--anth-text);
+        width:100%;
+      }
+      .param-group-title{
+        font-family:var(--font-heading); font-size:11px; font-weight:600;
+        text-transform:uppercase; letter-spacing:0.06em;
+        color:var(--anth-text-secondary);
+        margin:var(--space-3) 0 var(--space-2);
+      }
+      .toggle-sw{
+        position:relative; width:34px; height:18px; background:var(--anth-light-gray);
+        border-radius:var(--radius-pill); cursor:pointer;
+      }
+      .toggle-sw::after{
+        content:""; position:absolute; top:2px; left:2px;
+        width:14px; height:14px; background:#ffffff; border-radius:50%;
+        transition:all 0.2s;
+      }
+      .toggle-sw--on{background:var(--anth-orange);}
+      .toggle-sw--on::after{left:18px;}
+
+      .metrics-bar{
+        display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+        gap:var(--space-3);
+        margin-top:var(--space-4); padding:var(--space-3);
+        background:var(--anth-bg-subtle); border-radius:var(--radius-md);
+      }
+      .metric{font-family:var(--font-heading); font-size:12px; color:var(--anth-text-secondary);}
+      .metric strong{
+        display:block; font-family:var(--font-mono); font-size:18px;
+        color:var(--anth-text); font-weight:600;
+      }
+
+      /* ---- Devices mock ---- */
+      .dev-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4);}
+      .dev-card{display:flex; flex-direction:column; gap:var(--space-2);}
+      .dev-head{display:flex; align-items:center; gap:var(--space-2);}
+      .dot{width:10px; height:10px; border-radius:50%; display:inline-block;}
+      .dot--green{background:var(--anth-green);}
+      .dot--amber{background:#d9a557;}
+      .dot--red{background:var(--anth-danger);}
+      .dev-name{font-family:var(--font-heading); font-weight:600; font-size:16px;}
+      .dev-transport{
+        display:inline-block; font-family:var(--font-mono); font-size:11px;
+        background:var(--anth-bg-subtle); padding:2px 8px;
+        border-radius:var(--radius-sm); color:var(--anth-text-secondary);
+      }
+      .dev-body{font-size:14px; color:var(--anth-text-secondary); line-height:1.6;}
+      .dev-body code{font-family:var(--font-mono); font-size:12px; color:var(--anth-text);}
+      .dev-recent{
+        margin-top:var(--space-2); padding:var(--space-2);
+        background:var(--anth-bg-subtle); border-radius:var(--radius-sm);
+        font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);
+      }
+      .tunnel-bar{
+        display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-3);
+        margin-top:var(--space-4); padding:var(--space-3);
+        border:1px solid var(--anth-light-gray); border-radius:var(--radius-md);
+        background:var(--anth-bg);
+      }
+      .tunnel-cell{font-family:var(--font-heading); font-size:12px;}
+      .tunnel-cell strong{display:block; font-family:var(--font-mono); font-size:14px; color:var(--anth-text); font-weight:600;}
+
+      /* ---- System info mock ---- */
+      .sys-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:var(--space-4);}
+      .sys-card h3{font-size:15px; margin:0 0 var(--space-3); color:var(--anth-text); font-weight:600;}
+      .sys-kv{display:grid; grid-template-columns:110px 1fr; gap:6px 12px; font-size:13px;}
+      .sys-kv dt{
+        font-family:var(--font-heading); color:var(--anth-text-secondary);
+        font-weight:500;
+      }
+      .sys-kv dd{
+        font-family:var(--font-mono); margin:0; color:var(--anth-text);
+        word-break:break-all;
+      }
+      .part-row{
+        display:grid; grid-template-columns:100px 1fr 70px;
+        align-items:center; gap:var(--space-2);
+        font-size:12px; padding:4px 0;
+        border-bottom:1px dashed var(--anth-light-gray);
+      }
+      .part-row:last-child{border-bottom:none;}
+      .part-bar{
+        height:6px; background:var(--anth-light-gray);
+        border-radius:var(--radius-pill); overflow:hidden;
+      }
+      .part-bar-fill{height:100%; background:var(--anth-orange);}
+      .part-name{font-family:var(--font-mono); color:var(--anth-text);}
+      .part-pct{font-family:var(--font-mono); color:var(--anth-text-secondary); text-align:right; font-size:11px;}
+
+      /* ---- Charts mock ---- */
+      .spark-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4);}
+      .spark-card h3{
+        font-size:13px; font-family:var(--font-heading); font-weight:500;
+        color:var(--anth-text-secondary); margin:0 0 var(--space-2);
+        text-transform:uppercase; letter-spacing:0.04em;
+      }
+      .spark-val{
+        font-family:var(--font-mono); font-size:28px; font-weight:600;
+        color:var(--anth-text);
+      }
+      .spark-unit{
+        font-family:var(--font-heading); font-size:13px;
+        color:var(--anth-text-secondary); margin-left:4px;
+      }
+      .spark-svg{width:100%; height:60px; margin-top:var(--space-2); display:block;}
+
+      /* ---- Coming next ---- */
+      .next-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:var(--space-4);}
+      .next-card{
+        padding:var(--space-5);
+        background:var(--anth-bg); border:1px dashed var(--anth-mid-gray);
+        border-radius:var(--radius-md);
+      }
+      .next-card h3{font-size:15px; margin:0 0 var(--space-2); font-weight:600;}
+      .next-card p{font-size:13px; color:var(--anth-text-secondary); margin:0;}
+    </style>
+  </head>
+  <body>
+    <header class="anth-nav">
+      <div class="anth-nav-inner">
+        <a href="./" style="font-family:var(--font-heading); font-weight:600; font-size:18px; letter-spacing:-0.01em;">android-llm-bridge</a>
+        <nav aria-label="Primary" style="display:flex; align-items:center;">
+          <a href="./#features"><span class="lang-en">Features</span><span class="lang-zh">特性</span></a>
+          <a href="./#architecture"><span class="lang-en">Architecture</span><span class="lang-zh">架构</span></a>
+          <a href="./#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
+          <a href="on-device-agent.html"><span class="lang-en">On-device Agent</span><span class="lang-zh">设备端 Agent</span></a>
+          <a href="webui-preview.html" style="color:var(--anth-orange);"><span class="lang-en">Web UI Preview</span><span class="lang-zh">Web UI 预览</span></a>
+        </nav>
+        <div style="display:flex; align-items:center; gap:var(--space-3);">
+          <button class="lang-toggle" onclick="toggleLang()" id="langBtn" aria-label="Toggle language">中文</button>
+          <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge"><span class="lang-en">View on GitHub</span><span class="lang-zh">在 GitHub 查看</span></a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="anth-container" style="padding-top:var(--space-7); padding-bottom:var(--space-7);">
+
+        <!-- Hero -->
+        <div style="max-width:860px; margin-bottom:var(--space-5);">
+          <span class="anth-badge" style="background:var(--anth-orange); color:#ffffff;">
+            <span class="lang-en">Mockup · Placeholder data</span>
+            <span class="lang-zh">设计预览 · 假数据</span>
+          </span>
+          <h1 style="margin-top:var(--space-4);">
+            <span class="lang-en">What the Web UI will look like.</span>
+            <span class="lang-zh">Web UI 会长这样。</span>
+          </h1>
+          <p style="font-size:20px; line-height:1.55; color:var(--anth-text-secondary); margin-top:var(--space-4);">
+            <span class="lang-en">This page is a static preview — every widget is filled with fake data so you can walk through the full scope before we start wiring up the backend. Scroll through the six modules below, tell us what to cut, keep, or add, and the real Web tier ships on top of this shape.</span>
+            <span class="lang-zh">这是一份静态设计稿 —— 所有控件都用占位数据填好，让你在后端动工前先把完整范围过一遍。把下面六个模块翻完，告诉我们要砍什么、留什么、加什么，真实 Web 层就照这个形状来做。</span>
+          </p>
+        </div>
+
+        <!-- Sticky tab nav -->
+        <div class="tab-chips">
+          <div class="tab-chips-inner">
+            <a class="tab-chip" href="#chat"><span class="lang-en">Chat</span><span class="lang-zh">对话</span></a>
+            <a class="tab-chip" href="#terminal"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></a>
+            <a class="tab-chip" href="#playground"><span class="lang-en">Playground</span><span class="lang-zh">模型调试</span></a>
+            <a class="tab-chip" href="#devices"><span class="lang-en">Devices</span><span class="lang-zh">设备</span></a>
+            <a class="tab-chip" href="#system"><span class="lang-en">System Info</span><span class="lang-zh">系统信息</span></a>
+            <a class="tab-chip" href="#charts"><span class="lang-en">Charts</span><span class="lang-zh">实时图表</span></a>
+            <a class="tab-chip" href="#next"><span class="lang-en">Coming next</span><span class="lang-zh">后续批次</span></a>
+          </div>
+        </div>
+
+        <!-- ============ 1. CHAT ============ -->
+        <section id="chat" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">1 · Chat (Agent)</span><span class="lang-zh">1 · Chat 对话</span></h2>
+            <span class="status-pill status-pill--wip"><span class="lang-en">Backend ready</span><span class="lang-zh">后端已就位</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">Talk to an LLM that can drive the device. Streaming tokens, expandable tool calls, inline artifacts. Cancel mid-flight, edit and re-run, fork from any turn.</span>
+            <span class="lang-zh">和能操作设备的 LLM 对话。token 流式、tool 调用可折叠、产物内联预览。中途可取消、上条可编辑重跑、任意轮可 fork。</span>
+          </p>
+          <div class="need-row">
+            <span class="need-pill">WS /chat/ws</span>
+            <span class="need-pill">POST /chat</span>
+            <span class="need-pill">ChatSession JSONL</span>
+            <span class="need-pill">artifacts registry</span>
+          </div>
+
+          <div class="mock-card">
+            <div class="chat-window">
+              <div class="bubble bubble--user">
+                <span class="lang-en">Pull the last boot's logcat errors and tell me what crashed.</span>
+                <span class="lang-zh">把最近一次开机的 logcat 错误拉出来，告诉我什么崩了。</span>
+              </div>
+              <div class="tool-call">
+                <div class="tool-call-head">
+                  <span style="color:var(--anth-orange);">●</span>
+                  <span>alb_logcat</span>
+                  <span style="margin-left:auto; color:var(--anth-text-secondary); font-weight:400;">
+                    <span class="lang-en">completed · 618 lines · 72 KB</span>
+                    <span class="lang-zh">完成 · 618 行 · 72 KB</span>
+                  </span>
+                </div>
+                <div class="tool-call-body">{ level: "E", since: "boot", max_lines: 2000 }
+→ workspace/devices/ABC123/logcat/2026-04-23T10-14-02.log</div>
+              </div>
+              <div class="bubble bubble--assistant">
+                <span class="lang-en">Found <strong>3 distinct crash signatures</strong>. The loudest one (47 hits) is <code>SurfaceFlinger</code> timing out on the HWC composer — first occurrence 4.2 s after boot. Two other signatures look downstream of that. Want me to pull the matching dmesg window and check GPU driver init?</span>
+                <span class="lang-zh">找到 <strong>3 类不同崩溃</strong>。最多的一类（47 次）是 <code>SurfaceFlinger</code> 在 HWC 合成器上超时，第一次出现在开机后 4.2 秒。另外两类看上去是它的下游。要不要我把对应时间窗口的 dmesg 拉出来，顺便看看 GPU 驱动初始化？</span>
+              </div>
+              <div style="align-self:flex-start; display:flex; gap:var(--space-2); flex-wrap:wrap;">
+                <span class="artifact-chip">📄 logcat-errors.log · 72 KB</span>
+                <span class="artifact-chip">📊 crash-summary.json · 1.2 KB</span>
+              </div>
+              <div class="bubble bubble--user">
+                <span class="lang-en">Yes, pull dmesg from 4.0 s to 5.0 s.</span>
+                <span class="lang-zh">好，拉 4.0 秒到 5.0 秒的 dmesg。</span>
+              </div>
+              <div class="tool-call">
+                <div class="tool-call-head">
+                  <span style="color:var(--anth-orange);">●</span>
+                  <span>alb_dmesg</span>
+                  <span style="margin-left:auto; color:var(--anth-text-secondary); font-weight:400;">
+                    <span class="lang-en">running</span><span class="lang-zh">运行中</span>
+                    <span class="typing-dots" style="margin-left:6px;"><span></span><span></span><span></span></span>
+                  </span>
+                </div>
+                <div class="tool-call-body">{ time_range: "4.0s-5.0s" }</div>
+              </div>
+            </div>
+            <div class="chat-input">
+              <input type="text" placeholder="Ask anything about the device…" disabled>
+              <button class="anth-button" style="padding:8px 20px; font-size:13px;" disabled>
+                <span class="lang-en">Send</span><span class="lang-zh">发送</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 2. TERMINAL ============ -->
+        <section id="terminal" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">2 · Terminal</span><span class="lang-zh">2 · Terminal 终端</span></h2>
+            <span class="status-pill status-pill--plan"><span class="lang-en">New</span><span class="lang-zh">新增</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">Direct adb / serial shell in the browser — xterm.js over a WebSocket PTY. For the times you know exactly what to type. Dangerous commands hit a Human-in-the-Loop modal before they reach the device.</span>
+            <span class="lang-zh">浏览器里直通 adb / 串口 shell —— xterm.js 接 WebSocket PTY。你知道要敲什么时直接敲。危险命令在到达设备前先过一道人工确认。</span>
+          </p>
+          <div class="need-row">
+            <span class="need-pill">WS /terminal/&lt;device&gt;/ws</span>
+            <span class="need-pill">transport.interactive_shell()</span>
+            <span class="need-pill">command denylist matcher</span>
+            <span class="need-pill">session.terminal JSONL</span>
+          </div>
+
+          <div class="mock-card" style="padding:var(--space-3);">
+            <div class="term-frame">
+              <div class="term-titlebar">
+                <span class="term-dot" style="background:#d97757;"></span>
+                <span class="term-dot" style="background:#d9a557;"></span>
+                <span class="term-dot" style="background:#788c5d;"></span>
+                <span style="margin-left:var(--space-3);">adb shell · device ABC123XYZ · read+write</span>
+                <span style="margin-left:auto; display:flex; align-items:center; gap:var(--space-2);">
+                  <span class="lang-en">Read-only</span><span class="lang-zh">只读</span>
+                  <span class="toggle-sw" aria-label="Read-only toggle"></span>
+                </span>
+              </div>
+              <div class="term-body"><span class="term-prompt">device:/ $</span> <span class="term-out">getprop ro.build.version.release</span>
+<span class="term-out">14</span>
+<span class="term-prompt">device:/ $</span> <span class="term-out">uname -a</span>
+<span class="term-out">Linux localhost 6.1.75-android14 #1 SMP PREEMPT aarch64 Toybox</span>
+<span class="term-prompt">device:/ $</span> <span class="term-out">df -h /data</span>
+<span class="term-out">Filesystem     Size Used Avail Use% Mounted on</span>
+<span class="term-out">/dev/block/dm-6 103G  47G   56G  46% /data</span>
+<span class="term-prompt">device:/ $</span> <span class="term-out">logcat -b crash -d | tail -5</span>
+<span class="term-err">04-23 10:14:06.812 F DEBUG   : *** *** *** *** *** *** ***</span>
+<span class="term-err">04-23 10:14:06.813 F DEBUG   : Build fingerprint: 'Android/aosp/generic:14/UP1A.231005.007'</span>
+<span class="term-err">04-23 10:14:06.813 F DEBUG   : pid: 1142, tid: 1160, name: Binder:1142_2  &gt;&gt;&gt; /system/bin/surfaceflinger</span>
+<span class="term-err">04-23 10:14:06.814 F DEBUG   : signal 6 (SIGABRT), code -1 (SI_QUEUE)</span>
+<span class="term-err">04-23 10:14:06.814 F DEBUG   :     #00 pc 00000000000a0f8c  /apex/com.android.runtime/lib64/bionic/libc.so</span>
+<span class="term-prompt">device:/ $</span> <span class="term-out">rm -rf /system/priv-app/</span><span class="term-caret"></span>
+</div>
+            </div>
+
+            <div class="hitl-banner">
+              <strong>⚠ <span class="lang-en">Human-in-the-Loop required</span><span class="lang-zh">需人工确认</span></strong>
+              <div style="margin-top:4px; font-family:var(--font-mono); font-size:12px; color:var(--anth-text);">
+                rm -rf /system/priv-app/
+              </div>
+              <div style="margin-top:6px; color:var(--anth-text-secondary); font-size:13px;">
+                <span class="lang-en">Pattern matched: <code>rm -rf</code> targeting a system partition. This will brick a verified-boot device and is not auto-allowed.</span>
+                <span class="lang-zh">命中策略：<code>rm -rf</code> 指向系统分区。这会让 verified-boot 设备变砖，不自动放行。</span>
+              </div>
+              <div class="hitl-actions">
+                <button class="hitl-btn hitl-btn--deny"><span class="lang-en">Deny</span><span class="lang-zh">拒绝</span></button>
+                <button class="hitl-btn"><span class="lang-en">Edit & retry</span><span class="lang-zh">编辑后重试</span></button>
+                <button class="hitl-btn hitl-btn--allow"><span class="lang-en">Allow once</span><span class="lang-zh">仅此次放行</span></button>
+              </div>
+            </div>
+          </div>
+
+          <p class="anth-caption" style="margin-top:var(--space-3);">
+            <span class="lang-en">Every command lands in the session JSONL. Select any output block → right-click → “Ask LLM about this” to hand it over to the Chat tab.</span>
+            <span class="lang-zh">每条命令都落到 session JSONL。选中任意输出 → 右键「让 LLM 分析这段」即可丢给 Chat 面板。</span>
+          </p>
+        </section>
+
+        <!-- ============ 3. PLAYGROUND ============ -->
+        <section id="playground" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">3 · Model Playground</span><span class="lang-zh">3 · 模型调试台</span></h2>
+            <span class="status-pill status-pill--plan"><span class="lang-en">New</span><span class="lang-zh">新增</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">Raw chat, bypassing the agent loop. Tune every parameter of a local model — temperature, top-p, top-k, context window, seed, stop sequences, think toggle, system prompt — and watch tokens/second, eval duration, and prompt eval duration in real time. Compare two parameter sets side by side.</span>
+            <span class="lang-zh">绕过 agent loop 的直聊。把本地模型的每个参数调一遍 —— temperature / top-p / top-k / 上下文长度 / seed / stop / think 开关 / system prompt —— 实时看 tokens/s、eval 时长、prompt eval 时长。两套参数可并排对比。</span>
+          </p>
+          <div class="need-row">
+            <span class="need-pill">POST /playground/chat</span>
+            <span class="need-pill">WS /playground/chat/ws</span>
+            <span class="need-pill">GET /backends/&lt;id&gt;/models</span>
+            <span class="need-pill">metrics in stream done event</span>
+          </div>
+
+          <div class="mock-card">
+            <div class="pg-grid">
+              <!-- Param panel -->
+              <div>
+                <div class="param-group-title"><span class="lang-en">Model</span><span class="lang-zh">模型</span></div>
+                <div class="param-row"><label>Backend</label>
+                  <select><option>ollama</option><option>openai-compat</option><option>llama.cpp</option><option>anthropic</option></select>
+                  <span></span>
+                </div>
+                <div class="param-row"><label>Model</label>
+                  <select><option>gemma4:26b</option><option>qwen2.5:7b</option><option>gpt-oss:20b</option></select>
+                  <span></span>
+                </div>
+                <div class="param-row"><label>Endpoint</label>
+                  <input type="text" value="alb-ollama.local:11434">
+                  <span></span>
+                </div>
+
+                <div class="param-group-title"><span class="lang-en">Sampling</span><span class="lang-zh">采样</span></div>
+                <div class="param-row"><label>temperature</label>
+                  <input type="range" min="0" max="2" step="0.01" value="0.7">
+                  <span class="val">0.70</span>
+                </div>
+                <div class="param-row"><label>top_p</label>
+                  <input type="range" min="0" max="1" step="0.01" value="0.9">
+                  <span class="val">0.90</span>
+                </div>
+                <div class="param-row"><label>top_k</label>
+                  <input type="number" value="40" min="0">
+                  <span></span>
+                </div>
+                <div class="param-row"><label>seed</label>
+                  <input type="number" value="-1">
+                  <span class="val" style="color:var(--anth-text-secondary);">rand</span>
+                </div>
+                <div class="param-row"><label>repeat_penalty</label>
+                  <input type="range" min="0.5" max="2" step="0.01" value="1.1">
+                  <span class="val">1.10</span>
+                </div>
+
+                <div class="param-group-title"><span class="lang-en">Context</span><span class="lang-zh">上下文</span></div>
+                <div class="param-row"><label>num_ctx</label>
+                  <input type="number" value="8192">
+                  <span class="val" style="color:var(--anth-text-secondary);">tok</span>
+                </div>
+                <div class="param-row"><label>num_predict</label>
+                  <input type="number" value="-1">
+                  <span class="val" style="color:var(--anth-text-secondary);">∞</span>
+                </div>
+                <div class="param-row"><label>stop</label>
+                  <input type="text" value="&lt;/s&gt;, &lt;|im_end|&gt;">
+                  <span></span>
+                </div>
+
+                <div class="param-group-title"><span class="lang-en">Behavior</span><span class="lang-zh">行为</span></div>
+                <div class="param-row"><label>think</label>
+                  <span></span>
+                  <span class="toggle-sw toggle-sw--on"></span>
+                </div>
+                <div class="param-row"><label>stream</label>
+                  <span></span>
+                  <span class="toggle-sw toggle-sw--on"></span>
+                </div>
+                <div class="param-row"><label>compare</label>
+                  <span></span>
+                  <span class="toggle-sw"></span>
+                </div>
+
+                <div class="param-group-title"><span class="lang-en">System prompt</span><span class="lang-zh">系统提示</span></div>
+                <textarea style="width:100%; min-height:70px; font-family:var(--font-mono); font-size:12px; border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm); padding:8px; background:#ffffff;">You are a senior Android systems engineer. Answer in concise technical terms.</textarea>
+
+                <div style="display:flex; gap:var(--space-2); margin-top:var(--space-3);">
+                  <button class="hitl-btn"><span class="lang-en">Save preset</span><span class="lang-zh">存为预设</span></button>
+                  <button class="hitl-btn"><span class="lang-en">Load</span><span class="lang-zh">加载</span></button>
+                  <button class="hitl-btn" style="border-color:var(--anth-orange); color:var(--anth-orange);"><span class="lang-en">Reset</span><span class="lang-zh">重置</span></button>
+                </div>
+              </div>
+
+              <!-- Chat + metrics -->
+              <div>
+                <div class="chat-window" style="min-height:300px;">
+                  <div class="bubble bubble--user">
+                    <span class="lang-en">Explain dm-verity in three sentences.</span>
+                    <span class="lang-zh">用三句话解释 dm-verity。</span>
+                  </div>
+                  <div class="bubble bubble--assistant">
+                    <span class="lang-en">dm-verity is a device-mapper target that provides transparent integrity checking of a block device using a Merkle hash tree. The bootloader verifies the tree's root hash against a signed vbmeta image, and every read from the verified partition recomputes the block's hash on the fly. A hash mismatch triggers either a panic or a read error depending on the configured mode (<code>enforcing</code>, <code>logging</code>, or <code>ignore_zero_blocks</code>).</span>
+                    <span class="lang-zh">dm-verity 是一个 device-mapper target，用一棵 Merkle hash 树给块设备做透明完整性校验。bootloader 拿树的 root hash 去对签过名的 vbmeta 映像做验证，之后每次从这个分区读数据都会现算块的哈希。哈希不匹配时，按配置的模式触发 panic 或返回读错误（<code>enforcing</code> / <code>logging</code> / <code>ignore_zero_blocks</code>）。</span>
+                  </div>
+                </div>
+
+                <div class="metrics-bar">
+                  <div class="metric"><span class="lang-en">throughput</span><span class="lang-zh">吞吐</span>
+                    <strong>142 <span style="font-size:12px; font-weight:400;">tok/s</span></strong></div>
+                  <div class="metric"><span class="lang-en">eval duration</span><span class="lang-zh">生成时长</span>
+                    <strong>3.24 <span style="font-size:12px; font-weight:400;">s</span></strong></div>
+                  <div class="metric"><span class="lang-en">prompt eval</span><span class="lang-zh">prompt 处理</span>
+                    <strong>0.41 <span style="font-size:12px; font-weight:400;">s</span></strong></div>
+                  <div class="metric"><span class="lang-en">total</span><span class="lang-zh">总计</span>
+                    <strong>4.13 <span style="font-size:12px; font-weight:400;">s</span></strong></div>
+                  <div class="metric"><span class="lang-en">ctx used</span><span class="lang-zh">上下文用量</span>
+                    <strong>2341/8192</strong></div>
+                  <div class="metric"><span class="lang-en">tokens out</span><span class="lang-zh">输出 token</span>
+                    <strong>460</strong></div>
+                </div>
+
+                <div class="chat-input">
+                  <input type="text" placeholder="Ask the raw model anything…" disabled>
+                  <button class="anth-button" style="padding:8px 20px; font-size:13px;" disabled>
+                    <span class="lang-en">Send</span><span class="lang-zh">发送</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 4. DEVICES ============ -->
+        <section id="devices" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">4 · Devices Dashboard</span><span class="lang-zh">4 · 设备看板</span></h2>
+            <span class="status-pill status-pill--wip"><span class="lang-en">Partial backend</span><span class="lang-zh">后端部分就位</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">Every connected device at a glance — adb USB, adb over Wi-Fi, UART bridge. Tunnel status lights, live Windows probe output for COM ports and USB PID/VID.</span>
+            <span class="lang-zh">所有连上的设备一眼看完 —— USB adb、Wi-Fi adb、UART 桥。隧道状态灯 + Windows 探针实时上报 COM 口和 USB PID/VID。</span>
+          </p>
+          <div class="need-row">
+            <span class="need-pill">GET /devices</span>
+            <span class="need-pill">WS /devices/live</span>
+            <span class="need-pill">GET /tunnels</span>
+            <span class="need-pill">alb-probe-win (reverse tunnel)</span>
+          </div>
+
+          <div class="mock-card">
+            <div class="dev-grid">
+              <!-- Device A: adb USB -->
+              <div class="dev-card">
+                <div class="dev-head">
+                  <span class="dot dot--green"></span>
+                  <span class="dev-name">ABC123XYZ</span>
+                  <span class="dev-transport" style="margin-left:auto;">adb · usb</span>
+                </div>
+                <div class="dev-body">
+                  <span class="lang-en">Android 14 · userdebug · Cortex-A76/A55</span>
+                  <span class="lang-zh">Android 14 · userdebug · Cortex-A76/A55</span><br>
+                  <code>8G LPDDR5 · 128G UFS 3.1</code>
+                </div>
+                <div class="dev-recent">last: 2 s ago · logcat 618 E/min · batt 74% · 38.2°C</div>
+                <div style="display:flex; gap:var(--space-2);">
+                  <button class="hitl-btn"><span class="lang-en">Open chat</span><span class="lang-zh">打开对话</span></button>
+                  <button class="hitl-btn"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></button>
+                </div>
+              </div>
+
+              <!-- Device B: adb wifi -->
+              <div class="dev-card">
+                <div class="dev-head">
+                  <span class="dot dot--amber"></span>
+                  <span class="dev-name">DEF456UVW</span>
+                  <span class="dev-transport" style="margin-left:auto;">adb · wifi</span>
+                </div>
+                <div class="dev-body">
+                  <span class="lang-en">Android 13 · user · Cortex-A78</span>
+                  <span class="lang-zh">Android 13 · user · Cortex-A78</span><br>
+                  <code>board.lan:5555 · RTT 18 ms</code>
+                </div>
+                <div class="dev-recent">last: 12 s ago · idle · batt 92% · charging</div>
+                <div style="display:flex; gap:var(--space-2);">
+                  <button class="hitl-btn"><span class="lang-en">Open chat</span><span class="lang-zh">打开对话</span></button>
+                  <button class="hitl-btn"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></button>
+                </div>
+              </div>
+
+              <!-- Device C: serial -->
+              <div class="dev-card">
+                <div class="dev-head">
+                  <span class="dot dot--green"></span>
+                  <span class="dev-name"><span class="lang-en">UART bridge</span><span class="lang-zh">UART 桥</span></span>
+                  <span class="dev-transport" style="margin-left:auto;">serial</span>
+                </div>
+                <div class="dev-body">
+                  <span class="lang-en">1 500 000 baud · shell_root</span>
+                  <span class="lang-zh">1 500 000 波特率 · shell_root</span><br>
+                  <code>COM27 → localhost:19001</code>
+                </div>
+                <div class="dev-recent">last: 1 s ago · prompt stable · 0 printk since probe</div>
+                <div style="display:flex; gap:var(--space-2);">
+                  <button class="hitl-btn"><span class="lang-en">Capture</span><span class="lang-zh">抓日志</span></button>
+                  <button class="hitl-btn"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="tunnel-bar">
+              <div class="tunnel-cell">
+                <span class="dot dot--green" style="margin-right:6px;"></span>
+                <span class="lang-en">adb tunnel 5037</span><span class="lang-zh">adb 隧道 5037</span>
+                <strong>12.4 MB ↓ · 0.3 MB ↑</strong>
+              </div>
+              <div class="tunnel-cell">
+                <span class="dot dot--green" style="margin-right:6px;"></span>
+                <span class="lang-en">UART bridge 19001</span><span class="lang-zh">UART 桥 19001</span>
+                <strong>3.1 MB ↓ · 120 B ↑</strong>
+              </div>
+              <div class="tunnel-cell">
+                <span class="dot dot--amber" style="margin-right:6px;"></span>
+                <span class="lang-en">Windows probe 19002</span><span class="lang-zh">Windows 探针 19002</span>
+                <strong><span class="lang-en">waiting reconnect…</span><span class="lang-zh">等待重连…</span></strong>
+              </div>
+            </div>
+
+            <div style="margin-top:var(--space-4); padding:var(--space-3); background:var(--anth-bg); border:1px solid var(--anth-light-gray); border-radius:var(--radius-md); font-family:var(--font-mono); font-size:12px;">
+              <div style="font-family:var(--font-heading); font-weight:600; font-size:12px; color:var(--anth-text-secondary); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:var(--space-2);">
+                <span class="lang-en">Windows probe snapshot · 2 s ago</span>
+                <span class="lang-zh">Windows 探针快照 · 2 秒前</span>
+              </div>
+              <div>COM27 · 1500000 baud · in use by alb-serial-bridge.py (pid 14820)</div>
+              <div>COM4  · free</div>
+              <div>USB   · VID 18d1 · PID 4ee7 · “Android Composite ADB Interface” → ABC123XYZ</div>
+              <div>USB   · VID 0403 · PID 6001 · “USB Serial Converter”</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 5. SYSTEM INFO ============ -->
+        <section id="system" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">5 · System Info</span><span class="lang-zh">5 · 系统信息</span></h2>
+            <span class="status-pill status-pill--plan"><span class="lang-en">New capability</span><span class="lang-zh">新能力</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">One screen, full picture. Eleven panels cover everything from Android build fingerprint down to DDR type, partition usage, SELinux state, and Verified Boot chain — sourced from <code>getprop</code>, <code>/proc</code>, <code>/sys</code>, and <code>dumpsys</code>.</span>
+            <span class="lang-zh">一屏看完整机软硬件。11 个面板覆盖从 Android 构建指纹到 DDR 类型、分区用量、SELinux 状态、Verified Boot 链 —— 数据来自 <code>getprop</code> / <code>/proc</code> / <code>/sys</code> / <code>dumpsys</code>。</span>
+          </p>
+          <div class="need-row">
+            <span class="need-pill">alb info system</span>
+            <span class="need-pill">alb info cpu --watch</span>
+            <span class="need-pill">alb info storage</span>
+            <span class="need-pill">alb info battery</span>
+            <span class="need-pill">alb info security</span>
+            <span class="need-pill">+6 more</span>
+          </div>
+
+          <div class="sys-grid">
+            <!-- Overview -->
+            <div class="mock-card sys-card">
+              <h3>🔭 <span class="lang-en">Overview</span><span class="lang-zh">总览</span></h3>
+              <dl class="sys-kv">
+                <dt>Android</dt><dd>14 · API 34</dd>
+                <dt><span class="lang-en">Build</span><span class="lang-zh">构建</span></dt><dd>userdebug · keys=test</dd>
+                <dt><span class="lang-en">Fingerprint</span><span class="lang-zh">指纹</span></dt><dd>Android/aosp/generic:14/UP1A.231005.007/eng</dd>
+                <dt><span class="lang-en">Security patch</span><span class="lang-zh">安全补丁</span></dt><dd>2026-03-05</dd>
+                <dt><span class="lang-en">Root</span><span class="lang-zh">Root</span></dt><dd>adbd with root</dd>
+              </dl>
+            </div>
+
+            <!-- Kernel -->
+            <div class="mock-card sys-card">
+              <h3>⚙ <span class="lang-en">Kernel &amp; Bootloader</span><span class="lang-zh">内核 &amp; Bootloader</span></h3>
+              <dl class="sys-kv">
+                <dt>Kernel</dt><dd>6.1.75-android14-11-g3a8f0e</dd>
+                <dt>Arch</dt><dd>aarch64 · armv8.2-A</dd>
+                <dt>SELinux</dt><dd style="color:var(--anth-green);">enforcing</dd>
+                <dt>Bootloader</dt><dd>u-boot 2023.10-genericboard</dd>
+                <dt>Baseband</dt><dd>N/A</dd>
+                <dt>Slot</dt><dd>_a · success</dd>
+              </dl>
+            </div>
+
+            <!-- CPU -->
+            <div class="mock-card sys-card">
+              <h3>🧠 CPU</h3>
+              <dl class="sys-kv">
+                <dt>SoC</dt><dd><span class="lang-en">Generic Octa-core ARM</span><span class="lang-zh">通用 8 核 ARM</span></dd>
+                <dt>Config</dt><dd>4× A76 @ 2.2 GHz + 4× A55 @ 1.8 GHz</dd>
+                <dt>Governor</dt><dd>schedutil</dd>
+                <dt><span class="lang-en">Current</span><span class="lang-zh">当前频率</span></dt><dd>2.2 / 2.2 / 2.2 / 2.2 / 1.8 / 1.8 / 1.8 / 1.8</dd>
+                <dt><span class="lang-en">Thermal</span><span class="lang-zh">温度</span></dt><dd>52.1°C cpu-big · 49.3°C cpu-little</dd>
+              </dl>
+            </div>
+
+            <!-- GPU -->
+            <div class="mock-card sys-card">
+              <h3>🎨 GPU</h3>
+              <dl class="sys-kv">
+                <dt>Model</dt><dd>Mali-G610 MC4</dd>
+                <dt>Driver</dt><dd>r40p0 · OpenGL ES 3.2</dd>
+                <dt>Vulkan</dt><dd>1.3.231</dd>
+                <dt>Freq</dt><dd>800 MHz / 1000 MHz max</dd>
+                <dt>Util</dt><dd>37%</dd>
+              </dl>
+            </div>
+
+            <!-- Memory -->
+            <div class="mock-card sys-card">
+              <h3>💾 <span class="lang-en">Memory</span><span class="lang-zh">内存</span></h3>
+              <dl class="sys-kv">
+                <dt>Total</dt><dd>7 892 MB</dd>
+                <dt>Used</dt><dd>4 137 MB · 52%</dd>
+                <dt>Free</dt><dd>621 MB</dd>
+                <dt>Buff/Cache</dt><dd>3 134 MB</dd>
+                <dt>Swap</dt><dd>2048 MB (zram) · 412 used</dd>
+              </dl>
+            </div>
+
+            <!-- DDR & UFS -->
+            <div class="mock-card sys-card">
+              <h3>🪙 DDR &amp; UFS</h3>
+              <dl class="sys-kv">
+                <dt>DDR type</dt><dd>LPDDR5 · 6400 MT/s</dd>
+                <dt>Channels</dt><dd>2</dd>
+                <dt>Storage</dt><dd>UFS 3.1 · 128 GB</dd>
+                <dt><span class="lang-en">Seq read</span><span class="lang-zh">顺序读</span></dt><dd>2.1 GB/s</dd>
+                <dt><span class="lang-en">Seq write</span><span class="lang-zh">顺序写</span></dt><dd>1.4 GB/s</dd>
+              </dl>
+            </div>
+
+            <!-- Partitions -->
+            <div class="mock-card sys-card">
+              <h3>🗂 <span class="lang-en">Partitions</span><span class="lang-zh">分区</span></h3>
+              <div class="part-row">
+                <span class="part-name">system_a</span>
+                <div class="part-bar"><div class="part-bar-fill" style="width:86%;"></div></div>
+                <span class="part-pct">3.4 / 4 G</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">vendor_a</span>
+                <div class="part-bar"><div class="part-bar-fill" style="width:61%;"></div></div>
+                <span class="part-pct">610 / 1 G</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">boot_a</span>
+                <div class="part-bar"><div class="part-bar-fill" style="width:92%;"></div></div>
+                <span class="part-pct">58 / 64 M</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">userdata</span>
+                <div class="part-bar"><div class="part-bar-fill" style="width:46%;"></div></div>
+                <span class="part-pct">47 / 103 G</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">metadata</span>
+                <div class="part-bar"><div class="part-bar-fill" style="width:12%;"></div></div>
+                <span class="part-pct">2 / 16 M</span>
+              </div>
+            </div>
+
+            <!-- File systems -->
+            <div class="mock-card sys-card">
+              <h3>📁 <span class="lang-en">Filesystems</span><span class="lang-zh">文件系统</span></h3>
+              <div style="font-family:var(--font-mono); font-size:12px; line-height:1.7;">
+                <div><span style="color:var(--anth-text-secondary);">/</span>            → erofs  ro</div>
+                <div><span style="color:var(--anth-text-secondary);">/vendor</span>      → erofs  ro</div>
+                <div><span style="color:var(--anth-text-secondary);">/data</span>        → f2fs   rw</div>
+                <div><span style="color:var(--anth-text-secondary);">/metadata</span>    → ext4   rw</div>
+                <div><span style="color:var(--anth-text-secondary);">/sdcard</span>      → sdcardfs rw</div>
+                <div><span style="color:var(--anth-text-secondary);">/dev/cpuset</span>  → cgroup rw</div>
+                <div><span style="color:var(--anth-text-secondary);">/sys/fs/bpf</span>  → bpf    rw</div>
+              </div>
+            </div>
+
+            <!-- Network -->
+            <div class="mock-card sys-card">
+              <h3>🌐 <span class="lang-en">Network</span><span class="lang-zh">网络</span></h3>
+              <dl class="sys-kv">
+                <dt>wlan0</dt><dd>board.lan · up · -52 dBm</dd>
+                <dt>SSID</dt><dd>lab-2.4G</dd>
+                <dt>eth0</dt><dd>down</dd>
+                <dt>rndis0</dt><dd>board-usb.lan · up</dd>
+                <dt>DNS</dt><dd>dns.lan, 1.1.1.1</dd>
+              </dl>
+            </div>
+
+            <!-- Battery -->
+            <div class="mock-card sys-card">
+              <h3>🔋 <span class="lang-en">Battery</span><span class="lang-zh">电池</span></h3>
+              <dl class="sys-kv">
+                <dt>Level</dt><dd>74%</dd>
+                <dt>Status</dt><dd><span class="lang-en">charging (AC)</span><span class="lang-zh">充电中 (AC)</span></dd>
+                <dt>Voltage</dt><dd>4.12 V</dd>
+                <dt>Current</dt><dd>+1824 mA</dd>
+                <dt>Temp</dt><dd>38.2°C</dd>
+                <dt><span class="lang-en">Health</span><span class="lang-zh">健康</span></dt><dd>good · 412 cycles</dd>
+              </dl>
+            </div>
+
+            <!-- Security -->
+            <div class="mock-card sys-card">
+              <h3>🛡 <span class="lang-en">Security</span><span class="lang-zh">安全</span></h3>
+              <dl class="sys-kv">
+                <dt>Verified Boot</dt><dd><span style="color:var(--anth-green);">GREEN</span> · AVB v1.2</dd>
+                <dt>dm-verity</dt><dd>enforcing</dd>
+                <dt>FBE</dt><dd>aes-256-xts</dd>
+                <dt>SELinux policy</dt><dd>v33 · 2026-02-14 build</dd>
+                <dt>OEM unlock</dt><dd style="color:var(--anth-danger);">enabled</dd>
+                <dt>adb secure</dt><dd>1</dd>
+              </dl>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 6. CHARTS ============ -->
+        <section id="charts" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">6 · Real-time Charts</span><span class="lang-zh">6 · 实时图表</span></h2>
+            <span class="status-pill status-pill--plan"><span class="lang-en">New capability</span><span class="lang-zh">新能力</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">1 Hz sampling by default, 60-second sliding window, pause / zoom / CSV export. Always visible at the top of the app so you notice thermal throttle or memory pressure before the LLM does.</span>
+            <span class="lang-zh">默认 1 Hz 采样，60 秒滑窗，可暂停 / 缩放 / 导 CSV。常驻顶栏，让你比 LLM 更早发现降频或内存压力。</span>
+          </p>
+          <div class="need-row">
+            <span class="need-pill">WS /metrics/stream</span>
+            <span class="need-pill">ring buffer 300s</span>
+            <span class="need-pill">µPlot / Chart.js</span>
+          </div>
+
+          <div class="mock-card">
+            <div class="spark-grid">
+              <div class="spark-card">
+                <h3>CPU<span class="lang-en"> utilization</span><span class="lang-zh"> 占用</span></h3>
+                <span class="spark-val">47<span class="spark-unit">%</span></span>
+                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M0 40 L10 38 L20 42 L30 35 L40 30 L50 34 L60 28 L70 22 L80 26 L90 20 L100 24 L110 18 L120 22 L130 16 L140 20 L150 14 L160 12 L170 18 L180 22 L190 28 L200 24 L210 30 L220 26 L230 32 L240 28 L250 34 L260 30 L270 26 L280 32 L290 28 L300 32" fill="none" stroke="#d97757" stroke-width="1.6"/>
+                </svg>
+              </div>
+
+              <div class="spark-card">
+                <h3><span class="lang-en">Memory used</span><span class="lang-zh">内存占用</span></h3>
+                <span class="spark-val">4.1<span class="spark-unit">GB</span></span>
+                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M0 44 L20 43 L40 42 L60 41 L80 40 L100 39 L120 38 L140 36 L160 34 L180 32 L200 30 L220 29 L240 28 L260 27 L280 26 L300 25" fill="none" stroke="#6a9bcc" stroke-width="1.6"/>
+                </svg>
+              </div>
+
+              <div class="spark-card">
+                <h3><span class="lang-en">Battery temperature</span><span class="lang-zh">电池温度</span></h3>
+                <span class="spark-val">38.2<span class="spark-unit">°C</span></span>
+                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M0 50 L25 48 L50 46 L75 44 L100 40 L125 38 L150 36 L175 34 L200 32 L225 30 L250 28 L275 26 L300 24" fill="none" stroke="#a14238" stroke-width="1.6"/>
+                </svg>
+              </div>
+
+              <div class="spark-card">
+                <h3><span class="lang-en">Disk IO</span><span class="lang-zh">磁盘 IO</span></h3>
+                <span class="spark-val">82<span class="spark-unit">MB/s</span></span>
+                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M0 50 L20 48 L40 44 L60 30 L80 14 L100 28 L120 45 L140 50 L160 48 L180 32 L200 18 L220 24 L240 40 L260 46 L280 44 L300 38" fill="none" stroke="#788c5d" stroke-width="1.6"/>
+                </svg>
+              </div>
+
+              <div class="spark-card">
+                <h3><span class="lang-en">Network</span><span class="lang-zh">网络吞吐</span></h3>
+                <span class="spark-val">1.2<span class="spark-unit">MB/s</span></span>
+                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M0 48 L25 44 L50 40 L75 44 L100 36 L125 32 L150 38 L175 28 L200 24 L225 30 L250 22 L275 28 L300 20" fill="none" stroke="#d97757" stroke-width="1.6"/>
+                </svg>
+              </div>
+
+              <div class="spark-card">
+                <h3><span class="lang-en">GPU utilization</span><span class="lang-zh">GPU 占用</span></h3>
+                <span class="spark-val">37<span class="spark-unit">%</span></span>
+                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M0 46 L25 40 L50 44 L75 38 L100 42 L125 32 L150 36 L175 28 L200 34 L225 26 L250 30 L275 24 L300 28" fill="none" stroke="#6a9bcc" stroke-width="1.6"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ COMING NEXT ============ -->
+        <section id="next" style="margin-bottom:var(--space-9);">
+          <div class="section-head">
+            <h2><span class="lang-en">Coming next — batch 2</span><span class="lang-zh">后续批次 — batch 2</span></h2>
+            <span class="status-pill status-pill--plan"><span class="lang-en">Pending review</span><span class="lang-zh">等你过稿</span></span>
+          </div>
+          <p class="section-sub">
+            <span class="lang-en">We will mock these six after you sign off on batch 1 above. Each will get the same walk-through treatment before any backend work starts.</span>
+            <span class="lang-zh">上面 6 块你过稿后，这 6 块再按同样方式出静态稿 —— 全部定稿了再开后端。</span>
+          </p>
+
+          <div class="next-grid">
+            <div class="next-card">
+              <h3>🪵 <span class="lang-en">Logcat / dmesg stream</span><span class="lang-zh">Logcat / dmesg 流</span></h3>
+              <p>
+                <span class="lang-en">Level colors, tag / PID / regex filters, pause / export, trigger rules (“on FATAL: auto bugreport + screenshot”), ANR timeline markers.</span>
+                <span class="lang-zh">级别着色、tag / PID / 正则过滤、暂停 / 导出、触发规则（"FATAL 时自动抓 bugreport + 截图"）、ANR 时间轴标记。</span>
+              </p>
+            </div>
+
+            <div class="next-card">
+              <h3>🔍 <span class="lang-en">UI Inspector</span><span class="lang-zh">UI 检查器</span></h3>
+              <p>
+                <span class="lang-en">Screenshot with bounds overlay on hover, searchable view tree, selected-node details. No tap / swipe — diagnosis only.</span>
+                <span class="lang-zh">截图上悬浮高亮控件 bounds、控件树可搜索、选中控件详情。不做 tap / swipe —— 只诊断。</span>
+              </p>
+            </div>
+
+            <div class="next-card">
+              <h3>📦 <span class="lang-en">Artifacts browser</span><span class="lang-zh">产物浏览器</span></h3>
+              <p>
+                <span class="lang-en">Tree by session, type filters, inline preview of PNG / JSON / logcat / XML, quota bar, zip &amp; download.</span>
+                <span class="lang-zh">按 session 树形、类型筛选、PNG / JSON / logcat / XML 在线预览、配额进度条、打包下载。</span>
+              </p>
+            </div>
+
+            <div class="next-card">
+              <h3>⏳ <span class="lang-en">Sessions</span><span class="lang-zh">Session 会话</span></h3>
+              <p>
+                <span class="lang-en">List, open, replay with a timeline scrubber, diff two runs, fork from any turn, tag &amp; star.</span>
+                <span class="lang-zh">列表、打开、按时间轴 scrubber 回放、两次 run 对比、任意轮 fork、打标签收藏。</span>
+              </p>
+            </div>
+
+            <div class="next-card">
+              <h3>🚦 <span class="lang-en">HITL approvals</span><span class="lang-zh">HITL 审批</span></h3>
+              <p>
+                <span class="lang-en">Queue of pending dangerous tool calls, approve / deny / edit-then-approve, session-scoped allowlist, full audit trail.</span>
+                <span class="lang-zh">危险 tool 调用审批队列、允许 / 拒绝 / 改后放行、session 内白名单、完整审计。</span>
+              </p>
+            </div>
+
+            <div class="next-card">
+              <h3>🩺 <span class="lang-en">Doctor &amp; Settings</span><span class="lang-zh">Doctor &amp; 设置</span></h3>
+              <p>
+                <span class="lang-en">Red / yellow / green health check over tunnels, adb, serial, MCP, config, env. Backend config form, workspace quota, theme, language.</span>
+                <span class="lang-zh">隧道 / adb / 串口 / MCP / config / env 的红黄绿体检。后端配置表单、workspace 配额、主题、语言。</span>
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Feedback callout -->
+        <div class="mock-card" style="background:var(--anth-bg-subtle); border-style:dashed;">
+          <h3 style="margin-top:0;">
+            <span class="lang-en">→ Walk through, then cut.</span>
+            <span class="lang-zh">→ 先过一遍，再砍。</span>
+          </h3>
+          <p style="margin-bottom:0;">
+            <span class="lang-en">Open an issue or send a note with what to remove, keep, or add from this preview. Once batch 1 stabilizes, we freeze the schema and start wiring the FastAPI endpoints / WebSocket channels behind each widget.</span>
+            <span class="lang-zh">在 issue 里留言或直接反馈：这份 preview 里要删什么、留什么、加什么。batch 1 定稿后，我们冻结 schema，再按每个控件接上 FastAPI / WebSocket。</span>
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <footer style="background:var(--anth-bg-subtle); border-top:1px solid var(--anth-light-gray); padding:var(--space-7) 0; margin-top:var(--space-8);">
+      <div class="anth-container" style="display:flex; flex-wrap:wrap; gap:var(--space-5); justify-content:space-between; align-items:baseline;">
+        <div style="font-family:var(--font-heading); font-weight:600;">android-llm-bridge</div>
+        <div style="font-size:13px; color:var(--anth-text-secondary);">
+          <span class="lang-en">© 2026 android-llm-bridge contributors · MIT · open-source</span>
+          <span class="lang-zh">© 2026 android-llm-bridge contributors · MIT · 开源</span>
+        </div>
+        <div style="display:flex; gap:var(--space-4); font-size:14px;">
+          <a class="anth-link" href="./">Home</a>
+          <a class="anth-link" href="on-device-agent.html"><span class="lang-en">On-device Agent</span><span class="lang-zh">设备端 Agent</span></a>
+          <a class="anth-link" href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      function applyLang(lang){
+        document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+        const btn = document.getElementById("langBtn");
+        if(btn) btn.textContent = lang === "zh" ? "English" : "中文";
+        try{ localStorage.setItem("alb.lang", lang); }catch(e){}
+      }
+      function toggleLang(){
+        const cur = (localStorage.getItem("alb.lang") || "en");
+        applyLang(cur === "zh" ? "en" : "zh");
+      }
+      (function init(){
+        let stored = null;
+        try{ stored = localStorage.getItem("alb.lang"); }catch(e){}
+        const prefer = stored || (navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
+        if(prefer === "zh") applyLang("zh");
+      })();
+    </script>
+  </body>
+</html>
