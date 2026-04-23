@@ -68,7 +68,7 @@ _SAMPLE_CMD = (
     ' do echo "$d:"; cat $d/name 2>/dev/null; cat $d/cur_freq 2>/dev/null; done;'
     "echo __ALB_GPUUTIL__; cat /sys/kernel/debug/mali*/gpu_utilization 2>/dev/null;"
     "echo __ALB_DISK__; cat /sys/block/*/stat 2>/dev/null;"
-    "echo __ALB_BAT__; dumpsys battery 2>/dev/null | grep -E '^\\s*(present|temperature):'"
+    "echo __ALB_BAT__; dumpsys battery 2>/dev/null | grep -E '^[[:space:]]*(present|temperature):'"
 )
 
 
