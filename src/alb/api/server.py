@@ -19,6 +19,7 @@ from fastapi import FastAPI
 
 from alb import __version__
 from alb.api.chat_route import router as chat_router
+from alb.api.metrics_route import router as metrics_router
 from alb.infra.env_loader import load_env_files
 
 # Load .env.local / .env so ALB_* values reach FastAPI request handlers.
@@ -42,6 +43,13 @@ def create_app() -> FastAPI:
         return {"ok": "true", "version": __version__, "api": "alb"}
 
     app.include_router(chat_router)
+    app.include_router(metrics_router)
+
+    @app.on_event("shutdown")
+    async def _stop_streamers() -> None:  # noqa: ANN001 — FastAPI hook
+        from alb.capabilities.metrics import shutdown_all_streamers
+        await shutdown_all_streamers()
+
     return app
 
 
