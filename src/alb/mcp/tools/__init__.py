@@ -11,6 +11,7 @@ from alb.mcp.tools import filesync as filesync_tools
 from alb.mcp.tools import logging as logging_tools
 from alb.mcp.tools import power as power_tools
 from alb.mcp.tools import shell as shell_tools
+from alb.mcp.tools import info as info_tools
 from alb.mcp.tools import ui as ui_tools
 
 
@@ -23,3 +24,4 @@ def register_all(mcp) -> None:  # noqa: ANN001 — FastMCP import lazy in server
     power_tools.register(mcp)
     app_tools.register(mcp)
     ui_tools.register(mcp)
+    info_tools.register(mcp)
