@@ -12,9 +12,14 @@ from alb.capabilities.info import (
     all_info,
     battery,
     cpu,
+    display,
+    gpu,
     memory,
     network,
+    packages,
     panel_names,
+    processes,
+    security,
     storage,
     system,
 )
@@ -83,6 +88,60 @@ def cmd_battery(
     """Battery level / status / voltage / temp / health."""
     t = get_transport(ctx, device_serial=device)
     result = run_async(battery(t, device=device))
+    print_result(ctx, result)
+
+
+@app.command("gpu")
+def cmd_gpu(
+    ctx: typer.Context, device: str | None = typer.Option(None, "--device", "-d")
+) -> None:
+    """GPU model / frequency / governor / utilization."""
+    t = get_transport(ctx, device_serial=device)
+    result = run_async(gpu(t, device=device))
+    print_result(ctx, result)
+
+
+@app.command("security")
+def cmd_security(
+    ctx: typer.Context, device: str | None = typer.Option(None, "--device", "-d")
+) -> None:
+    """Verified Boot / dm-verity / FBE / SELinux / OEM unlock."""
+    t = get_transport(ctx, device_serial=device)
+    result = run_async(security(t, device=device))
+    print_result(ctx, result)
+
+
+@app.command("display")
+def cmd_display(
+    ctx: typer.Context, device: str | None = typer.Option(None, "--device", "-d")
+) -> None:
+    """Resolution / density / refresh rate / brightness."""
+    t = get_transport(ctx, device_serial=device)
+    result = run_async(display(t, device=device))
+    print_result(ctx, result)
+
+
+@app.command("packages")
+def cmd_packages(
+    ctx: typer.Context,
+    device: str | None = typer.Option(None, "--device", "-d"),
+    sample: int = typer.Option(10, "--sample", help="Sample size per list."),
+) -> None:
+    """Installed packages: system / user / disabled counts + samples."""
+    t = get_transport(ctx, device_serial=device)
+    result = run_async(packages(t, device=device, sample_limit=sample))
+    print_result(ctx, result)
+
+
+@app.command("processes")
+def cmd_processes(
+    ctx: typer.Context,
+    device: str | None = typer.Option(None, "--device", "-d"),
+    limit: int = typer.Option(15, "--limit", help="Top-N by CPU and by RSS."),
+) -> None:
+    """Top processes by CPU and by memory (RSS)."""
+    t = get_transport(ctx, device_serial=device)
+    result = run_async(processes(t, device=device, limit=limit))
     print_result(ctx, result)
 
 
