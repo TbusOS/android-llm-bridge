@@ -831,16 +831,567 @@ def _parse_dumpsys_battery(stdout: str) -> BatteryInfo:
     )
 
 
-# ─── Aggregate: run all 6 in parallel ────────────────────────────────
+# ─── Panel: gpu ──────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class GPUInfo:
+    name: str            # device name from sysfs (e.g. "fde60000.gpu")
+    vendor: str          # "arm" / "qualcomm" / "imagination" / ""
+    renderer: str        # OpenGL renderer string if we can get it
+    freq_hz_current: int
+    freq_hz_max: int
+    freq_hz_min: int
+    governor: str
+    util_pct: int        # -1 if unknown
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+async def gpu(t: Transport, *, device: str | None = None) -> Result[GPUInfo]:
+    """GPU devfreq snapshot.
+
+    Most Android SoCs expose the GPU via `/sys/class/devfreq/<id>` with a
+    `name` like 'mali-...' or a device path like '[addr].gpu'. We look
+    for the first devfreq entry whose name mentions gpu / mali / adreno.
+    """
+    start = perf_counter()
+
+    dump = await _shell_or_empty(
+        t,
+        r"for d in /sys/class/devfreq/*; do "
+        r'echo "$d:" && '
+        r"cat $d/name 2>/dev/null && "
+        r"cat $d/cur_freq 2>/dev/null && "
+        r"cat $d/max_freq 2>/dev/null && "
+        r"cat $d/min_freq 2>/dev/null && "
+        r"cat $d/governor 2>/dev/null; done",
+        timeout=10,
+    )
+    entry = _pick_gpu_devfreq(dump)
+
+    # Load / utilization — Mali exposes via debugfs (root-only usually).
+    util_out = await _shell_or_empty(
+        t,
+        "cat /sys/kernel/debug/mali*/gpu_utilization 2>/dev/null; "
+        "cat /sys/devices/platform/*.gpu/utilisation 2>/dev/null",
+        timeout=5,
+    )
+    util = _parse_single_int(util_out, default=-1)
+
+    # Renderer — dumpsys SurfaceFlinger prints 'GLES:' line.
+    sf_out = await _shell_or_empty(
+        t, "dumpsys SurfaceFlinger 2>/dev/null | grep -iE '^GLES:' | head -1",
+        timeout=10,
+    )
+    renderer = sf_out.strip()
+    if renderer.lower().startswith("gles:"):
+        renderer = renderer.split(":", 1)[1].strip()
+
+    vendor = _detect_gpu_vendor(entry.get("name", "") + " " + renderer)
+
+    info = GPUInfo(
+        name=entry.get("name", ""),
+        vendor=vendor,
+        renderer=renderer,
+        freq_hz_current=entry.get("cur", 0),
+        freq_hz_max=entry.get("max", 0),
+        freq_hz_min=entry.get("min", 0),
+        governor=entry.get("gov", ""),
+        util_pct=util,
+    )
+    return ok(data=info, timing_ms=_elapsed_ms(start))
+
+
+_DEVFREQ_KEYWORDS = ("gpu", "mali", "adreno", "powervr")
+
+
+def _pick_gpu_devfreq(stdout: str) -> dict[str, Any]:
+    """Walk `for d in /sys/class/devfreq/*; echo $d: ...` output and
+    return the first block that mentions gpu/mali/adreno/powervr."""
+    current_path: str | None = None
+    buf: list[str] = []
+    best: dict[str, Any] = {}
+    for line in stdout.splitlines():
+        if line.endswith(":") and line.startswith("/sys/class/devfreq/"):
+            if current_path is not None:
+                entry = _build_devfreq_entry(current_path, buf)
+                if not best and _devfreq_is_gpu(entry):
+                    best = entry
+            current_path = line.rstrip(":")
+            buf = []
+        else:
+            buf.append(line)
+    if current_path is not None:
+        entry = _build_devfreq_entry(current_path, buf)
+        if not best and _devfreq_is_gpu(entry):
+            best = entry
+    return best
+
+
+def _devfreq_is_gpu(entry: dict[str, Any]) -> bool:
+    haystack = (entry.get("name", "") + " " + entry.get("path", "")).lower()
+    return any(k in haystack for k in _DEVFREQ_KEYWORDS)
+
+
+def _build_devfreq_entry(path: str, values: list[str]) -> dict[str, Any]:
+    vals = [v.strip() for v in values if v.strip()]
+    name = vals[0] if vals else ""
+    cur = _safe_int(vals[1]) if len(vals) >= 2 else 0
+    max_ = _safe_int(vals[2]) if len(vals) >= 3 else 0
+    min_ = _safe_int(vals[3]) if len(vals) >= 4 else 0
+    gov = vals[4] if len(vals) >= 5 else ""
+    # If order differs (some kernels omit name), best-effort extract numerics
+    if cur == 0 and len(vals) >= 1 and vals[0].isdigit():
+        name = ""
+        cur = _safe_int(vals[0])
+        max_ = _safe_int(vals[1]) if len(vals) >= 2 else 0
+        min_ = _safe_int(vals[2]) if len(vals) >= 3 else 0
+        gov = vals[3] if len(vals) >= 4 else ""
+    return {"path": path, "name": name, "cur": cur, "max": max_, "min": min_, "gov": gov}
+
+
+def _safe_int(s: str) -> int:
+    try:
+        return int(s.strip())
+    except (ValueError, AttributeError):
+        return 0
+
+
+def _parse_single_int(stdout: str, *, default: int = 0) -> int:
+    for line in stdout.splitlines():
+        s = line.strip().rstrip("%")
+        if s.isdigit():
+            return int(s)
+    return default
+
+
+def _detect_gpu_vendor(text: str) -> str:
+    t = text.lower()
+    if "mali" in t:
+        return "arm"
+    if "adreno" in t:
+        return "qualcomm"
+    if "powervr" in t:
+        return "imagination"
+    if "videocore" in t:
+        return "broadcom"
+    return ""
+
+
+# ─── Panel: security ─────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SecurityInfo:
+    verified_boot_state: str      # green / yellow / orange / red / ""
+    avb_version: str
+    verity_mode: str              # enforcing / logging / disabled / ""
+    crypto_state: str             # encrypted / unencrypted / unsupported / ""
+    crypto_type: str              # file / block / ""
+    file_encryption: str          # aes-256-xts / adiantum / ""
+    selinux_mode: str             # enforcing / permissive
+    selinux_policy_version: str
+    oem_unlock_allowed: bool
+    oem_unlock_supported: bool
+    adb_secure: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+async def security(t: Transport, *, device: str | None = None) -> Result[SecurityInfo]:
+    start = perf_counter()
+    props_out = await _shell_or_empty(t, "getprop", timeout=10)
+    if not props_out:
+        return fail(
+            code="ADB_COMMAND_FAILED",
+            message="getprop returned nothing",
+            category="transport",
+            timing_ms=_elapsed_ms(start),
+        )
+    props = _parse_getprop(props_out)
+
+    selinux_out = await _shell_or_empty(t, "getenforce 2>/dev/null", timeout=3)
+    pv_out = await _shell_or_empty(
+        t, "cat /sys/fs/selinux/policyvers 2>/dev/null", timeout=3
+    )
+    policy_version = pv_out.strip() if pv_out.strip().isdigit() else ""
+
+    info = SecurityInfo(
+        verified_boot_state=props.get("ro.boot.verifiedbootstate", ""),
+        avb_version=props.get("ro.boot.avb_version", ""),
+        verity_mode=props.get("ro.boot.veritymode", ""),
+        crypto_state=props.get("ro.crypto.state", ""),
+        crypto_type=props.get("ro.crypto.type", ""),
+        file_encryption=(
+            props.get("ro.crypto.volume.metadata.encryption", "")
+            or props.get("fbe.contents", "")
+            or props.get("ro.crypto.file_encryption", "")
+        ),
+        selinux_mode=selinux_out.strip().lower(),
+        selinux_policy_version=policy_version,
+        oem_unlock_allowed=_prop_bool(props.get("sys.oem_unlock_allowed", "")),
+        oem_unlock_supported=_prop_bool(
+            props.get("ro.oem_unlock_supported", ""),
+            truthy_values=("1", "true"),
+        ),
+        adb_secure=_prop_bool(
+            props.get("ro.adb.secure", ""),
+            truthy_values=("1", "true"),
+        ),
+    )
+    return ok(data=info, timing_ms=_elapsed_ms(start))
+
+
+def _prop_bool(value: str, *, truthy_values: tuple[str, ...] = ("true", "1")) -> bool:
+    return value.strip().lower() in truthy_values
+
+
+# ─── Panel: display ──────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DisplayInfo:
+    width: int
+    height: int
+    density: int                  # dpi (Physical density)
+    density_override: int         # user-overridden density if any
+    refresh_rate_hz: float
+    brightness: int               # 0-255; -1 if not readable
+    rotation: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+async def display(t: Transport, *, device: str | None = None) -> Result[DisplayInfo]:
+    start = perf_counter()
+
+    size_out = await _shell_or_empty(t, "wm size 2>/dev/null", timeout=5)
+    density_out = await _shell_or_empty(t, "wm density 2>/dev/null", timeout=5)
+    dumpsys_out = await _shell_or_empty(
+        t,
+        "dumpsys display 2>/dev/null | head -80",
+        timeout=10,
+    )
+    brightness_out = await _shell_or_empty(
+        t, "settings get system screen_brightness 2>/dev/null", timeout=5
+    )
+
+    width, height = _parse_wm_size(size_out)
+    density, density_override = _parse_wm_density(density_out)
+    refresh = _extract_refresh_rate(dumpsys_out)
+    rotation = _extract_rotation(dumpsys_out)
+    brightness = _safe_int(brightness_out)
+    if brightness == 0 and "null" in brightness_out.lower():
+        brightness = -1
+
+    return ok(
+        data=DisplayInfo(
+            width=width,
+            height=height,
+            density=density,
+            density_override=density_override,
+            refresh_rate_hz=refresh,
+            brightness=brightness,
+            rotation=rotation,
+        ),
+        timing_ms=_elapsed_ms(start),
+    )
+
+
+def _parse_wm_size(stdout: str) -> tuple[int, int]:
+    """'Physical size: 1080x2400' (and optionally 'Override size: ...')."""
+    for line in stdout.splitlines():
+        m = re.search(r"(\d+)\s*x\s*(\d+)", line)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return 0, 0
+
+
+def _parse_wm_density(stdout: str) -> tuple[int, int]:
+    """'Physical density: 420' + optional 'Override density: 480'."""
+    phys = 0
+    override = 0
+    for line in stdout.splitlines():
+        m = re.search(r"(?i)physical density:\s*(\d+)", line)
+        if m:
+            phys = int(m.group(1))
+        m = re.search(r"(?i)override density:\s*(\d+)", line)
+        if m:
+            override = int(m.group(1))
+    return phys, override
+
+
+def _extract_refresh_rate(stdout: str) -> float:
+    for line in stdout.splitlines():
+        # 'mRefreshRate=60.000004' / 'fps=60.0'
+        m = re.search(
+            r"(?:mRefreshRate|fps)\s*=\s*([\d.]+)",
+            line,
+        )
+        if m:
+            try:
+                return round(float(m.group(1)), 2)
+            except ValueError:
+                pass
+    return 0.0
+
+
+def _extract_rotation(stdout: str) -> int:
+    for line in stdout.splitlines():
+        m = re.search(r"(?:mRotation|orientation)\s*=\s*(\d+)", line)
+        if m:
+            return int(m.group(1))
+    return 0
+
+
+# ─── Panel: packages ─────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class PackagesInfo:
+    total: int
+    system_count: int
+    user_count: int
+    disabled_count: int
+    system_samples: list[str]
+    user_samples: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+async def packages(
+    t: Transport,
+    *,
+    device: str | None = None,
+    sample_limit: int = 10,
+) -> Result[PackagesInfo]:
+    start = perf_counter()
+    sys_out = await _shell_or_empty(t, "pm list packages -s 2>/dev/null", timeout=15)
+    user_out = await _shell_or_empty(t, "pm list packages -3 2>/dev/null", timeout=15)
+    dis_out = await _shell_or_empty(
+        t, "pm list packages -d 2>/dev/null", timeout=10
+    )
+
+    if not sys_out and not user_out:
+        return fail(
+            code="PM_UNAVAILABLE",
+            message="pm list packages returned nothing",
+            suggestion="Device may not be fully booted or pm service unreachable",
+            category="capability",
+            timing_ms=_elapsed_ms(start),
+        )
+
+    sys_pkgs = _parse_pm_list(sys_out)
+    user_pkgs = _parse_pm_list(user_out)
+    dis_pkgs = _parse_pm_list(dis_out)
+
+    return ok(
+        data=PackagesInfo(
+            total=len(sys_pkgs) + len(user_pkgs),
+            system_count=len(sys_pkgs),
+            user_count=len(user_pkgs),
+            disabled_count=len(dis_pkgs),
+            system_samples=sys_pkgs[:sample_limit],
+            user_samples=user_pkgs[:sample_limit],
+        ),
+        timing_ms=_elapsed_ms(start),
+    )
+
+
+def _parse_pm_list(stdout: str) -> list[str]:
+    """`pm list packages` emits 'package:<name>' one per line."""
+    out: list[str] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith("package:"):
+            out.append(line[len("package:"):])
+    return out
+
+
+# ─── Panel: processes ────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ProcessEntry:
+    pid: int
+    user: str
+    cpu_pct: float
+    mem_pct: float
+    rss_kb: int
+    name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+@dataclass(frozen=True)
+class ProcessesInfo:
+    count: int
+    top_cpu: list[ProcessEntry]
+    top_mem: list[ProcessEntry]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "count": self.count,
+            "top_cpu": [p.to_dict() for p in self.top_cpu],
+            "top_mem": [p.to_dict() for p in self.top_mem],
+        }
+
+
+async def processes(
+    t: Transport,
+    *,
+    device: str | None = None,
+    limit: int = 15,
+) -> Result[ProcessesInfo]:
+    """Top processes by CPU and by memory.
+
+    Uses `top -n 1 -b -m <limit>` (Android toybox) which emits one batch.
+    Falls back to `ps -A` counting if top is unavailable.
+    """
+    start = perf_counter()
+
+    top_out = await _shell_or_empty(
+        t,
+        f"top -n 1 -b -m {limit * 2} -q 2>/dev/null",
+        timeout=15,
+    )
+    entries = _parse_toybox_top(top_out)
+    # Fall back: older toybox prints without -q flag support
+    if not entries:
+        top2 = await _shell_or_empty(
+            t, f"top -n 1 -b -m {limit * 2} 2>/dev/null", timeout=15
+        )
+        entries = _parse_toybox_top(top2)
+
+    # Count all processes via ps (cheap)
+    ps_out = await _shell_or_empty(t, "ps -A 2>/dev/null | wc -l", timeout=5)
+    total = _safe_int(ps_out)
+    if total > 0:
+        total -= 1  # subtract header line
+
+    if not entries:
+        # Still return a usable response with the count only.
+        return ok(
+            data=ProcessesInfo(count=total, top_cpu=[], top_mem=[]),
+            timing_ms=_elapsed_ms(start),
+        )
+
+    top_cpu = sorted(entries, key=lambda e: -e.cpu_pct)[:limit]
+    top_mem = sorted(entries, key=lambda e: -e.rss_kb)[:limit]
+    return ok(
+        data=ProcessesInfo(count=total, top_cpu=top_cpu, top_mem=top_mem),
+        timing_ms=_elapsed_ms(start),
+    )
+
+
+def _parse_toybox_top(stdout: str) -> list[ProcessEntry]:
+    """Parse the tabular body of `top -n 1 -b`.
+
+    Columns vary between toybox / procps / busybox, so we find the header
+    row first (line containing PID + USER + CPU% + RES/RSS + NAME/CMD)
+    and then split later rows by whitespace mapped to those columns.
+    """
+    lines = stdout.splitlines()
+    header_idx = _find_top_header(lines)
+    if header_idx < 0:
+        return []
+
+    header = lines[header_idx]
+    cols = header.split()
+    try:
+        pid_i = _col_index(cols, ("PID",))
+        user_i = _col_index(cols, ("USER", "UID"))
+        cpu_i = _col_index(cols, ("%CPU", "CPU%"))
+        mem_i = _col_index(cols, ("%MEM", "MEM%"))
+        rss_i = _col_index(cols, ("RES", "RSS"))
+        name_i = _col_index(cols, ("NAME", "CMD", "COMMAND", "ARGS"))
+    except KeyError:
+        return []
+
+    out: list[ProcessEntry] = []
+    for row in lines[header_idx + 1:]:
+        if not row.strip():
+            continue
+        fields = row.split(None, len(cols) - 1)
+        if len(fields) < max(pid_i, user_i, cpu_i, mem_i, rss_i, name_i) + 1:
+            continue
+        try:
+            pid = int(fields[pid_i])
+        except ValueError:
+            continue
+        out.append(ProcessEntry(
+            pid=pid,
+            user=fields[user_i],
+            cpu_pct=_safe_float(fields[cpu_i]),
+            mem_pct=_safe_float(fields[mem_i]),
+            rss_kb=_parse_rss(fields[rss_i]),
+            name=fields[name_i].strip(),
+        ))
+    return out
+
+
+def _find_top_header(lines: list[str]) -> int:
+    for i, line in enumerate(lines):
+        if "PID" in line and ("USER" in line or "UID" in line) and (
+            "CPU" in line or "%CPU" in line.upper()
+        ):
+            return i
+    return -1
+
+
+def _col_index(cols: list[str], candidates: tuple[str, ...]) -> int:
+    for cand in candidates:
+        if cand in cols:
+            return cols.index(cand)
+    raise KeyError(candidates)
+
+
+def _safe_float(s: str) -> float:
+    try:
+        return float(s.strip().rstrip("%"))
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def _parse_rss(s: str) -> int:
+    """RSS in toybox is already KB; procps may use 'K'/'M'/'G' suffix."""
+    s = s.strip()
+    if not s:
+        return 0
+    suffix = s[-1].upper()
+    multipliers = {"K": 1, "M": 1024, "G": 1024 * 1024}
+    if suffix in multipliers:
+        try:
+            return int(float(s[:-1]) * multipliers[suffix])
+        except ValueError:
+            return 0
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+
+
+# ─── Aggregate: run all panels in parallel ────────────────────────────────
 
 
 _PANELS = {
     "system": system,
     "cpu": cpu,
+    "gpu": gpu,
     "memory": memory,
     "storage": storage,
     "network": network,
     "battery": battery,
+    "security": security,
+    "display": display,
+    "packages": packages,
+    "processes": processes,
 }
 
 

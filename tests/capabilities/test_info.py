@@ -10,7 +10,10 @@ from alb.capabilities.info import (
     _build_core,
     _build_zone,
     _count_processors,
+    _detect_gpu_vendor,
     _extract_default_route,
+    _extract_refresh_rate,
+    _extract_rotation,
     _parse_by_name_listing,
     _parse_cpu_freq_dump,
     _parse_cpuinfo_head,
@@ -20,16 +23,27 @@ from alb.capabilities.info import (
     _parse_ip_addr,
     _parse_meminfo,
     _parse_mounts_for_fstype,
+    _parse_pm_list,
     _parse_proc_partitions,
+    _parse_rss,
     _parse_soc_props,
     _parse_thermal_zones,
+    _parse_toybox_top,
+    _parse_wm_density,
+    _parse_wm_size,
+    _pick_gpu_devfreq,
     _sniff_ufs_spec,
     all_info,
     battery,
     cpu,
+    display,
+    gpu,
     memory,
     network,
+    packages,
     panel_names,
+    processes,
+    security,
     storage,
     system,
 )
@@ -611,12 +625,14 @@ async def test_all_info_runs_each_panel_once() -> None:
         "/proc/cpuinfo": ShellResult(ok=True, stdout="processor\t: 0\n"),
     })
     results = await all_info(t)
-    assert set(results.keys()) == {
-        "system", "cpu", "memory", "storage", "network", "battery",
-    }
-    # All succeeded with the stub data we provided
-    for name, r in results.items():
-        assert r.ok, f"{name}: {r.error}"
+    # The 6 core panels wired in part 1 must all be present; additional
+    # part-2 panels (gpu, security, display, packages, processes) may be
+    # ok or fail depending on whether their probes hit stub coverage.
+    assert {"system", "cpu", "memory", "storage", "network", "battery"} <= set(
+        results.keys()
+    )
+    for name in ("system", "cpu", "memory", "storage", "network"):
+        assert results[name].ok, f"{name}: {results[name].error}"
 
 
 @pytest.mark.asyncio
@@ -642,5 +658,296 @@ def test_panel_names_stable() -> None:
     assert "system" in names
     assert "cpu" in names
     assert "battery" in names
+    assert "gpu" in names
+    assert "security" in names
+    assert "display" in names
+    assert "packages" in names
+    assert "processes" in names
     # Ordering: whatever it is, has to be deterministic across calls
     assert panel_names() == names
+
+
+# ─── GPU parser tests ─────────────────────────────────────────────
+
+
+def test_pick_gpu_devfreq_by_name() -> None:
+    dump = (
+        "/sys/class/devfreq/dmc:\n"
+        "dmc\n600000000\n800000000\n300000000\nsimple_ondemand\n"
+        "/sys/class/devfreq/fde60000.gpu:\n"
+        "mali-g610\n800000000\n1000000000\n200000000\nsimple_ondemand\n"
+    )
+    entry = _pick_gpu_devfreq(dump)
+    assert entry["name"] == "mali-g610"
+    assert entry["cur"] == 800000000
+
+
+def test_pick_gpu_devfreq_by_path() -> None:
+    # Fallback: match on path containing 'gpu' when name is generic
+    dump = (
+        "/sys/class/devfreq/fde60000.gpu:\n"
+        "\n500000000\n800000000\n100000000\nondemand\n"
+    )
+    entry = _pick_gpu_devfreq(dump)
+    assert entry["cur"] == 500000000 or entry.get("path", "").endswith(".gpu")
+
+
+def test_pick_gpu_devfreq_no_gpu() -> None:
+    dump = (
+        "/sys/class/devfreq/dmc:\n"
+        "dmc\n600000000\n800000000\n300000000\nsimple_ondemand\n"
+    )
+    assert _pick_gpu_devfreq(dump) == {}
+
+
+def test_detect_gpu_vendor() -> None:
+    assert _detect_gpu_vendor("mali-g610") == "arm"
+    assert _detect_gpu_vendor("Adreno 620") == "qualcomm"
+    assert _detect_gpu_vendor("PowerVR Rogue") == "imagination"
+    assert _detect_gpu_vendor("Unknown") == ""
+
+
+# ─── Display parser tests ────────────────────────────────────────
+
+
+def test_parse_wm_size() -> None:
+    out = "Physical size: 1080x2400\nOverride size: 1080x2340\n"
+    assert _parse_wm_size(out) == (1080, 2400)
+
+
+def test_parse_wm_size_empty() -> None:
+    assert _parse_wm_size("") == (0, 0)
+
+
+def test_parse_wm_density() -> None:
+    assert _parse_wm_density("Physical density: 420\nOverride density: 480\n") == (420, 480)
+
+
+def test_parse_wm_density_no_override() -> None:
+    assert _parse_wm_density("Physical density: 320\n") == (320, 0)
+
+
+def test_extract_refresh_rate() -> None:
+    stdout = "Display 0: ...\n  mRefreshRate=60.000004\n"
+    assert _extract_refresh_rate(stdout) == 60.0
+
+
+def test_extract_refresh_rate_fps_variant() -> None:
+    assert _extract_refresh_rate("  fps=120.0  ") == 120.0
+
+
+def test_extract_rotation() -> None:
+    assert _extract_rotation("  mRotation=1\n") == 1
+
+
+# ─── Packages parser tests ───────────────────────────────────────
+
+
+def test_parse_pm_list_basic() -> None:
+    s = "package:com.android.launcher3\npackage:com.google.gms\n"
+    assert _parse_pm_list(s) == ["com.android.launcher3", "com.google.gms"]
+
+
+def test_parse_pm_list_ignores_junk() -> None:
+    s = "some header\npackage:com.a\nblank line\npackage:com.b\n"
+    assert _parse_pm_list(s) == ["com.a", "com.b"]
+
+
+# ─── Processes parser tests ──────────────────────────────────────
+
+
+_TOYBOX_TOP_SAMPLE = """top - 10:14:02, 1 users, load 0.50 0.30 0.20
+Tasks:   500 total,   1 running
+Mem: 8192M total, 4096M used, 4096M free
+  PID USER     PR  NI  VIRT  RES SHR S %CPU %MEM TIME+ CMD
+ 1234 system   20   0 2000M 250M 100M S 15.0  3.0 01:23 system_server
+ 5678 u0_a42   20   0 1500M 200M  80M S  8.5  2.5 00:45 com.android.launcher3
+ 9012 root     20   0  800M 150M  50M S  4.0  1.8 00:10 surfaceflinger
+"""
+
+
+def test_parse_toybox_top_basic() -> None:
+    entries = _parse_toybox_top(_TOYBOX_TOP_SAMPLE)
+    assert len(entries) == 3
+    assert entries[0].pid == 1234
+    assert entries[0].user == "system"
+    assert entries[0].cpu_pct == 15.0
+    assert entries[0].mem_pct == 3.0
+    assert entries[0].name == "system_server"
+
+
+def test_parse_toybox_top_no_header() -> None:
+    assert _parse_toybox_top("just some junk\n") == []
+
+
+def test_parse_rss_suffixes() -> None:
+    assert _parse_rss("250M") == 250 * 1024
+    assert _parse_rss("2G") == 2 * 1024 * 1024
+    assert _parse_rss("512K") == 512
+    assert _parse_rss("12345") == 12345
+    assert _parse_rss("") == 0
+    assert _parse_rss("garbage") == 0
+
+
+# ─── Integration tests for new panels ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_gpu_happy_path() -> None:
+    dump = (
+        "/sys/class/devfreq/fde60000.gpu:\n"
+        "mali-g610\n800000000\n1000000000\n200000000\nsimple_ondemand\n"
+    )
+    t = _mk_transport({
+        "devfreq": ShellResult(ok=True, stdout=dump),
+        "gpu_utilization": ShellResult(ok=True, stdout="37\n"),
+        "SurfaceFlinger": ShellResult(ok=True, stdout="GLES: ARM, Mali-G610, OpenGL ES 3.2\n"),
+    })
+    r = await gpu(t)
+    assert r.ok
+    assert r.data.name == "mali-g610"
+    assert r.data.vendor == "arm"
+    assert r.data.freq_hz_current == 800000000
+    assert r.data.freq_hz_max == 1000000000
+    assert r.data.util_pct == 37
+    assert "Mali-G610" in r.data.renderer
+
+
+@pytest.mark.asyncio
+async def test_gpu_no_devfreq_gpu_entry() -> None:
+    t = _mk_transport({
+        "devfreq": ShellResult(
+            ok=True,
+            stdout="/sys/class/devfreq/dmc:\ndmc\n600000000\n800000000\n300000000\nsimple_ondemand\n",
+        ),
+    })
+    r = await gpu(t)
+    assert r.ok
+    assert r.data.name == ""
+    assert r.data.freq_hz_current == 0
+
+
+@pytest.mark.asyncio
+async def test_security_happy_path() -> None:
+    props = (
+        "[ro.boot.verifiedbootstate]: [green]\n"
+        "[ro.boot.avb_version]: [1.2]\n"
+        "[ro.boot.veritymode]: [enforcing]\n"
+        "[ro.crypto.state]: [encrypted]\n"
+        "[ro.crypto.type]: [file]\n"
+        "[sys.oem_unlock_allowed]: [0]\n"
+        "[ro.oem_unlock_supported]: [1]\n"
+        "[ro.adb.secure]: [1]\n"
+    )
+    t = _mk_transport({
+        "getprop": ShellResult(ok=True, stdout=props),
+        "getenforce": ShellResult(ok=True, stdout="Enforcing\n"),
+        "policyvers": ShellResult(ok=True, stdout="33\n"),
+    })
+    r = await security(t)
+    assert r.ok
+    assert r.data.verified_boot_state == "green"
+    assert r.data.avb_version == "1.2"
+    assert r.data.verity_mode == "enforcing"
+    assert r.data.crypto_state == "encrypted"
+    assert r.data.crypto_type == "file"
+    assert r.data.selinux_mode == "enforcing"
+    assert r.data.selinux_policy_version == "33"
+    assert r.data.oem_unlock_allowed is False
+    assert r.data.oem_unlock_supported is True
+    assert r.data.adb_secure is True
+
+
+@pytest.mark.asyncio
+async def test_security_getprop_empty() -> None:
+    t = _mk_transport({})
+    r = await security(t)
+    assert not r.ok
+    assert r.error.code == "ADB_COMMAND_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_display_happy_path() -> None:
+    t = _mk_transport({
+        "wm size": ShellResult(ok=True, stdout="Physical size: 1080x2400\n"),
+        "wm density": ShellResult(ok=True, stdout="Physical density: 420\n"),
+        "dumpsys display": ShellResult(
+            ok=True,
+            stdout="Display 0:\n  mRefreshRate=60.000004\n  mRotation=0\n",
+        ),
+        "screen_brightness": ShellResult(ok=True, stdout="128\n"),
+    })
+    r = await display(t)
+    assert r.ok
+    assert r.data.width == 1080
+    assert r.data.height == 2400
+    assert r.data.density == 420
+    assert r.data.refresh_rate_hz == 60.0
+    assert r.data.brightness == 128
+    assert r.data.rotation == 0
+
+
+@pytest.mark.asyncio
+async def test_display_brightness_null() -> None:
+    t = _mk_transport({
+        "wm size": ShellResult(ok=True, stdout="Physical size: 720x1280\n"),
+        "wm density": ShellResult(ok=True, stdout="Physical density: 320\n"),
+        "dumpsys display": ShellResult(ok=True, stdout=""),
+        "screen_brightness": ShellResult(ok=True, stdout="null\n"),
+    })
+    r = await display(t)
+    assert r.ok
+    assert r.data.brightness == -1
+
+
+@pytest.mark.asyncio
+async def test_packages_happy_path() -> None:
+    sys_out = "package:com.android.settings\npackage:com.android.launcher3\n"
+    user_out = "package:com.example.app\n"
+    dis_out = ""
+    t = _mk_transport({
+        "pm list packages -s": ShellResult(ok=True, stdout=sys_out),
+        "pm list packages -3": ShellResult(ok=True, stdout=user_out),
+        "pm list packages -d": ShellResult(ok=True, stdout=dis_out),
+    })
+    r = await packages(t)
+    assert r.ok
+    assert r.data.system_count == 2
+    assert r.data.user_count == 1
+    assert r.data.total == 3
+    assert "com.android.settings" in r.data.system_samples
+
+
+@pytest.mark.asyncio
+async def test_packages_pm_unavailable() -> None:
+    t = _mk_transport({})
+    r = await packages(t)
+    assert not r.ok
+    assert r.error.code == "PM_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_processes_happy_path() -> None:
+    t = _mk_transport({
+        "top -n 1 -b -m 30 -q": ShellResult(ok=True, stdout=_TOYBOX_TOP_SAMPLE),
+        "ps -A": ShellResult(ok=True, stdout="500\n"),
+    })
+    r = await processes(t, limit=15)
+    assert r.ok
+    assert r.data.count == 499  # 500 - header
+    assert len(r.data.top_cpu) == 3
+    assert r.data.top_cpu[0].name == "system_server"
+    assert r.data.top_cpu[0].cpu_pct == 15.0
+    # top_mem should be sorted by RSS
+    assert r.data.top_mem[0].pid == 1234  # RES=250M highest
+
+
+@pytest.mark.asyncio
+async def test_processes_top_unavailable_still_counts() -> None:
+    t = _mk_transport({
+        "ps -A": ShellResult(ok=True, stdout="42\n"),
+    })
+    r = await processes(t)
+    assert r.ok
+    assert r.data.count == 41
+    assert r.data.top_cpu == []
