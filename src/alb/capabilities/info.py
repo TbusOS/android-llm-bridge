@@ -1251,18 +1251,21 @@ async def processes(
 ) -> Result[ProcessesInfo]:
     """Top processes by CPU and by memory.
 
-    Uses `top -n 1 -b -m <limit>` (Android toybox) which emits one batch.
-    Falls back to `ps -A` counting if top is unavailable.
+    Forces a known column layout via `-o` so parsing is deterministic
+    regardless of toybox/procps quirks (some versions merge `S` with
+    `%CPU` as `S[%CPU]`, others omit headers entirely with `-q`).
     """
     start = perf_counter()
 
-    top_out = await _shell_or_empty(
-        t,
-        f"top -n 1 -b -m {limit * 2} -q 2>/dev/null",
-        timeout=15,
+    cmd = (
+        f"top -n 1 -b -m {limit * 2} "
+        "-o PID,USER,%CPU,%MEM,RES,CMDLINE 2>/dev/null"
     )
+    top_out = await _shell_or_empty(t, cmd, timeout=15)
     entries = _parse_toybox_top(top_out)
-    # Fall back: older toybox prints without -q flag support
+
+    # Older toybox doesn't honor -o; retry without it and fall back to
+    # column discovery on whatever header it emits.
     if not entries:
         top2 = await _shell_or_empty(
             t, f"top -n 1 -b -m {limit * 2} 2>/dev/null", timeout=15
@@ -1293,33 +1296,36 @@ async def processes(
 def _parse_toybox_top(stdout: str) -> list[ProcessEntry]:
     """Parse the tabular body of `top -n 1 -b`.
 
-    Columns vary between toybox / procps / busybox, so we find the header
-    row first (line containing PID + USER + CPU% + RES/RSS + NAME/CMD)
-    and then split later rows by whitespace mapped to those columns.
+    Toybox sometimes merges adjacent columns into one header token like
+    `S[%CPU]` or `RES[CMDLINE]` while still printing two whitespace-
+    separated fields per row. Expand those before lookup so column
+    indexes line up with the actual row tokens.
     """
     lines = stdout.splitlines()
     header_idx = _find_top_header(lines)
     if header_idx < 0:
         return []
 
-    header = lines[header_idx]
-    cols = header.split()
+    cols = _expand_merged_top_header(lines[header_idx].split())
     try:
         pid_i = _col_index(cols, ("PID",))
         user_i = _col_index(cols, ("USER", "UID"))
         cpu_i = _col_index(cols, ("%CPU", "CPU%"))
         mem_i = _col_index(cols, ("%MEM", "MEM%"))
         rss_i = _col_index(cols, ("RES", "RSS"))
-        name_i = _col_index(cols, ("NAME", "CMD", "COMMAND", "ARGS"))
+        name_i = _col_index(cols, ("CMDLINE", "ARGS", "NAME", "CMD", "COMMAND"))
     except KeyError:
         return []
 
     out: list[ProcessEntry] = []
+    needed = max(pid_i, user_i, cpu_i, mem_i, rss_i, name_i) + 1
     for row in lines[header_idx + 1:]:
         if not row.strip():
             continue
+        # Split exactly once for each non-CMD column so the trailing
+        # CMD/ARGS column captures the remainder (it can contain spaces).
         fields = row.split(None, len(cols) - 1)
-        if len(fields) < max(pid_i, user_i, cpu_i, mem_i, rss_i, name_i) + 1:
+        if len(fields) < needed:
             continue
         try:
             pid = int(fields[pid_i])
@@ -1336,6 +1342,23 @@ def _parse_toybox_top(stdout: str) -> list[ProcessEntry]:
     return out
 
 
+def _expand_merged_top_header(raw_cols: list[str]) -> list[str]:
+    """`['S[%CPU]', 'RES[CMDLINE]']` → `['S', '%CPU', 'RES', 'CMDLINE']`.
+
+    Toybox prints two row tokens for these merged headers, so we must
+    treat the header as two columns to keep row indexes aligned.
+    """
+    out: list[str] = []
+    for c in raw_cols:
+        m = re.match(r"^([^\[]+)\[([^\]]+)\]$", c)
+        if m:
+            out.append(m.group(1))
+            out.append(m.group(2))
+        else:
+            out.append(c)
+    return out
+
+
 def _find_top_header(lines: list[str]) -> int:
     for i, line in enumerate(lines):
         if "PID" in line and ("USER" in line or "UID" in line) and (
@@ -1346,9 +1369,18 @@ def _find_top_header(lines: list[str]) -> int:
 
 
 def _col_index(cols: list[str], candidates: tuple[str, ...]) -> int:
+    """Locate a column by name, with substring tolerance.
+
+    Some toybox versions merge fields, e.g. the state + %CPU column shows
+    up as `S[%CPU]`. Exact match wins; substring is the fallback.
+    """
     for cand in candidates:
         if cand in cols:
             return cols.index(cand)
+    for cand in candidates:
+        for i, col in enumerate(cols):
+            if cand in col:
+                return i
     raise KeyError(candidates)
 
 
