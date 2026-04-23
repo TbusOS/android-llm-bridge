@@ -35,6 +35,7 @@ from alb.cli.setup_cli import app as setup_cli
 from alb.cli.skills_cli import app as skills_cli
 from alb.cli.info_cli import app as info_cli
 from alb.cli.metrics_cli import app as metrics_cli
+from alb.cli.playground_cli import app as playground_cli
 from alb.cli.ui_cli import app as ui_cli
 from alb.infra.config import load_active
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
@@ -245,6 +246,7 @@ app.add_typer(chat_cli, name="chat", help="Interactive LLM agent REPL.")
 app.add_typer(ui_cli, name="ui", help="UI diagnostics (screenshot / uiautomator dump).")
 app.add_typer(info_cli, name="info", help="Structured device info (system/cpu/memory/...).")
 app.add_typer(metrics_cli, name="metrics", help="Live telemetry samples (cpu/mem/temp/io).")
+app.add_typer(playground_cli, name="playground", help="Raw LLM chat with full sampling control.")
 
 
 # ─── Log tool group (search / tail) ────────────────────────────────

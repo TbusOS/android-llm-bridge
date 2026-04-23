@@ -189,12 +189,7 @@ class OllamaBackend(LLMBackend):
                             finish_reason = (
                                 "tool_calls" if tool_calls else _classify_done(chunk)
                             )
-                            usage = {
-                                "input_tokens": int(chunk.get("prompt_eval_count") or 0),
-                                "output_tokens": int(chunk.get("eval_count") or 0),
-                                "total_tokens": int(chunk.get("prompt_eval_count") or 0)
-                                + int(chunk.get("eval_count") or 0),
-                            }
+                            usage = _build_usage_dict(chunk)
                             break
         except httpx.ConnectError as e:
             raise BackendError(
@@ -343,11 +338,7 @@ class OllamaBackend(LLMBackend):
 
         finish_reason: FinishReason = "tool_calls" if tool_calls else _classify_done(raw)
 
-        usage = {
-            "input_tokens": int(raw.get("prompt_eval_count") or 0),
-            "output_tokens": int(raw.get("eval_count") or 0),
-            "total_tokens": int(raw.get("prompt_eval_count") or 0) + int(raw.get("eval_count") or 0),
-        }
+        usage = _build_usage_dict(raw)
         return ChatResponse(
             content=content,
             tool_calls=tool_calls,
@@ -356,6 +347,39 @@ class OllamaBackend(LLMBackend):
             model=raw.get("model") or self.model,
             thinking=thinking,
         )
+
+    async def list_models(self) -> list[dict[str, Any]]:
+        """Return the installed model catalog from `/api/tags`.
+
+        Each entry has at least {name, size, modified_at}; we pass it
+        through verbatim so callers can show whatever the daemon exposes.
+        Raises BackendError on connectivity / HTTP failure so the API
+        layer can surface a structured error.
+        """
+        url = f"{self.base_url}/api/tags"
+        try:
+            async with httpx.AsyncClient(
+                timeout=5.0, transport=self._transport
+            ) as client:
+                r = await client.get(url)
+        except httpx.ConnectError as e:
+            raise BackendError(
+                "BACKEND_UNREACHABLE",
+                f"ollama not reachable at {self.base_url}: {e}",
+                suggestion="start ollama (`ollama serve`)",
+            ) from e
+        except httpx.HTTPError as e:
+            raise BackendError(
+                "BACKEND_HTTP_ERROR",
+                f"ollama HTTP error: {e}",
+            ) from e
+        if r.status_code >= 400:
+            raise BackendError(
+                "BACKEND_HTTP_ERROR",
+                f"ollama /api/tags returned {r.status_code}",
+            )
+        models = r.json().get("models") or []
+        return [m for m in models if isinstance(m, dict)]
 
 
 # ─── Wire-format helpers ─────────────────────────────────────────────
@@ -385,6 +409,29 @@ def _message_to_ollama(m: Message) -> dict[str, Any]:
     if m.name is not None:
         d["name"] = m.name
     return d
+
+
+def _build_usage_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    """Extract token counts + timing fields from an Ollama response.
+
+    Ollama reports durations in nanoseconds; we expose them as integer
+    milliseconds, which is the unit the rest of alb uses.
+    """
+    in_t = int(raw.get("prompt_eval_count") or 0)
+    out_t = int(raw.get("eval_count") or 0)
+
+    def _ns_to_ms(key: str) -> int:
+        return int((raw.get(key) or 0) // 1_000_000)
+
+    return {
+        "input_tokens": in_t,
+        "output_tokens": out_t,
+        "total_tokens": in_t + out_t,
+        "load_duration_ms": _ns_to_ms("load_duration"),
+        "prompt_eval_duration_ms": _ns_to_ms("prompt_eval_duration"),
+        "eval_duration_ms": _ns_to_ms("eval_duration"),
+        "total_duration_ms": _ns_to_ms("total_duration"),
+    }
 
 
 def _tool_to_ollama(t: ToolSpec) -> dict[str, Any]:

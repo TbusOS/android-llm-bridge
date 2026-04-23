@@ -13,6 +13,7 @@ from alb.mcp.tools import power as power_tools
 from alb.mcp.tools import shell as shell_tools
 from alb.mcp.tools import info as info_tools
 from alb.mcp.tools import metrics as metrics_tools
+from alb.mcp.tools import playground as playground_tools
 from alb.mcp.tools import ui as ui_tools
 
 
@@ -27,3 +28,4 @@ def register_all(mcp) -> None:  # noqa: ANN001 — FastMCP import lazy in server
     ui_tools.register(mcp)
     info_tools.register(mcp)
     metrics_tools.register(mcp)
+    playground_tools.register(mcp)

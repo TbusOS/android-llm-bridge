@@ -41,7 +41,11 @@ async def test_chat_happy_path_no_tools() -> None:
     assert resp.content == "hi there"
     assert resp.finish_reason == "stop"
     assert resp.tool_calls == []
-    assert resp.usage == {"input_tokens": 7, "output_tokens": 5, "total_tokens": 12}
+    # Usage now also carries Ollama timing fields (ms); just spot-check
+    # the token counts that this test cares about.
+    assert resp.usage["input_tokens"] == 7
+    assert resp.usage["output_tokens"] == 5
+    assert resp.usage["total_tokens"] == 12
     assert resp.model == "qwen2.5:3b"
 
     # request shape
