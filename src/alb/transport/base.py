@@ -16,6 +16,11 @@ from typing import Any
 
 from alb.infra.permissions import PermissionResult, default_check
 
+# Forward declaration — concrete import deferred to runtime to keep
+# the ABC import lightweight (interactive PTY pulls in fcntl/termios).
+if False:  # TYPE_CHECKING shim, no runtime cost
+    from alb.transport.interactive import InteractiveShell  # noqa: F401
+
 
 @dataclass(frozen=True)
 class ShellResult:
@@ -75,6 +80,25 @@ class Transport(ABC):
     async def forward(self, local_port: int, remote_port: int) -> ShellResult:
         """Forward a TCP port. Not supported by serial."""
         raise NotImplementedError(f"{self.name} does not support port forwarding")
+
+    # ── Interactive PTY shell (M3 — Web Terminal feeds this) ──────
+    async def interactive_shell(
+        self,
+        *,
+        rows: int = 24,
+        cols: int = 80,
+    ) -> "InteractiveShell":
+        """Open a PTY-backed bidirectional shell session.
+
+        Default raises NotImplementedError. Subclasses that can fork
+        an interactive shell (adb / serial / ssh) override this and
+        return an InteractiveShell. Caller is responsible for calling
+        `await shell.close()` when done — wrapping with `async with`
+        is not provided here because the shell itself is the resource.
+        """
+        raise NotImplementedError(
+            f"{self.name} does not support interactive_shell()"
+        )
 
     # ── Device control ────────────────────────────────────────────
     @abstractmethod

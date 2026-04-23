@@ -15,6 +15,9 @@ from typing import Any
 
 from alb.infra.permissions import PermissionResult, default_check
 from alb.infra.process import run as proc_run, spawn_stream
+
+if False:  # TYPE_CHECKING shim
+    from alb.transport.interactive import InteractiveShell  # noqa: F401
 from alb.transport.base import ShellResult, Transport
 
 
@@ -163,6 +166,29 @@ class AdbTransport(Transport):
                 if not line:
                     break
                 yield line
+
+    async def interactive_shell(
+        self,
+        *,
+        rows: int = 24,
+        cols: int = 80,
+    ) -> "InteractiveShell":
+        """Spawn `adb shell` attached to a fresh PTY.
+
+        adb's shell is line-discipline-aware when the client side is a
+        TTY; piping stdin through a PTY gets us the same behavior we'd
+        see at a terminal. The caller (Web Terminal WS) shuttles bytes
+        in both directions and is responsible for `await shell.close()`.
+        """
+        from alb.transport.interactive import open_pty_subprocess
+
+        return await open_pty_subprocess(
+            *self._base_cmd(),
+            "shell",
+            env=self._env(),
+            rows=rows,
+            cols=cols,
+        )
 
     async def push(self, local: Path, remote: str) -> ShellResult:
         if not local.exists():
