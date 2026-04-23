@@ -100,6 +100,101 @@ def cmd_health(
     console.print(table)
 
 
+@app.command("learn")
+def cmd_learn(
+    ctx: typer.Context,
+    samples: int = typer.Option(
+        5,
+        "--samples",
+        "-n",
+        help="How many probe commands to run to infer the prompt.",
+    ),
+    state_key: str = typer.Option(
+        "shell_root",
+        "--state-key",
+        help=(
+            "Which state's prompt are we learning? Typical: shell_root / "
+            "shell_user. The label ends up in the generated TOML snippet."
+        ),
+    ),
+    device: str | None = typer.Option(None, "--device"),
+) -> None:
+    """Auto-derive a prompt regex from the live board.
+
+    When a board's prompt isn't matched by alb's built-ins (custom
+    ROM PS1, weird bootloader, embedded Linux with a bespoke login
+    banner), the right fix is a TOML override in ``config.toml``.
+    Writing that regex by hand is fiddly. This command watches the
+    board's actual output across ``--samples`` probe commands,
+    computes the stable part of the prompt, generalises the varying
+    parts (typically the CWD) to ``[^\\s]*``, and prints a ready-to-
+    paste TOML snippet.
+
+    Requires the endpoint is already in a POSIX-ish shell state —
+    run ``alb serial status`` first to confirm.
+    """
+    import json
+
+    from alb.transport.serial_learn import learn_prompt
+
+    t = _force_serial(ctx, device)
+    learned = run_async(learn_prompt(t, samples=samples, state_key=state_key))
+
+    if (ctx.obj or {}).get("json"):
+        typer.echo(json.dumps({
+            "samples": learned.samples,
+            "common_suffix": learned.common_suffix,
+            "regex": learned.regex,
+            "confidence": learned.confidence,
+            "toml_snippet": learned.toml_snippet,
+        }, indent=2))
+        return
+
+    from rich.console import Group
+    from rich.panel import Panel
+    from rich.syntax import Syntax
+    from rich.table import Table
+
+    from alb.cli.common import console
+
+    if not learned.regex:
+        console.print(Panel(
+            "No prompt could be derived — not enough usable samples.\n"
+            "Check that `alb serial status` shows a shell state first,\n"
+            "then retry with more --samples.",
+            title="serial learn — nothing learned",
+            border_style="red",
+        ))
+        raise typer.Exit(code=1)
+
+    sample_tbl = Table(show_header=True, header_style="bold")
+    sample_tbl.add_column("#", justify="right")
+    sample_tbl.add_column("captured prompt")
+    for i, s in enumerate(learned.samples, 1):
+        sample_tbl.add_row(str(i), repr(s))
+
+    conf_colour = {"high": "green", "medium": "yellow", "low": "red"}[learned.confidence]
+    summary = Table.grid(padding=(0, 1))
+    summary.add_column(style="bold")
+    summary.add_column()
+    summary.add_row("state_key",      state_key)
+    summary.add_row("samples",        str(len(learned.samples)))
+    summary.add_row("common suffix",  repr(learned.common_suffix))
+    summary.add_row("regex",          learned.regex)
+    summary.add_row("confidence",     f"[{conf_colour}]{learned.confidence}[/{conf_colour}]")
+
+    console.print(Panel(Group(
+        summary,
+        sample_tbl,
+    ), title="serial learn — derived", border_style=conf_colour))
+
+    console.print(Panel(
+        Syntax(learned.toml_snippet, "toml"),
+        title="copy into ~/.config/alb/config.toml",
+        border_style="green",
+    ))
+
+
 @app.command("probe")
 def cmd_probe(
     ctx: typer.Context,
