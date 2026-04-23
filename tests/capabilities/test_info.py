@@ -776,6 +776,52 @@ def test_parse_toybox_top_basic() -> None:
     assert entries[0].name == "system_server"
 
 
+# Toybox 0.8.9-android emits 'S[%CPU]' as a merged column header.
+# Real output sample from a 2026-04-23 device run.
+_TOYBOX_MERGED_HEADER_SAMPLE = """Tasks: 429 total,   1 running, 428 sleeping
+  Mem:  8100008K total,  2266304K used,  5833704K free
+  PID USER         PR  NI VIRT  RES  SHR S[%CPU] %MEM     TIME+ ARGS
+ 2525 u0_a44       10 -10  18G 176M 121M S 36.6   2.2  16:08.26 com.example.app
+  346 system       -3  -8  11G  71M  49M S 23.3   0.9  11:03.15 surfaceflinger
+"""
+
+
+def test_parse_toybox_top_merged_s_cpu_header() -> None:
+    # When toybox merges 'S' with '%CPU' as 'S[%CPU]', the parser
+    # expands it back into two columns so row tokens align.
+    entries = _parse_toybox_top(_TOYBOX_MERGED_HEADER_SAMPLE)
+    assert len(entries) == 2
+    assert entries[0].pid == 2525
+    assert entries[0].cpu_pct == 36.6
+    assert entries[0].mem_pct == 2.2
+    assert entries[0].rss_kb == 176 * 1024  # 176M
+
+
+# Toybox -o output also merges RES + CMDLINE as RES[CMDLINE].
+# Real output sample from a 2026-04-23 device run.
+_TOYBOX_MERGED_RES_SAMPLE = """Tasks: 433 total
+  Mem:  8100008K total
+  PID USER         %CPU  %MEM  RES[CMDLINE]
+  551 root          0.0   2.3 190M zygote64
+ 1127 webview_zygote 0.0  1.1  88M webview_zygote
+ 3122 root         17.2   0.0 5.1M top -n 1 -b -m 3
+"""
+
+
+def test_parse_toybox_top_merged_res_cmdline_header() -> None:
+    entries = _parse_toybox_top(_TOYBOX_MERGED_RES_SAMPLE)
+    assert len(entries) == 3
+    zygote = entries[0]
+    assert zygote.pid == 551
+    assert zygote.user == "root"
+    assert zygote.cpu_pct == 0.0
+    assert zygote.mem_pct == 2.3
+    assert zygote.rss_kb == 190 * 1024
+    assert zygote.name == "zygote64"
+    # CMDLINE with spaces should be captured intact
+    assert entries[2].name == "top -n 1 -b -m 3"
+
+
 def test_parse_toybox_top_no_header() -> None:
     assert _parse_toybox_top("just some junk\n") == []
 
@@ -929,7 +975,7 @@ async def test_packages_pm_unavailable() -> None:
 @pytest.mark.asyncio
 async def test_processes_happy_path() -> None:
     t = _mk_transport({
-        "top -n 1 -b -m 30 -q": ShellResult(ok=True, stdout=_TOYBOX_TOP_SAMPLE),
+        "top -n 1 -b": ShellResult(ok=True, stdout=_TOYBOX_TOP_SAMPLE),
         "ps -A": ShellResult(ok=True, stdout="500\n"),
     })
     r = await processes(t, limit=15)
