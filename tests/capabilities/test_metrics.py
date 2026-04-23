@@ -94,21 +94,41 @@ def test_parse_freq_dump_skips_garbage() -> None:
 # ─── Thermal zone parser ──────────────────────────────────────────
 
 
-def test_max_cpu_temp_picks_highest_cpu_zone() -> None:
+def test_max_cpu_temp_picks_highest_silicon_zone() -> None:
     s = (
         "/sys/class/thermal/thermal_zone0:\n"
         "cpu-big\n62100\n"
         "/sys/class/thermal/thermal_zone1:\n"
-        "battery\n38000\n"
+        "battery\n38000\n"  # excluded
         "/sys/class/thermal/thermal_zone2:\n"
         "cpu-little\n55000\n"
     )
     assert _max_cpu_temp(s) == 62.1
 
 
-def test_max_cpu_temp_no_cpu_zone() -> None:
-    s = "/sys/class/thermal/thermal_zone0:\nbattery\n38000\n"
+def test_max_cpu_temp_handles_vendor_naming() -> None:
+    # Real device used 'soc-thermal' / 'bigcore-thermal' etc. — none
+    # contain 'cpu' literally, but they're still silicon temps.
+    s = (
+        "/sys/class/thermal/thermal_zone0:\nsoc-thermal\n69300\n"
+        "/sys/class/thermal/thermal_zone1:\nbigcore-thermal\n70200\n"
+        "/sys/class/thermal/thermal_zone2:\nlittle-core-thermal\n71200\n"
+        "/sys/class/thermal/thermal_zone3:\ngpu-thermal\n68400\n"
+    )
+    assert _max_cpu_temp(s) == 71.2
+
+
+def test_max_cpu_temp_excludes_battery_and_skin() -> None:
+    s = (
+        "/sys/class/thermal/thermal_zone0:\nbattery\n38200\n"
+        "/sys/class/thermal/thermal_zone1:\nskin-therm\n42000\n"
+        "/sys/class/thermal/thermal_zone2:\ncharger\n45000\n"
+    )
     assert _max_cpu_temp(s) == 0.0
+
+
+def test_max_cpu_temp_no_zones() -> None:
+    assert _max_cpu_temp("") == 0.0
 
 
 def test_consume_thermal_handles_short_buffer() -> None:

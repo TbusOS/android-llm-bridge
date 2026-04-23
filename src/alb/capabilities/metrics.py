@@ -363,8 +363,14 @@ def _parse_freq_dump(freq_section: str) -> list[int]:
 
 
 def _max_cpu_temp(therm_section: str) -> float:
-    """Walk `for z in /sys/class/thermal/thermal_zone*; echo $z:; type; temp`
-    and return the highest temperature for any zone whose type contains 'cpu'."""
+    """Walk thermal zones and return the highest non-battery temperature.
+
+    Zone type names vary wildly across SoCs: 'cpu0-thermal' on some,
+    'bigcore-thermal' / 'soc-thermal' / 'little-core-thermal' /
+    'cluster0-thermal' on others. Picking by keyword is fragile, so we
+    take the max across every zone except battery (which is reported
+    separately as battery_temp_c) and ambient sensors.
+    """
     best = 0.0
     current_path: str | None = None
     buf: list[str] = []
@@ -380,11 +386,15 @@ def _max_cpu_temp(therm_section: str) -> float:
     return round(best, 1)
 
 
+# Excluded so they don't dominate over real silicon temps.
+_NON_SILICON_THERMAL = ("battery", "ambient", "skin", "case", "charger")
+
+
 def _consume_thermal(buf: list[str], best: float) -> float:
     if len(buf) < 2:
         return best
     ztype = buf[0].strip().lower()
-    if "cpu" not in ztype:
+    if any(k in ztype for k in _NON_SILICON_THERMAL):
         return best
     try:
         # kernel reports milli-degrees C
