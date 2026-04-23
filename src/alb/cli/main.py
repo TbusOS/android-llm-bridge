@@ -33,6 +33,7 @@ from alb.cli.power_cli import app as power_cli
 from alb.cli.serial_cli import app as serial_cli
 from alb.cli.setup_cli import app as setup_cli
 from alb.cli.skills_cli import app as skills_cli
+from alb.cli.info_cli import app as info_cli
 from alb.cli.ui_cli import app as ui_cli
 from alb.infra.config import load_active
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
@@ -241,6 +242,7 @@ app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
 app.add_typer(skills_cli, name="skills", help="SKILL.md generator for LLM clients.")
 app.add_typer(chat_cli, name="chat", help="Interactive LLM agent REPL.")
 app.add_typer(ui_cli, name="ui", help="UI diagnostics (screenshot / uiautomator dump).")
+app.add_typer(info_cli, name="info", help="Structured device info (system/cpu/memory/...).")
 
 
 # ─── Log tool group (search / tail) ────────────────────────────────
