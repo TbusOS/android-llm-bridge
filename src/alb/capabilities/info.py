@@ -162,7 +162,9 @@ class ThermalZone:
 @dataclass(frozen=True)
 class CPUInfo:
     processor_count: int
-    model: str
+    model: str  # from /proc/cpuinfo; often empty on Android aarch64
+    soc_model: str  # SoC name from getprop (e.g. from ro.soc.model)
+    soc_manufacturer: str
     features: list[str]
     cores: list[CPUCore]
     thermal_zones: list[ThermalZone]
@@ -171,6 +173,8 @@ class CPUInfo:
         return {
             "processor_count": self.processor_count,
             "model": self.model,
+            "soc_model": self.soc_model,
+            "soc_manufacturer": self.soc_manufacturer,
             "features": self.features,
             "cores": [c.to_dict() for c in self.cores],
             "thermal_zones": [z.to_dict() for z in self.thermal_zones],
@@ -182,6 +186,16 @@ async def cpu(t: Transport, *, device: str | None = None) -> Result[CPUInfo]:
     cpuinfo = await _shell_or_empty(t, "cat /proc/cpuinfo", timeout=5)
     n = _count_processors(cpuinfo)
     model, features = _parse_cpuinfo_head(cpuinfo)
+
+    # ARM64 /proc/cpuinfo often omits a human-readable model; fall back to
+    # getprop for the SoC identity.
+    soc_out = await _shell_or_empty(
+        t,
+        "getprop ro.soc.model; getprop ro.soc.manufacturer; "
+        "getprop ro.board.platform",
+        timeout=5,
+    )
+    soc_model, soc_mfr = _parse_soc_props(soc_out)
 
     # Pull per-core freq / governor. Globbing sysfs with a single shell line
     # keeps us to one roundtrip.
@@ -209,12 +223,27 @@ async def cpu(t: Transport, *, device: str | None = None) -> Result[CPUInfo]:
         data=CPUInfo(
             processor_count=n,
             model=model,
+            soc_model=soc_model,
+            soc_manufacturer=soc_mfr,
             features=features,
             cores=cores,
             thermal_zones=zones,
         ),
         timing_ms=_elapsed_ms(start),
     )
+
+
+def _parse_soc_props(stdout: str) -> tuple[str, str]:
+    """Three `getprop X` outputs on separate lines → (model, manufacturer).
+
+    Order: ro.soc.model, ro.soc.manufacturer, ro.board.platform (fallback).
+    """
+    lines = [ln.strip() for ln in stdout.splitlines()]
+    model = lines[0] if len(lines) >= 1 and lines[0] else ""
+    mfr = lines[1] if len(lines) >= 2 else ""
+    if not model and len(lines) >= 3:
+        model = lines[2]
+    return model, mfr
 
 
 def _count_processors(stdout: str) -> int:
@@ -422,7 +451,25 @@ class StorageInfo:
         }
 
 
-async def storage(t: Transport, *, device: str | None = None) -> Result[StorageInfo]:
+# Real storage devices — exclude ramdisks / loopback / zram. Keep dm-N
+# (device-mapper, used by A/B sparse filesystems on modern Android).
+_PARTITION_NOISE = re.compile(r"^(ram|loop|zram)\d+$")
+_PARTITION_REAL = re.compile(r"^(mmcblk|sd[a-z]|nvme|vd[a-z])")
+
+
+async def storage(
+    t: Transport,
+    *,
+    device: str | None = None,
+    include_virtual: bool = False,
+) -> Result[StorageInfo]:
+    """Storage snapshot.
+
+    Args:
+        include_virtual: when False (default), ramdisks / loop / zram
+                         devices are dropped from the partition list so
+                         real storage stands out.
+    """
     start = perf_counter()
 
     df_out = await _shell_or_empty(t, "df -k 2>/dev/null", timeout=10)
@@ -438,7 +485,9 @@ async def storage(t: Transport, *, device: str | None = None) -> Result[StorageI
         timeout=5,
     )
     by_name_map = _parse_by_name_listing(by_name_out)
-    partitions = _parse_proc_partitions(parts_out, by_name_map)
+    partitions = _parse_proc_partitions(
+        parts_out, by_name_map, include_virtual=include_virtual
+    )
 
     # Heuristic UFS/eMMC detection via dmesg — may be empty without root.
     dmesg_out = await _shell_or_empty(
@@ -503,12 +552,18 @@ def _parse_mounts_for_fstype(stdout: str) -> dict[str, str]:
 
 
 def _parse_proc_partitions(
-    stdout: str, by_name_map: dict[str, str]
+    stdout: str,
+    by_name_map: dict[str, str],
+    *,
+    include_virtual: bool = False,
 ) -> list[Partition]:
-    """major minor #blocks name → list[Partition] (sizes in KB since blocks=1K)."""
+    """major minor #blocks name → list[Partition] (sizes in KB since blocks=1K).
+
+    Virtual devices (ram0-N, loopN, zramN) are filtered out by default so
+    the real storage layout is visible at a glance.
+    """
     out: list[Partition] = []
-    lines = stdout.splitlines()
-    for line in lines:
+    for line in stdout.splitlines():
         parts = line.split()
         if len(parts) != 4 or parts[0] == "major":
             continue
@@ -517,6 +572,8 @@ def _parse_proc_partitions(
         except ValueError:
             continue
         name = parts[3]
+        if not include_virtual and _PARTITION_NOISE.match(name):
+            continue
         out.append(Partition(
             name=name,
             size_kb=blocks,
@@ -530,6 +587,10 @@ def _parse_by_name_listing(stdout: str) -> dict[str, str]:
 
     Each line looks like:
       lrwxrwxrwx 1 root root 16 2024-01-01 01:00 boot_a -> /dev/block/sda5
+
+    Self-links (e.g. `mmcblk0 -> /dev/block/mmcblk0`) are skipped — some
+    boards ship them and they'd otherwise tag the whole disk with a
+    meaningless by_name.
     """
     out: dict[str, str] = {}
     for line in stdout.splitlines():
@@ -538,8 +599,9 @@ def _parse_by_name_listing(stdout: str) -> dict[str, str]:
         left, _, right = line.partition("->")
         label = left.split()[-1] if left.split() else ""
         dev = right.strip().rsplit("/", 1)[-1]
-        if label and dev:
-            out[dev] = label
+        if not label or not dev or label == dev:
+            continue
+        out[dev] = label
     return out
 
 
@@ -596,9 +658,19 @@ async def network(t: Transport, *, device: str | None = None) -> Result[NetworkI
 
     interfaces = _parse_ip_addr(ip_out, link_out)
     default_route = _extract_default_route(route_out)
-    # DNS usually via getprop net.dns1/net.dns2 or /system/etc/resolv.conf
-    dns_out = await _shell_or_empty(t, "getprop net.dns1 && getprop net.dns2", timeout=3)
+    # DNS on Android 10+ no longer goes through getprop net.dns*; it's set
+    # per-network via ConnectivityService. Try getprop first for older
+    # devices, then fall back to /etc/resolv.conf.
+    dns_out = await _shell_or_empty(t, "getprop net.dns1; getprop net.dns2", timeout=3)
     dns = [line.strip() for line in dns_out.splitlines() if line.strip()]
+    if not dns:
+        resolv = await _shell_or_empty(
+            t, "cat /etc/resolv.conf 2>/dev/null", timeout=3
+        )
+        for line in resolv.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == "nameserver":
+                dns.append(parts[1])
 
     return ok(
         data=NetworkInfo(
@@ -700,6 +772,18 @@ async def battery(t: Transport, *, device: str | None = None) -> Result[BatteryI
             timing_ms=_elapsed_ms(start),
         )
     info = _parse_dumpsys_battery(out)
+    # Dev boards report present=false and leave every field at zero.
+    # Surface this clearly rather than letting the UI render an empty
+    # battery card — it's a real physical state, not a probe failure.
+    if not info.present and info.level_pct == 0 and info.voltage_mv == 0:
+        return fail(
+            code="NO_BATTERY",
+            message="Device has no battery (dumpsys reports present=false)",
+            suggestion="Common on dev boards / emulators. Safe to hide the battery panel.",
+            category="device",
+            details={"raw": out[:500]},
+            timing_ms=_elapsed_ms(start),
+        )
     return ok(data=info, timing_ms=_elapsed_ms(start))
 
 
