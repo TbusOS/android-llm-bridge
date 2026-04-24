@@ -23,6 +23,7 @@ from alb.api.metrics_route import router as metrics_router
 from alb.api.playground_route import router as playground_router
 from alb.api.meta_route import router as meta_router
 from alb.api.terminal_route import router as terminal_router
+from alb.api.ui_static import mount_ui
 from alb.infra.env_loader import load_env_files
 
 # Load .env.local / .env so ALB_* values reach FastAPI request handlers.
@@ -50,6 +51,11 @@ def create_app() -> FastAPI:
     app.include_router(playground_router)
     app.include_router(terminal_router)
     app.include_router(meta_router)
+
+    # Best-effort mount of the React UI at /app. Missing bundle =
+    # fresh clone before `cd web && npm run build`; silently skip so
+    # the API keeps working.
+    mount_ui(app)
 
     @app.on_event("shutdown")
     async def _stop_streamers() -> None:  # noqa: ANN001 — FastAPI hook
