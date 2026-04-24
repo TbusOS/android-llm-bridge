@@ -38,6 +38,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from alb.api.schema import API_VERSION
 from alb.infra.workspace import iso_timestamp, session_path
 from alb.mcp.transport_factory import build_transport
 from alb.transport.interactive import InteractiveShell
@@ -120,6 +121,7 @@ async def terminal_ws(ws: WebSocket) -> None:
     )
 
     await ws.send_json({
+        "v": API_VERSION,
         "type": "ready",
         "device": device or "",
         "transport": getattr(transport, "name", "adb"),

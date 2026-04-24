@@ -28,6 +28,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from alb.api.schema import API_VERSION
 from alb.capabilities.metrics import (
     MetricSample,
     MetricsStreamer,
@@ -64,6 +65,7 @@ async def metrics_stream(ws: WebSocket) -> None:
     history_n = max(0, int(history_seconds / streamer.interval_s))
     history = streamer.history(history_n)
     await ws.send_json({
+        "v": API_VERSION,
         "type": "history",
         "interval_s": streamer.interval_s,
         "samples": [s.to_dict() for s in history],
