@@ -21,6 +21,7 @@ from alb import __version__
 from alb.api.chat_route import router as chat_router
 from alb.api.metrics_route import router as metrics_router
 from alb.api.playground_route import router as playground_router
+from alb.api.meta_route import router as meta_router
 from alb.api.terminal_route import router as terminal_router
 from alb.infra.env_loader import load_env_files
 
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(playground_router)
     app.include_router(terminal_router)
+    app.include_router(meta_router)
 
     @app.on_event("shutdown")
     async def _stop_streamers() -> None:  # noqa: ANN001 — FastAPI hook
