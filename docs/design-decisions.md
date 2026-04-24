@@ -339,6 +339,100 @@ tags: [adr, decisions, rationale]
 
 ---
 
+## ADR-017 · Web Tier 1 技术栈、本地 LLM、离线部署
+
+**状态**：M2.5 起步；持续到 M3。
+
+**决策**：Web 前端用 **React 19 + Vite + TypeScript + TanStack（Router/Query/Table/Virtual） + shadcn/ui + Radix UI primitives + lucide-react**，全部资源本地化（字体 / 图标 / 第三方 SDK 全 vendor），严禁运行时外部 HTTP 请求。LLM 后端 ABC 已就绪（ADR-016），逐步实现 6 个 backend 实现，**优先无外网依赖的几种**。同时把"离线 + 本地模型"做成一等公民部署形态，三个 OS 各出 standalone bundle。
+
+**前端栈选型理由（vs Alpine / Svelte / Vue / Lit / Solid）**：
+- **React 生态最深** —— 关键的 `react-flow`（workflow builder）、`cmdk`（命令面板）、`react-arborist`（控件树 / MCP trace）、Radix UI 无障碍 primitives 等组件 React 独占或最成熟，Svelte / Vue 等价物功能差距 30%-50%
+- **TanStack 一栈** —— Router / Query / Table / Virtual 解决路由、服务器状态、虚拟列表、表格四件大事，类型安全
+- **shadcn/ui pattern** —— 不是 npm 依赖，是 copy-paste 进我们仓库的源码，完全可改可审，适配 anthropic.css 设计系统
+- **Vite 构建** —— dev HMR <100ms，prod 产物 minify + 代码分割 + tree-shake 干净，离线友好
+- **TypeScript strict** —— 12+ 模块（Tier 1 只 6 个，Tier 2/3 还会加）的重构安全网
+- **AI 工具兼容** —— Claude Code / Cursor 对 React + TS 代码补全准度最高（训练语料量级差异）
+- **代价**：bundle 比 Svelte 大 ~40KB gzip（运行时），对本地 / 局域网部署可忽略；多一层 npm 工具链，但仅前端贡献者需要
+
+**离线 / 本地优先约束（硬性）**：
+- 0 个外部 HTTP 请求（CI 用 Playwright 断言）
+- 字体（Poppins / Lora / JetBrains Mono）必须本地 woff2，不通过 Google Fonts
+- 图标用 lucide 静态 SVG 子集进 bundle
+- 不打 telemetry（无 Sentry / GA / Cloudflare Insights）
+- `navigator.onLine` + `GET /api/version` 双重检测，UI 离线模式下隐藏云端 backend / 模型下载等联网功能
+
+**LLM Backend 路线（按离线友好度优先）**：
+
+| 阶段 | Backend | 离线 | 工作量 |
+|---|---|---|---|
+| ✓ M2 | OllamaBackend | 100%（拉过模型后） | 已完成 |
+| **M2.5** | **LlamaCppBackend**（嵌入式 GGUF） | 100%（纯文件） | 必做，CLI-only 用户首选 |
+| **M2.5** | **OpenAICompatBackend**（通配 LM Studio / vLLM / llamafile） | 取决于服务端 | 必做，覆盖最广 |
+| M3 早 | MLXBackend（Apple Silicon） | 100% | Mac 性能最佳 |
+| M3 中 | HuggingFaceBackend（transformers pipeline） | 100% | 研究 / fine-tune 模型 |
+| M3 末 | AnthropicBackend | **0% 联网** | 可选；离线模式默认禁用 |
+| M4+ | vLLM 专用 / TensorRT-LLM | 100%（企业 GPU） | 多人共享 |
+
+**Web UI 仍是 web 形态**（不是 Electron）：
+- alb 进程在 localhost 起 FastAPI，serve `docs/app/` 静态资源
+- 用户在浏览器（任何现代浏览器）打开 localhost → 即用
+- Tauri "原生窗口壳"是 M3+ 可选润色（webview 指 localhost），不改主体
+- 同 Jupyter / n8n / Open WebUI / LM Studio 同模式 —— "本地 web app" 是工业级成熟模式
+
+**新 UI 组件（为本地模型场景）**：
+1. **Model File Picker** —— 嵌入式 backend 用，浏览本地 GGUF / safetensors（后端 `GET /api/fs/browse` 带白名单 sandbox）
+2. **Backend Health 卡片** —— Doctor + Playground 显示 Ollama / llama.cpp / MLX / OpenAI-compat 各自状态
+3. **Resource Predictor** —— 选模型时估 VRAM / RAM 占用，防 OOM
+4. **Offline Banner** —— 离线时顶栏明示，云端 backend 自动隐藏
+5. **Model Downloader**（联网时才显示） —— Ollama pull / HF snapshot 带进度条
+
+**部署形态（三种 + 离线 bundle）**：
+
+| 场景 | 谁装 node | 用户操作 |
+|---|---|---|
+| `pip install alb` | 否 | `alb serve --open` → 浏览器即用 |
+| GitHub Pages 预览 | 否 | 访问 Pages → 填本地 `localhost:8765` 连自己的 alb-api |
+| Windows standalone exe（M2.5）| 否 | 双击 alb.exe → systray + 浏览器自动打开 |
+| **离线 bundle**（Linux/macOS/Windows 各一个 tar.gz）| 否 | 含 wheel + ollama / llama-server binary + platform-tools，零网络可装 |
+| 前端贡献者 | **是**，一次 npm install | `cd web && npm run dev` |
+
+**仓库结构**：
+```
+web/                   # React 源码（前端贡献者）
+├── src/{routes,components,features,lib,styles}
+├── public/fonts/      # 本地化字体
+├── package.json + vite.config.ts + tsconfig.json + biome.json
+docs/app/              # vite build 产物 (committed)
+src/alb/api/ui_static.py   # FastAPI StaticFiles 挂 docs/app
+.github/workflows/web.yml  # CI: web/src 改了必须 rebuild docs/app + Playwright 离线检测
+```
+
+**CI 硬性 gates**：
+1. **外部请求 0 容忍** —— Playwright 加载 + 监听网络，命中外部域名直接 fail
+2. **字体本地** —— grep `docs/app/` 出现 fonts.googleapis.com / fonts.gstatic.com 即 fail
+3. **bundle 体积** —— gzip 后 > 500KB 报警
+4. **离线冒烟** —— docker no-internet 容器跑 `alb serve` + curl 端点 + pytest tests/offline_smoke/
+
+**性能目标（可度量）**：
+- 首屏 LCP < 1.5s（本地）
+- WS token 流平均延迟 < 50ms（机器内）
+- Logcat 虚拟列表 60fps @ 100K 行
+- Charts 60fps @ 6 曲线 × 300 点滑窗
+
+**为什么不选其它**：
+- **Alpine / 纯 vanilla** —— 12+ 模块后无 TypeScript / 无组件复用，Tier 2 workflow builder / 命令面板写不动
+- **Svelte 5 / Solid** —— 运行时更小很优雅，但 react-flow / cmdk / Radix / TanStack 等关键库 React 独占或先发优势明显，"少 40KB 运行时" 换不回 "造轮子工作量"
+- **Vue 3** —— 居中选项，但社区活跃度和组件深度略逊 React，且 vue-flow 不如 react-flow 成熟
+- **React + Next.js / Remix** —— SSR 框架对 alb 这种 "本地 SPA" 场景过度，多一层无意义复杂
+
+**代价**：
+- 前端贡献者要装 node + npm（一次性，端用户不用）
+- bundle 比 Svelte 大 ~40KB gzip
+- shadcn 模式要自己维护组件源码（同时也是优势：完全可控）
+- 离线 bundle 打包流程比纯 pip install 多几步（CI 自动化吸收）
+
+---
+
 ## 附录 · 被驳回的提案
 
 | 提案 | 驳回理由 |
