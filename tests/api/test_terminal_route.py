@@ -140,3 +140,79 @@ def test_terminal_ws_unsupported_transport(no_pty_client) -> None:
         ev = ws.receive_json()
         assert ev["type"] == "closed"
         assert ev["error"]["code"] == "TRANSPORT_NO_PTY"
+
+
+def test_terminal_ws_hitl_blocks_dangerous_command(client) -> None:
+    """Type a dangerous command — the WS should send a hitl_request
+    instead of forwarding it to the shell."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "rows": 24, "cols": 80})
+        ws.receive_json()  # ready
+
+        # Type the line via JSON so the bytes flow through the guard.
+        ws.send_json({"type": "input", "data": "rm -rf /system/x\n"})
+
+        # Drain frames; expect a hitl_request text frame.
+        for _ in range(40):
+            msg = ws.receive()
+            text = msg.get("text") if isinstance(msg, dict) else None
+            if text:
+                import json
+                obj = json.loads(text)
+                if obj.get("type") == "hitl_request":
+                    assert "rm -rf" in obj["command"]
+                    assert obj["rule"]
+                    return
+        import pytest
+        pytest.fail("never received hitl_request")
+
+
+def test_terminal_ws_hitl_deny_then_safe_command_works(client) -> None:
+    """After denying a dangerous command, the next safe command should
+    still flow through the shell."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({})
+        ws.receive_json()  # ready
+        ws.send_json({"type": "input", "data": "reboot\n"})
+
+        # Wait for hitl_request, then deny.
+        for _ in range(40):
+            msg = ws.receive()
+            text = msg.get("text") if isinstance(msg, dict) else None
+            if text:
+                import json
+                obj = json.loads(text)
+                if obj.get("type") == "hitl_request":
+                    ws.send_json({"type": "hitl_response", "approve": False})
+                    break
+
+        # Now send a safe command, expect to see its echo come back.
+        ws.send_json({"type": "input", "data": "ok\n"})
+        seen = b""
+        for _ in range(60):
+            msg = ws.receive()
+            data = msg.get("bytes") if isinstance(msg, dict) else None
+            if data:
+                seen += data
+                if b"ok" in seen:
+                    return
+        import pytest
+        pytest.fail("post-deny safe command never echoed back")
+
+
+def test_terminal_ws_set_read_only_ack(client) -> None:
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({})
+        ws.receive_json()  # ready
+        ws.send_json({"type": "set_read_only", "value": True})
+        for _ in range(20):
+            msg = ws.receive()
+            text = msg.get("text") if isinstance(msg, dict) else None
+            if text:
+                import json
+                obj = json.loads(text)
+                if obj.get("type") == "control_ack" and obj.get("action") == "set_read_only":
+                    assert obj["read_only"] is True
+                    return
+        import pytest
+        pytest.fail("never received set_read_only ack")
