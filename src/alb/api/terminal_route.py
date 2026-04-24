@@ -38,8 +38,10 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from alb.infra.workspace import iso_timestamp, session_path
 from alb.mcp.transport_factory import build_transport
 from alb.transport.interactive import InteractiveShell
+from alb.transport.terminal_guard import TerminalGuard
 
 router = APIRouter()
 
@@ -49,9 +51,12 @@ async def terminal_ws(ws: WebSocket) -> None:
     await ws.accept()
 
     config = await _read_config(ws)
-    device = config.get("device") if isinstance(config, dict) else None
-    rows = _safe_int(config.get("rows", 24) if isinstance(config, dict) else 24, 24)
-    cols = _safe_int(config.get("cols", 80) if isinstance(config, dict) else 80, 80)
+    config = config if isinstance(config, dict) else {}
+    device = config.get("device")
+    rows = _safe_int(config.get("rows", 24), 24)
+    cols = _safe_int(config.get("cols", 80), 80)
+    read_only = bool(config.get("read_only", False))
+    session_id = str(config.get("session_id") or f"term-{iso_timestamp()}")
 
     transport = build_transport(device_serial=device)
 
@@ -84,13 +89,45 @@ async def terminal_ws(ws: WebSocket) -> None:
             await ws.close()
         return
 
+    audit_path = session_path(session_id, "terminal.jsonl")
+
+    async def on_hitl(line: str, rule) -> None:  # noqa: ANN001
+        await ws.send_json({
+            "type": "hitl_request",
+            "command": line,
+            "rule": rule.name,
+            "reason": rule.reason,
+        })
+
+    async def on_audit(payload: dict) -> None:
+        try:
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": iso_timestamp(), **payload}, ensure_ascii=False))
+                f.write("\n")
+        except OSError:
+            pass
+
+    async def on_echo(data: bytes) -> None:
+        with contextlib.suppress(Exception):
+            await ws.send_bytes(data)
+
+    guard = TerminalGuard(
+        shell,
+        read_only=read_only,
+        on_hitl=on_hitl,
+        on_audit=on_audit,
+        on_echo=on_echo,
+    )
+
     await ws.send_json({
         "type": "ready",
         "device": device or "",
         "transport": getattr(transport, "name", "adb"),
+        "session_id": session_id,
+        "read_only": read_only,
     })
 
-    recv_task = asyncio.create_task(_recv_loop(ws, shell))
+    recv_task = asyncio.create_task(_recv_loop(ws, shell, guard))
     send_task = asyncio.create_task(_send_loop(ws, shell))
     try:
         done, pending = await asyncio.wait(
@@ -102,6 +139,7 @@ async def terminal_ws(ws: WebSocket) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await t
     finally:
+        guard.close()
         await shell.close()
         with contextlib.suppress(Exception):
             await ws.send_json({
@@ -115,12 +153,11 @@ async def terminal_ws(ws: WebSocket) -> None:
 # ─── Loops ─────────────────────────────────────────────────────────
 
 
-async def _recv_loop(ws: WebSocket, shell: InteractiveShell) -> None:
-    """Forward client messages to the shell.
-
-    Binary frames go straight to stdin. Text frames are parsed as JSON
-    control messages (resize / control:close).
-    """
+async def _recv_loop(
+    ws: WebSocket, shell: InteractiveShell, guard: TerminalGuard
+) -> None:
+    """Forward client messages — bytes go through the HITL guard,
+    JSON frames carry resize / control / hitl_response / set_read_only."""
     try:
         while True:
             msg = await ws.receive()
@@ -129,15 +166,13 @@ async def _recv_loop(ws: WebSocket, shell: InteractiveShell) -> None:
             data = msg.get("bytes")
             text = msg.get("text")
             if data is not None:
-                await shell.write(data)
+                await guard.feed(data)
                 continue
             if text is not None:
                 try:
                     obj = json.loads(text)
                 except json.JSONDecodeError:
-                    # Treat as raw text input — terminals occasionally
-                    # send pasted strings as text frames.
-                    await shell.write(text.encode("utf-8", errors="replace"))
+                    await guard.feed(text.encode("utf-8", errors="replace"))
                     continue
                 if not isinstance(obj, dict):
                     continue
@@ -151,7 +186,19 @@ async def _recv_loop(ws: WebSocket, shell: InteractiveShell) -> None:
                 elif kind == "input":
                     payload = obj.get("data", "")
                     if isinstance(payload, str):
-                        await shell.write(payload.encode("utf-8", errors="replace"))
+                        await guard.feed(payload.encode("utf-8", errors="replace"))
+                elif kind == "hitl_response":
+                    await guard.respond_hitl(
+                        approve=bool(obj.get("approve", False)),
+                        allow_session=bool(obj.get("allow_session", False)),
+                    )
+                elif kind == "set_read_only":
+                    guard.read_only = bool(obj.get("value", False))
+                    await ws.send_json({
+                        "type": "control_ack",
+                        "action": "set_read_only",
+                        "read_only": guard.read_only,
+                    })
     except WebSocketDisconnect:
         return
     except Exception:
