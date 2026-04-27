@@ -12,6 +12,7 @@
  * Data is currently mock; each section's `data` prop will swap to a
  * real fetcher once /devices /tunnels /sessions /metrics ship.
  */
+import type { Lang } from "../../stores/app";
 import { useApp } from "../../stores/app";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { DeviceStripCompact } from "./DeviceStripCompact";
@@ -20,10 +21,10 @@ import { LiveSessionCard } from "./LiveSessionCard";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
+import { useDevices } from "./useDevices";
 import { useRecentSessions } from "./useSessions";
 import {
   MOCK_BACKENDS,
-  MOCK_DEVICES,
   MOCK_KPIS,
   MOCK_LIVE,
   MOCK_QUICK_ACTIONS,
@@ -34,6 +35,7 @@ export function DashboardPage() {
   const lang = useApp((s) => s.lang);
   const setDevice = useApp((s) => s.setDevice);
   const recent = useRecentSessions(5);
+  const devices = useDevices();
 
   return (
     <section>
@@ -53,18 +55,38 @@ export function DashboardPage() {
       {/* === Devices compact strip === */}
       <div className="group-head">
         <h2>{lang === "zh" ? "设备" : "Devices"}</h2>
-        <span className="meta">
-          {lang === "zh"
-            ? "3 在线 · 1 不可达 · 点卡片进入设备页"
-            : "3 online · 1 unreachable · click to drill in"}
-        </span>
+        <span className="meta">{deviceMeta(devices, lang)}</span>
         <span className="right">
           <a className="link-arrow" href="#all-devices">
             {lang === "zh" ? "所有设备" : "All devices"}
           </a>
         </span>
       </div>
-      <DeviceStripCompact devices={MOCK_DEVICES} onSelect={setDevice} />
+      {devices.isLoading ? (
+        <div className="dev-strip-state">
+          {lang === "zh" ? "加载设备中…" : "Loading devices…"}
+        </div>
+      ) : devices.isError ? (
+        <div className="dev-strip-state dev-strip-state--err">
+          {lang === "zh"
+            ? "无法获取设备列表（GET /devices 失败）"
+            : "Couldn't load devices (GET /devices failed)"}
+        </div>
+      ) : devices.backendError ? (
+        <div className="dev-strip-state dev-strip-state--err">
+          {lang === "zh"
+            ? `传输层不可用 · ${devices.backendError}`
+            : `Transport unavailable · ${devices.backendError}`}
+        </div>
+      ) : devices.devices.length === 0 ? (
+        <div className="dev-strip-state">
+          {lang === "zh"
+            ? `当前 transport：${devices.transportName ?? "—"} · 无设备`
+            : `Active transport: ${devices.transportName ?? "—"} · no devices`}
+        </div>
+      ) : (
+        <DeviceStripCompact devices={devices.devices} onSelect={setDevice} />
+      )}
 
       {/* === LLM backends + Recent sessions side-by-side === */}
       <div className="dash-2col">
@@ -139,4 +161,21 @@ export function DashboardPage() {
       <QuickActionRow actions={MOCK_QUICK_ACTIONS} />
     </section>
   );
+}
+
+function deviceMeta(
+  vm: ReturnType<typeof useDevices>,
+  lang: Lang,
+): string {
+  if (vm.isLoading) return lang === "zh" ? "加载中…" : "Loading…";
+  if (vm.isError) return lang === "zh" ? "请求失败" : "request failed";
+  const total = vm.devices.length;
+  const online = vm.devices.filter((d) => d.status === "online").length;
+  const offline = vm.devices.filter((d) => d.status === "offline").length;
+  if (total === 0) {
+    return lang === "zh" ? "无设备 · 检查 transport" : "no devices · check transport";
+  }
+  return lang === "zh"
+    ? `${online} 在线 · ${offline} 不可达 · ${vm.transportName ?? "—"}`
+    : `${online} online · ${offline} offline · ${vm.transportName ?? "—"}`;
 }
