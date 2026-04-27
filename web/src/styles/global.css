@@ -1,7 +1,8 @@
 /**
  * Global stylesheet hooks that extend the Anthropic design system.
  * fonts.css and anthropic.css are loaded by index.html; this file only
- * adds rules that are specific to the React app.
+ * adds rules that affect base elements.  Re-usable component classes
+ * live in components.css.
  */
 
 html,
@@ -17,6 +18,10 @@ body {
   color: var(--anth-text);
   font-family: var(--font-body);
 }
+
+* { box-sizing: border-box; }
+
+button { font-family: inherit; }
 
 code {
   font-family: var(--font-mono);

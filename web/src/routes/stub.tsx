@@ -1,10 +1,10 @@
 /**
- * Placeholder page — each feature module currently renders this until
- * its real implementation lands.  Lists the backend endpoints the
- * module will consume so the wiring intent is visible during
- * scaffolding.
+ * Placeholder page — every feature module that hasn't shipped its real
+ * implementation renders this.  Visually matches the section blocks in
+ * docs/webui-preview.html so users see continuity with the mockup.
  */
 import { useQuery } from "@tanstack/react-query";
+import { useApp } from "../stores/app";
 import type { ApiVersion } from "../lib/api";
 import { fetchApiVersion } from "../lib/api";
 
@@ -13,11 +13,12 @@ export interface StubPageProps {
   titleZh: string;
   summary: string;
   summaryZh: string;
-  /** REST paths / WS paths this module will use. */
+  /** REST paths / WS paths this module will consume. */
   consumes: string[];
 }
 
 export function StubPage(props: StubPageProps) {
+  const lang = useApp((s) => s.lang);
   const { data } = useQuery<ApiVersion>({
     queryKey: ["apiVersion"],
     queryFn: ({ signal }) => fetchApiVersion(signal),
@@ -29,48 +30,68 @@ export function StubPage(props: StubPageProps) {
   data?.ws.forEach((w) => availablePaths.add(w.path));
 
   return (
-    <section style={{ maxWidth: "72ch" }}>
-      <header style={{ marginBottom: "var(--space-5)" }}>
-        <h1 style={{ marginBottom: "var(--space-2)" }}>{props.title}</h1>
-        <p style={{ color: "var(--anth-text-secondary)", marginBottom: 0 }}>
-          {props.summary}
-        </p>
-      </header>
+    <section>
+      <div className="section-head">
+        <h1>{lang === "zh" ? props.titleZh : props.title}</h1>
+        <span className="status-pill status-pill--plan">
+          {lang === "zh" ? "待实现" : "Planned"}
+        </span>
+      </div>
+      <p className="section-sub">
+        {lang === "zh" ? props.summaryZh : props.summary}
+      </p>
 
-      <div
-        style={{
-          background: "var(--anth-bg-subtle)",
-          border: "1px dashed var(--anth-mid-gray)",
-          borderRadius: "var(--radius-md)",
-          padding: "var(--space-4) var(--space-5)",
-        }}
-      >
-        <strong style={{ fontFamily: "var(--font-heading)", fontSize: 13 }}>
-          Upcoming · consumes
-        </strong>
-        <ul style={{ marginTop: "var(--space-3)", fontFamily: "var(--font-mono)", fontSize: 13 }}>
-          {props.consumes.map((p) => (
-            <li key={p}>
-              {p}
-              {data && (
-                <span
-                  style={{
-                    marginLeft: "var(--space-2)",
-                    fontSize: 11,
-                    color: availablePaths.has(p.replace(/^(WS|GET|POST) /, "").split(" ")[0] ?? "")
-                      ? "var(--anth-green)"
-                      : "var(--anth-danger)",
-                  }}
-                >
-                  {availablePaths.has(p.replace(/^(WS|GET|POST) /, "").split(" ")[0] ?? "")
-                    ? "server supports ✓"
-                    : "server missing ✗"}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+      <div className="mock-card">
+        <div
+          style={{
+            fontFamily: "var(--font-heading)",
+            fontSize: 11,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            color: "var(--anth-text-secondary)",
+            marginBottom: "var(--space-3)",
+          }}
+        >
+          {lang === "zh" ? "依赖端点" : "Consumes"}
+        </div>
+        <div>
+          {props.consumes.map((entry) => {
+            const path = pathOf(entry);
+            const ok = data ? availablePaths.has(path) : null;
+            return (
+              <span
+                key={entry}
+                className={
+                  ok === null
+                    ? "need-pill"
+                    : ok
+                      ? "need-pill is-ok"
+                      : "need-pill is-miss"
+                }
+                title={
+                  ok === null
+                    ? "checking…"
+                    : ok
+                      ? lang === "zh"
+                        ? "服务端已就位"
+                        : "server supports"
+                      : lang === "zh"
+                        ? "服务端缺失"
+                        : "server missing"
+                }
+              >
+                {entry}
+              </span>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
+}
+
+/** "GET /devices" → "/devices"; "WS /chat/ws" → "/chat/ws". */
+function pathOf(entry: string): string {
+  return entry.replace(/^(WS|GET|POST|PUT|DELETE|PATCH)\s+/, "").split(" ")[0] ?? "";
 }

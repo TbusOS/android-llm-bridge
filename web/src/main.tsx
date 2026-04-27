@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { AlbApiError } from "./lib/api";
 import "./styles/global.css";
+import "./styles/components.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
