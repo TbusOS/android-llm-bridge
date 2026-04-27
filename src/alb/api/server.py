@@ -19,6 +19,7 @@ from fastapi import FastAPI
 
 from alb import __version__
 from alb.api.chat_route import router as chat_router
+from alb.api.devices_route import router as devices_router
 from alb.api.metrics_route import router as metrics_router
 from alb.api.playground_route import router as playground_router
 from alb.api.meta_route import router as meta_router
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
         return {"ok": "true", "version": __version__, "api": "alb"}
 
     app.include_router(chat_router)
+    app.include_router(devices_router)
     app.include_router(metrics_router)
     app.include_router(playground_router)
     app.include_router(sessions_router)
