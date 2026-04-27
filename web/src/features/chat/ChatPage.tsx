@@ -44,7 +44,7 @@ export function ChatPage() {
           }}
         >
           <label
-            className="icon-btn"
+            className="pill-btn"
             style={{ cursor: "pointer", borderColor: "transparent" }}
             title={lang === "zh" ? "开关 MCP 工具" : "Toggle MCP tools"}
           >
@@ -60,7 +60,7 @@ export function ChatPage() {
           </label>
           <button
             type="button"
-            className="icon-btn"
+            className="pill-btn"
             onClick={retry}
             disabled={!canRetry}
             title={lang === "zh" ? "重试上一条" : "Retry last"}
@@ -70,7 +70,7 @@ export function ChatPage() {
           </button>
           <button
             type="button"
-            className="icon-btn"
+            className="pill-btn"
             onClick={reset}
             disabled={turns.length === 0 || isStreaming}
             title={lang === "zh" ? "清空会话" : "Clear conversation"}

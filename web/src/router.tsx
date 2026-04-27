@@ -1,8 +1,9 @@
 /**
  * Router assembly — code-based TanStack Router setup with the
- * RootLayout wrapping every route.  File-based routing via the
- * @tanstack/router-plugin is a future polish; for now the explicit
- * route tree is easy to read.
+ * RootLayout wrapping every route.  v2 module map (8 entries on the
+ * activity bar): Dashboard / Chat / Terminal / Inspect / Playground /
+ * Sessions / Files / Audit.  Only Dashboard and Chat are real today;
+ * the rest render StubPage.
  */
 import {
   createRootRoute,
@@ -11,6 +12,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { ChatPage } from "./features/chat/ChatPage";
+import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { RootLayout } from "./layouts/RootLayout";
 import { StubPage } from "./routes/stub";
 
@@ -20,22 +22,14 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   beforeLoad: () => {
-    throw redirect({ to: "/devices" });
+    throw redirect({ to: "/dashboard" });
   },
 });
 
-const devicesRoute = createRoute({
+const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/devices",
-  component: () => (
-    <StubPage
-      title="Devices"
-      titleZh="设备"
-      summary="Lists every connected device (adb USB / adb Wi-Fi / UART bridge) with tunnel state and Windows probe feed."
-      summaryZh="列出所有连上的设备（USB adb / Wi-Fi adb / UART 桥），显示隧道状态和 Windows 探针数据。"
-      consumes={["GET /devices", "GET /tunnels", "WS /devices/live"]}
-    />
-  ),
+  path: "/dashboard",
+  component: DashboardPage,
 });
 
 const chatRoute = createRoute({
@@ -54,6 +48,24 @@ const terminalRoute = createRoute({
       summary="Interactive adb / serial shell via xterm.js with HITL command guard and optional read-only mode."
       summaryZh="xterm.js 直通 adb / 串口 shell；危险命令 HITL 拦截；可切只读模式。"
       consumes={["WS /terminal/ws"]}
+    />
+  ),
+});
+
+const inspectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/inspect",
+  component: () => (
+    <StubPage
+      title="Inspect"
+      titleZh="Inspect 检视"
+      summary="Per-device drill-in: System info (11 panels), 1 Hz charts (CPU / mem / temp / disk / net / GPU), screenshots, UI dump, file browser."
+      summaryZh="单设备深挖：系统信息 11 面板、1 Hz 实时图表、抓屏、UI 树、文件浏览。模块内子导航。"
+      consumes={[
+        "GET /devices/{id}/info",
+        "WS /metrics/stream",
+        "POST /devices/{id}/screenshot",
+      ]}
     />
   ),
 });
@@ -77,42 +89,58 @@ const playgroundRoute = createRoute({
   ),
 });
 
-const systemRoute = createRoute({
+const sessionsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/system",
+  path: "/sessions",
   component: () => (
     <StubPage
-      title="System Info"
-      titleZh="系统信息"
-      summary="11 structured panels covering OS / kernel / CPU / GPU / memory / storage / network / battery / security / display / packages / processes."
-      summaryZh="11 个结构化面板 —— 系统 / 内核 / CPU / GPU / 内存 / 存储 / 网络 / 电池 / 安全 / 显示 / 应用 / 进程。"
-      consumes={["GET /devices/{id}/info", "alb info all (WIP REST)"]}
+      title="Sessions"
+      titleZh="会话历史"
+      summary="Browse / search / replay every JSONL agent session.  Resume an old turn, fork a session, export to share."
+      summaryZh="所有 JSONL agent session 的浏览 / 搜索 / 回放。可续接旧轮、fork、导出。"
+      consumes={["GET /sessions", "GET /sessions/{id}", "POST /sessions/{id}/resume"]}
     />
   ),
 });
 
-const chartsRoute = createRoute({
+const filesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/charts",
+  path: "/files",
   component: () => (
     <StubPage
-      title="Real-time Charts"
-      titleZh="实时图表"
-      summary="1 Hz telemetry — CPU / memory / temp / disk / network / GPU — via µPlot with a sliding 60 s window."
-      summaryZh="1 Hz 实时 —— CPU / 内存 / 温度 / 磁盘 / 网络 / GPU —— µPlot 渲染 60 秒滑窗。"
-      consumes={["WS /metrics/stream"]}
+      title="Files"
+      titleZh="文件浏览"
+      summary="Push / pull / rsync between host and device with HITL on path changes outside /sdcard."
+      summaryZh="主机 ↔ 设备 文件 push / pull / rsync；非 /sdcard 路径走 HITL。"
+      consumes={["GET /devices/{id}/fs", "POST /devices/{id}/push", "POST /devices/{id}/pull"]}
+    />
+  ),
+});
+
+const auditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/audit",
+  component: () => (
+    <StubPage
+      title="Audit"
+      titleZh="审计日志"
+      summary="Append-only log of every tool call, HITL decision, and session boundary.  Filter by device / actor / verdict."
+      summaryZh="所有工具调用、HITL 决策、session 边界的 append-only 日志；按设备 / 操作者 / 结果筛。"
+      consumes={["GET /audit", "WS /audit/stream"]}
     />
   ),
 });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  devicesRoute,
+  dashboardRoute,
   chatRoute,
   terminalRoute,
+  inspectRoute,
   playgroundRoute,
-  systemRoute,
-  chartsRoute,
+  sessionsRoute,
+  filesRoute,
+  auditRoute,
 ]);
 
 // Strip the deployment base (e.g. `/app/` in dev + alb-api mount, or
