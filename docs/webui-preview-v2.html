@@ -1,0 +1,1537 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web UI Preview v2 — android-llm-bridge</title>
+    <meta name="description" content="Activity-bar app shell + real-time Dashboard for android-llm-bridge. Static mockup with placeholder data — review the layout before the React refactor.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      /* ==========================================================
+         App shell — left activity bar + content column
+         ========================================================== */
+      body { background: var(--anth-bg); }
+
+      /* 4px orange brand stripe at the very top — enough to anchor brand
+         color in the visible top region per design-review §K. */
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      html[lang^="zh"] body, html[lang^="zh"] p, html[lang^="zh"] li,
+      html[lang^="zh"] h1, html[lang^="zh"] h2, html[lang^="zh"] h3 {
+        font-family: "Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+      }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        min-height: 100vh;
+      }
+
+      /* ----- Activity bar ----- */
+      .activity-bar {
+        background: #ffffff;
+        border-right: 1px solid var(--anth-light-gray);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: var(--space-3) 0 var(--space-4);
+        gap: var(--space-2);
+        position: sticky;
+        top: 0;
+        height: 100vh;
+      }
+      .ab-logo {
+        width: 44px; height: 44px;
+        margin-bottom: var(--space-3);
+        display: flex; align-items: center; justify-content: center;
+        background: var(--anth-orange);
+        color: #fff;
+        font-family: var(--font-heading); font-weight: 700; font-size: 15px;
+        border-radius: 12px;
+        text-decoration: none;
+      }
+      .ab-item {
+        position: relative;
+        width: 44px; height: 44px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 10px;
+        color: var(--anth-text-secondary);
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+        transition: color 240ms cubic-bezier(0.25,1,0.5,1),
+                    background 240ms cubic-bezier(0.25,1,0.5,1);
+      }
+      .ab-item:hover { color: var(--anth-text); background: var(--anth-bg-subtle); }
+      .ab-item.is-active {
+        color: #ffffff;
+        background: var(--anth-orange);
+      }
+      .ab-item.is-active:hover {
+        color: #ffffff;
+        background: var(--anth-orange-hover);
+      }
+      .ab-item.is-active::before {
+        content: "";
+        position: absolute; left: -8px; top: 8px; bottom: 8px;
+        width: 4px; border-radius: 0 4px 4px 0;
+        background: var(--anth-orange);
+      }
+      .ab-item .badge {
+        position: absolute;
+        top: 6px; right: 6px;
+        min-width: 16px; height: 16px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: var(--anth-orange);
+        color: #fff;
+        font-family: var(--font-heading); font-size: 10px; font-weight: 600;
+        display: inline-flex; align-items: center; justify-content: center;
+      }
+      .ab-spacer { flex: 1; }
+
+      .ab-divider {
+        width: 24px;
+        height: 1px;
+        background: var(--anth-light-gray);
+        margin: 4px 0;
+      }
+
+      .ab-status {
+        position: relative;
+        width: 44px; height: 44px;
+        display: flex; align-items: center; justify-content: center;
+        flex-direction: column;
+        gap: 2px;
+        cursor: default;
+        font-family: var(--font-heading); font-size: 9px; font-weight: 600;
+        color: var(--anth-text-secondary);
+      }
+      .ab-status .swatch {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--anth-green);
+      }
+
+      /* ----- Top bar ----- */
+      .topbar {
+        position: sticky; top: 0; z-index: 30;
+        background: var(--anth-bg);
+        border-bottom: 1px solid var(--anth-light-gray);
+        height: 56px;
+        display: flex; align-items: center;
+        gap: var(--space-3);
+        padding: 0 var(--space-5);
+      }
+      .crumbs {
+        display: inline-flex; align-items: center; gap: var(--space-2);
+        font-family: var(--font-heading); font-size: 14px;
+      }
+      .crumbs .sep { color: var(--anth-mid-gray); }
+      .crumbs .root { color: var(--anth-text-secondary); }
+      .crumbs .leaf { color: var(--anth-text); font-weight: 600; }
+
+      .device-picker {
+        display: inline-flex; align-items: center; gap: var(--space-2);
+        padding: 6px 12px;
+        border: 1px solid var(--anth-light-gray); border-radius: var(--radius-pill);
+        background: #ffffff;
+        font-family: var(--font-heading); font-size: 13px;
+        cursor: pointer;
+      }
+      .device-picker .dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--anth-green);
+      }
+      .device-picker .label { color: var(--anth-text); font-weight: 500; }
+      .device-picker .meta {
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+
+      .cmd-search {
+        flex: 1; max-width: 360px;
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 6px 12px;
+        background: var(--anth-bg-subtle); border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        color: var(--anth-text-secondary);
+        font-family: var(--font-heading); font-size: 13px;
+        cursor: text;
+      }
+      .cmd-search kbd {
+        margin-left: auto;
+        padding: 1px 6px;
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: 4px;
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+
+      .topbar-spacer { flex: 1; }
+
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 5px 12px;
+        border: 1px solid var(--anth-light-gray); border-radius: var(--radius-pill);
+        background: #ffffff;
+        font-family: var(--font-heading); font-size: 12px;
+        color: var(--anth-text-secondary);
+      }
+      .pill .swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--anth-green); }
+      .pill--ok { color: #5d7043; border-color: rgba(120,140,93,0.5); background: rgba(120,140,93,0.10); }
+      .pill--ok .swatch { background: var(--anth-green); }
+      .pill--warn { color: #a8502f; border-color: rgba(217,119,87,0.5); background: rgba(217,119,87,0.10); }
+      .pill--warn .swatch { background: var(--anth-orange); }
+
+      .icon-btn {
+        width: 32px; height: 32px;
+        display: inline-flex; align-items: center; justify-content: center;
+        border: 1px solid var(--anth-light-gray); border-radius: 8px;
+        background: #ffffff; color: var(--anth-text-secondary);
+        cursor: pointer;
+        transition: color 240ms cubic-bezier(0.25,1,0.5,1),
+                    border-color 240ms cubic-bezier(0.25,1,0.5,1);
+      }
+      .icon-btn:hover { color: var(--anth-orange); border-color: var(--anth-orange); }
+
+      /* ----- Content column ----- */
+      .app-content {
+        padding: var(--space-6) var(--space-7);
+        max-width: 1480px;
+      }
+
+      /* ----- Section heads ----- */
+      .h-title {
+        font-family: var(--font-heading);
+        font-size: 28px; font-weight: 700;
+        margin: 0 0 var(--space-2);
+        color: var(--anth-text);
+      }
+      .h-sub {
+        color: var(--anth-text-secondary);
+        font-size: 15px;
+        margin: 0 0 var(--space-5);
+      }
+      .group-head {
+        display: flex; align-items: baseline; gap: var(--space-3);
+        margin: var(--space-7) 0 var(--space-4);
+      }
+      .group-head h2 {
+        font-family: var(--font-heading); font-size: 18px; font-weight: 600;
+        margin: 0;
+      }
+      .group-head .meta {
+        color: var(--anth-text-secondary); font-size: 13px;
+      }
+      .group-head .right { margin-left: auto; }
+      .link-arrow {
+        color: var(--anth-orange); text-decoration: none;
+        font-family: var(--font-heading); font-size: 13px; font-weight: 500;
+      }
+      .link-arrow::after { content: " \2192"; }
+
+      /* ==========================================================
+         Hero row — Live session card + KPI 2x2 grid
+         ========================================================== */
+      .hero-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+        gap: var(--space-4);
+        margin-top: var(--space-3);
+      }
+      @media (max-width: 1180px) {
+        .hero-row { grid-template-columns: 1fr; }
+      }
+
+      .live-card {
+        position: relative;
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-left: 4px solid var(--anth-orange);
+        border-radius: var(--radius-md);
+        padding: var(--space-5) var(--space-5) var(--space-4);
+        display: flex; flex-direction: column;
+        gap: var(--space-3);
+        min-width: 0;
+      }
+      .live-head {
+        display: flex; align-items: center; gap: var(--space-2);
+        flex-wrap: wrap;
+      }
+      .live-pulse {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: var(--anth-orange);
+        box-shadow: 0 0 0 0 rgba(217,119,87,0.5);
+        animation: live-pulse 1.6s ease-out infinite;
+      }
+      @keyframes live-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(217,119,87,0.5); }
+        80%  { box-shadow: 0 0 0 9px rgba(217,119,87,0); }
+        100% { box-shadow: 0 0 0 0 rgba(217,119,87,0); }
+      }
+      .live-label {
+        font-family: var(--font-heading); font-weight: 600; font-size: 13px;
+        color: var(--anth-orange);
+        text-transform: uppercase; letter-spacing: 0.06em;
+      }
+      .live-device {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 10px;
+        background: var(--anth-bg-subtle); border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill);
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text);
+      }
+      .live-elapsed {
+        margin-left: auto;
+        font-family: var(--font-mono); font-size: 12px;
+        color: var(--anth-text-secondary);
+      }
+      .live-btn {
+        padding: 5px 14px;
+        background: transparent;
+        border: 1px solid var(--anth-danger);
+        border-radius: var(--radius-pill);
+        color: var(--anth-danger);
+        font-family: var(--font-heading); font-weight: 600; font-size: 12px;
+        cursor: pointer;
+        transition: background 240ms cubic-bezier(0.25,1,0.5,1),
+                    color 240ms cubic-bezier(0.25,1,0.5,1);
+      }
+      .live-btn:hover { background: var(--anth-danger); color: #ffffff; }
+
+      .live-prompt {
+        margin: 0;
+        padding: var(--space-3) var(--space-4);
+        background: var(--anth-bg-subtle);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.55;
+        color: var(--anth-text);
+        font-style: italic;
+        border-left: 3px solid var(--anth-orange);
+      }
+
+      .live-tools {
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      .live-tool {
+        display: grid;
+        grid-template-columns: 18px 1fr 60px;
+        align-items: center; gap: var(--space-2);
+        padding: 6px 0;
+        font-family: var(--font-mono); font-size: 12px;
+        border-bottom: 1px dashed var(--anth-light-gray);
+      }
+      .live-tool:last-child { border-bottom: none; }
+      .live-tool-icon {
+        width: 18px; height: 18px;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-weight: 600;
+      }
+      .live-tool--done .live-tool-icon { color: var(--anth-green); }
+      .live-tool--running .live-tool-icon { color: var(--anth-orange); }
+      .live-tool-name { color: var(--anth-text); }
+      .live-tool-arg { color: var(--anth-text-secondary); margin-left: var(--space-2); }
+      .live-tool-time {
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+        text-align: right;
+      }
+
+      .live-throughput {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: end; gap: var(--space-3);
+        padding-top: var(--space-2);
+      }
+      .live-tps {
+        font-family: var(--font-mono); font-weight: 600; font-size: 22px;
+        color: var(--anth-text);
+        line-height: 1;
+      }
+      .live-tps .unit {
+        font-family: var(--font-heading); font-size: 11px; font-weight: 500;
+        color: var(--anth-text-secondary);
+        margin-left: 4px;
+      }
+      .live-tps-spark {
+        height: 36px;
+        width: 100%;
+      }
+      .live-tps-meta {
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+        text-align: right;
+      }
+
+      /* ==========================================================
+         Stat strip (4 KPI cards)
+         ========================================================== */
+      .stat-strip {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-3);
+      }
+      .stat-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-3) var(--space-4);
+        display: flex; flex-direction: column; gap: 4px;
+      }
+      .stat-label {
+        font-family: var(--font-heading);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--anth-text-secondary);
+      }
+      .stat-value {
+        font-family: var(--font-heading);
+        font-weight: 700;
+        font-size: 26px;
+        color: var(--anth-text);
+        line-height: 1;
+      }
+      .stat-value .unit {
+        font-size: 14px; font-weight: 500;
+        color: var(--anth-text-secondary);
+        margin-left: 4px;
+      }
+      .stat-foot {
+        display: flex; align-items: center; gap: var(--space-2);
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+      .delta--up { color: #5d7043; }
+      .delta--down { color: var(--anth-danger); }
+
+      /* ==========================================================
+         Device strip — compact horizontal cards
+         ========================================================== */
+      .dev-strip {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: var(--space-3);
+      }
+      .dev-card {
+        position: relative;
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-3) var(--space-4) var(--space-3);
+        display: flex; flex-direction: column; gap: 6px;
+        text-decoration: none; color: inherit;
+        transition: border-color 240ms cubic-bezier(0.25,1,0.5,1),
+                    transform 240ms cubic-bezier(0.25,1,0.5,1);
+        overflow: hidden;
+      }
+      .dev-card:hover {
+        border-color: var(--anth-orange);
+        transform: translateY(-1px);
+      }
+      .dev-card.is-active {
+        border-color: var(--anth-orange);
+        box-shadow: 0 0 0 3px rgba(217,119,87,0.15);
+      }
+      .dev-card.is-active::after {
+        content: "active";
+        position: absolute; top: 8px; right: 8px;
+        font-family: var(--font-heading); font-size: 9px; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.06em;
+        color: #ffffff; background: var(--anth-orange);
+        padding: 1px 6px; border-radius: var(--radius-pill);
+      }
+      .dev-card.is-warn { border-color: var(--anth-orange); }
+      .dev-card.is-offline { opacity: 0.6; border-color: var(--anth-mid-gray); border-style: dashed; }
+
+      .dev-head {
+        display: flex; align-items: center; gap: var(--space-2);
+      }
+      .dev-status {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: var(--anth-green);
+        flex-shrink: 0;
+      }
+      .dev-status--warn { background: var(--anth-orange); }
+      .dev-status--off  { background: var(--anth-mid-gray); }
+      .dev-name {
+        font-family: var(--font-heading); font-weight: 600; font-size: 14px;
+        color: var(--anth-text);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dev-transport {
+        font-family: var(--font-mono); font-size: 10px;
+        color: var(--anth-text-secondary);
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .dev-meta {
+        font-family: var(--font-mono); font-size: 10.5px;
+        color: var(--anth-text-secondary);
+        line-height: 1.5;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dev-metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-2);
+        margin-top: 2px;
+      }
+      .dev-metric {
+        display: flex; flex-direction: column; gap: 2px;
+      }
+      .dev-metric-val {
+        font-family: var(--font-mono); font-weight: 600; font-size: 16px;
+        color: var(--anth-text);
+        line-height: 1;
+      }
+      .dev-metric-val .unit {
+        font-family: var(--font-heading); font-size: 10px; font-weight: 500;
+        color: var(--anth-text-secondary);
+        margin-left: 2px;
+      }
+      .dev-metric-spark {
+        height: 22px;
+        width: 100%;
+      }
+
+      /* ==========================================================
+         Backend / health card
+         ========================================================== */
+      .be-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: var(--space-4);
+      }
+      .be-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-4) var(--space-5);
+        display: flex; flex-direction: column; gap: var(--space-3);
+      }
+      .be-head {
+        display: flex; align-items: baseline; gap: var(--space-2);
+      }
+      .be-name { font-family: var(--font-heading); font-weight: 600; font-size: 15px; }
+      .be-model {
+        margin-left: auto;
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+      .be-grid-stats {
+        display: grid; grid-template-columns: repeat(3,1fr);
+        gap: var(--space-3);
+      }
+      .be-stat-label {
+        font-family: var(--font-heading); font-size: 10px; font-weight: 500;
+        text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--anth-text-secondary);
+      }
+      .be-stat-value {
+        font-family: var(--font-mono); font-weight: 600; font-size: 16px;
+        color: var(--anth-text);
+      }
+
+      /* ==========================================================
+         Sessions list
+         ========================================================== */
+      .sess-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .sess-row {
+        display: grid;
+        grid-template-columns: 24px 1fr 90px 80px 80px;
+        gap: var(--space-3);
+        align-items: center;
+        padding: var(--space-3) var(--space-4);
+        border-bottom: 1px solid var(--anth-light-gray);
+      }
+      .sess-row:last-child { border-bottom: 0; }
+      .sess-icon {
+        width: 24px; height: 24px;
+        background: var(--anth-bg-subtle);
+        border-radius: 6px;
+        display: flex; align-items: center; justify-content: center;
+        color: var(--anth-orange);
+        font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+      }
+      .sess-msg {
+        font-family: var(--font-body); font-size: 14px;
+        color: var(--anth-text);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .sess-meta {
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+        text-align: right;
+      }
+      .sess-status {
+        font-family: var(--font-heading); font-size: 11px; font-weight: 600;
+        text-transform: uppercase;
+        text-align: center;
+        padding: 2px 8px; border-radius: var(--radius-pill);
+      }
+      .sess-status--ok   { background: rgba(120,140,93,0.18); color: #5d7043; }
+      .sess-status--err  { background: rgba(161,66,56,0.15); color: var(--anth-danger); }
+      .sess-status--live { background: rgba(217,119,87,0.20); color: #a8502f; }
+
+      /* ==========================================================
+         Activity timeline
+         ========================================================== */
+      .timeline {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-4) var(--space-5);
+      }
+      .tl-row {
+        display: grid; grid-template-columns: 64px 18px 1fr;
+        gap: var(--space-3);
+        align-items: flex-start;
+        padding: 8px 0;
+        font-size: 13px;
+      }
+      .tl-time {
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+      .tl-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--anth-mid-gray);
+        margin-top: 6px;
+        margin-left: 4px;
+      }
+      .tl-dot--ok { background: var(--anth-green); }
+      .tl-dot--orange { background: var(--anth-orange); }
+      .tl-dot--err { background: var(--anth-danger); }
+      .tl-text { color: var(--anth-text); line-height: 1.55; }
+      .tl-text code {
+        font-family: var(--font-mono); font-size: 12px;
+        background: rgba(20,20,19,0.06); padding: 1px 6px; border-radius: 4px;
+      }
+      .tl-text .secondary { color: var(--anth-text-secondary); }
+
+      /* ==========================================================
+         Quick actions row
+         ========================================================== */
+      .qa-row {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: var(--space-3);
+      }
+      .qa-card {
+        display: flex; align-items: center; gap: var(--space-3);
+        padding: var(--space-3) var(--space-4);
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        text-decoration: none; color: var(--anth-text);
+        transition: border-color 240ms cubic-bezier(0.25,1,0.5,1),
+                    transform 240ms cubic-bezier(0.25,1,0.5,1);
+      }
+      .qa-card:hover { border-color: var(--anth-orange); transform: translateY(-1px); }
+      .qa-icon {
+        width: 36px; height: 36px;
+        background: var(--anth-bg-subtle); color: var(--anth-orange);
+        border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .qa-text { display: flex; flex-direction: column; }
+      .qa-title { font-family: var(--font-heading); font-weight: 600; font-size: 14px; }
+      .qa-sub { font-family: var(--font-body); font-size: 12px; color: var(--anth-text-secondary); }
+
+      /* ==========================================================
+         Sub-nav (used inside Inspect)
+         ========================================================== */
+      .subnav {
+        display: flex; gap: 4px;
+        border-bottom: 1px solid var(--anth-light-gray);
+        margin-bottom: var(--space-4);
+      }
+      .subnav a {
+        padding: 10px 14px;
+        font-family: var(--font-heading); font-size: 13px; font-weight: 500;
+        color: var(--anth-text-secondary);
+        text-decoration: none;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+      }
+      .subnav a:hover { color: var(--anth-text); }
+      .subnav a.is-active {
+        color: var(--anth-text);
+        border-bottom-color: var(--anth-orange);
+      }
+
+      /* ==========================================================
+         System info panel grid
+         ========================================================== */
+      .sys-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: var(--space-4);
+      }
+      .sys-card {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-4) var(--space-5);
+      }
+      .sys-card h3 {
+        font-family: var(--font-heading); font-size: 13px;
+        font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+        margin: 0 0 var(--space-3); color: var(--anth-text-secondary);
+      }
+      .sys-kv {
+        display: grid; grid-template-columns: 110px 1fr; gap: 6px var(--space-3);
+        font-size: 13px;
+      }
+      .sys-kv dt { font-family: var(--font-heading); color: var(--anth-text-secondary); font-weight: 500; }
+      .sys-kv dd { font-family: var(--font-mono); margin: 0; color: var(--anth-text); word-break: break-all; }
+      .part-row {
+        display: grid; grid-template-columns: 80px 1fr 80px;
+        gap: var(--space-2); align-items: center;
+        padding: 4px 0; font-size: 12px;
+        border-bottom: 1px dashed var(--anth-light-gray);
+      }
+      .part-row:last-child { border-bottom: none; }
+      .part-bar {
+        height: 6px; background: var(--anth-light-gray);
+        border-radius: var(--radius-pill); overflow: hidden;
+      }
+      .part-fill { height: 100%; background: var(--anth-orange); }
+      .part-name { font-family: var(--font-mono); color: var(--anth-text); }
+      .part-pct { font-family: var(--font-mono); color: var(--anth-text-secondary); text-align: right; font-size: 11px; }
+
+      /* ==========================================================
+         Real-time charts
+         ========================================================== */
+      .charts-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+        gap: var(--space-4);
+      }
+      .chart-card {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-4) var(--space-5);
+      }
+      .chart-head {
+        display: flex; align-items: baseline; gap: var(--space-3);
+        margin-bottom: var(--space-3);
+      }
+      .chart-title {
+        font-family: var(--font-heading); font-size: 12px; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--anth-text-secondary);
+      }
+      .chart-now {
+        font-family: var(--font-mono); font-size: 22px; font-weight: 600;
+        color: var(--anth-text);
+      }
+      .chart-now .unit {
+        font-family: var(--font-heading); font-size: 12px; font-weight: 500;
+        color: var(--anth-text-secondary); margin-left: 4px;
+      }
+      .chart-spark { width: 100%; height: 88px; display: block; }
+      .chart-foot {
+        display: flex; gap: var(--space-3); margin-top: var(--space-2);
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+
+      /* ==========================================================
+         Footer caption
+         ========================================================== */
+      .preview-foot {
+        margin-top: var(--space-9);
+        padding-top: var(--space-5);
+        border-top: 1px solid var(--anth-light-gray);
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3);
+      }
+    </style>
+  </head>
+  <body>
+
+    <div class="brand-stripe" aria-hidden="true"></div>
+
+    <div class="app-shell">
+
+      <!-- ============================ ACTIVITY BAR ============================ -->
+      <aside class="activity-bar" aria-label="Primary navigation">
+        <a href="./" class="ab-logo" aria-label="alb home">alb</a>
+
+        <button class="ab-item is-active" aria-label="Dashboard" aria-current="page">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="9" rx="1.5"/>
+            <rect x="14" y="3" width="7" height="5" rx="1.5"/>
+            <rect x="14" y="12" width="7" height="9" rx="1.5"/>
+            <rect x="3" y="16" width="7" height="5" rx="1.5"/>
+          </svg>
+        </button>
+
+        <button class="ab-item" aria-label="Chat">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+          </svg>
+          <span class="badge">2</span>
+        </button>
+
+        <button class="ab-item" aria-label="Terminal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="4 17 10 11 4 5"/>
+            <line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+        </button>
+
+        <button class="ab-item" aria-label="Inspect">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/>
+            <line x1="21" y1="21" x2="16" y2="16"/>
+          </svg>
+        </button>
+
+        <button class="ab-item" aria-label="Playground">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="4" y1="6" x2="20" y2="6"/>
+            <circle cx="9" cy="6" r="2.2" fill="#fff"/>
+            <line x1="4" y1="12" x2="20" y2="12"/>
+            <circle cx="15" cy="12" r="2.2" fill="#fff"/>
+            <line x1="4" y1="18" x2="20" y2="18"/>
+            <circle cx="11" cy="18" r="2.2" fill="#fff"/>
+          </svg>
+        </button>
+
+        <button class="ab-item" aria-label="Sessions">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <polyline points="12 7 12 12 15 14"/>
+          </svg>
+        </button>
+
+        <button class="ab-item" aria-label="Files">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2H19.5A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11z"/>
+          </svg>
+        </button>
+
+        <button class="ab-item" aria-label="Audit">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2 4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/>
+            <polyline points="9 12 11 14 15 10"/>
+          </svg>
+        </button>
+
+        <span class="ab-spacer"></span>
+
+        <span class="ab-status" title="Ollama up · 8 ms">
+          <span class="swatch"></span>
+          LLM
+        </span>
+
+        <button class="ab-item" aria-label="Toggle theme" type="button">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>
+        </button>
+
+        <button class="ab-item lang-toggle" id="langBtn" aria-label="Toggle language" type="button" onclick="toggleLang()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        </button>
+
+        <span class="ab-divider" aria-hidden="true"></span>
+
+        <button class="ab-item" aria-label="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9 1.65 1.65 0 0 0 4.27 7.18l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </aside>
+
+      <!-- ============================ MAIN COL ============================ -->
+      <div>
+        <header class="topbar" role="banner">
+          <span class="crumbs">
+            <span class="root"><span class="lang-en">Workspace</span><span class="lang-zh">工作区</span></span>
+            <span class="sep">/</span>
+            <span class="leaf"><span class="lang-en">Dashboard</span><span class="lang-zh">总览</span></span>
+          </span>
+
+          <span class="device-picker" tabindex="0" role="combobox" aria-label="Active device">
+            <span class="dot"></span>
+            <span class="label">aosp-emu-01</span>
+            <span class="meta">adb · usb · 1500000 baud</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </span>
+
+          <span class="cmd-search" tabindex="0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span><span class="lang-en">Run anything · ask the agent · jump to a panel</span><span class="lang-zh">命令面板：跑工具 / 问 agent / 跳面板</span></span>
+            <kbd>⌘K</kbd>
+          </span>
+
+          <span class="topbar-spacer"></span>
+
+          <span style="font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">
+            2026-04-24 · 16:42:08
+          </span>
+        </header>
+
+        <main class="app-content">
+
+          <!-- ============================ DASHBOARD ============================ -->
+          <h1 class="h-title">
+            <span class="lang-en">Dashboard</span><span class="lang-zh">总览</span>
+          </h1>
+          <p class="h-sub">
+            <span class="lang-en">Live status across every connected device, the local LLM, recent agent sessions, and what just happened.</span>
+            <span class="lang-zh">当前所有设备、本地 LLM、最近 session、刚发生过的事 —— 一屏看完。</span>
+          </p>
+
+          <!-- ============= HERO ROW: Live agent + KPI 2x2 ============= -->
+          <div class="hero-row">
+
+            <!-- LIVE AGENT SESSION -->
+            <article class="live-card" aria-live="polite">
+              <div class="live-head">
+                <span class="live-pulse" aria-hidden="true"></span>
+                <span class="live-label"><span class="lang-en">Live agent session</span><span class="lang-zh">Agent 进行中</span></span>
+                <span class="live-device">
+                  <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--anth-green);"></span>
+                  rk-board-7c · uart
+                </span>
+                <span class="live-elapsed"><span class="lang-en">turn 3 · 1m 42s</span><span class="lang-zh">第 3 轮 · 1m 42s</span></span>
+                <button class="live-btn" type="button"><span class="lang-en">Interrupt</span><span class="lang-zh">中断</span></button>
+              </div>
+
+              <p class="live-prompt">
+                <span class="lang-en">"Find what's draining the battery on this device — list the top 5 wakelocks and any wakeup sources from the last 30 min."</span>
+                <span class="lang-zh">"查一下这台设备是什么在耗电 —— 列最近 30 分钟前 5 个 wakelock 和唤醒源。"</span>
+              </p>
+
+              <div class="live-tools">
+                <div class="live-tool live-tool--done">
+                  <span class="live-tool-icon">✓</span>
+                  <span class="live-tool-name">alb_dumpsys_battery <span class="live-tool-arg">{ since: "30m" }</span></span>
+                  <span class="live-tool-time">1.2 s</span>
+                </div>
+                <div class="live-tool live-tool--done">
+                  <span class="live-tool-icon">✓</span>
+                  <span class="live-tool-name">alb_top <span class="live-tool-arg">{ sort: "cpu", n: 10 }</span></span>
+                  <span class="live-tool-time">0.8 s</span>
+                </div>
+                <div class="live-tool live-tool--running">
+                  <span class="live-tool-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.55" style="transform-origin:center; animation: spin 1s linear infinite;"/></svg>
+                  </span>
+                  <span class="live-tool-name">alb_dumpsys_power <span class="live-tool-arg">{ section: "wakelocks" }</span></span>
+                  <span class="live-tool-time">2.4 s</span>
+                </div>
+              </div>
+
+              <div class="live-throughput">
+                <span class="live-tps">42<span class="unit">tok/s</span></span>
+                <svg class="live-tps-spark" viewBox="0 0 280 36" preserveAspectRatio="none" role="img" aria-label="Token throughput last 60 s">
+                  <polyline points="0,28 20,26 40,22 60,24 80,18 100,20 120,14 140,18 160,12 180,15 200,10 220,13 240,9 260,12 280,8"
+                    fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+                  <polyline points="0,28 20,26 40,22 60,24 80,18 100,20 120,14 140,18 160,12 180,15 200,10 220,13 240,9 260,12 280,8 280,36 0,36"
+                    fill="rgba(106,155,204,0.12)" stroke="none"/>
+                </svg>
+                <span class="live-tps-meta">qwen2.5:7b<br>1247 tok</span>
+              </div>
+
+              <style scoped>
+                @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+              </style>
+            </article>
+
+            <!-- KPI 2x2 -->
+            <div class="stat-strip">
+              <div class="stat-card">
+                <div class="stat-label"><span class="lang-en">Devices</span><span class="lang-zh">设备</span></div>
+                <div class="stat-value">3<span class="unit">/ 4</span></div>
+                <div class="stat-foot"><span class="delta--up">▲ 1</span><span><span class="lang-en">vs yesterday</span><span class="lang-zh">较昨日</span></span></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label"><span class="lang-en">Sessions</span><span class="lang-zh">会话</span></div>
+                <div class="stat-value">2</div>
+                <div class="stat-foot"><span><span class="lang-en">1 live · 1 idle</span><span class="lang-zh">1 进行 · 1 空闲</span></span></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label"><span class="lang-en">MCP tools</span><span class="lang-zh">MCP 工具</span></div>
+                <div class="stat-value">21</div>
+                <div class="stat-foot"><span><span class="lang-en">3 need HITL</span><span class="lang-zh">3 个需 HITL</span></span></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label"><span class="lang-en">LLM throughput</span><span class="lang-zh">LLM 吞吐</span></div>
+                <div class="stat-value">38<span class="unit">tok/s</span></div>
+                <div class="stat-foot"><span class="delta--up">▲ 4%</span><span><span class="lang-en">5 min avg</span><span class="lang-zh">5 分钟均值</span></span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============= DEVICES (compact strip) ============= -->
+          <div class="group-head">
+            <h2><span class="lang-en">Devices</span><span class="lang-zh">设备</span></h2>
+            <span class="meta"><span class="lang-en">3 online · 1 unreachable · click to drill in</span><span class="lang-zh">3 在线 · 1 不可达 · 点卡片进入设备页</span></span>
+            <span class="right"><a class="link-arrow" href="#"><span class="lang-en">All devices</span><span class="lang-zh">所有设备</span></a></span>
+          </div>
+
+          <div class="dev-strip">
+            <a class="dev-card" href="#">
+              <div class="dev-head">
+                <span class="dev-status" aria-label="online"></span>
+                <span class="dev-name">aosp-emu-01</span>
+              </div>
+              <div class="dev-meta">Pixel 8 · Android 14 · <span class="dev-transport">adb usb</span></div>
+              <div class="dev-metrics">
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,18 10,15 20,13 30,15 40,11 50,8 60,11 70,6 80,8 90,5 100,3"
+                      fill="none" stroke="#6a9bcc" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">42<span class="unit">% cpu</span></div>
+                </div>
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,12 20,11 40,11 60,10 80,9 100,8"
+                      fill="none" stroke="#788c5d" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">46<span class="unit">°C</span></div>
+                </div>
+              </div>
+            </a>
+
+            <a class="dev-card is-active" href="#">
+              <div class="dev-head">
+                <span class="dev-status" aria-label="online"></span>
+                <span class="dev-name">rk-board-7c</span>
+              </div>
+              <div class="dev-meta">ARM board · Debian · <span class="dev-transport">uart 1.5M</span></div>
+              <div class="dev-metrics">
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,12 10,9 20,6 30,8 40,4 50,5 60,2 70,3 80,2 90,1 100,2"
+                      fill="none" stroke="#d97757" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">88<span class="unit">% cpu</span></div>
+                </div>
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,14 20,12 40,10 60,8 80,7 100,5"
+                      fill="none" stroke="#d97757" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">63<span class="unit">°C</span></div>
+                </div>
+              </div>
+            </a>
+
+            <a class="dev-card" href="#">
+              <div class="dev-head">
+                <span class="dev-status" aria-label="online"></span>
+                <span class="dev-name">qa-pixel-tab</span>
+              </div>
+              <div class="dev-meta">Tablet · Android 14 · <span class="dev-transport">adb wifi</span></div>
+              <div class="dev-metrics">
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,18 20,17 40,16 60,17 80,15 100,16"
+                      fill="none" stroke="#6a9bcc" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">12<span class="unit">% cpu</span></div>
+                </div>
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,15 20,15 40,14 60,14 80,13 100,13"
+                      fill="none" stroke="#788c5d" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">38<span class="unit">°C</span></div>
+                </div>
+              </div>
+            </a>
+
+            <a class="dev-card" href="#">
+              <div class="dev-head">
+                <span class="dev-status" aria-label="online"></span>
+                <span class="dev-name">vbox-stable</span>
+              </div>
+              <div class="dev-meta">VM · Android 13 · <span class="dev-transport">adb tcp</span></div>
+              <div class="dev-metrics">
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,16 20,14 40,15 60,12 80,13 100,11"
+                      fill="none" stroke="#6a9bcc" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">28<span class="unit">% cpu</span></div>
+                </div>
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline points="0,17 20,16 40,16 60,16 80,15 100,15"
+                      fill="none" stroke="#788c5d" stroke-width="1.6" stroke-linejoin="round"/>
+                  </svg>
+                  <div class="dev-metric-val">41<span class="unit">°C</span></div>
+                </div>
+              </div>
+            </a>
+
+            <a class="dev-card is-offline" href="#">
+              <div class="dev-head">
+                <span class="dev-status dev-status--off" aria-label="offline"></span>
+                <span class="dev-name">build-bot-09</span>
+              </div>
+              <div class="dev-meta"><span class="lang-en">unreachable · 14 min ago</span><span class="lang-zh">不可达 · 14 分钟前</span></div>
+              <div class="dev-metrics">
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <line x1="0" y1="14" x2="100" y2="14" stroke="#b0aea5" stroke-width="1" stroke-dasharray="2 3"/>
+                  </svg>
+                  <div class="dev-metric-val" style="color:var(--anth-mid-gray);">— <span class="unit">cpu</span></div>
+                </div>
+                <div class="dev-metric">
+                  <svg class="dev-metric-spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
+                    <line x1="0" y1="14" x2="100" y2="14" stroke="#b0aea5" stroke-width="1" stroke-dasharray="2 3"/>
+                  </svg>
+                  <div class="dev-metric-val" style="color:var(--anth-mid-gray);">—</div>
+                </div>
+              </div>
+            </a>
+
+            <a class="dev-card" href="#" style="border-style: dashed; color: var(--anth-text-secondary); align-items: center; justify-content: center; min-height: 100px;">
+              <div style="text-align:center;">
+                <div style="font-family:var(--font-heading); font-weight:600; font-size:14px; color:var(--anth-orange);">+ <span class="lang-en">Add device</span><span class="lang-zh">添加设备</span></div>
+                <div style="font-family:var(--font-body); font-size:11px; color:var(--anth-text-secondary); margin-top:4px;">
+                  <span class="lang-en">adb / ssh / uart wizard</span>
+                  <span class="lang-zh">adb / ssh / 串口 向导</span>
+                </div>
+              </div>
+            </a>
+          </div>
+
+          <!-- LLM backends + Sessions side-by-side -->
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); margin-top: var(--space-7);">
+
+            <section>
+              <div class="group-head" style="margin-top:0;">
+                <h2><span class="lang-en">LLM backends</span><span class="lang-zh">LLM 后端</span></h2>
+                <span class="meta"><span class="lang-en">1 local · 1 paused · 2 unconfigured</span><span class="lang-zh">1 本地 · 1 暂停 · 2 未配置</span></span>
+              </div>
+              <div class="be-grid">
+                <article class="be-card">
+                  <div class="be-head">
+                    <span class="be-name">ollama</span>
+                    <span class="be-model">qwen2.5:7b</span>
+                  </div>
+                  <div class="be-grid-stats">
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">latency p50</span><span class="lang-zh">延迟 p50</span></div>
+                      <div class="be-stat-value">8<span style="font-size:11px; color:var(--anth-text-secondary);"> ms</span></div>
+                    </div>
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">tok/s</span><span class="lang-zh">tok/s</span></div>
+                      <div class="be-stat-value">38</div>
+                    </div>
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">errors</span><span class="lang-zh">错误</span></div>
+                      <div class="be-stat-value">0<span style="font-size:11px; color:var(--anth-text-secondary);"> / 64</span></div>
+                    </div>
+                  </div>
+                  <svg class="spark-svg" viewBox="0 0 280 32" preserveAspectRatio="none" role="img" aria-label="Last 5 min token throughput sparkline">
+                    <polyline points="0,18 20,16 40,14 60,18 80,12 100,15 120,11 140,14 160,8 180,12 200,9 220,11 240,8 260,10 280,7"
+                      fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round"/>
+                  </svg>
+                </article>
+                <article class="be-card">
+                  <div class="be-head">
+                    <span class="be-name">openai-compat</span>
+                    <span class="be-model">lm-studio · gemma3</span>
+                  </div>
+                  <div class="be-grid-stats">
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">status</span><span class="lang-zh">状态</span></div>
+                      <div class="be-stat-value" style="color:var(--anth-text-secondary); font-family:var(--font-heading); font-size:13px;"><span class="lang-en">paused</span><span class="lang-zh">暂停</span></div>
+                    </div>
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">last used</span><span class="lang-zh">上次使用</span></div>
+                      <div class="be-stat-value" style="font-family:var(--font-heading); font-size:13px;"><span class="lang-en">2 h ago</span><span class="lang-zh">2 小时前</span></div>
+                    </div>
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">budget</span><span class="lang-zh">预算</span></div>
+                      <div class="be-stat-value" style="font-family:var(--font-heading); font-size:13px;">—</div>
+                    </div>
+                  </div>
+                  <svg class="spark-svg" viewBox="0 0 280 32" preserveAspectRatio="none" role="img" aria-label="No recent throughput">
+                    <line x1="0" y1="22" x2="280" y2="22" stroke="#b0aea5" stroke-width="1" stroke-dasharray="2 4"/>
+                  </svg>
+                </article>
+              </div>
+            </section>
+
+            <section>
+              <div class="group-head" style="margin-top:0;">
+                <h2><span class="lang-en">Recent sessions</span><span class="lang-zh">近期会话</span></h2>
+                <span class="right"><a class="link-arrow" href="#"><span class="lang-en">Open Sessions</span><span class="lang-zh">查看全部</span></a></span>
+              </div>
+              <div class="sess-card">
+                <div class="sess-row">
+                  <div class="sess-icon">A</div>
+                  <div class="sess-msg"><span class="lang-en">"Find what's draining the battery on rk-board-7c"</span><span class="lang-zh">"查一下 rk-board-7c 是什么在耗电"</span></div>
+                  <div class="sess-meta">12 turns</div>
+                  <div class="sess-meta">qwen2.5</div>
+                  <div class="sess-status sess-status--live"><span class="lang-en">live</span><span class="lang-zh">进行中</span></div>
+                </div>
+                <div class="sess-row">
+                  <div class="sess-icon">A</div>
+                  <div class="sess-msg"><span class="lang-en">"Pull the last logcat error window from aosp-emu-01"</span><span class="lang-zh">"把 aosp-emu-01 最近一次 logcat 错误段拉出来"</span></div>
+                  <div class="sess-meta">4 turns</div>
+                  <div class="sess-meta">qwen2.5</div>
+                  <div class="sess-status sess-status--ok"><span class="lang-en">done</span><span class="lang-zh">完成</span></div>
+                </div>
+                <div class="sess-row">
+                  <div class="sess-icon">A</div>
+                  <div class="sess-msg"><span class="lang-en">"Bench start-up time on the new build"</span><span class="lang-zh">"测一下新版本的启动耗时"</span></div>
+                  <div class="sess-meta">7 turns</div>
+                  <div class="sess-meta">qwen2.5</div>
+                  <div class="sess-status sess-status--ok"><span class="lang-en">done</span><span class="lang-zh">完成</span></div>
+                </div>
+                <div class="sess-row">
+                  <div class="sess-icon">A</div>
+                  <div class="sess-msg"><span class="lang-en">"Why does setprop persist.foo trigger HITL?"</span><span class="lang-zh">"为什么 setprop persist.foo 会触发 HITL？"</span></div>
+                  <div class="sess-meta">2 turns</div>
+                  <div class="sess-meta">qwen2.5</div>
+                  <div class="sess-status sess-status--err"><span class="lang-en">error</span><span class="lang-zh">出错</span></div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Activity timeline -->
+          <div class="group-head">
+            <h2><span class="lang-en">Recent activity</span><span class="lang-zh">最近动作</span></h2>
+            <span class="meta"><span class="lang-en">last 30 minutes · agent + terminal + tools</span><span class="lang-zh">近 30 分钟 · agent / 终端 / 工具调用</span></span>
+            <span class="right"><a class="link-arrow" href="#"><span class="lang-en">Open Audit</span><span class="lang-zh">打开审计</span></a></span>
+          </div>
+          <div class="timeline">
+            <div class="tl-row">
+              <div class="tl-time">16:42:08</div>
+              <div class="tl-dot tl-dot--ok"></div>
+              <div class="tl-text"><span class="lang-en">tool call <code>alb_logcat</code> completed · 618 lines · <span class="secondary">aosp-emu-01</span></span><span class="lang-zh">工具 <code>alb_logcat</code> 完成 · 618 行 · <span class="secondary">aosp-emu-01</span></span></div>
+            </div>
+            <div class="tl-row">
+              <div class="tl-time">16:41:47</div>
+              <div class="tl-dot tl-dot--orange"></div>
+              <div class="tl-text"><span class="lang-en">HITL approved · <code>rm /data/cache/*.tmp</code> on <span class="secondary">aosp-emu-01</span></span><span class="lang-zh">HITL 放行 · <code>rm /data/cache/*.tmp</code> · <span class="secondary">aosp-emu-01</span></span></div>
+            </div>
+            <div class="tl-row">
+              <div class="tl-time">16:39:12</div>
+              <div class="tl-dot tl-dot--err"></div>
+              <div class="tl-text"><span class="lang-en">build-bot-09 ssh tunnel dropped · <span class="secondary">retrying in 30 s</span></span><span class="lang-zh">build-bot-09 ssh 隧道断开 · <span class="secondary">30 秒后重试</span></span></div>
+            </div>
+            <div class="tl-row">
+              <div class="tl-time">16:35:22</div>
+              <div class="tl-dot tl-dot--ok"></div>
+              <div class="tl-text"><span class="lang-en">screenshot saved · <code>workspace/aosp-emu-01/2026-04-24T16-35-22.png</code></span><span class="lang-zh">截图已保存 · <code>workspace/aosp-emu-01/2026-04-24T16-35-22.png</code></span></div>
+            </div>
+            <div class="tl-row">
+              <div class="tl-time">16:33:02</div>
+              <div class="tl-dot tl-dot--ok"></div>
+              <div class="tl-text"><span class="lang-en">session <code>20260424-c4e2…</code> resumed · <span class="secondary">3 turns added</span></span><span class="lang-zh">会话 <code>20260424-c4e2…</code> 续接 · <span class="secondary">新增 3 轮</span></span></div>
+            </div>
+          </div>
+
+          <!-- Quick actions -->
+          <div class="group-head">
+            <h2><span class="lang-en">Quick actions</span><span class="lang-zh">快捷操作</span></h2>
+            <span class="meta"><span class="lang-en">one-click verbs against the active device</span><span class="lang-zh">对当前选中设备的一键操作</span></span>
+          </div>
+          <div class="qa-row">
+            <a class="qa-card" href="#">
+              <span class="qa-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              </span>
+              <span class="qa-text">
+                <span class="qa-title"><span class="lang-en">New chat</span><span class="lang-zh">新建 Chat</span></span>
+                <span class="qa-sub"><span class="lang-en">agent loop · tools enabled</span><span class="lang-zh">Agent 模式 · 工具已开</span></span>
+              </span>
+            </a>
+            <a class="qa-card" href="#">
+              <span class="qa-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              </span>
+              <span class="qa-text">
+                <span class="qa-title"><span class="lang-en">Open terminal</span><span class="lang-zh">打开终端</span></span>
+                <span class="qa-sub"><span class="lang-en">PTY · adb shell</span><span class="lang-zh">PTY · adb shell</span></span>
+              </span>
+            </a>
+            <a class="qa-card" href="#">
+              <span class="qa-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-7l-4 4v-4H5a2 2 0 0 1-2-2V5z"/></svg>
+              </span>
+              <span class="qa-text">
+                <span class="qa-title"><span class="lang-en">Tail logcat</span><span class="lang-zh">实时 logcat</span></span>
+                <span class="qa-sub"><span class="lang-en">level E · since boot</span><span class="lang-zh">level E · 自开机</span></span>
+              </span>
+            </a>
+            <a class="qa-card" href="#">
+              <span class="qa-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 17l4-4 5 5 4-4 5 5"/><circle cx="9" cy="8" r="1"/></svg>
+              </span>
+              <span class="qa-text">
+                <span class="qa-title"><span class="lang-en">Take screenshot</span><span class="lang-zh">抓屏</span></span>
+                <span class="qa-sub"><span class="lang-en">save to workspace</span><span class="lang-zh">保存到 workspace</span></span>
+              </span>
+            </a>
+          </div>
+
+          <!-- =============== INSPECT module preview =============== -->
+          <h2 class="h-title" style="margin-top: var(--space-9); font-size: 22px;">
+            <span class="lang-en">Inspect — preview</span><span class="lang-zh">Inspect 检视 — 预览</span>
+          </h2>
+          <p class="h-sub">
+            <span class="lang-en">Modules with substantial detail get an internal sub-nav, so the activity-bar stays small.</span>
+            <span class="lang-zh">细节多的模块用模块内子导航，左边 activity bar 始终精简。</span>
+          </p>
+
+          <nav class="subnav" aria-label="Inspect sub-nav">
+            <a href="#" class="is-active"><span class="lang-en">System Info</span><span class="lang-zh">系统信息</span></a>
+            <a href="#"><span class="lang-en">Charts</span><span class="lang-zh">实时图表</span></a>
+            <a href="#"><span class="lang-en">Screenshot</span><span class="lang-zh">屏幕截图</span></a>
+            <a href="#"><span class="lang-en">UI Dump</span><span class="lang-zh">UI 树</span></a>
+            <a href="#"><span class="lang-en">Files</span><span class="lang-zh">文件</span></a>
+          </nav>
+
+          <div class="sys-grid">
+            <div class="sys-card">
+              <h3><span class="lang-en">System</span><span class="lang-zh">系统</span></h3>
+              <dl class="sys-kv">
+                <dt>OS</dt><dd>Android 14 · UP1A.231005</dd>
+                <dt>Kernel</dt><dd>6.1.75-android14 #1 SMP PREEMPT</dd>
+                <dt>Bootloader</dt><dd>locked · verity on</dd>
+                <dt>Uptime</dt><dd>3 d 14 h 22 m</dd>
+                <dt>Build</dt><dd>aosp_arm64-userdebug</dd>
+              </dl>
+            </div>
+            <div class="sys-card">
+              <h3><span class="lang-en">CPU</span><span class="lang-zh">CPU</span></h3>
+              <dl class="sys-kv">
+                <dt><span class="lang-en">Model</span><span class="lang-zh">型号</span></dt><dd>arm64 8-core</dd>
+                <dt><span class="lang-en">Governor</span><span class="lang-zh">调速器</span></dt><dd>schedutil</dd>
+                <dt><span class="lang-en">Freq min/max</span><span class="lang-zh">频率</span></dt><dd>500 MHz / 2.85 GHz</dd>
+                <dt><span class="lang-en">Load 1m</span><span class="lang-zh">负载</span></dt><dd>1.42</dd>
+                <dt><span class="lang-en">SoC temp</span><span class="lang-zh">温度</span></dt><dd>46 °C</dd>
+              </dl>
+            </div>
+            <div class="sys-card">
+              <h3><span class="lang-en">Storage</span><span class="lang-zh">存储</span></h3>
+              <div class="part-row">
+                <span class="part-name">/data</span>
+                <div class="part-bar"><div class="part-fill" style="width:46%;"></div></div>
+                <span class="part-pct">46%</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">/system</span>
+                <div class="part-bar"><div class="part-fill" style="width:78%; background:#788c5d;"></div></div>
+                <span class="part-pct">78%</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">/cache</span>
+                <div class="part-bar"><div class="part-fill" style="width:12%; background:#6a9bcc;"></div></div>
+                <span class="part-pct">12%</span>
+              </div>
+              <div class="part-row">
+                <span class="part-name">/vendor</span>
+                <div class="part-bar"><div class="part-fill" style="width:91%; background:#a14238;"></div></div>
+                <span class="part-pct">91%</span>
+              </div>
+            </div>
+            <div class="sys-card">
+              <h3><span class="lang-en">Memory</span><span class="lang-zh">内存</span></h3>
+              <dl class="sys-kv">
+                <dt><span class="lang-en">Total</span><span class="lang-zh">总量</span></dt><dd>7.8 GiB</dd>
+                <dt><span class="lang-en">Used</span><span class="lang-zh">已用</span></dt><dd>4.2 GiB · 53%</dd>
+                <dt><span class="lang-en">Cached</span><span class="lang-zh">缓存</span></dt><dd>1.6 GiB</dd>
+                <dt>swap</dt><dd>2.0 GiB · 12%</dd>
+                <dt>zram</dt><dd>on · 2.0 GiB</dd>
+              </dl>
+            </div>
+            <div class="sys-card">
+              <h3><span class="lang-en">Network</span><span class="lang-zh">网络</span></h3>
+              <dl class="sys-kv">
+                <dt>iface</dt><dd>wlan0</dd>
+                <dt>IPv4</dt><dd>192.168.50.108/24</dd>
+                <dt>SSID</dt><dd>lab-2.4G</dd>
+                <dt>RSSI</dt><dd>-58 dBm</dd>
+                <dt>RX/TX</dt><dd>4.2 MB/s · 0.7 MB/s</dd>
+              </dl>
+            </div>
+            <div class="sys-card">
+              <h3><span class="lang-en">Battery</span><span class="lang-zh">电池</span></h3>
+              <dl class="sys-kv">
+                <dt><span class="lang-en">Level</span><span class="lang-zh">电量</span></dt><dd>72%</dd>
+                <dt><span class="lang-en">State</span><span class="lang-zh">状态</span></dt><dd>discharging</dd>
+                <dt><span class="lang-en">Health</span><span class="lang-zh">健康度</span></dt><dd>good</dd>
+                <dt><span class="lang-en">Voltage</span><span class="lang-zh">电压</span></dt><dd>3.94 V</dd>
+                <dt><span class="lang-en">Temp</span><span class="lang-zh">温度</span></dt><dd>34 °C</dd>
+              </dl>
+            </div>
+          </div>
+
+          <!-- Charts sub-tab preview -->
+          <div class="group-head">
+            <h2><span class="lang-en">Inspect → Charts</span><span class="lang-zh">Inspect → 实时图表</span></h2>
+            <span class="meta"><span class="lang-en">1 Hz telemetry · 60-second sliding window · click any panel to expand</span><span class="lang-zh">1 Hz 采样 · 60 秒滑窗 · 点任意一格展开</span></span>
+          </div>
+
+          <div class="charts-grid">
+            <div class="chart-card">
+              <div class="chart-head">
+                <span class="chart-title">cpu</span>
+                <span class="chart-now">42<span class="unit">%</span></span>
+                <span style="margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">avg 38 · max 71</span>
+              </div>
+              <svg class="chart-spark" viewBox="0 0 400 88" preserveAspectRatio="none" role="img" aria-label="CPU 60-second chart">
+                <line x1="0" y1="22" x2="400" y2="22" stroke="#e8e6dc" stroke-width="0.5" stroke-dasharray="2 4"/>
+                <line x1="0" y1="44" x2="400" y2="44" stroke="#e8e6dc" stroke-width="0.5" stroke-dasharray="2 4"/>
+                <line x1="0" y1="66" x2="400" y2="66" stroke="#e8e6dc" stroke-width="0.5" stroke-dasharray="2 4"/>
+                <polyline points="0,72 20,68 40,55 60,62 80,48 100,58 120,40 140,52 160,38 180,46 200,30 220,42 240,28 260,40 280,32 300,46 320,38 340,52 360,30 380,42 400,36"
+                  fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+                <polyline points="0,72 20,68 40,55 60,62 80,48 100,58 120,40 140,52 160,38 180,46 200,30 220,42 240,28 260,40 280,32 300,46 320,38 340,52 360,30 380,42 400,36 400,88 0,88"
+                  fill="rgba(106,155,204,0.10)" stroke="none"/>
+              </svg>
+              <div class="chart-foot"><span>−60 s</span><span style="margin-left:auto;">now</span></div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-head">
+                <span class="chart-title">memory</span>
+                <span class="chart-now">53<span class="unit">%</span></span>
+                <span style="margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">4.2 / 7.8 GiB</span>
+              </div>
+              <svg class="chart-spark" viewBox="0 0 400 88" preserveAspectRatio="none" role="img" aria-label="Memory chart">
+                <polyline points="0,42 50,42 100,40 150,40 200,38 250,38 300,38 350,36 400,36"
+                  fill="none" stroke="#788c5d" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <div class="chart-foot"><span>−60 s</span><span style="margin-left:auto;">now</span></div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-head">
+                <span class="chart-title">soc temp</span>
+                <span class="chart-now">46<span class="unit">°C</span></span>
+                <span style="margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">limit 85 °C</span>
+              </div>
+              <svg class="chart-spark" viewBox="0 0 400 88" preserveAspectRatio="none" role="img" aria-label="Temperature chart">
+                <polyline points="0,52 50,50 100,48 150,46 200,46 250,44 300,42 350,42 400,40"
+                  fill="none" stroke="#d97757" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <div class="chart-foot"><span>−60 s</span><span style="margin-left:auto;">now</span></div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-head">
+                <span class="chart-title">disk i/o</span>
+                <span class="chart-now">12<span class="unit">MB/s</span></span>
+                <span style="margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">r 8.2 · w 3.8</span>
+              </div>
+              <svg class="chart-spark" viewBox="0 0 400 88" preserveAspectRatio="none" role="img" aria-label="Disk IO chart">
+                <polyline points="0,72 30,68 60,40 90,52 120,30 150,48 180,35 210,55 240,40 270,28 300,45 330,38 360,52 400,42"
+                  fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <div class="chart-foot"><span>−60 s</span><span style="margin-left:auto;">now</span></div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-head">
+                <span class="chart-title">network</span>
+                <span class="chart-now">4.9<span class="unit">MB/s</span></span>
+                <span style="margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">rx 4.2 · tx 0.7</span>
+              </div>
+              <svg class="chart-spark" viewBox="0 0 400 88" preserveAspectRatio="none" role="img" aria-label="Network chart">
+                <polyline points="0,68 40,52 80,42 120,30 160,46 200,38 240,28 280,42 320,36 360,30 400,42"
+                  fill="none" stroke="#788c5d" stroke-width="2" stroke-linejoin="round"/>
+                <polyline points="0,76 40,72 80,68 120,72 160,70 200,74 240,70 280,72 320,68 360,72 400,70"
+                  fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <div class="chart-foot"><span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:10px; background:#788c5d; border-radius:2px;"></span>rx</span><span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:10px; background:#6a9bcc; border-radius:2px;"></span>tx</span><span style="margin-left:auto;">now</span></div>
+            </div>
+
+            <div class="chart-card">
+              <div class="chart-head">
+                <span class="chart-title">gpu</span>
+                <span class="chart-now">31<span class="unit">%</span></span>
+                <span style="margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);">mali · 800 MHz</span>
+              </div>
+              <svg class="chart-spark" viewBox="0 0 400 88" preserveAspectRatio="none" role="img" aria-label="GPU chart">
+                <polyline points="0,68 30,62 60,55 90,52 120,46 150,42 180,48 210,52 240,42 270,36 300,40 330,44 360,46 400,52"
+                  fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <div class="chart-foot"><span>−60 s</span><span style="margin-left:auto;">now</span></div>
+            </div>
+          </div>
+
+          <!-- Footer caption -->
+          <div class="preview-foot">
+            <span>
+              <span class="lang-en">Static mockup · placeholder data · React refactor follows once approved.</span>
+              <span class="lang-zh">静态设计稿 · 占位数据 · 你点头后再回炉改 React。</span>
+            </span>
+            <span>
+              <a href="webui-preview.html" style="color:var(--anth-orange); text-decoration:none;">
+                <span class="lang-en">← v1 mockup</span><span class="lang-zh">← v1 设计稿</span>
+              </a>
+            </span>
+          </div>
+
+        </main>
+      </div>
+    </div>
+
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+
+    <!-- design-review:self-diff v1
+      decisions:
+      - Layout: VSCode-style 64px activity bar on the left + 56px sticky topbar + content
+        column. Replaces the 6-tab horizontal nav from v1 because we expect 8+ modules
+        (Dashboard / Chat / Terminal / Inspect / Playground / Sessions / Files / Audit /
+        Settings) and tab chips don't scale.
+      - Dashboard becomes the default home — 4 KPI cards, live device cards w/ inline
+        CPU+temp sparklines, recent sessions table, LLM backend health, 30-min activity
+        timeline, and 4 quick-action cards. Goal: one-glance situational awareness.
+      - Sub-nav demonstrated inside Inspect (System / Charts / Screenshot / UI Dump /
+        Files) so heavy modules don't bloat the global nav.
+      - Topbar device picker is the single source of "active device" state; every panel
+        below operates against it. Removes the per-panel "select device" UX from v1.
+      - Charts grid uses Anthropic data-display palette (#6a9bcc primary,
+        #788c5d secondary, #d97757 emphasis) — no neon, no rainbow. Sparklines on
+        device cards use the same palette so visual language is consistent.
+      - All status pills, device dots, and sparkline strokes use existing --anth-* tokens
+        — no hardcoded hex outside of intentional rgba tints (e.g. translucent fills).
+      - Bilingual EN/ZH baked in via .lang-en/.lang-zh spans + html[lang^="zh"] toggle,
+        same convention as v1 mockup so the lang button works the same way.
+      tradeoffs:
+      - Activity bar uses inline SVGs only (no labels, tooltip on hover); discoverability
+        is slightly worse than labelled tabs on first run but gained back via ⌘K command
+        palette and persistent topbar breadcrumb.
+      - Sparklines are decorative SVG paths, not real data. Real version will be µPlot
+        or hand-rolled canvas to handle 1 Hz updates without React reconciliation cost.
+      - Sub-nav uses a thin underline-active style instead of pills so it's visually
+        distinct from the global activity bar — risk of confusion mitigated by always
+        appearing inside a module page (never standalone).
+    -->
+
+  </body>
+</html>
