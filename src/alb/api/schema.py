@@ -53,6 +53,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "List recent ChatSession dirs (Dashboard feed)"},
     {"method": "GET",  "path": "/devices",
      "description": "Devices visible through the active transport"},
+    {"method": "GET",  "path": "/audit",
+     "description": "Recent audit events (chat + terminal jsonl) for the Timeline"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [
