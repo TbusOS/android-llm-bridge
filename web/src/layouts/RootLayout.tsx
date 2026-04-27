@@ -1,13 +1,12 @@
 import { Outlet } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { Sidebar } from "../components/Sidebar";
-import { TopBar } from "../components/TopBar";
+import { AppNav } from "../components/AppNav";
+import { TabChips } from "../components/TabChips";
 import { useApp } from "../stores/app";
 
 /**
- * Root layout — sidebar + topbar + <Outlet/> for the active route.
- * Applies `html[lang]` + `html[data-theme]` based on Zustand state so
- * legacy anthropic.css selectors (html[lang^="zh"] ...) keep working.
+ * Root layout — top nav, sticky tab strip, then the active route in a
+ * 1280-px content container.  Matches docs/webui-preview.html.
  */
 export function RootLayout() {
   const theme = useApp((s) => s.theme);
@@ -19,34 +18,17 @@ export function RootLayout() {
 
   useEffect(() => {
     const root = document.documentElement;
-    if (theme === "auto") {
-      root.removeAttribute("data-theme");
-    } else {
-      root.setAttribute("data-theme", theme);
-    }
+    if (theme === "auto") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
   }, [theme]);
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "220px 1fr",
-        minHeight: "100vh",
-      }}
-    >
-      <Sidebar lang={lang} />
-      <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <TopBar />
-        <main
-          style={{
-            flex: 1,
-            padding: "var(--space-6) var(--space-7)",
-            minWidth: 0,
-          }}
-        >
-          <Outlet />
-        </main>
-      </div>
-    </div>
+    <>
+      <AppNav />
+      <TabChips />
+      <main className="app-main">
+        <Outlet />
+      </main>
+    </>
   );
 }

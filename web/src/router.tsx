@@ -10,6 +10,7 @@ import {
   createRouter,
   redirect,
 } from "@tanstack/react-router";
+import { ChatPage } from "./features/chat/ChatPage";
 import { RootLayout } from "./layouts/RootLayout";
 import { StubPage } from "./routes/stub";
 
@@ -40,15 +41,7 @@ const devicesRoute = createRoute({
 const chatRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/chat",
-  component: () => (
-    <StubPage
-      title="Chat"
-      titleZh="Chat 对话"
-      summary="Agent loop chat with tool dispatch, streaming tokens, and artifact chips."
-      summaryZh="Agent loop 对话、流式 token、tool 调用可折叠、产物内联。"
-      consumes={["POST /chat", "WS /chat/ws"]}
-    />
-  ),
+  component: ChatPage,
 });
 
 const terminalRoute = createRoute({
@@ -122,9 +115,16 @@ const routeTree = rootRoute.addChildren([
   chartsRoute,
 ]);
 
+// Strip the deployment base (e.g. `/app/` in dev + alb-api mount, or
+// `/android-llm-bridge/app/` on GitHub Pages) before matching routes,
+// so route definitions stay deployment-agnostic.
+const RAW_BASE = import.meta.env.BASE_URL || "/";
+const BASEPATH = RAW_BASE === "/" ? "" : RAW_BASE.replace(/\/$/, "");
+
 export const router = createRouter({
   routeTree,
   defaultPreload: "intent",
+  basepath: BASEPATH || undefined,
 });
 
 declare module "@tanstack/react-router" {
