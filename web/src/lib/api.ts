@@ -77,3 +77,30 @@ export async function fetchSessions(
   }
   return (await r.json()) as SessionsResponse;
 }
+
+export interface ApiDevice {
+  serial: string;
+  state: string; // "device" | "offline" | "unauthorized" | ...
+  product?: string;
+  model?: string;
+  transport_id?: string;
+}
+
+export interface DevicesResponse {
+  ok: boolean;
+  transport: string | null; // class name e.g. "AdbTransport"; null on factory failure
+  devices: ApiDevice[];
+  error?: string; // present when ok=false
+}
+
+export async function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
+  const r = await fetch(`/devices`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /devices returned ${r.status}`,
+      r.status,
+      "DEVICES_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as DevicesResponse;
+}

@@ -760,6 +760,21 @@ html[lang^="zh"] h3 {
   gap: var(--space-3);
 }
 
+.dev-strip-state {
+  background: #ffffff;
+  border: 1px dashed var(--anth-light-gray);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-4);
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--anth-text-secondary);
+  text-align: center;
+}
+
+.dev-strip-state--err {
+  color: var(--anth-danger);
+}
+
 .dev-card {
   position: relative;
   background: #ffffff;
