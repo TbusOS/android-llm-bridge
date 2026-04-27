@@ -27,6 +27,8 @@ interface Props {
   strokeWidth?: number;
   /** Optional translucent fill under the line. */
   fillTint?: boolean;
+  /** Y-coords for horizontal dashed gridlines (used by Charts cards). */
+  gridLines?: number[];
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
@@ -41,6 +43,7 @@ export function Sparkline({
   color = "blue",
   strokeWidth = 1.6,
   fillTint = false,
+  gridLines,
   className,
   style,
   ariaLabel,
@@ -88,12 +91,20 @@ export function Sparkline({
       role="img"
       aria-label={ariaLabel ?? "sparkline"}
     >
-      {fillPoints ? (
-        <polyline
-          points={fillPoints}
-          fill={`${stroke}1f`}
-          stroke="none"
+      {gridLines?.map((y) => (
+        <line
+          key={y}
+          x1={0}
+          y1={y}
+          x2={width}
+          y2={y}
+          stroke="#e8e6dc"
+          strokeWidth={0.5}
+          strokeDasharray="2 4"
         />
+      ))}
+      {fillPoints ? (
+        <polyline points={fillPoints} fill={`${stroke}1f`} stroke="none" />
       ) : null}
       <polyline
         points={polyPoints}

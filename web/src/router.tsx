@@ -13,6 +13,7 @@ import {
 } from "@tanstack/react-router";
 import { ChatPage } from "./features/chat/ChatPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
+import { InspectPage } from "./features/inspect/InspectPage";
 import { RootLayout } from "./layouts/RootLayout";
 import { StubPage } from "./routes/stub";
 
@@ -55,19 +56,7 @@ const terminalRoute = createRoute({
 const inspectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/inspect",
-  component: () => (
-    <StubPage
-      title="Inspect"
-      titleZh="Inspect 检视"
-      summary="Per-device drill-in: System info (11 panels), 1 Hz charts (CPU / mem / temp / disk / net / GPU), screenshots, UI dump, file browser."
-      summaryZh="单设备深挖：系统信息 11 面板、1 Hz 实时图表、抓屏、UI 树、文件浏览。模块内子导航。"
-      consumes={[
-        "GET /devices/{id}/info",
-        "WS /metrics/stream",
-        "POST /devices/{id}/screenshot",
-      ]}
-    />
-  ),
+  component: InspectPage,
 });
 
 const playgroundRoute = createRoute({
