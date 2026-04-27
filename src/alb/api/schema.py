@@ -49,6 +49,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Models installed on the given backend"},
     {"method": "POST", "path": "/playground/chat",
      "description": "Raw LLM chat (no agent loop), non-streaming"},
+    {"method": "GET",  "path": "/sessions",
+     "description": "List recent ChatSession dirs (Dashboard feed)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [
