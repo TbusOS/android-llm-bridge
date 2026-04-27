@@ -1026,6 +1026,18 @@ html[lang^="zh"] h3 {
   border-bottom: 0;
 }
 
+.sess-card--state {
+  padding: var(--space-5) var(--space-4);
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--anth-text-secondary);
+  text-align: center;
+}
+
+.sess-card--err {
+  color: var(--anth-danger);
+}
+
 .sess-icon {
   width: 24px;
   height: 24px;

@@ -47,3 +47,33 @@ export async function fetchApiVersion(signal?: AbortSignal): Promise<ApiVersion>
   }
   return (await r.json()) as ApiVersion;
 }
+
+export interface SessionSummary {
+  session_id: string;
+  created: string | null;
+  backend: string;
+  model: string;
+  device: string | null;
+  turns: number;
+  last_event_ts: string | null;
+}
+
+export interface SessionsResponse {
+  ok: boolean;
+  sessions: SessionSummary[];
+}
+
+export async function fetchSessions(
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<SessionsResponse> {
+  const r = await fetch(`/sessions?limit=${limit}`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /sessions returned ${r.status}`,
+      r.status,
+      "SESSIONS_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as SessionsResponse;
+}
