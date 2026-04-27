@@ -1,19 +1,20 @@
 import { Outlet } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { AppNav } from "../components/AppNav";
-import { TabChips } from "../components/TabChips";
+import { ActivityBar } from "../components/ActivityBar";
+import { TopBar } from "../components/TopBar";
 import { useApp } from "../stores/app";
 
 /**
- * Root layout — top nav, sticky tab strip, then the active route in a
- * 1280-px content container.  Matches docs/webui-preview.html.
+ * Root layout — 3px brand stripe + 64-px activity bar on the left, then
+ * a sticky 56-px topbar above the routed page.  Matches v2 mockup
+ * (docs/webui-preview-v2.html).
  */
 export function RootLayout() {
   const theme = useApp((s) => s.theme);
   const lang = useApp((s) => s.lang);
 
   useEffect(() => {
-    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    document.documentElement.setAttribute("lang", lang === "zh" ? "zh-CN" : "en");
   }, [lang]);
 
   useEffect(() => {
@@ -24,11 +25,16 @@ export function RootLayout() {
 
   return (
     <>
-      <AppNav />
-      <TabChips />
-      <main className="app-main">
-        <Outlet />
-      </main>
+      <div className="brand-stripe" aria-hidden={true} />
+      <div className="app-shell">
+        <ActivityBar />
+        <div style={{ minWidth: 0 }}>
+          <TopBar />
+          <main className="app-content">
+            <Outlet />
+          </main>
+        </div>
+      </div>
     </>
   );
 }
