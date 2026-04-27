@@ -51,6 +51,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Raw LLM chat (no agent loop), non-streaming"},
     {"method": "GET",  "path": "/sessions",
      "description": "List recent ChatSession dirs (Dashboard feed)"},
+    {"method": "GET",  "path": "/devices",
+     "description": "Devices visible through the active transport"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [
