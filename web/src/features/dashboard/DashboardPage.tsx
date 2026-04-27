@@ -20,19 +20,20 @@ import { LiveSessionCard } from "./LiveSessionCard";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
+import { useRecentSessions } from "./useSessions";
 import {
   MOCK_BACKENDS,
   MOCK_DEVICES,
   MOCK_KPIS,
   MOCK_LIVE,
   MOCK_QUICK_ACTIONS,
-  MOCK_SESSIONS,
   MOCK_TIMELINE,
 } from "./mockData";
 
 export function DashboardPage() {
   const lang = useApp((s) => s.lang);
   const setDevice = useApp((s) => s.setDevice);
+  const recent = useRecentSessions(5);
 
   return (
     <section>
@@ -88,7 +89,25 @@ export function DashboardPage() {
               </a>
             </span>
           </div>
-          <RecentSessions sessions={MOCK_SESSIONS} />
+          {recent.isLoading ? (
+            <div className="sess-card sess-card--state">
+              {lang === "zh" ? "加载中…" : "Loading…"}
+            </div>
+          ) : recent.isError ? (
+            <div className="sess-card sess-card--state sess-card--err">
+              {lang === "zh"
+                ? "无法获取会话列表（GET /sessions 失败）"
+                : "Couldn't load sessions (GET /sessions failed)"}
+            </div>
+          ) : recent.sessions.length === 0 ? (
+            <div className="sess-card sess-card--state">
+              {lang === "zh"
+                ? "尚无会话 · 进入 Chat 开一段试试"
+                : "No sessions yet · open Chat to start one"}
+            </div>
+          ) : (
+            <RecentSessions sessions={recent.sessions} />
+          )}
         </section>
       </div>
 
