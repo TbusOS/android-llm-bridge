@@ -39,10 +39,24 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
+from alb.infra.event_bus import get_bus, make_event
 from alb.infra.workspace import iso_timestamp, session_path
 from alb.mcp.transport_factory import build_transport
 from alb.transport.interactive import InteractiveShell
 from alb.transport.terminal_guard import TerminalGuard
+
+
+def _summarize_terminal_payload(payload: dict) -> str:
+    ev = payload.get("event")
+    line = (payload.get("line") or "")[:120]
+    if ev == "command":
+        return f"$ {line}"
+    if ev == "deny":
+        rule = payload.get("rule") or ""
+        return f"deny: {line} ({rule})" if rule else f"deny: {line}"
+    if ev in ("hitl_approve", "hitl_deny"):
+        return f"{ev}: {line}"
+    return str(ev or "?")
 
 router = APIRouter()
 
@@ -106,6 +120,18 @@ async def terminal_ws(ws: WebSocket) -> None:
                 f.write(json.dumps({"ts": iso_timestamp(), **payload}, ensure_ascii=False))
                 f.write("\n")
         except OSError:
+            pass
+        try:
+            await get_bus().publish(
+                make_event(
+                    session_id=session_id,
+                    source="terminal",
+                    kind=str(payload.get("event") or "unknown"),
+                    summary=_summarize_terminal_payload(payload),
+                    data=payload,
+                )
+            )
+        except Exception:  # noqa: BLE001 — bus is best-effort
             pass
 
     async def on_echo(data: bytes) -> None:

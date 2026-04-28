@@ -48,7 +48,10 @@ from pydantic import BaseModel, Field, ValidationError
 from alb.agent.backends import get_backend
 from alb.agent.loop import AgentLoop
 from alb.agent.session import ChatSession
+from alb.infra.event_bus import get_bus, make_event
 from alb.infra.prompt_builder import default_agent_prompt
+
+_SUMMARY_MAX = 120
 
 router = APIRouter()
 
@@ -86,9 +89,24 @@ async def chat(req: ChatRequest) -> ChatResponse:
         )
     loop, session, llm = built
 
+    await _publish_chat_event(
+        session.session_id, "user", _truncate(req.message)
+    )
+
     result = await loop.run(req.message, session=session)
 
     if not result.ok and result.error:
+        await _publish_chat_event(
+            session.session_id,
+            "error",
+            _truncate(result.error.message),
+            data={
+                "code": result.error.code,
+                "timing_ms": result.timing_ms or 0,
+                "model": llm.model,
+                "backend": llm.name,
+            },
+        )
         return ChatResponse(
             ok=False,
             session_id=session.session_id,
@@ -101,6 +119,18 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "suggestion": result.error.suggestion,
             },
         )
+
+    await _publish_chat_event(
+        session.session_id,
+        "done",
+        f"agent done · {result.timing_ms or 0}ms",
+        data={
+            "timing_ms": result.timing_ms or 0,
+            "model": llm.model,
+            "backend": llm.name,
+            "artifact_count": len(result.artifacts or []),
+        },
+    )
 
     return ChatResponse(
         ok=True,
@@ -152,11 +182,32 @@ async def chat_ws(ws: WebSocket) -> None:
             return
         loop, session, llm = built
 
+        await _publish_chat_event(
+            session.session_id, "user", _truncate(req.message)
+        )
+
         async for event in loop.run_stream(req.message, session=session):
             # Enrich terminal event with backend metadata for client convenience
             if event.get("type") == "done":
                 event.setdefault("model", llm.model)
                 event.setdefault("backend", llm.name)
+
+            kind, summary = _summarize_stream_event(event)
+            if kind:
+                data: dict[str, Any] = {}
+                if event.get("type") == "tool_call_start":
+                    data = {"name": event.get("name"), "id": event.get("id")}
+                elif event.get("type") == "tool_call_end":
+                    data = {"name": event.get("name"), "id": event.get("id"),
+                            "ok": (event.get("result") or {}).get("ok", True)}
+                elif event.get("type") == "done":
+                    data = {"timing_ms": event.get("timing_ms", 0),
+                            "model": llm.model, "backend": llm.name,
+                            "usage": event.get("usage") or {}}
+                await _publish_chat_event(
+                    session.session_id, kind, summary, data=data or None
+                )
+
             await ws.send_json(event)
     except WebSocketDisconnect:
         return
@@ -230,3 +281,52 @@ async def _build_agent(
 
 async def _empty_executor(name: str, args: dict) -> dict:
     return {"ok": False, "error": {"code": "TOOL_CALL_FAILED", "message": "tools disabled"}}
+
+
+def _truncate(s: str, n: int = _SUMMARY_MAX) -> str:
+    s = (s or "").replace("\n", " ").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+async def _publish_chat_event(
+    session_id: str,
+    kind: str,
+    summary: str,
+    *,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort publish to the audit bus. Failures are swallowed —
+    a misbehaving bus must not break a chat turn."""
+    try:
+        await get_bus().publish(
+            make_event(
+                session_id=session_id,
+                source="chat",
+                kind=kind,
+                summary=summary,
+                data=data,
+            )
+        )
+    except Exception:  # noqa: BLE001 — bus is best-effort
+        pass
+
+
+def _summarize_stream_event(event: dict[str, Any]) -> tuple[str, str]:
+    """Map an AgentLoop stream event to (kind, summary) for the bus.
+
+    Returns ("", "") for events the bus shouldn't see (notably `token`,
+    which is too dense to broadcast)."""
+    et = event.get("type")
+    if et == "tool_call_start":
+        return "tool_call_start", f"tool_call: {event.get('name', '?')}"
+    if et == "tool_call_end":
+        result = event.get("result") or {}
+        ok = result.get("ok", True)
+        suffix = "" if ok else " (err)"
+        return "tool_call_end", f"tool_result: {event.get('name', '?')}{suffix}"
+    if et == "done":
+        if event.get("ok", True):
+            return "done", f"agent done · {event.get('timing_ms', 0)}ms"
+        err = (event.get("error") or {}).get("message", "agent error")
+        return "error", _truncate(err)
+    return "", ""

@@ -57,7 +57,10 @@ class _NoPtyTransport(_PtyFakeTransport):
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
     monkeypatch.chdir(tmp_path)
+    from alb.infra.event_bus import reset_bus
+    reset_bus()
     monkeypatch.setattr(
         "alb.api.terminal_route.build_transport",
         lambda **kwargs: _PtyFakeTransport(),
@@ -69,7 +72,10 @@ def client(monkeypatch, tmp_path):
 
 @pytest.fixture
 def no_pty_client(monkeypatch, tmp_path):
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
     monkeypatch.chdir(tmp_path)
+    from alb.infra.event_bus import reset_bus
+    reset_bus()
     monkeypatch.setattr(
         "alb.api.terminal_route.build_transport",
         lambda **kwargs: _NoPtyTransport(),
@@ -216,3 +222,76 @@ def test_terminal_ws_set_read_only_ack(client) -> None:
                     return
         import pytest
         pytest.fail("never received set_read_only ack")
+
+
+# ─── Audit bus integration ──────────────────────────────────────────
+
+
+def _read_events(workspace_root) -> list[dict]:
+    import json
+    from pathlib import Path
+
+    p = Path(workspace_root) / "events.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+
+
+def test_terminal_command_publishes_to_event_bus(client, tmp_path) -> None:
+    """A regular terminal command should land in workspace/events.jsonl
+    as a `terminal/command` event."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "rows": 24, "cols": 80})
+        ready = ws.receive_json()
+        sid = ready["session_id"]
+        ws.send_json({"type": "input", "data": "uptime\n"})
+
+        # Wait for the echo to be sure on_audit fired.
+        seen = b""
+        for _ in range(50):
+            msg = ws.receive()
+            if "bytes" in msg and msg["bytes"]:
+                seen += msg["bytes"]
+                if b"uptime" in seen:
+                    break
+
+    events = _read_events(tmp_path)
+    cmd_events = [e for e in events
+                  if e["source"] == "terminal" and e["kind"] == "command"]
+    assert cmd_events, f"no terminal/command event in {events!r}"
+    assert any("uptime" in e["summary"] for e in cmd_events)
+    assert any(e["session_id"] == sid for e in cmd_events)
+
+
+def test_terminal_deny_publishes_to_event_bus(client, tmp_path) -> None:
+    """A denied (HITL) command should land as `terminal/<event>` —
+    actual kind depends on TerminalGuard's audit payload schema."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "rows": 24, "cols": 80})
+        ws.receive_json()
+        ws.send_json({"type": "input", "data": "rm -rf /system/x\n"})
+
+        # Drain until we see the hitl_request, then deny.
+        for _ in range(40):
+            msg = ws.receive()
+            text = msg.get("text") if isinstance(msg, dict) else None
+            if text:
+                import json
+                obj = json.loads(text)
+                if obj.get("type") == "hitl_request":
+                    ws.send_json({"type": "hitl_response", "approve": False})
+                    break
+
+        # Give the bus a beat to flush.
+        for _ in range(5):
+            try:
+                ws.receive(timeout=0.05)
+            except Exception:
+                break
+
+    events = _read_events(tmp_path)
+    terminal_events = [e for e in events if e["source"] == "terminal"]
+    # Either a deny event (intercepted) or hitl_deny (after response) —
+    # both are valid signals that the guard fired.
+    assert terminal_events, f"no terminal events in {events!r}"
+    assert any("rm -rf" in e["summary"] for e in terminal_events)

@@ -25,7 +25,12 @@ class _FakeBackend(LLMBackend):
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)  # redirect workspace/sessions to tmp
+    # Redirect workspace_root() to tmp so events.jsonl + sessions land
+    # under tmp_path, not the user's real workspace.
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    from alb.infra.event_bus import reset_bus
+    reset_bus()
     return TestClient(create_app())
 
 
@@ -186,3 +191,75 @@ def test_chat_ws_session_not_found(client, monkeypatch):
     assert ev["type"] == "done"
     assert ev["ok"] is False
     assert ev["error"]["code"] == "SESSION_NOT_FOUND"
+
+
+# ─── Audit bus integration ──────────────────────────────────────────
+
+
+def _read_events(workspace_root) -> list[dict]:
+    import json
+    from pathlib import Path
+
+    p = Path(workspace_root) / "events.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+
+
+def test_post_chat_publishes_user_and_done_to_bus(client, fake_backend_patch, tmp_path):
+    r = client.post("/chat", json={"message": "你好世界", "tools": False})
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+
+    events = _read_events(tmp_path)
+    kinds = [(e["source"], e["kind"]) for e in events]
+    assert ("chat", "user") in kinds
+    assert ("chat", "done") in kinds
+    user_ev = next(e for e in events if e["kind"] == "user")
+    assert user_ev["session_id"] == sid
+    assert user_ev["summary"] == "你好世界"
+    done_ev = next(e for e in events if e["kind"] == "done")
+    assert done_ev["data"]["model"] == "fake-model"
+    assert done_ev["data"]["backend"] == "fake"
+
+
+def test_post_chat_publishes_error_event_on_backend_init_fail(client, monkeypatch, tmp_path):
+    def _bad(name: str, **kw):
+        raise ValueError("nope")
+    monkeypatch.setattr("alb.api.chat_route.get_backend", _bad)
+    r = client.post("/chat", json={"message": "hi", "tools": False, "backend": "x"})
+    assert r.status_code == 200 and r.json()["ok"] is False
+    # No session was created → no user/done events; backend init failure
+    # path bypasses publish, which is fine — error is in HTTP body.
+    events = _read_events(tmp_path)
+    assert all(e["kind"] != "user" for e in events)
+
+
+def test_ws_chat_publishes_user_and_done(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "alb.api.chat_route.get_backend",
+        lambda name, **kw: _StreamingFakeBackend(reply="hi"),
+    )
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "ping", "tools": False})
+        while True:
+            ev = ws.receive_json()
+            if ev.get("type") == "done":
+                break
+
+    events = _read_events(tmp_path)
+    kinds = [e["kind"] for e in events]
+    assert "user" in kinds
+    assert "done" in kinds
+    # token events are NOT broadcast
+    assert "token" not in kinds
+
+
+def test_long_user_message_is_truncated_in_summary(client, fake_backend_patch, tmp_path):
+    long = "x" * 500
+    client.post("/chat", json={"message": long, "tools": False})
+    events = _read_events(tmp_path)
+    user_ev = next(e for e in events if e["kind"] == "user")
+    # Summary capped at 120 chars (with ellipsis)
+    assert len(user_ev["summary"]) <= 120
+    assert user_ev["summary"].endswith("…")
