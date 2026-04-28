@@ -26,17 +26,18 @@ import { useDevices } from "./useDevices";
 import { useRecentSessions } from "./useSessions";
 import {
   MOCK_BACKENDS,
-  MOCK_KPIS,
   MOCK_LIVE,
   MOCK_QUICK_ACTIONS,
 } from "./mockData";
+import type { KpiCardData } from "./types";
 
 export function DashboardPage() {
   const lang = useApp((s) => s.lang);
   const setDevice = useApp((s) => s.setDevice);
-  const recent = useRecentSessions(5);
+  const recent = useRecentSessions();
   const devices = useDevices();
   const audit = useAudit(30, 50);
+  const kpis = buildKpis(devices, recent, lang);
 
   return (
     <section>
@@ -50,7 +51,7 @@ export function DashboardPage() {
       {/* === Hero: live session + KPI 2x2 === */}
       <div className="hero-row">
         <LiveSessionCard data={MOCK_LIVE} />
-        <KpiStrip items={MOCK_KPIS} />
+        <KpiStrip items={kpis} />
       </div>
 
       {/* === Devices compact strip === */}
@@ -129,7 +130,7 @@ export function DashboardPage() {
                 : "No sessions yet · open Chat to start one"}
             </div>
           ) : (
-            <RecentSessions sessions={recent.sessions} />
+            <RecentSessions sessions={recent.sessions.slice(0, 5)} />
           )}
         </section>
       </div>
@@ -180,6 +181,58 @@ export function DashboardPage() {
       <QuickActionRow actions={MOCK_QUICK_ACTIONS} />
     </section>
   );
+}
+
+/** Compose the 4-tile KPI strip: 2 from real data + 2 still mocked. */
+function buildKpis(
+  devices: ReturnType<typeof useDevices>,
+  recent: ReturnType<typeof useRecentSessions>,
+  lang: Lang,
+): KpiCardData[] {
+  const total = devices.devices.length;
+  const online = devices.devices.filter((d) => d.status === "online").length;
+  const sessions = recent.sessions.length;
+  const live = recent.sessions.filter((s) => s.status === "live").length;
+  return [
+    {
+      label: "Devices",
+      labelZh: "设备",
+      value: devices.isLoading ? "—" : String(online),
+      unit: total ? `/ ${total}` : undefined,
+      deltaText: devices.transportName ?? "",
+      deltaTextZh: devices.transportName ?? "",
+    },
+    {
+      label: "Sessions",
+      labelZh: "会话",
+      value: recent.isLoading ? "—" : String(sessions),
+      deltaText: live
+        ? `${live} live`
+        : sessions
+          ? "all idle"
+          : "—",
+      deltaTextZh: live
+        ? `${live} 进行中`
+        : sessions
+          ? "全部空闲"
+          : "—",
+    },
+    {
+      label: "MCP tools",
+      labelZh: "MCP 工具",
+      value: "21",
+      deltaText: lang === "zh" ? "见 alb_describe" : "see alb_describe",
+      deltaTextZh: "见 alb_describe",
+    },
+    {
+      label: "LLM throughput",
+      labelZh: "LLM 吞吐",
+      value: "—",
+      unit: "tok/s",
+      deltaText: "待 /metrics",
+      deltaTextZh: "待 /metrics",
+    },
+  ];
 }
 
 function deviceMeta(

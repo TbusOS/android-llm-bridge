@@ -50,7 +50,7 @@ export function mapToRecent(
   };
 }
 
-export function useRecentSessions(limit = 5) {
+export function useRecentSessions(limit = 100) {
   const q = useQuery({
     queryKey: ["sessions", limit],
     queryFn: ({ signal }) => fetchSessions(limit, signal),
