@@ -18,16 +18,23 @@ in the log carries a real ts).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from alb.infra.event_bus import events_log_path
+from alb.infra.event_bus import events_log_path, get_bus
 
 router = APIRouter()
+
+# Snapshot returns at most this many events when the client connects.
+# Matches the GET /audit default upper bound.
+_SNAPSHOT_LIMIT = 200
+_FIRST_MESSAGE_TIMEOUT_S = 0.5
 
 
 def _parse_ts(value: str) -> datetime | None:
@@ -101,3 +108,124 @@ async def list_audit(
         "until": until.isoformat(),
         "events": events[:limit],
     }
+
+
+@router.websocket("/audit/stream")
+async def audit_stream(ws: WebSocket) -> None:
+    """Live audit stream.
+
+    Protocol:
+
+        C → S (optional first JSON, 0.5s timeout):
+            {"minutes": 30}            # snapshot window; default 30
+        S → C (one shot):
+            {"type": "snapshot",
+             "since": "<ISO>",
+             "until": "<ISO>",
+             "events": [<event>, ...]}     # newest-first, ≤ 200 entries
+        S → C (live):
+            {"type": "event", "data": <event>}
+        C → S (any time):
+            {"type": "control", "action": "pause"}
+            {"type": "control", "action": "resume"}
+        S → C:
+            {"type": "control_ack", "paused": <bool>}
+
+    A paused stream silently drops events that arrive while paused —
+    catching up on history is what GET /audit + reconnect is for.
+    """
+    await ws.accept()
+
+    # Optional first message — opt-in window override.
+    minutes = 30
+    try:
+        first = await asyncio.wait_for(
+            ws.receive_json(), timeout=_FIRST_MESSAGE_TIMEOUT_S
+        )
+    except (asyncio.TimeoutError, json.JSONDecodeError):
+        first = None
+    except WebSocketDisconnect:
+        return
+    if isinstance(first, dict):
+        try:
+            minutes = max(1, min(1440, int(first.get("minutes", minutes))))
+        except (TypeError, ValueError):
+            pass
+
+    # 1. Snapshot
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(minutes=minutes)
+    snapshot: list[dict[str, Any]] = []
+    for e in _read_events(events_log_path()):
+        ts = _parse_ts(e["ts"])
+        if ts is not None and since <= ts <= until:
+            snapshot.append(e)
+    snapshot.sort(key=lambda e: e["ts"], reverse=True)
+    snapshot = snapshot[:_SNAPSHOT_LIMIT]
+    try:
+        await ws.send_json({
+            "type": "snapshot",
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            "events": snapshot,
+        })
+    except WebSocketDisconnect:
+        return
+
+    # 2. Live + control. Two coroutines, FIRST_COMPLETED tears both
+    #    down — same pattern as terminal_route.
+    state = {"paused": False}
+    bus = get_bus()
+
+    async with bus.subscribe() as q:
+
+        async def reader_loop() -> None:
+            while True:
+                msg = await ws.receive_json()
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("type") != "control":
+                    continue
+                action = msg.get("action")
+                if action == "pause":
+                    state["paused"] = True
+                elif action == "resume":
+                    state["paused"] = False
+                await ws.send_json({
+                    "type": "control_ack",
+                    "action": action,
+                    "paused": state["paused"],
+                })
+
+        async def writer_loop() -> None:
+            while True:
+                event = await q.get()
+                if state["paused"]:
+                    continue
+                projected = _project(event)
+                if projected is None:
+                    continue
+                await ws.send_json({"type": "event", "data": projected})
+
+        reader = asyncio.create_task(reader_loop())
+        writer = asyncio.create_task(writer_loop())
+
+        try:
+            done, pending = await asyncio.wait(
+                {reader, writer},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+            for t in done:
+                exc = t.exception()
+                if exc and not isinstance(exc, WebSocketDisconnect):
+                    raise exc
+        except WebSocketDisconnect:
+            pass
+        finally:
+            for t in (reader, writer):
+                if not t.done():
+                    t.cancel()
+            with contextlib.suppress(Exception):
+                await ws.close()

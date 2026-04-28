@@ -194,3 +194,156 @@ def test_default_fields_filled_in(client, workspace) -> None:
 def test_endpoint_listed_in_schema(client) -> None:
     paths = [(e["method"], e["path"]) for e in client.get("/api/version").json()["rest"]]
     assert ("GET", "/audit") in paths
+
+
+def test_ws_stream_listed_in_schema(client) -> None:
+    ws_paths = [w["path"] for w in client.get("/api/version").json()["ws"]]
+    assert "/audit/stream" in ws_paths
+
+
+# ─── WS /audit/stream ──────────────────────────────────────────────
+
+
+def test_ws_stream_default_snapshot(client, workspace) -> None:
+    """Connect with no first message → 30 min window snapshot."""
+    now = _now()
+    _write_events(workspace, [
+        {"ts": (now - timedelta(minutes=2)).isoformat(),
+         "session_id": "s1", "source": "chat", "kind": "user",
+         "summary": "hello"},
+        {"ts": (now - timedelta(hours=2)).isoformat(),
+         "session_id": "s1", "source": "chat", "kind": "user",
+         "summary": "old"},
+    ])
+    with client.websocket_connect("/audit/stream") as ws:
+        snap = ws.receive_json()
+    assert snap["type"] == "snapshot"
+    assert snap["since"] < snap["until"]
+    summaries = [e["summary"] for e in snap["events"]]
+    assert "hello" in summaries
+    assert "old" not in summaries  # outside the 30-min window
+
+
+def test_ws_stream_minutes_override(client, workspace) -> None:
+    """Sending {minutes: 300} should pull older events into the snapshot."""
+    now = _now()
+    _write_events(workspace, [
+        {"ts": (now - timedelta(hours=2)).isoformat(),
+         "session_id": "s1", "source": "chat", "kind": "user",
+         "summary": "two-hour-old"},
+    ])
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.send_json({"minutes": 300})
+        snap = ws.receive_json()
+    summaries = [e["summary"] for e in snap["events"]]
+    assert "two-hour-old" in summaries
+
+
+def test_ws_stream_pause_then_resume_acks(client, workspace) -> None:
+    """Pause → ack with paused=true; resume → ack with paused=false."""
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.receive_json()  # snapshot
+
+        ws.send_json({"type": "control", "action": "pause"})
+        ack1 = ws.receive_json()
+        assert ack1["type"] == "control_ack"
+        assert ack1["action"] == "pause"
+        assert ack1["paused"] is True
+
+        ws.send_json({"type": "control", "action": "resume"})
+        ack2 = ws.receive_json()
+        assert ack2["type"] == "control_ack"
+        assert ack2["action"] == "resume"
+        assert ack2["paused"] is False
+
+
+def test_ws_stream_unknown_control_does_not_change_paused(client, workspace) -> None:
+    """An unknown action is acked but state stays the same."""
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.receive_json()  # snapshot
+        ws.send_json({"type": "control", "action": "pause"})
+        ws.receive_json()  # paused=true
+        ws.send_json({"type": "control", "action": "wat"})
+        ack = ws.receive_json()
+        assert ack["type"] == "control_ack"
+        assert ack["action"] == "wat"
+        assert ack["paused"] is True  # unchanged
+
+
+def test_ws_stream_non_control_messages_ignored(client, workspace) -> None:
+    """A non-control message must not crash the handler — it's silently
+    dropped and the next valid control still works."""
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.receive_json()  # snapshot
+        ws.send_json({"type": "garbage", "foo": "bar"})  # ignored
+        ws.send_json({"type": "control", "action": "pause"})
+        ack = ws.receive_json()
+        assert ack["paused"] is True
+
+
+def test_ws_stream_publishes_live_events_to_subscriber(client, workspace) -> None:
+    """Verify the subscriber path: directly call get_bus().publish()
+    inside the same event loop as the WS handler.
+
+    Trick: TestClient's WebSocketSession exposes a `portal` (anyio
+    blocking portal) that the test can use to call coroutines on the
+    server's loop. This avoids spinning up a separate asyncio loop
+    that the bus's asyncio.Lock would refuse to talk to.
+    """
+    from alb.infra.event_bus import get_bus, make_event
+
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.receive_json()  # snapshot
+
+        async def _emit() -> None:
+            await get_bus().publish(make_event(
+                session_id="live-1",
+                source="chat",
+                kind="tool_call_start",
+                summary="tool_call: alb_top",
+            ))
+
+        ws.portal.call(_emit)
+
+        msg = ws.receive_json()
+        assert msg["type"] == "event"
+        assert msg["data"]["session_id"] == "live-1"
+        assert msg["data"]["summary"] == "tool_call: alb_top"
+
+
+def test_ws_stream_paused_drops_live_events(client, workspace) -> None:
+    """While paused, incoming bus events are dropped (not queued)."""
+    from alb.infra.event_bus import get_bus, make_event
+
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.receive_json()  # snapshot
+
+        ws.send_json({"type": "control", "action": "pause"})
+        ack = ws.receive_json()
+        assert ack["paused"] is True
+
+        async def _emit_two() -> None:
+            for i in range(2):
+                await get_bus().publish(make_event(
+                    session_id="x", source="chat", kind="user",
+                    summary=f"dropped-{i}",
+                ))
+
+        ws.portal.call(_emit_two)
+
+        # Resume; subsequently published events should arrive but the
+        # two we sent while paused should not (no queue catch-up).
+        ws.send_json({"type": "control", "action": "resume"})
+        resumed = ws.receive_json()
+        assert resumed["paused"] is False
+
+        async def _emit_after_resume() -> None:
+            await get_bus().publish(make_event(
+                session_id="x", source="chat", kind="user",
+                summary="kept",
+            ))
+
+        ws.portal.call(_emit_after_resume)
+        live = ws.receive_json()
+        assert live["type"] == "event"
+        assert live["data"]["summary"] == "kept"
