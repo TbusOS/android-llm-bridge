@@ -103,6 +103,23 @@ WS_ENDPOINTS: list[WSSpec] = [
         ],
     },
     {
+        "path": "/audit/stream",
+        "description": "Live audit event stream — snapshot then incremental, "
+                       "with client-side pause/resume.",
+        "messages": [
+            {"type": "<client-first>",   "direction": "C→S",
+             "description": "Optional {minutes: 30} to size the snapshot window"},
+            {"type": "snapshot",         "direction": "S→C",
+             "description": "{since, until, events: [...]} — newest first"},
+            {"type": "event",            "direction": "S→C",
+             "description": "{data: <event>} — one live event"},
+            {"type": "control",          "direction": "C→S",
+             "description": "{action: pause|resume}"},
+            {"type": "control_ack",      "direction": "S→C",
+             "description": "{action, paused}"},
+        ],
+    },
+    {
         "path": "/terminal/ws",
         "description": "PTY-backed interactive shell with HITL deny-list.",
         "messages": [
