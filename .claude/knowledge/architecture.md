@@ -116,6 +116,12 @@ ChatRequest ──┐
 ## 关键不变量
 
 - `event_bus` schema 是合约，**不再变**：`{ts, session_id, source, kind, summary, data?}`
+- `event_bus` event kind 分两类（ADR-021）：
+  - **business kinds**：user / assistant / tool_call_start / tool_call_end /
+    done / error / command / deny / hitl_*
+  - **metric kinds**：tps_sample（1Hz 周期采样，未来可加 cmd_rate / push_rate）
+  - 订阅方默认只收 business kinds；GET /audit `?include_metrics=true`
+    或 WS 首条 `{include_metrics: true}` opt-in 收 metric kinds
 - `API_VERSION` 字符串："1"。schema 改动若 break 客户端 → 必须 bump
 - `workspace/events.jsonl` append-only，绝不就地改写已有行
 - `docs/webui-preview-v*.html` 改版 → 必须走三道闸再合入

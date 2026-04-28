@@ -180,6 +180,7 @@ class AgentLoop:
         user_input: str,
         *,
         session: ChatSession | None = None,
+        on_raw_token: Callable[[int], None] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Streaming variant of run(): yield StreamEvent dicts.
 
@@ -197,6 +198,12 @@ class AgentLoop:
 
         Requires backend.supports_streaming == True.  Otherwise raises
         NotImplementedError at first turn (mirrors backend.stream behaviour).
+
+        `on_raw_token` is called once per *backend* token event with the
+        token count from that chunk (not the buffered final-turn token).
+        Used by MetricSampler to drive 1Hz tps_sample without seeing the
+        full stream. Callback is sync, must be cheap, and exceptions
+        from it are swallowed (best-effort, must not break the chat).
         """
         start = perf_counter()
         artifacts: list[Path] = []
@@ -231,6 +238,11 @@ class AgentLoop:
                         # can't know yet.  Buffer and only forward if the
                         # done event has no tool_calls.
                         turn_content += ev.get("delta", "")
+                        if on_raw_token is not None:
+                            try:
+                                on_raw_token(int(ev.get("tokens", 1)))
+                            except Exception:  # noqa: BLE001 — best-effort
+                                pass
                     elif etype == "done":
                         turn_content = ev.get("content", turn_content)
                         turn_thinking = ev.get("thinking", "")

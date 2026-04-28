@@ -263,3 +263,27 @@ def test_long_user_message_is_truncated_in_summary(client, fake_backend_patch, t
     # Summary capped at 120 chars (with ellipsis)
     assert len(user_ev["summary"]) <= 120
     assert user_ev["summary"].endswith("…")
+
+
+def test_ws_chat_emits_tps_sample(client, monkeypatch, tmp_path):
+    """Streaming chat must produce at least one tps_sample event in
+    events.jsonl (the final flush at sampler.close())."""
+    long_reply = "abcdefghij" * 20  # 200 chars → enough token deltas to observe
+    monkeypatch.setattr(
+        "alb.api.chat_route.get_backend",
+        lambda name, **kw: _StreamingFakeBackend(reply=long_reply),
+    )
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "go", "tools": False})
+        while True:
+            ev = ws.receive_json()
+            if ev.get("type") == "done":
+                break
+
+    events = _read_events(tmp_path)
+    samples = [e for e in events if e["kind"] == "tps_sample"]
+    assert samples, "expected tps_sample events from TokenSampler.close()"
+    last = samples[-1]
+    assert last["source"] == "chat"
+    assert last["data"]["total_tokens"] > 0
+    assert last["data"]["window_s"] == 1.0  # default interval

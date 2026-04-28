@@ -172,4 +172,43 @@ F 档要解决的（用 1Hz 聚合的 tps_sample 事件代替 token 事件）。
 
 ---
 
+## ADR-021 · token 不广播但聚合 tps_sample（F.1 实施时定）
+
+- **日期**：2026-04-28
+- **状态**：accepted；extends ADR-019
+
+**上下文**：ADR-019 决定 chat token 事件不广播到 bus（密度太高）。但
+LiveSession 的 spark / KPI 的 LLM throughput 都需要 tps 数据源（DEBT-001
+/ DEBT-004 登记）。F.1 要补这个数据源。
+
+**决策**：
+1. token 事件**仍然不广播**到 bus（ADR-019 不变）
+2. 引入 `MetricSampler`（src/alb/infra/metric_sampler.py · TokenSampler 类），
+   每 chat session 一个，1Hz 聚合 + publish `tps_sample` 事件到 bus
+3. `tps_sample` 是新加的 **metric kind**（第 6 种 bus event kind）。
+   bus event kinds 从此分两类：
+   - **business kinds**：user / assistant / tool_call_start / tool_call_end /
+     done / error / command / deny / hitl_*
+   - **metric kinds**：tps_sample（未来可加 cmd_rate / push_rate 等）
+4. 订阅方默认**只收 business kinds**。`/audit/stream` 通过首条 message
+   `{include_metrics: true}` opt-in；`GET /audit` 通过 `?include_metrics=true`
+   opt-in
+5. token 数从 backend ABC 的 token 事件携带（`{"type":"token","delta":"...",
+   "tokens": 1}`），AgentLoop 加 `on_raw_token` 回调把真实 token 数喂给
+   sampler。**不**走"chars/4 估算"，避免 2-3× 精度偏差
+
+**备选**：
+- (a) 让 done 事件带完整 tps spark 数组 — 一次性，非流式，UI 看不到滚动
+- (b) chars/4 估算 token — 中文 / emoji 偏差 2-3×，spark 失真
+- (c) sampler 内联到 chat_route — 失去未来复用（terminal 命令速率等）
+
+**Trade-off**：
+- 放弃：bus event schema 极简（5 类 → 6 类），多一个回调路径
+- 获得：实时 spark / KPI 真实 throughput 数据源 / metric 流可独立扩展
+  / 不污染 timeline UI（默认过滤）
+
+**何时推翻**：metric kinds 多到 ≥ 5 类时，应抽 `MetricBus` 独立通道。
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）

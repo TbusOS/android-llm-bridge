@@ -49,6 +49,7 @@ from alb.agent.backends import get_backend
 from alb.agent.loop import AgentLoop
 from alb.agent.session import ChatSession
 from alb.infra.event_bus import get_bus, make_event
+from alb.infra.metric_sampler import TokenSampler
 from alb.infra.prompt_builder import default_agent_prompt
 
 _SUMMARY_MAX = 120
@@ -186,29 +187,43 @@ async def chat_ws(ws: WebSocket) -> None:
             session.session_id, "user", _truncate(req.message)
         )
 
-        async for event in loop.run_stream(req.message, session=session):
-            # Enrich terminal event with backend metadata for client convenience
-            if event.get("type") == "done":
-                event.setdefault("model", llm.model)
-                event.setdefault("backend", llm.name)
+        sampler = TokenSampler(session_id=session.session_id)
+        sampler.start()
+        try:
+            # Hook sampler directly to the backend's raw token events via
+            # AgentLoop's on_raw_token callback, so we get accurate token
+            # counts (1 per Ollama chunk) instead of guessing from delta
+            # char length. ADR-021.
+            stream_iter = loop.run_stream(
+                req.message,
+                session=session,
+                on_raw_token=lambda n: sampler.observe(n),
+            )
+            async for event in stream_iter:
+                # Enrich terminal event with backend metadata for client convenience
+                if event.get("type") == "done":
+                    event.setdefault("model", llm.model)
+                    event.setdefault("backend", llm.name)
 
-            kind, summary = _summarize_stream_event(event)
-            if kind:
-                data: dict[str, Any] = {}
-                if event.get("type") == "tool_call_start":
-                    data = {"name": event.get("name"), "id": event.get("id")}
-                elif event.get("type") == "tool_call_end":
-                    data = {"name": event.get("name"), "id": event.get("id"),
-                            "ok": (event.get("result") or {}).get("ok", True)}
-                elif event.get("type") == "done":
-                    data = {"timing_ms": event.get("timing_ms", 0),
-                            "model": llm.model, "backend": llm.name,
-                            "usage": event.get("usage") or {}}
-                await _publish_chat_event(
-                    session.session_id, kind, summary, data=data or None
-                )
+                kind, summary = _summarize_stream_event(event)
+                if kind:
+                    data: dict[str, Any] = {}
+                    if event.get("type") == "tool_call_start":
+                        data = {"name": event.get("name"), "id": event.get("id")}
+                    elif event.get("type") == "tool_call_end":
+                        data = {"name": event.get("name"), "id": event.get("id"),
+                                "ok": (event.get("result") or {}).get("ok", True)}
+                    elif event.get("type") == "done":
+                        data = {"timing_ms": event.get("timing_ms", 0),
+                                "model": llm.model, "backend": llm.name,
+                                "usage": event.get("usage") or {}}
+                    await _publish_chat_event(
+                        session.session_id, kind, summary, data=data or None
+                    )
 
-            await ws.send_json(event)
+                await ws.send_json(event)
+        finally:
+            await sampler.close()
     except WebSocketDisconnect:
         return
     finally:

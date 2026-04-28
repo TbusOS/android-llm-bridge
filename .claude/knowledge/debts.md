@@ -19,9 +19,11 @@
 - **位置**：`web/src/features/dashboard/useLiveSession.ts` `tpsSpark: []`
 - **原因**：C.2 决定 token 事件不广播（ADR-019），导致 LiveSession 没有
   逐字粒度的 tps 数据。tps 只能在 done 时取整段平均，spark 没采样可放。
-- **是否计划修**：是（F 档）
-- **还债 sketch**：F.1 加 TokenSampler 1Hz 聚合 → publish tps_sample
-  → useLiveSession reducer 识别 → tpsSpark 60 个采样
+- **状态（2026-04-28 update）**：**partial-fix shipped**
+  - 后端就绪 ✓（F.1 ship · ADR-021 实施）：tps_sample 1Hz 流上 bus
+  - 前端待做（F.5/F.6）：useAuditStream 加 include_metrics + useLiveSession
+    reducer 识别 tps_sample → tpsSpark
+- **彻底关闭条件**：F.6 ship 后，LiveSessionCard 实际渲染滚动 spark
 
 ---
 
@@ -59,9 +61,12 @@
 - **引入**：D step 4（commit 2af137c）
 - **位置**：同上，LLM throughput KPI value="—"，deltaText="待 /metrics"
 - **原因**：tps 数据源没就绪（chat session 的 token usage 没全局聚合）
-- **是否计划修**：是（候选 E.2，等 F.1 完成 tps_sample 后做）
-- **还债 sketch**：`GET /metrics/summary?window=300s` 聚合最近 5 min
-  events.jsonl 的 tps_sample → mean / p50 / p95 / max。前端 useMetricsSummary。
+- **状态（2026-04-28 update）**：**unblocked**
+  - 数据源就绪 ✓（F.1 ship · tps_sample 持续流到 events.jsonl）
+  - 后端 GET /metrics/summary 待加（F.3）
+  - 前端 useMetricsSummary 待加（F.7）
+- **还债 sketch**：F.3 加 `GET /metrics/summary?window=300s` 聚合最近 5 min
+  events.jsonl 的 tps_sample → mean / p50 / p95 / max。F.7 加前端 hook 接 KPI
 
 ---
 

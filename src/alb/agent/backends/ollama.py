@@ -161,7 +161,12 @@ class OllamaBackend(LLMBackend):
                         delta_t = msg.get("thinking", "") or ""
                         if delta_c:
                             content_parts.append(delta_c)
-                            yield {"type": "token", "delta": delta_c}
+                            # Ollama streams 1 token per chunk (after applying
+                            # its tokenizer); see ABC contract in
+                            # alb.agent.backend.LLMBackend.stream — tokens=1
+                            # per token-event so MetricSampler doesn't have to
+                            # guess from char length.
+                            yield {"type": "token", "delta": delta_c, "tokens": 1}
                         if delta_t:
                             thinking_parts.append(delta_t)
                         if chunk.get("model"):
