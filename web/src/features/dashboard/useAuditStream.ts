@@ -52,7 +52,11 @@ function isControlAck(m: unknown): m is ControlAckMessage {
 }
 
 export interface AuditStreamViewModel {
+  /** Mapped, ready-to-render timeline rows (newest first, capped). */
   events: TimelineEventData[];
+  /** The same buffer as `events` but in raw form, for reducers like
+   *  `useLiveSession` that need access to `data` payloads. */
+  rawEvents: AuditEvent[];
   since: string | null;
   until: string | null;
   status: AuditStreamStatus;
@@ -63,6 +67,7 @@ export interface AuditStreamViewModel {
 
 export function useAuditStream(): AuditStreamViewModel {
   const [events, setEvents] = useState<TimelineEventData[]>([]);
+  const [rawEvents, setRawEvents] = useState<AuditEvent[]>([]);
   const [since, setSince] = useState<string | null>(null);
   const [until, setUntil] = useState<string | null>(null);
   const [status, setStatus] = useState<AuditStreamStatus>("connecting");
@@ -88,11 +93,14 @@ export function useAuditStream(): AuditStreamViewModel {
           const msg = wsEv.data;
           if (isSnapshot(msg)) {
             setEvents(msg.events.map(mapAuditToTimeline));
+            setRawEvents(msg.events);
             setSince(msg.since);
             setUntil(msg.until);
           } else if (isEvent(msg)) {
-            const ev = mapAuditToTimeline(msg.data);
+            const raw = msg.data;
+            const ev = mapAuditToTimeline(raw);
             setEvents((prev) => [ev, ...prev].slice(0, MAX_EVENTS));
+            setRawEvents((prev) => [raw, ...prev].slice(0, MAX_EVENTS));
           } else if (isControlAck(msg)) {
             setPaused(msg.paused);
           }
@@ -117,5 +125,5 @@ export function useAuditStream(): AuditStreamViewModel {
     clientRef.current?.send({ type: "control", action: "resume" });
   }, []);
 
-  return { events, since, until, status, paused, pause, resume };
+  return { events, rawEvents, since, until, status, paused, pause, resume };
 }

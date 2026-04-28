@@ -23,10 +23,10 @@ import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
 import { useAuditStream } from "./useAuditStream";
 import { useDevices } from "./useDevices";
+import { useLiveSession } from "./useLiveSession";
 import { useRecentSessions } from "./useSessions";
 import {
   MOCK_BACKENDS,
-  MOCK_LIVE,
   MOCK_QUICK_ACTIONS,
 } from "./mockData";
 import type { KpiCardData } from "./types";
@@ -37,6 +37,7 @@ export function DashboardPage() {
   const recent = useRecentSessions();
   const devices = useDevices();
   const audit = useAuditStream();
+  const live = useLiveSession(audit.rawEvents);
   const kpis = buildKpis(devices, recent, lang);
 
   return (
@@ -50,7 +51,7 @@ export function DashboardPage() {
 
       {/* === Hero: live session + KPI 2x2 === */}
       <div className="hero-row">
-        <LiveSessionCard data={MOCK_LIVE} />
+        <LiveSessionCard data={live} />
         <KpiStrip items={kpis} />
       </div>
 
