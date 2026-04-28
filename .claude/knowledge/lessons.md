@@ -197,4 +197,33 @@ cmd #ifdef 保护就下结论"不是必须"。后来发现没查运行时路径 
 
 ---
 
+## L-013 · bus event 加新 kind 时分类（business / metric）
+
+**坑**：F.1 第一版 sketch 想直接把 `tps_sample` 当成第 6 类业务事件加，
+没注意到它是 1Hz 周期数据 —— 一旦 ship，会让所有现有 audit 订阅者
+（前端 Timeline、未来 audit log 看板）被刷屏。architecture-reviewer
+agent 在首次实战中 catch 到这个问题，要求"F.1 不应单独 ship，至少
+audit 默认过滤要一起做"。
+
+**根因**：bus event 加新 kind 时只想着"它能塞进 schema 吗"，没分类
+"它的语义是什么"。tps_sample 是 metric 流（周期 / 高频 / 不在故事
+线上），和 user/assistant/tool_call_*（business 流，每条都是故事
+节点）属于不同 audit 类别。
+
+**规则**：bus event 加新 kind 时**必须先回答**：
+1. 这是 business 还是 metric？
+   - business：人类阅读时序故事的事件（用户问 / 模型答 / 工具调）
+   - metric：周期 / 高频 / 数值采样（tps / cmd_rate / push_rate）
+2. 默认订阅方应该看到吗？
+   - business → 看到
+   - metric → 默认过滤，opt-in
+3. 是否进 ADR？
+   - 引入新 kind 类（business → metric 第一个 / metric → business 第一个）必须 ADR
+   - 同类的第 N 个不必（如果已有 metric 流再加一个 cmd_rate）
+
+**应用到 agents**：architecture-reviewer 评审涉及 bus event 加 kind
+的改动时，强制问"是 business 还是 metric"。
+
+---
+
 （新教训按此格式追加）

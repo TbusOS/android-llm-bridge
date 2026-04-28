@@ -184,9 +184,14 @@ class LLMBackend(ABC):
 
         Event shapes (all dict[str, Any] for Python's sake — contract below):
 
-            {"type": "token",  "delta": "部分文本"}
+            {"type": "token",  "delta": "部分文本",  "tokens": 1}
                 — only emitted for the final assistant turn's content;
                   tool-call turns buffer silently until done.
+                — `tokens` is the token count for this delta as reported
+                  by the backend's stream framing (Ollama: 1 per chunk;
+                  OpenAI-compat: 1 per choices[0].delta.content). Used
+                  by MetricSampler to drive accurate tps_sample without
+                  guessing from char length.
 
             {"type": "done",
              "content":       "完整回复 (delta 的拼接)",

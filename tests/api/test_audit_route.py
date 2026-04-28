@@ -196,6 +196,30 @@ def test_endpoint_listed_in_schema(client) -> None:
     assert ("GET", "/audit") in paths
 
 
+def test_get_audit_filters_metric_kinds_by_default(client, workspace) -> None:
+    """tps_sample (metric kind) should be hidden by default; opt-in via
+    ?include_metrics=true."""
+    now = _now()
+    ts = (now - timedelta(minutes=2)).isoformat()
+    _write_events(workspace, [
+        {"ts": ts, "session_id": "s1", "source": "chat",
+         "kind": "user", "summary": "hi"},
+        {"ts": ts, "session_id": "s1", "source": "chat",
+         "kind": "tps_sample", "summary": "100 tok/s"},
+        {"ts": ts, "session_id": "s1", "source": "chat",
+         "kind": "done", "summary": "agent done"},
+    ])
+
+    default = client.get("/audit").json()["events"]
+    kinds = [e["kind"] for e in default]
+    assert "tps_sample" not in kinds
+    assert {"user", "done"} <= set(kinds)
+
+    opt_in = client.get("/audit?include_metrics=true").json()["events"]
+    kinds_in = [e["kind"] for e in opt_in]
+    assert "tps_sample" in kinds_in
+
+
 def test_ws_stream_listed_in_schema(client) -> None:
     ws_paths = [w["path"] for w in client.get("/api/version").json()["ws"]]
     assert "/audit/stream" in ws_paths
@@ -309,6 +333,50 @@ def test_ws_stream_publishes_live_events_to_subscriber(client, workspace) -> Non
         assert msg["type"] == "event"
         assert msg["data"]["session_id"] == "live-1"
         assert msg["data"]["summary"] == "tool_call: alb_top"
+
+
+def test_ws_stream_filters_metric_kinds_by_default(client, workspace) -> None:
+    """Default WS stream drops tps_sample; first-message
+    `include_metrics:true` opts in."""
+    from alb.infra.event_bus import get_bus, make_event
+
+    # Default — no opt-in
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.receive_json()  # snapshot
+
+        async def emit() -> None:
+            await get_bus().publish(make_event(
+                session_id="s", source="chat", kind="tps_sample",
+                summary="50 tok/s",
+            ))
+            await get_bus().publish(make_event(
+                session_id="s", source="chat", kind="user", summary="hi",
+            ))
+        ws.portal.call(emit)
+
+        live = ws.receive_json()
+        assert live["type"] == "event"
+        # The metric event must be dropped; only the user event should arrive
+        assert live["data"]["kind"] == "user"
+
+
+def test_ws_stream_include_metrics_passes_tps_sample(client, workspace) -> None:
+    from alb.infra.event_bus import get_bus, make_event
+
+    with client.websocket_connect("/audit/stream") as ws:
+        ws.send_json({"include_metrics": True})
+        ws.receive_json()  # snapshot
+
+        async def emit() -> None:
+            await get_bus().publish(make_event(
+                session_id="s", source="chat", kind="tps_sample",
+                summary="50 tok/s",
+            ))
+        ws.portal.call(emit)
+
+        live = ws.receive_json()
+        assert live["type"] == "event"
+        assert live["data"]["kind"] == "tps_sample"
 
 
 def test_ws_stream_paused_drops_live_events(client, workspace) -> None:

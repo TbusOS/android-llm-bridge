@@ -36,6 +36,18 @@ router = APIRouter()
 _SNAPSHOT_LIMIT = 200
 _FIRST_MESSAGE_TIMEOUT_S = 0.5
 
+# ADR-021: bus event kinds split into two classes:
+#   business kinds — user / assistant / tool_call_start / tool_call_end /
+#                    done / error / command / deny / hitl_*
+#   metric kinds   — tps_sample (and future periodic metric streams)
+#
+# The Timeline UI wants business events; LiveSession's spark wants
+# metrics. Both consumers share /audit/stream + GET /audit, but metric
+# kinds are filtered out by default to keep the Timeline readable. Set
+# `?include_metrics=true` on GET, or send `{include_metrics: true}` as
+# the WS first message, to opt in.
+METRIC_KINDS = frozenset({"tps_sample"})
+
 
 def _parse_ts(value: str) -> datetime | None:
     try:
@@ -89,13 +101,20 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
 async def list_audit(
     minutes: int = Query(30, ge=1, le=1440),
     limit: int = Query(200, ge=1, le=2000),
+    include_metrics: bool = Query(False),
 ) -> dict[str, Any]:
-    """Return the last `minutes` minutes of audit events, newest first."""
+    """Return the last `minutes` minutes of audit events, newest first.
+
+    By default `tps_sample` and other metric kinds are filtered out so
+    the Timeline UI stays readable; pass `?include_metrics=true` to
+    receive every kind."""
     until = datetime.now(timezone.utc)
     since = until - timedelta(minutes=minutes)
 
     in_window: list[dict[str, Any]] = []
     for e in _read_events(events_log_path()):
+        if not include_metrics and e["kind"] in METRIC_KINDS:
+            continue
         ts = _parse_ts(e["ts"])
         if ts is not None and since <= ts <= until:
             in_window.append(e)
@@ -136,8 +155,9 @@ async def audit_stream(ws: WebSocket) -> None:
     """
     await ws.accept()
 
-    # Optional first message — opt-in window override.
+    # Optional first message — opt-in window override + include_metrics.
     minutes = 30
+    include_metrics = False
     try:
         first = await asyncio.wait_for(
             ws.receive_json(), timeout=_FIRST_MESSAGE_TIMEOUT_S
@@ -151,12 +171,15 @@ async def audit_stream(ws: WebSocket) -> None:
             minutes = max(1, min(1440, int(first.get("minutes", minutes))))
         except (TypeError, ValueError):
             pass
+        include_metrics = bool(first.get("include_metrics", False))
 
     # 1. Snapshot
     until = datetime.now(timezone.utc)
     since = until - timedelta(minutes=minutes)
     snapshot: list[dict[str, Any]] = []
     for e in _read_events(events_log_path()):
+        if not include_metrics and e["kind"] in METRIC_KINDS:
+            continue
         ts = _parse_ts(e["ts"])
         if ts is not None and since <= ts <= until:
             snapshot.append(e)
@@ -201,6 +224,8 @@ async def audit_stream(ws: WebSocket) -> None:
             while True:
                 event = await q.get()
                 if state["paused"]:
+                    continue
+                if not include_metrics and event.get("kind") in METRIC_KINDS:
                     continue
                 projected = _project(event)
                 if projected is None:
