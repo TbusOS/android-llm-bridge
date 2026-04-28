@@ -211,4 +211,49 @@ LiveSession 的 spark / KPI 的 LLM throughput 都需要 tps 数据源（DEBT-00
 
 ---
 
+## ADR-022 · Dashboard 同页双 WS 实例（F.5 实施时定）
+
+- **日期**：2026-04-28
+- **状态**：accepted；**reverses ADR-018 备选 (c) under ADR-021 conditions**
+
+**上下文**：ADR-018（C 档 audit 升级为事件总线）当时把"两个 WS 各连各
+的"作为备选 (c) 否决，理由是"浪费连接"。ADR-021 引入 metric kinds +
+`include_metrics` opt-in 后，business 流的 pause/resume（user 控
+timeline）和 metric 流（永远 live，喂 LiveSession spark）的 lifetime
+语义已经不一致 —— 共享同一连接做客户端 demux 会让 timeline pause 冻结
+metric 流，违反"metric 跟随设备运行"的设计意图。trade-off 反转。
+
+**决策**：DashboardPage 同时持有两个 useAuditStream 实例：
+1. `useAuditStream({includeMetrics: false})` —— ActivityTimeline 用
+2. `useAuditStream({includeMetrics: true})` —— useLiveSession 喂数据用
+
+Hook 不抽 useDualAuditStream（callsite 单一时是 premature abstraction，
+按 architecture-reviewer 维度 1 的"两个实际场景才抽象"原则）。
+
+`useAuditStream({includeMetrics: true}).pause/resume` 加运行时
+console.warn 防止误用（metric 流不应 user-pausable）。
+
+**备选**：
+- (a) 单 WS 共享 + 客户端 demux + 独立 pause 状态机 —— 复杂度高，且
+  当前规模 N=2 时双连接更直白
+- (b) 抽 useDualAuditStream wrapper —— premature，等第二个 page 也要
+  双流时再抽
+
+**Trade-off**：
+- 放弃：单连接简洁
+- 获得：独立 pause 语义 / 独立重连 / hook API 不变 / server 端 fan-out
+  queue 1× → 2×（可接受）
+
+**何时推翻**：
+- (a) 同页连接数 ≥ 4
+- (b) SessionDetailPage 等带 sessionId 过滤的消费者出现
+- 任一触发 → 评估方案 (a)（多消费者 + 客户端独立 pause 状态机）
+
+**反思 ADR-018 的备选 c**：当时否决理由"浪费连接"在 localhost
+单租户 + N=2 时不成立；隐性优势"独立 pause 语义"在 ADR-021 引入
+metric 流后变成必须。**这次反转给后续 reviewer 重要信号**：ADR
+备选段不是永久判决，新事实出现时应主动反转 + 立新 ADR（见 L-015）。
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）

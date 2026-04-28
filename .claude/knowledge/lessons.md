@@ -197,6 +197,47 @@ cmd #ifdef 保护就下结论"不是必须"。后来发现没查运行时路径 
 
 ---
 
+## L-015 · ADR 备选段会随后续 ADR 反转 —— 反转时必须新立 ADR
+
+**坑**：F.5 双 WS 实例方案在 sketch 阶段已经定（ADR-021 时就讨论过），
+但 decisions.md 文本里只记了"include_metrics opt-in"，没提"几条 WS"。
+F.5 实施时 architecture-reviewer agent 翻 ADR-018 备选段才发现："两个
+WS 各连"在 ADR-018 被显式否决（理由"浪费连接"），但 ADR-021 引入新
+事实让该备选的 trade-off 反转。如果不立 ADR-022 显式记录这次反转，
+下任 reviewer 看到 DashboardPage 双调会怀疑"是不是误改"，重走推断
+路径浪费认知开销。
+
+**根因**：ADR 的"备选"段在原 ADR 写下时被否决，但项目后续 ADR 可能
+引入新事实让该备选的 trade-off 改变。如果没文档化反转，知识库里就
+有两条互相矛盾的"决策": 老 ADR 说否决，新代码却走否决方案。
+
+**规则**：当实施代码走的是某 ADR 已否决的备选时：
+1. **必须**新立一条 ADR 显式说明 "reverses ADR-X 备选 Y, because
+   ADR-Z 引入了新事实 W"
+2. 新 ADR 标 status: "accepted; reverses ADR-X under ADR-Z conditions"
+3. 老 ADR 不改（保留历史决策上下文）；只在新 ADR 里说明反转
+4. 不准只在 sketch / commit message / code 注释里写"我们决定这么做"
+   —— 这些都不进 knowledge 库，半年后没人记得为什么
+
+**反例（不要这样做）**：
+```
+// in DashboardPage.tsx:
+// 备选 c 反转了，所以这里开两条 WS
+```
+这条注释 6 个月后看不懂"备选 c 是什么"。
+
+**正例**：
+```
+// see ADR-022 · Dashboard 同页双 WS 实例
+```
++ ADR-022 完整记录上下文。
+
+**应用到 agents**：architecture-reviewer 评审任何"看起来反直觉的设计"
+时，先翻 decisions.md 看是不是某 ADR 备选的反转，如果是 → 立刻要求
+立新 ADR。
+
+---
+
 ## L-014 · `@mcp.tool()` 函数首行 docstring 等同于公开 API description
 
 **坑**：F.4 加 `GET /tools` 后，`fn.__doc__` 第一行被作为 description

@@ -15,6 +15,56 @@ agents 提的建议被采纳 / 驳回的累积记录。**agents 评审前必读*
 
 ---
 
+## 2026-04-28 · F.5 双 WS 实例（前端 useAuditStream + LiveSession metric 流）评审
+
+**评审对象**：F.5 staged diff（useAuditStream.ts +24 行 / DashboardPage.tsx +11 行）
+
+**调动**：code-reviewer + architecture-reviewer 并行（无新 schema，
+跳过 security）
+
+### 采纳清单（已实施）
+
+- arch [high] **F.5 走 ADR-018 备选 (c) 但没立 ADR 反转** → 立新
+  ADR-022 "Dashboard 同页双 WS 实例" + L-015 "ADR 备选段会随后续 ADR
+  反转" 升级为元规则
+- arch [mid] **server 协议没预留 session_id / kinds 过滤** → 登记
+  DEBT-010
+- arch [mid] **`pause/resume` 在 metric 实例上应禁用** → 加 console.warn
+  no-op，防 LiveSession 误调
+- code [mid] **UseAuditStreamOptions 应限定 primitive 字段** → JSDoc
+  加约束说明（避免 caller 传函数/数组导致无限重连）
+- code [mid] **首条 message 重连依赖 lib/ws.ts listener Set 复用契约
+  没文档化** → 注释加 "after EVERY open (including reconnects)" 说明
+- code [low] **注释 "cheap on localhost" 不准确** → 改"acceptable for
+  M2 single-tenant; revisit when M3 adds auth；server fan-out queue
+  1× → 2× acceptable while N ≤ 4"
+- code [low] **liveAudit status="error" 时 spark 静默冻是 UX 缺口** →
+  LiveSessionCard 接 streamStatus prop，error/closed 时 throughput
+  区显示 "● stale" 离线提示
+
+### 驳回清单
+
+- arch [low] **抽 useDualAuditStream wrapper** → arch agent 自己反对
+  （premature abstraction，单 callsite），不抽
+- arch [mid] **strict-mode dev 双 invoke 触发 4× connect / snapshot scan**
+  → 影响轻（snapshot 只读，不污染 events.jsonl），ADR-022 提及，本档
+  不专门修，等 DEBT-006 events rotate 时一起加测试
+
+### 形成新规则
+
+- **ADR-022** · Dashboard 同页双 WS 实例（reverses ADR-018 备选 c）
+- **L-015** · ADR 备选段会随后续 ADR 反转，反转时必须新立 ADR（**这条
+  是元规则，覆盖整个 knowledge 维护流程**）
+- **DEBT-010** · /audit/stream WS 协议预留 session_id/kinds（low，N≥3
+  时还）
+
+### agent prompt 调整建议
+
+无。本次 architecture-reviewer agent 主动翻 ADR-018 备选段对照 ADR-021
+新事实，识别出文档债 —— **这是 agents 团队"会演进"特性的具体证据**。
+
+---
+
 ## 2026-04-28 · F.4 GET /tools 评审
 
 **评审对象**：F.4 staged diff（src/alb/api/tools_route.py 新 112 行 +
@@ -192,15 +242,17 @@ schema/server +2 +2 + 测试 167 行）
 
 > dev-team 展示页会读这里的统计，让外部看到团队成长证据。
 
-**当前（2026-04-28 update · F.4 完成后）**：
-- 总评审次数：3（F.1 / F.3 / F.4 各一次）
-- 总建议数：36（F.1: 18 / F.3: 10 / F.4: 8）
-- 采纳率：78%（F.1 11 + F.3 8 + F.4 8 = 27 / 36）
-- 驳回类型分布：模块归属偏好 1 / 已登记 DEBT 复提 2 / 未来 milestone 范围 2 / 测试便利权衡 1 / "不强求"风格调整 1 / 无场景的防御 1
-- 形成新规则数：2（L-013 · bus event 分类 / L-014 · mcp tool docstring 等同公开 API）+ 2 ADR（ADR-020/021）+ 1 新 DEBT（DEBT-008）
+**当前（2026-04-28 update · F.5 完成后）**：
+- 总评审次数：4（F.1 / F.3 / F.4 / F.5）
+- 总建议数：48（F.1: 18 / F.3: 10 / F.4: 8 / F.5: 12）
+- 采纳率：79%（27 + 11 = 38 / 48）
+- 驳回类型分布：模块归属偏好 1 / 已登记 DEBT 复提 2 / 未来 milestone 范围 2 / 测试便利权衡 1 / "不强求"风格调整 1 / 无场景的防御 1 / premature abstraction 1 / 影响轻不修 1
+- 形成新规则数：3（L-013 / L-014 / **L-015 元规则**）+ 3 ADR（ADR-020/021/022）+ 2 DEBT（DEBT-008/010）
 - F.1 发现 2 条 high 级架构问题 → 推迟 ship，重做调整版
-- F.3 / F.4 reviewer 反馈聚焦代码质量 + 防御性，无 high 问题，直接
-  调整后 ship。**采纳率从 65% 升到 78%**（团队成熟，反馈质量提升）
+- **F.5 architecture-reviewer 主动翻历史 ADR 备选段，识别"反转未立新
+  ADR"的文档债 → 升级为元规则 L-015**（agents 团队"会演进"的具体证据）
+- F.3 / F.4 / F.5 reviewer 反馈持续聚焦代码质量 + 架构债识别，**采纳率
+  稳定在 78-79%**
 
 > 每次评审后由主对话更新（commit message 里附带"review-feedback +N
 > 条"作为信号）。

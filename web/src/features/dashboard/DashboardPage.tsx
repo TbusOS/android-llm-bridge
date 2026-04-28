@@ -36,8 +36,17 @@ export function DashboardPage() {
   const setDevice = useApp((s) => s.setDevice);
   const recent = useRecentSessions();
   const devices = useDevices();
-  const audit = useAuditStream();
-  const live = useLiveSession(audit.rawEvents);
+  // Two separate WS subscriptions on /audit/stream — see ADR-022:
+  //   1. timeline view: business events only (tps_sample filtered)
+  //   2. live view: metric events included so LiveSession can drive
+  //      a real tps spark.
+  // Two connections is acceptable for M2 single-tenant; revisit when
+  // M3 adds auth (each WS = handshake + token). On the server side
+  // this means the bus fan-out queue count goes 1× → 2×; acceptable
+  // while N ≤ 4 connections per page.
+  const audit = useAuditStream({ includeMetrics: false });
+  const liveAudit = useAuditStream({ includeMetrics: true });
+  const live = useLiveSession(liveAudit.rawEvents);
   const kpis = buildKpis(devices, recent, lang);
 
   return (
@@ -51,7 +60,7 @@ export function DashboardPage() {
 
       {/* === Hero: live session + KPI 2x2 === */}
       <div className="hero-row">
-        <LiveSessionCard data={live} />
+        <LiveSessionCard data={live} streamStatus={liveAudit.status} />
         <KpiStrip items={kpis} />
       </div>
 

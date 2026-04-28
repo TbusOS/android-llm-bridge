@@ -12,13 +12,26 @@ import { useApp } from "../../stores/app";
 import { Sparkline } from "./Sparkline";
 import type { LiveSessionData } from "./types";
 
+export type LiveSessionStreamStatus =
+  | "connecting"
+  | "open"
+  | "closed"
+  | "error";
+
 interface Props {
   data: LiveSessionData;
+  /** WS status of the metric stream feeding this card. When the stream
+   *  drops, the spark would otherwise freeze silently — we surface a
+   *  small inline label so the user knows the spark isn't fresh. */
+  streamStatus?: LiveSessionStreamStatus;
   onInterrupt?: () => void;
 }
 
-export function LiveSessionCard({ data, onInterrupt }: Props) {
+export function LiveSessionCard({ data, streamStatus, onInterrupt }: Props) {
   const lang = useApp((s) => s.lang);
+
+  const streamWarning =
+    streamStatus === "closed" || streamStatus === "error";
 
   if (!data.active) {
     return (
@@ -98,6 +111,29 @@ export function LiveSessionCard({ data, onInterrupt }: Props) {
         <span className="live-tps">
           {data.tps}
           <span className="unit">tok/s</span>
+          {streamWarning ? (
+            <span
+              className="live-tps-stale"
+              title={
+                streamStatus === "error"
+                  ? lang === "zh"
+                    ? "事件流错误"
+                    : "metric stream error"
+                  : lang === "zh"
+                    ? "事件流断开 · 重连中"
+                    : "stream offline · reconnecting"
+              }
+              style={{
+                marginLeft: "var(--space-2)",
+                fontSize: "11px",
+                color: "var(--anth-danger)",
+                fontFamily: "var(--font-body)",
+                fontWeight: 400,
+              }}
+            >
+              {lang === "zh" ? "● 离线" : "● stale"}
+            </span>
+          ) : null}
         </span>
         <Sparkline
           points={data.tpsSpark}

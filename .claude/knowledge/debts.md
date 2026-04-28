@@ -125,6 +125,22 @@
   作为 low 风险，不阻塞 ship。
 
 
+## DEBT-010 · /audit/stream WS 协议没预留 session_id / kinds 过滤
+
+- **severity**：low
+- **引入**：F.5（commit pending，2026-04-28）
+- **位置**：`src/alb/api/audit_route.py` 首条 message 只读
+  `minutes` / `include_metrics`，无 `session_id` / `kinds` 过滤
+- **原因**：F.5 阶段只需 metric vs business 两路；未来 SessionDetailPage /
+  DiagnoseFollow / 第三个消费者想"单 session 全流"需要 break 协议或
+  自己客户端过滤。当前 N=2 没问题，N≥3 + 跨页面消费时需要扩协议
+- **是否计划修**：是（视情况，触发条件见下）
+- **还债 sketch**：首条 message schema 扩为
+  `{minutes, include_metrics, session_id?, kinds?}`，server 全 None 时
+  行为不变（向后兼容）；同步 bump web/lib 协议版本注释
+- **还债条件**：第 3 个消费者出现 / 同时 N ≥ 3 条 WS 都连 /audit/stream
+
+
 ## DEBT-009 · Vite base URL 硬编码风险
 
 - **severity**：low
