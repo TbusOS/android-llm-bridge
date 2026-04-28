@@ -55,6 +55,11 @@ ALLOWED=(
   'scripts/check_sensitive_words.sh'  # this script
   '.pre-commit-config.yaml'
   '.gitignore'
+  # agents 团队元文档：security-and-neutrality-auditor 引用禁用词清单
+  # 让 agent 知道要扫什么；lessons.md 解释历史教训为什么禁用。两份都
+  # 是定义规则本身，不是泄露。
+  '.claude/agents/security-and-neutrality-auditor.md'
+  '.claude/knowledge/lessons.md'
 )
 
 is_allowed() {
