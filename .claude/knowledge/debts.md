@@ -41,7 +41,7 @@
 
 ---
 
-## DEBT-003 · KPI MCP tools 写死 21
+## DEBT-003 · KPI MCP tools 写死 21（partial-fix shipped）
 
 - **severity**：low
 - **引入**：D step 4（commit 2af137c，2026-04-28）
@@ -49,9 +49,11 @@
   里 MCP tools KPI value 写死 "21"
 - **原因**：现有后端没有"列 MCP tool"端点；写死避免接 21 这数字到 21
   以外时还要改前端
-- **是否计划修**：是（候选 E.1）
-- **还债 sketch**：新增 `GET /tools` 后端端点列出所有 mcp.tool() 名 +
-  category；前端 useTools hook 调用之
+- **状态（2026-04-28 update）**：**partial-fix shipped**
+  - 后端就绪 ✓（F.4 ship · GET /tools 列 33 个 tool / 11 categories）
+  - 前端待做（F.7）：useTools hook + KpiStrip 用 hook 数据替代写死 21
+- **彻底关闭条件**：F.7 ship 后，KpiStrip MCP tools KPI 显示真实数（33
+  或后续）
 
 ---
 
