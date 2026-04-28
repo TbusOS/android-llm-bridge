@@ -57,6 +57,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Recent audit events (chat + terminal jsonl) for the Timeline"},
     {"method": "GET",  "path": "/metrics/summary",
      "description": "Windowed aggregation of tps_sample events (KPI throughput)"},
+    {"method": "GET",  "path": "/tools",
+     "description": "List MCP tools registered by alb (KPI MCP tools count)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

@@ -197,6 +197,33 @@ cmd #ifdef 保护就下结论"不是必须"。后来发现没查运行时路径 
 
 ---
 
+## L-014 · `@mcp.tool()` 函数首行 docstring 等同于公开 API description
+
+**坑**：F.4 加 `GET /tools` 后，`fn.__doc__` 第一行被作为 description
+公开到 Web UI Dashboard。任何后续 PR 在 `src/alb/mcp/tools/*.py` 给
+`@mcp.tool()` 函数加首行 docstring 写了 `RK3576` / `paxsz` / 内部 IP /
+内部安全策略细节（如"DENY: rm -rf, reboot bootloader"），都会**直接
+通过 GET /tools 流到外部**。`scripts/check_sensitive_words.sh` 是全文
+grep 能拦中立性，但**安全策略细节不在禁用词清单里**，会被静默放行。
+
+**根因**：`@mcp.tool()` 装饰的函数 docstring 不是"内部代码注释"，是
+公开 API description。在 GET /tools 端点引入前没人意识到这一点。
+
+**规则**：
+1. `@mcp.tool()` 函数的**首行** docstring 按"公网外发标准"写：
+   - ✓ 描述功能：`"Execute a shell command on the connected Android device."`
+   - ✗ 列举攻击向量 / 默认 deny 列表 / 绕过表
+2. 安全策略细节放函数体下半部分 docstring（不在 `_first_doc_line`
+   的范围内）
+3. 评审 `src/alb/mcp/tools/` 改动时 reviewer 自动检查首行
+4. 跨项目复用此规则：任何"按反射暴露代码元数据"的端点（`/tools` /
+   `/capabilities` / `/metrics-schema`）都按此规则审 docstring 首行
+
+**应用到 agents**：security-and-neutrality-auditor 评审 mcp/tools/ 改动时
+强制检查首行 docstring 是否包含 policy 细节。
+
+---
+
 ## L-013 · bus event 加新 kind 时分类（business / metric）
 
 **坑**：F.1 第一版 sketch 想直接把 `tps_sample` 当成第 6 类业务事件加，
