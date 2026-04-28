@@ -1,11 +1,11 @@
-"""Tests for GET /audit."""
+"""Tests for GET /audit — driven by workspace/events.jsonl."""
 
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,23 +26,20 @@ def client(workspace):
         yield c
 
 
-def _write_terminal_jsonl(path: Path, lines: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for d in lines:
-            f.write(json.dumps(d) + "\n")
+def _write_events(workspace: Path, events: list[dict[str, Any]]) -> Path:
+    """Append events to workspace/events.jsonl, creating it if needed."""
+    path = workspace / "events.jsonl"
+    with path.open("a", encoding="utf-8") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+    return path
 
 
-def _write_messages_jsonl(path: Path, lines: list[dict], *, mtime: datetime) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for d in lines:
-            f.write(json.dumps(d) + "\n")
-    ts = mtime.timestamp()
-    os.utime(path, (ts, ts))
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def test_empty_workspace(client) -> None:
+def test_empty_log_returns_no_events(client) -> None:
     r = client.get("/audit")
     assert r.status_code == 200
     body = r.json()
@@ -51,80 +48,58 @@ def test_empty_workspace(client) -> None:
     assert body["since"] < body["until"]
 
 
-def test_terminal_events_filtered_by_window(client, workspace) -> None:
-    now = datetime.now(timezone.utc)
+def test_window_filters_old_events(client, workspace) -> None:
+    now = _now()
     in_window = (now - timedelta(minutes=5)).isoformat()
     out_of_window = (now - timedelta(hours=2)).isoformat()
-    _write_terminal_jsonl(
-        workspace / "sessions/sid-A/terminal.jsonl",
+    _write_events(
+        workspace,
         [
-            {"ts": in_window, "event": "command", "line": "ls /data"},
-            {"ts": out_of_window, "event": "command", "line": "rm /tmp/x"},
-            {"ts": in_window, "event": "deny", "line": "rm -rf /", "rule": "fs_destructive"},
+            {"ts": in_window, "session_id": "s1", "source": "terminal",
+             "kind": "command", "summary": "$ ls /data"},
+            {"ts": out_of_window, "session_id": "s1", "source": "terminal",
+             "kind": "command", "summary": "$ rm /tmp/x"},
+            {"ts": in_window, "session_id": "s1", "source": "terminal",
+             "kind": "deny", "summary": "deny: rm -rf / (fs_destructive)"},
         ],
     )
-
     body = client.get("/audit").json()
-    events = body["events"]
-    assert [e["kind"] for e in events] == ["command", "deny"] or \
-           [e["kind"] for e in events] == ["deny", "command"]
-    assert all(e["source"] == "terminal" for e in events)
-    assert all(e["ts_approx"] is False for e in events)
-    assert all(e["session_id"] == "sid-A" for e in events)
-    summaries = " ".join(e["summary"] for e in events)
-    assert "ls /data" in summaries
-    assert "rm -rf /" in summaries
-    assert "fs_destructive" in summaries
-    assert "rm /tmp/x" not in summaries  # out-of-window dropped
+    summaries = [e["summary"] for e in body["events"]]
+    assert any("ls /data" in s for s in summaries)
+    assert any("rm -rf /" in s for s in summaries)
+    assert not any("rm /tmp/x" in s for s in summaries)
+    assert all(e["ts_approx"] is False for e in body["events"])
 
 
-def test_chat_events_use_file_mtime_with_ts_approx_true(client, workspace) -> None:
-    now = datetime.now(timezone.utc)
-    recent = now - timedelta(minutes=10)
-    _write_messages_jsonl(
-        workspace / "sessions/sid-B/messages.jsonl",
+def test_chat_and_terminal_events_coexist(client, workspace) -> None:
+    now = _now()
+    ts = (now - timedelta(minutes=2)).isoformat()
+    _write_events(
+        workspace,
         [
-            {"role": "user", "content": "hello there"},
-            {"role": "assistant", "content": "hi", "tool_calls": [
-                {"id": "1", "name": "alb_top", "arguments": {}}]},
-            {"role": "tool", "tool_call_id": "1", "name": "alb_top",
-             "content": "{cpu: 50}"},
+            {"ts": ts, "session_id": "chat-1", "source": "chat",
+             "kind": "user", "summary": "find battery drain"},
+            {"ts": ts, "session_id": "chat-1", "source": "chat",
+             "kind": "tool_call_start", "summary": "tool_calls: alb_top"},
+            {"ts": ts, "session_id": "term-1", "source": "terminal",
+             "kind": "command", "summary": "$ uptime"},
         ],
-        mtime=recent,
     )
-
-    events = client.get("/audit").json()["events"]
-    assert len(events) == 3
-    assert all(e["source"] == "chat" for e in events)
-    assert all(e["ts_approx"] is True for e in events)
-    kinds = [e["kind"] for e in events]
-    assert kinds.count("user") == 1
-    assert kinds.count("assistant") == 1
-    assert kinds.count("tool") == 1
-    summaries = " ".join(e["summary"] for e in events)
-    assert "hello there" in summaries
-    assert "tool_calls: alb_top" in summaries
-    assert "tool result" in summaries
-
-
-def test_chat_events_dropped_when_file_mtime_outside_window(client, workspace) -> None:
-    very_old = datetime.now(timezone.utc) - timedelta(hours=4)
-    _write_messages_jsonl(
-        workspace / "sessions/sid-stale/messages.jsonl",
-        [{"role": "user", "content": "ancient"}],
-        mtime=very_old,
-    )
-    events = client.get("/audit").json()["events"]
-    assert events == []
+    body = client.get("/audit").json()
+    assert len(body["events"]) == 3
+    sources = {e["source"] for e in body["events"]}
+    assert sources == {"chat", "terminal"}
 
 
 def test_minutes_param_widens_window(client, workspace) -> None:
-    """A 4-hour-old event should appear when ?minutes=300 is requested."""
-    old_chat = datetime.now(timezone.utc) - timedelta(hours=4)
-    _write_messages_jsonl(
-        workspace / "sessions/sid-old/messages.jsonl",
-        [{"role": "user", "content": "still recent enough"}],
-        mtime=old_chat,
+    now = _now()
+    old = (now - timedelta(hours=4)).isoformat()
+    _write_events(
+        workspace,
+        [
+            {"ts": old, "session_id": "s1", "source": "chat",
+             "kind": "user", "summary": "still recent enough"},
+        ],
     )
     short = client.get("/audit?minutes=30").json()["events"]
     long = client.get("/audit?minutes=300").json()["events"]
@@ -133,45 +108,58 @@ def test_minutes_param_widens_window(client, workspace) -> None:
 
 
 def test_events_sorted_newest_first(client, workspace) -> None:
-    now = datetime.now(timezone.utc)
-    _write_terminal_jsonl(
-        workspace / "sessions/sid-C/terminal.jsonl",
+    now = _now()
+    _write_events(
+        workspace,
         [
             {"ts": (now - timedelta(minutes=2)).isoformat(),
-             "event": "command", "line": "newer"},
+             "session_id": "s1", "source": "terminal",
+             "kind": "command", "summary": "newer"},
             {"ts": (now - timedelta(minutes=20)).isoformat(),
-             "event": "command", "line": "older"},
+             "session_id": "s1", "source": "terminal",
+             "kind": "command", "summary": "older"},
         ],
     )
     events = client.get("/audit").json()["events"]
-    assert "newer" in events[0]["summary"]
-    assert "older" in events[1]["summary"]
+    assert events[0]["summary"] == "newer"
+    assert events[1]["summary"] == "older"
     assert events[0]["ts"] > events[1]["ts"]
 
 
-def test_malformed_lines_skipped(client, workspace) -> None:
-    p = workspace / "sessions/sid-bad/terminal.jsonl"
-    p.parent.mkdir(parents=True)
-    now = datetime.now(timezone.utc)
-    p.write_text(
-        "not-json\n"
-        + json.dumps({"ts": (now - timedelta(minutes=5)).isoformat(),
-                      "event": "command", "line": "good"}) + "\n"
-        + json.dumps({"event": "command", "line": "no-ts"}) + "\n"  # no ts
-    )
+def test_malformed_rows_skipped(client, workspace) -> None:
+    """A bad JSONL row or a row with missing/unparseable ts is dropped."""
+    path = workspace / "events.jsonl"
+    now = _now()
+    valid = json.dumps({
+        "ts": (now - timedelta(minutes=5)).isoformat(),
+        "session_id": "s1", "source": "terminal",
+        "kind": "command", "summary": "good",
+    })
+    no_ts = json.dumps({
+        "session_id": "s1", "source": "terminal",
+        "kind": "command", "summary": "no ts",
+    })
+    bad_ts = json.dumps({
+        "ts": "not-a-date", "session_id": "s1", "source": "terminal",
+        "kind": "command", "summary": "bad ts",
+    })
+    path.write_text(f"not-json\n{valid}\n{no_ts}\n{bad_ts}\n")
     events = client.get("/audit").json()["events"]
     assert len(events) == 1
-    assert "good" in events[0]["summary"]
+    assert events[0]["summary"] == "good"
 
 
 def test_limit_truncates(client, workspace) -> None:
-    now = datetime.now(timezone.utc)
-    lines = [
-        {"ts": (now - timedelta(minutes=i)).isoformat(),
-         "event": "command", "line": f"cmd{i}"}
-        for i in range(1, 11)
-    ]
-    _write_terminal_jsonl(workspace / "sessions/sid-D/terminal.jsonl", lines)
+    now = _now()
+    _write_events(
+        workspace,
+        [
+            {"ts": (now - timedelta(minutes=i)).isoformat(),
+             "session_id": "s1", "source": "terminal",
+             "kind": "command", "summary": f"cmd{i}"}
+            for i in range(1, 11)
+        ],
+    )
     events = client.get("/audit?limit=3").json()["events"]
     assert len(events) == 3
 
@@ -181,6 +169,26 @@ def test_param_bounds(client) -> None:
     assert client.get("/audit?minutes=99999").status_code == 422
     assert client.get("/audit?limit=0").status_code == 422
     assert client.get("/audit?limit=9999").status_code == 422
+
+
+def test_default_fields_filled_in(client, workspace) -> None:
+    """A minimal row that only has ts still produces a usable event with
+    sensible defaults for missing keys."""
+    now = _now()
+    _write_events(
+        workspace,
+        [
+            {"ts": (now - timedelta(minutes=1)).isoformat()},
+        ],
+    )
+    body = client.get("/audit").json()
+    assert len(body["events"]) == 1
+    e = body["events"][0]
+    assert e["session_id"] == ""
+    assert e["source"] == "system"
+    assert e["kind"] == "unknown"
+    assert e["summary"] == ""
+    assert e["ts_approx"] is False
 
 
 def test_endpoint_listed_in_schema(client) -> None:

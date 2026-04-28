@@ -1,14 +1,19 @@
 """GET /audit — recent activity stream for the Web UI Timeline.
 
-Aggregates two on-disk audit sources under each session directory:
+Reads the cross-session audit log produced by the event bus
+(`workspace/events.jsonl`, see src/alb/infra/event_bus.py). The bus
+appends one canonical event per line, so this endpoint is just a
+windowed tail with optional filtering.
 
-    workspace/sessions/<sid>/messages.jsonl     # ChatSession appends — no per-line ts
-    workspace/sessions/<sid>/terminal.jsonl     # TerminalGuard appends — each line has ts
+Companion endpoint `WS /audit/stream` streams new events live; clients
+typically call `GET /audit?minutes=30` for an initial snapshot then
+subscribe to the WS for live updates. The schema returned here is the
+same shape the WS pushes via `{type:"event", data:...}`, so a single
+mapping function on the client handles both.
 
-`messages.jsonl` lines do not carry a per-line timestamp (Message has
-no `ts` field; see src/alb/agent/backend.py). We use the file's mtime
-as an approximate ts for every line and mark `ts_approx: true` so the
-UI can render it accordingly. terminal.jsonl lines are kept exact.
+`ts_approx` is kept in the response for backward compatibility with
+the old fs-scan implementation but is always `false` now (every event
+in the log carries a real ts).
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from alb.infra.workspace import workspace_root
+from alb.infra.event_bus import events_log_path
 
 router = APIRouter()
 
@@ -35,34 +40,26 @@ def _parse_ts(value: str) -> datetime | None:
     return ts
 
 
-def _summarize_terminal(d: dict[str, Any]) -> str:
-    ev = d.get("event")
-    line = (d.get("line") or "")[:120]
-    if ev == "command":
-        return f"$ {line}"
-    if ev == "deny":
-        rule = d.get("rule") or ""
-        return f"deny: {line} ({rule})" if rule else f"deny: {line}"
-    if ev in ("hitl_approve", "hitl_deny"):
-        return f"{ev}: {line}"
-    return str(ev or "?")
+def _project(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a raw events.jsonl entry into the GET /audit shape.
+
+    Drops malformed rows (missing ts / unparseable ts) silently — the
+    log is append-only best-effort, we don't want a single bad row to
+    poison the whole response."""
+    ts = _parse_ts(raw.get("ts") or "")
+    if ts is None:
+        return None
+    return {
+        "ts": ts.isoformat(),
+        "session_id": raw.get("session_id") or "",
+        "source": raw.get("source") or "system",
+        "kind": raw.get("kind") or "unknown",
+        "summary": raw.get("summary") or "",
+        "ts_approx": False,
+    }
 
 
-def _summarize_chat(d: dict[str, Any]) -> str:
-    tool_calls = d.get("tool_calls") or []
-    if tool_calls:
-        names = ", ".join(tc.get("name", "?") for tc in tool_calls)
-        return f"tool_calls: {names}"
-    role = d.get("role")
-    content = (d.get("content") or "").strip().replace("\n", " ")
-    if role == "tool":
-        return f"tool result: {content[:120]}"
-    return content[:120]
-
-
-def _terminal_events(
-    path: Path, sid: str, since: datetime, until: datetime
-) -> list[dict[str, Any]]:
+def _read_events(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []
@@ -72,49 +69,12 @@ def _terminal_events(
             if not line:
                 continue
             try:
-                d = json.loads(line)
+                raw = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            ts = _parse_ts(d.get("ts") or "")
-            if ts is None or not (since <= ts <= until):
-                continue
-            out.append({
-                "ts": ts.isoformat(),
-                "session_id": sid,
-                "source": "terminal",
-                "kind": d.get("event") or "unknown",
-                "summary": _summarize_terminal(d),
-                "ts_approx": False,
-            })
-    return out
-
-
-def _chat_events(
-    path: Path, sid: str, since: datetime, until: datetime
-) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-    if not (since <= mtime <= until):
-        return []
-    out: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            out.append({
-                "ts": mtime.isoformat(),
-                "session_id": sid,
-                "source": "chat",
-                "kind": d.get("role") or "unknown",
-                "summary": _summarize_chat(d),
-                "ts_approx": True,
-            })
+            projected = _project(raw)
+            if projected is not None:
+                out.append(projected)
     return out
 
 
@@ -123,32 +83,18 @@ async def list_audit(
     minutes: int = Query(30, ge=1, le=1440),
     limit: int = Query(200, ge=1, le=2000),
 ) -> dict[str, Any]:
-    """Return audit events from the last `minutes` minutes, newest first.
-
-    Window: [now - minutes, now]. The `since` / `until` ISO strings in
-    the response let the UI label the window without re-deriving it.
-    """
+    """Return the last `minutes` minutes of audit events, newest first."""
     until = datetime.now(timezone.utc)
     since = until - timedelta(minutes=minutes)
 
-    sessions_root = workspace_root() / "sessions"
-    if not sessions_root.exists():
-        return {
-            "ok": True,
-            "since": since.isoformat(),
-            "until": until.isoformat(),
-            "events": [],
-        }
+    in_window: list[dict[str, Any]] = []
+    for e in _read_events(events_log_path()):
+        ts = _parse_ts(e["ts"])
+        if ts is not None and since <= ts <= until:
+            in_window.append(e)
+    in_window.sort(key=lambda e: e["ts"], reverse=True)
+    events = in_window
 
-    events: list[dict[str, Any]] = []
-    for session_dir in sessions_root.iterdir():
-        if not session_dir.is_dir():
-            continue
-        sid = session_dir.name
-        events.extend(_terminal_events(session_dir / "terminal.jsonl", sid, since, until))
-        events.extend(_chat_events(session_dir / "messages.jsonl", sid, since, until))
-
-    events.sort(key=lambda e: e["ts"], reverse=True)
     return {
         "ok": True,
         "since": since.isoformat(),
