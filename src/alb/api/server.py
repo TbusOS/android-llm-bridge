@@ -22,6 +22,7 @@ from alb.api.audit_route import router as audit_router
 from alb.api.chat_route import router as chat_router
 from alb.api.devices_route import router as devices_router
 from alb.api.metrics_route import router as metrics_router
+from alb.api.metrics_summary_route import router as metrics_summary_router
 from alb.api.playground_route import router as playground_router
 from alb.api.meta_route import router as meta_router
 from alb.api.sessions_route import router as sessions_router
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(devices_router)
     app.include_router(metrics_router)
+    app.include_router(metrics_summary_router)
     app.include_router(playground_router)
     app.include_router(sessions_router)
     app.include_router(terminal_router)

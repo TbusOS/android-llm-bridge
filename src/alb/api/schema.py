@@ -55,6 +55,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Devices visible through the active transport"},
     {"method": "GET",  "path": "/audit",
      "description": "Recent audit events (chat + terminal jsonl) for the Timeline"},
+    {"method": "GET",  "path": "/metrics/summary",
+     "description": "Windowed aggregation of tps_sample events (KPI throughput)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

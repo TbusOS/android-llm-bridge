@@ -105,7 +105,25 @@
 
 ---
 
-## DEBT-008 · Vite base URL 硬编码风险
+## DEBT-008 · GET /metrics/summary 缺 short-TTL cache
+
+- **severity**：low
+- **引入**：F.3（commit pending，2026-04-28）
+- **位置**：`src/alb/api/metrics_summary_route.py` 每次请求全量扫
+  `events.jsonl`
+- **原因**：`window_seconds` 上限 24h + events.jsonl 全量遍历。alb-api
+  默认 bind 127.0.0.1，但单机内同源前端循环刷新 / bug 死循环可放大
+  IO 压力。F.3 阶段 events.jsonl 还没积累，问题不显；DEBT-006 events.jsonl
+  rotate 落地前是廉价缓解点。
+- **是否计划修**：M3 一起（连同 DEBT-006 events rotate）
+- **还债 sketch**：进程级 `functools.lru_cache(maxsize=8)` + TTL 60s，
+  按 (window_seconds, session_id) cache 上次结果。或直接走 DEBT-006
+  rotate 后扫描量本身就小。
+- **备注**：security-and-neutrality-auditor agent 在 F.3 评审中提出
+  作为 low 风险，不阻塞 ship。
+
+
+## DEBT-009 · Vite base URL 硬编码风险
 
 - **severity**：low
 - **引入**：M2 Web Tier 1（约 commit f757cb7 起）

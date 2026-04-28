@@ -15,6 +15,54 @@ agents 提的建议被采纳 / 驳回的累积记录。**agents 评审前必读*
 
 ---
 
+## 2026-04-28 · F.3 GET /metrics/summary 评审
+
+**评审对象**：F.3 staged diff（src/alb/api/metrics_summary_route.py 新 +
+schema/server +2 +2 + 测试 167 行）
+
+**调动**：code-reviewer + security-and-neutrality-auditor 并行
+（无新架构，跳过 architecture-reviewer）
+
+### 采纳清单（已实施到 F.3 调整版）
+
+- code [mid] **percentile 边界缺测试** → 加 test_single_sample_percentile
+  + test_two_sample_percentile + test_basic_aggregation 加 p50 断言
+- code [mid] **total_tokens 类型守卫不一致** → `isinstance(tw, (int, float))`
+  + `int(tw)` 累加，与 rate fallback 对称
+- code [mid] **legacy/malformed 测试没断 total_tokens** → 加断言；新增
+  test_total_tokens_accepts_float_tokens_window 锁定 float 路径
+- code [low] **docstring "ISO" 不说时区** → 改 "ISO 8601, UTC, with offset"
+- code [low] **session_id 空串 0 命中体验差** → Query min_length=1（空串
+  返 422）+ 加测试 test_session_id_empty_string_rejected
+- sec [low] **session_id 进 response 的 XSS 边界提醒** → docstring 加
+  "consumer MUST escape session_id" 注释
+
+### 驳回清单（写入此文件，agents 下次会看到）
+
+- code [low] **rates.sort() in-place 风格** → reviewer 自己说"不强求"，
+  不改。
+- code [low] **双闭区间 since <= ts <= until** → reviewer 自己核查后已
+  确认与 audit_route 一致，不改。
+- sec [low] **session_id 字符集 regex** → 当前不拼日志/不进路径，无
+  实际场景，不加。等真有 log 拼接时再加 `regex=r"^[a-zA-Z0-9_\-]+$"`。
+
+### 新登记 DEBT
+
+- **DEBT-008** · GET /metrics/summary 缺 short-TTL cache —— security
+  agent 提的 "24h × 全量扫描" 放大风险，severity=low，登记到 M3 一起
+  解（连同 DEBT-006 events.jsonl rotate）
+
+### 形成的新规则
+
+无（本档 reviewer 反馈都是局部代码改进，无升级到 lessons 的新规律）
+
+### agent prompt 调整建议
+
+- 暂无。本次评审反馈聚焦在测试覆盖 + 类型守卫 + docstring 三块，质量
+  高，prompt 不调。
+
+---
+
 ## 2026-04-28 · F.1 首次实战（agents 团队 ship 后第一次评审）
 
 **评审对象**：F.1 staged diff（TokenSampler + chat_route 集成）
@@ -101,14 +149,15 @@ agents 提的建议被采纳 / 驳回的累积记录。**agents 评审前必读*
 
 > dev-team 展示页会读这里的统计，让外部看到团队成长证据。
 
-**当前（2026-04-28 update · F.1 首次实战后）**：
-- 总评审次数：1（3 agents 并行 = 1 次）
-- 总建议数：18（arch 6 + code 7 + sec 4 + 1 重叠不双计）
-- 采纳率：65%（11 采纳 / 5 驳回 / 2 已知不修）
-- 驳回类型分布：模块归属偏好 1 / 已登记 DEBT 复提 2 / 未来 milestone 范围 1 / 测试便利权衡 1
-- 形成新规则数：1（L-013 · bus event 分类）+ 1 ADR（ADR-021）
-- agents 团队首次实战发现 2 条 high 级架构问题 → 推迟原本的 ship，重做 F.1
-  调整版。**首次实战已经创造价值**。
+**当前（2026-04-28 update · F.3 完成后）**：
+- 总评审次数：2（F.1 一次 / F.3 一次）
+- 总建议数：28（F.1: 18 / F.3: 10）
+- 采纳率：71%（F.1 11 采纳 + F.3 8 采纳 = 19 / 28）
+- 驳回类型分布：模块归属偏好 1 / 已登记 DEBT 复提 2 / 未来 milestone 范围 2 / 测试便利权衡 1 / "不强求"风格调整 1 / 无场景的防御 1
+- 形成新规则数：1（L-013 · bus event 分类）+ 2 ADR（ADR-020/021）+ 1 新 DEBT（DEBT-008）
+- F.1 发现 2 条 high 级架构问题 → 推迟 ship，重做调整版
+- F.3 reviewer 反馈聚焦代码质量（测试覆盖 + 类型守卫 + 边界），无 high
+  问题，直接调整后 ship
 
 > 每次评审后由主对话更新（commit message 里附带"review-feedback +N
 > 条"作为信号）。
