@@ -104,3 +104,35 @@ export async function fetchDevices(signal?: AbortSignal): Promise<DevicesRespons
   }
   return (await r.json()) as DevicesResponse;
 }
+
+export interface AuditEvent {
+  ts: string;
+  session_id: string;
+  source: "chat" | "terminal";
+  kind: string;
+  summary: string;
+  ts_approx: boolean;
+}
+
+export interface AuditResponse {
+  ok: boolean;
+  since: string;
+  until: string;
+  events: AuditEvent[];
+}
+
+export async function fetchAudit(
+  minutes = 30,
+  limit = 200,
+  signal?: AbortSignal,
+): Promise<AuditResponse> {
+  const r = await fetch(`/audit?minutes=${minutes}&limit=${limit}`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /audit returned ${r.status}`,
+      r.status,
+      "AUDIT_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as AuditResponse;
+}

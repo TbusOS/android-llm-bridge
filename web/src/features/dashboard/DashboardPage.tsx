@@ -21,6 +21,7 @@ import { LiveSessionCard } from "./LiveSessionCard";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
+import { useAudit } from "./useAudit";
 import { useDevices } from "./useDevices";
 import { useRecentSessions } from "./useSessions";
 import {
@@ -28,7 +29,6 @@ import {
   MOCK_KPIS,
   MOCK_LIVE,
   MOCK_QUICK_ACTIONS,
-  MOCK_TIMELINE,
 } from "./mockData";
 
 export function DashboardPage() {
@@ -36,6 +36,7 @@ export function DashboardPage() {
   const setDevice = useApp((s) => s.setDevice);
   const recent = useRecentSessions(5);
   const devices = useDevices();
+  const audit = useAudit(30, 50);
 
   return (
     <section>
@@ -138,8 +139,8 @@ export function DashboardPage() {
         <h2>{lang === "zh" ? "最近动作" : "Recent activity"}</h2>
         <span className="meta">
           {lang === "zh"
-            ? "近 30 分钟 · agent / 终端 / 工具调用"
-            : "last 30 minutes · agent + terminal + tools"}
+            ? `近 30 分钟 · ${audit.events.length} 条`
+            : `last 30 minutes · ${audit.events.length} events`}
         </span>
         <span className="right">
           <a className="link-arrow" href="#audit">
@@ -147,7 +148,25 @@ export function DashboardPage() {
           </a>
         </span>
       </div>
-      <ActivityTimeline events={MOCK_TIMELINE} />
+      {audit.isLoading ? (
+        <div className="dev-strip-state">
+          {lang === "zh" ? "加载中…" : "Loading…"}
+        </div>
+      ) : audit.isError ? (
+        <div className="dev-strip-state dev-strip-state--err">
+          {lang === "zh"
+            ? "无法获取审计流（GET /audit 失败）"
+            : "Couldn't load audit (GET /audit failed)"}
+        </div>
+      ) : audit.events.length === 0 ? (
+        <div className="dev-strip-state">
+          {lang === "zh"
+            ? "近 30 分钟没有事件 · 跑个 chat 或 terminal 试试"
+            : "No events in the last 30 minutes · run a chat or terminal"}
+        </div>
+      ) : (
+        <ActivityTimeline events={audit.events} />
+      )}
 
       {/* === Quick actions === */}
       <div className="group-head">
