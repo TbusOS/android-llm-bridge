@@ -21,7 +21,7 @@ import { LiveSessionCard } from "./LiveSessionCard";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
-import { useAudit } from "./useAudit";
+import { useAuditStream } from "./useAuditStream";
 import { useDevices } from "./useDevices";
 import { useRecentSessions } from "./useSessions";
 import {
@@ -36,7 +36,7 @@ export function DashboardPage() {
   const setDevice = useApp((s) => s.setDevice);
   const recent = useRecentSessions();
   const devices = useDevices();
-  const audit = useAudit(30, 50);
+  const audit = useAuditStream();
   const kpis = buildKpis(devices, recent, lang);
 
   return (
@@ -138,26 +138,30 @@ export function DashboardPage() {
       {/* === Activity timeline === */}
       <div className="group-head">
         <h2>{lang === "zh" ? "最近动作" : "Recent activity"}</h2>
-        <span className="meta">
-          {lang === "zh"
-            ? `近 30 分钟 · ${audit.events.length} 条`
-            : `last 30 minutes · ${audit.events.length} events`}
-        </span>
+        <span className="meta">{auditMeta(audit, lang)}</span>
         <span className="right">
-          <a className="link-arrow" href="#audit">
-            {lang === "zh" ? "打开审计" : "Open Audit"}
-          </a>
+          <button
+            type="button"
+            className="link-arrow"
+            onClick={audit.paused ? audit.resume : audit.pause}
+            disabled={audit.status !== "open"}
+            style={{ background: "none", border: "none", cursor: "pointer" }}
+          >
+            {audit.paused
+              ? lang === "zh" ? "恢复实时" : "Resume"
+              : lang === "zh" ? "暂停实时" : "Pause"}
+          </button>
         </span>
       </div>
-      {audit.isLoading ? (
+      {audit.status === "connecting" ? (
         <div className="dev-strip-state">
-          {lang === "zh" ? "加载中…" : "Loading…"}
+          {lang === "zh" ? "连接事件流…" : "Connecting to event stream…"}
         </div>
-      ) : audit.isError ? (
+      ) : audit.status === "error" || audit.status === "closed" ? (
         <div className="dev-strip-state dev-strip-state--err">
           {lang === "zh"
-            ? "无法获取审计流（GET /audit 失败）"
-            : "Couldn't load audit (GET /audit failed)"}
+            ? "事件流断开 · 自动重连中…"
+            : "Event stream disconnected · reconnecting…"}
         </div>
       ) : audit.events.length === 0 ? (
         <div className="dev-strip-state">
@@ -233,6 +237,23 @@ function buildKpis(
       deltaTextZh: "待 /metrics",
     },
   ];
+}
+
+function auditMeta(
+  vm: ReturnType<typeof useAuditStream>,
+  lang: Lang,
+): string {
+  const count = vm.events.length;
+  const live = vm.status === "open" && !vm.paused;
+  const liveLabel = vm.paused
+    ? (lang === "zh" ? "已暂停" : "paused")
+    : vm.status === "open"
+      ? (lang === "zh" ? "实时" : "live")
+      : (lang === "zh" ? "连接中" : "connecting");
+  if (lang === "zh") {
+    return `近 30 分钟 · ${count} 条 · ${liveLabel}${live ? " ●" : ""}`;
+  }
+  return `last 30 minutes · ${count} events · ${liveLabel}${live ? " ●" : ""}`;
 }
 
 function deviceMeta(
