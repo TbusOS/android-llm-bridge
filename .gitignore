@@ -127,7 +127,11 @@ docs/reference/
 # Secrets / personal / machine-specific — NEVER commit
 # ─────────────────────────────────────────────
 # Claude Code local settings (may contain internal IPs, hosts, paths)
-.claude/
+# - settings.local.json / scheduled_tasks.lock 是机器/用户私有的，禁止入仓
+# - agents/commands/knowledge/reports 是团队工程方法论的一部分，必须入仓
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/reports/screenshots/
 # Personal operating guides kept out of the open-source repo
 adb-via-ssh-tunnel-guide*.md
 # Anything in a user's home directory tree
