@@ -140,3 +140,67 @@ export async function fetchAudit(
   }
   return (await r.json()) as AuditResponse;
 }
+
+export interface ToolCategory {
+  name: string;
+  count: number;
+}
+export interface ToolEntry {
+  name: string;
+  description: string;
+  category: string;
+}
+export interface ToolsResponse {
+  ok: boolean;
+  count: number;
+  categories: ToolCategory[];
+  tools: ToolEntry[];
+}
+
+export async function fetchTools(signal?: AbortSignal): Promise<ToolsResponse> {
+  const r = await fetch(`/tools`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /tools returned ${r.status}`,
+      r.status,
+      "TOOLS_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as ToolsResponse;
+}
+
+export interface MetricsSummaryTps {
+  mean: number;
+  p50: number;
+  p95: number;
+  max: number;
+  min: number;
+}
+
+export interface MetricsSummaryResponse {
+  ok: boolean;
+  since: string;
+  until: string;
+  window_s: number;
+  session_id: string | null;
+  tps: MetricsSummaryTps | null;
+  total_tokens: number;
+  sample_count: number;
+}
+
+export async function fetchMetricsSummary(
+  windowSeconds = 300,
+  signal?: AbortSignal,
+): Promise<MetricsSummaryResponse> {
+  const r = await fetch(`/metrics/summary?window_seconds=${windowSeconds}`, {
+    signal,
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /metrics/summary returned ${r.status}`,
+      r.status,
+      "METRICS_SUMMARY_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as MetricsSummaryResponse;
+}

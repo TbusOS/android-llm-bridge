@@ -19,7 +19,7 @@
  * (boolean / number / string). Passing functions or arrays will
  * trigger unbounded reconnects via the useEffect deps array.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AuditEvent } from "../../lib/api";
 import { connect, type WsClient } from "../../lib/ws";
@@ -28,7 +28,25 @@ import { mapAuditToTimeline } from "./useAudit";
 
 export type AuditStreamStatus = "connecting" | "open" | "closed" | "error";
 
-const MAX_EVENTS = 200;
+/** Business-kind cap. Drives the visible Timeline length. */
+const BUSINESS_CAP = 200;
+/** Metric-kind cap. Aligned with SPARK_WINDOW in useLiveSession so the
+ *  reducer always has enough samples to render a 60 s spark, but a
+ *  long-running session's 1Hz tps_sample stream cannot push business
+ *  events out of the buffer (DEBT-011 fix, F.7). */
+const METRIC_CAP = 60;
+
+/** Server-side authoritative set is `audit_route._DEFAULT_METRIC_KINDS`.
+ *  When ADR-021 grows to add cmd_rate / push_rate, **double-write here**
+ *  — missing it makes server treat the new kind as metric (filtered)
+ *  while client treats it as business (eats into business cap, evicting
+ *  real user/done events under sustained load). DEBT-013 candidate
+ *  tracks pushing this list down from the server when `|kinds| ≥ 3`. */
+const METRIC_KINDS: ReadonlySet<string> = new Set(["tps_sample"]);
+
+function isMetricKind(kind: string): boolean {
+  return METRIC_KINDS.has(kind);
+}
 
 interface SnapshotMessage {
   type: "snapshot";
@@ -89,8 +107,13 @@ export function useAuditStream(
 ): AuditStreamViewModel {
   const { includeMetrics = false, minutes = 30 } = options;
 
-  const [events, setEvents] = useState<TimelineEventData[]>([]);
-  const [rawEvents, setRawEvents] = useState<AuditEvent[]>([]);
+  // Two parallel buffers so a high-rate metric stream cannot evict
+  // business events (DEBT-011). Caps are tuned so each kind keeps
+  // enough history for its own UI consumer:
+  //   business → ActivityTimeline (200 rows)
+  //   metric   → useLiveSession spark (60 samples ≈ 60 s @ 1 Hz)
+  const [businessRaw, setBusinessRaw] = useState<AuditEvent[]>([]);
+  const [metricRaw, setMetricRaw] = useState<AuditEvent[]>([]);
   const [since, setSince] = useState<string | null>(null);
   const [until, setUntil] = useState<string | null>(null);
   const [status, setStatus] = useState<AuditStreamStatus>("connecting");
@@ -123,15 +146,27 @@ export function useAuditStream(
         case "json": {
           const msg = wsEv.data;
           if (isSnapshot(msg)) {
-            setEvents(msg.events.map(mapAuditToTimeline));
-            setRawEvents(msg.events);
+            const business: AuditEvent[] = [];
+            const metric: AuditEvent[] = [];
+            for (const e of msg.events) {
+              if (isMetricKind(e.kind)) metric.push(e);
+              else business.push(e);
+            }
+            // Both setBusinessRaw + setMetricRaw + setSince + setUntil
+            // fire in the same tick. React 18 batches these into a
+            // single render, and the merged-rawEvents useMemo runs
+            // exactly once per render, not per setState call.
+            setBusinessRaw(business.slice(0, BUSINESS_CAP));
+            setMetricRaw(metric.slice(0, METRIC_CAP));
             setSince(msg.since);
             setUntil(msg.until);
           } else if (isEvent(msg)) {
             const raw = msg.data;
-            const ev = mapAuditToTimeline(raw);
-            setEvents((prev) => [ev, ...prev].slice(0, MAX_EVENTS));
-            setRawEvents((prev) => [raw, ...prev].slice(0, MAX_EVENTS));
+            if (isMetricKind(raw.kind)) {
+              setMetricRaw((prev) => [raw, ...prev].slice(0, METRIC_CAP));
+            } else {
+              setBusinessRaw((prev) => [raw, ...prev].slice(0, BUSINESS_CAP));
+            }
           } else if (isControlAck(msg)) {
             setPaused(msg.paused);
           }
@@ -174,6 +209,22 @@ export function useAuditStream(
     }
     clientRef.current?.send({ type: "control", action: "resume" });
   }, [includeMetrics]);
+
+  // Timeline rows: business only. `useMemo` so identity is stable for
+  // child memo'd components.
+  const events = useMemo(
+    () => businessRaw.map(mapAuditToTimeline),
+    [businessRaw],
+  );
+  // Reducer-friendly merged list (newest first by ts). With caps 200 +
+  // 60 the merged array is ≤ 260 entries — sort cost is negligible.
+  const rawEvents = useMemo(() => {
+    if (metricRaw.length === 0) return businessRaw;
+    if (businessRaw.length === 0) return metricRaw;
+    const merged = [...businessRaw, ...metricRaw];
+    merged.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+    return merged;
+  }, [businessRaw, metricRaw]);
 
   return { events, rawEvents, since, until, status, paused, pause, resume };
 }

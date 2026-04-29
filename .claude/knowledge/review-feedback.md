@@ -282,6 +282,89 @@ session runtime 未自动加载，主对话用 general-purpose 代理 + 注入 a
 
 ---
 
+## 2026-04-29 · F.7 KpiStrip 4/4 + dual buffer + label 语义区分
+
+**评审对象**：F.7 staged diff（5 web 文件 + 1 验证报告）。关闭
+DEBT-003 / DEBT-004 / DEBT-011，落实 F.6 review #4 label 强制要求。
+
+**调动**：code-reviewer + architecture-reviewer 并行（项目 agents
+runtime 仍未自动加载，主对话用 general-purpose 代理 + 注入 agent 定义）
+
+### 采纳清单（已实施）
+
+- code [mid] **MCP tools / throughput 在 isError 态显示假"0"** →
+  改 `isLoading || isError ? "—"`，error 单独走"数据获取失败 / fetch
+  failed" 提示
+- code [mid] **snapshot 同帧双 setState React 18 batches 注释**
+  → 加注释说明合并到一次 render，useMemo 跑一次
+- arch [low] **METRIC_KINDS server-side authoritative 注释 + 双改
+  提醒** → 加注释 + 登记 DEBT-013 候选
+- arch [mid] **DEBT-008 升级 low → mid + 触发条件细化**
+  → debts.md 标 升级（events.jsonl ≥ 10k 行 或 多 tab ≥ 1h 触发）
+
+### 维持现状（reviewer 主动结论"现状对"）
+
+- code [low] sort tie-break：ts 微秒精度业务不会撞，加 source
+  localeCompare 是 over-engineered，注释已覆盖意图
+- code [low] `tps ?` 在 mean=0 时走 0 不塌缩 null：是对的（5min 内
+  零生成 = 0 是真值），登记到 DEBT-012 vitest 引入时一起测，不新增独立债
+- code [low] useTools docstring：自查清晰，撤回
+- arch [low] LiveCard tps vs KPI throughput 重连边界短时不一致：
+  label 已解释，F.8 截图脚本不要断言两数字一致性（会误报）
+- arch [low] metric cap 60 在小时级长 session 仍合理：spark 是 live
+  view 不是历史轨迹，evict 老 sample 是设计意图
+
+### 拆 commit 决议
+
+code-reviewer 建议拆三 commit (a)hooks + (b)消费侧 + (c)dual buffer。
+**主对话决议：保持单 commit ship**。理由：项目历史所有 F.x 都单
+commit；拆 (a) 单独"加 dead code 等后续消费"反而显得不完整；DEBT-011
+独立 revert 价值边际。这条 review 反馈记入此处，未来更复杂改动可参考。
+
+### 关闭 DEBT
+
+- ✅ DEBT-003（MCP tools 写死 21）→ KpiStrip 显示真实 33 / 11 categories
+- ✅ DEBT-004（throughput "—"）→ KpiStrip 显示 11.4 tok/s + 5m avg label
+- ✅ DEBT-011（dual cap）→ business 200 + metric 60 dual buffer 落地
+
+### 升级 DEBT
+
+- ⚠ DEBT-008 · severity low → mid（F.7 是第一个稳定消费者）
+
+### 新登记 DEBT
+
+- **DEBT-013**（候选 low） · 前端 METRIC_KINDS 与后端
+  _DEFAULT_METRIC_KINDS 双写不同步。N=1 时不触发，N≥3 时触发
+
+### 学到的新规则（升级到 lessons.md）
+
+- 暂无。F.7 落实既定 ADR-021/022 + L-013/L-016/L-017 路径，无新规律。
+
+### 端到端验证状态（L-017 规则）
+
+✅ done · `.claude/reports/visual-2026-04-29-f7.md`：
+
+- 真实 ollama gemma4:e4b chat session 跑通
+- KpiStrip 4/4 真数据（33 tools / 11.4 tok/s 5m avg / 12 samples /
+  1 device / 4 sessions）
+- DEBT-011 模拟验证：50 biz + 500 metric 合成事件，旧单 cap 18/50
+  vs 新 dual cap 50/50
+- F.6 review #4 完整落实：LiveCard "tok/s now / 现" + KPI "5m avg /
+  5 分均"，semantic 区分清晰
+
+### 对应 agent prompt 调整建议
+
+- 暂无。两个 reviewer 反馈质量高，无重复驳回。
+
+### 累计统计调整
+
+- 总评审次数：6（F.1 / F.3 / F.4 / F.5 / F.6 / **F.7**）
+- 总建议数：72（F.1: 18 / F.3: 10 / F.4: 8 / F.5: 12 / F.6: 15 / **F.7: 9**）
+- F.7 采纳：4 全采纳 + 5 维持（reviewer 主动结论现状对）
+- F.7 形成新规则：0 / 关 3 债 / 升 1 债 / 新候选债 1 / 落实 1 跨档要求
+
+---
+
 ## 2026-04-29 · F.6 端到端验证 + DEBT-001 关闭 + audit_route _project bug 修复
 
 **触发**：arch reviewer 在 F.6 评审里要求"DEBT-001 ship 前必须跑行为
