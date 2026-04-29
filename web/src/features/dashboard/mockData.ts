@@ -149,6 +149,11 @@ export const MOCK_DEVICES: DeviceCardData[] = [
   },
 ];
 
+/**
+ * Dev fixture only — production uses `useBackends` (closes DEBT-002 as
+ * of 2026-04-29). Kept here so storybook / visual regression / future
+ * vitest snapshots have stable seed data without hitting alb-api.
+ */
 export const MOCK_BACKENDS: BackendCardData[] = [
   {
     name: "ollama",

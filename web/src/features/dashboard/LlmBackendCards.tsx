@@ -31,21 +31,39 @@ export function LlmBackendCards({ backends }: Props) {
                     {lang === "zh" ? "延迟 p50" : "latency p50"}
                   </div>
                   <div className="be-stat-value">
-                    {be.latencyMs}
-                    <span className="unit">ms</span>
+                    {/* Runtime health metrics aren't sourced yet —
+                     * registry only tells us a backend is implemented,
+                     * not its live latency. Show "—" rather than 0 to
+                     * avoid implying a real measurement. */}
+                    {be.latencyMs !== undefined ? (
+                      <>
+                        {be.latencyMs}
+                        <span className="unit">ms</span>
+                      </>
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
                 <div>
                   <div className="be-stat-label">tok/s</div>
-                  <div className="be-stat-value">{be.tps}</div>
+                  <div className="be-stat-value">
+                    {be.tps !== undefined ? be.tps : "—"}
+                  </div>
                 </div>
                 <div>
                   <div className="be-stat-label">
                     {lang === "zh" ? "错误" : "errors"}
                   </div>
                   <div className="be-stat-value">
-                    {be.errors?.count ?? 0}
-                    <span className="unit">/ {be.errors?.total ?? 0}</span>
+                    {be.errors !== undefined ? (
+                      <>
+                        {be.errors.count}
+                        <span className="unit">/ {be.errors.total}</span>
+                      </>
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
               </>

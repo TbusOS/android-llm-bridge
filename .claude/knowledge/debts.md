@@ -34,17 +34,17 @@
 
 ---
 
-## DEBT-002 · MOCK_BACKENDS 仍占位
+## DEBT-002 · MOCK_BACKENDS 仍占位 —— **CLOSED 2026-04-29**
 
 - **severity**：low
 - **引入**：D 档（commit 6e5b12b，2026-04-27）
-- **位置**：`web/src/features/dashboard/DashboardPage.tsx` 使用
-  `MOCK_BACKENDS`
-- **原因**：D 档优先把 sessions / devices / audit 三大数据区接通；LLM
-  backend cards 留 mock 暂用
-- **是否计划修**：是（候选 G 档）
-- **还债 sketch**：建一个 useBackends hook 调 `/playground/backends`，
-  把现状 mock 替换。后端端点已存在。
+- **关闭**：G 档（2026-04-29）—— 新 `useBackends` hook 调 GET
+  /playground/backends；DashboardPage 改用 hook，backendMeta 动态
+  caption "1 registered · 3 planned"。LlmBackendCards 改 latencyMs/
+  tps/errors undefined 时显示 "—"（避免假数据 0）
+- **范围拆分**：本档只关 "mock → 真注册表数据"，runtime health
+  缺口（latency/tps/errors 永远 "—"）拆 **DEBT-017** follow-up
+- **agents 评审**：5 建议，4 采纳 + 1 follow-up（empty placeholder 不阻塞）
 
 ---
 
@@ -307,8 +307,47 @@
   没有回归网。
 - **是否计划修**：是
 - **还债 sketch**：web/ 引入 vitest 时一起补 6-8 case：单 sample / 多 sample /
-  done 后续 sample / NaN 守卫 / SPARK_WINDOW cap / 跨 session 切换
+  done 后续 sample / NaN 守卫 / SPARK_WINDOW cap / 跨 session 切换；
+  **+ G 档 mapApiBackendToCard 5 case**（beta / planned / 未知 status /
+  description 空走 requires / requires 空走 ""）
 - **还债条件**：web/ 引入测试框架（候选 G/H 档）
+
+---
+
+## DEBT-017 · LLM backend runtime health 缺口（DEBT-002 follow-up）
+
+- **severity**：mid（多 backend 时无法判断哪个真在跑；小 backend 时
+  用户体感是"为什么 ollama 卡永远是 —"）
+- **引入**：D 档 BackendCardData type 定义 latencyMs/tps/errors/spark/
+  lastUsed/budget 等运行时字段，但注册表没数据源
+- **暴露**：G 档（2026-04-29）端到端验证发现 ollama 卡 latency/tps/
+  errors 全 "—"，arch reviewer 警示用户会误读为"刚启动"而非"未知"
+- **位置**：
+  - 后端：`src/alb/api/playground_route.py` `/playground/backends`
+    只返回静态 manifest，无 health 字段
+  - 前端：`web/src/features/dashboard/useBackends.ts`
+    `mapApiBackendToCard` runtime fields 全留 undefined
+  - type：`web/src/features/dashboard/types.ts BackendCardData` 含
+    mock-era 字段（lastUsed/lastUsedZh/budget）永远不填，会让加新
+    backend 的开发者困惑
+- **是否计划修**：是
+- **还债 sketch**：
+  1. 后端：`GET /playground/backends/{name}/health`，返回 `{ok,
+     last_ping_ms, errors_window, last_latency_ms, model?}`；ping 是
+     带 timeout 的轻探测（ollama HTTP HEAD / OpenAI-compat HEAD），
+     不真跑 chat
+  2. 前端：useBackends 串接 health 端点，按 backend 并行 ping，
+     结果填 latencyMs/errors/model 字段
+  3. UI：当 status=up 但所有 health 字段 undefined 时改文案
+     "registered · status: beta · runtime: unknown" 一行说明，避免
+     空 metric 槽误读
+  4. type 清理：BackendCardData 删 lastUsed/budget（registry 永远不知道）
+  5. follow-up small：DashboardPage `<LlmBackendCards>` 加 isError /
+     empty placeholder（reviewer 发现 #2）
+- **还债条件**：M3 上 OpenAI-compat 后多 backend 同时活；或用户
+  报"为什么 ollama 卡永远是 —"
+- **来源**：G 档 agents 评审（code+arch reviewer 合体）发现 #1 + #4
+  合并触发，主对话采纳
 
 ---
 

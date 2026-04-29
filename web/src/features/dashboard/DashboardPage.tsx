@@ -22,15 +22,13 @@ import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
 import { useAuditStream } from "./useAuditStream";
+import { useBackends } from "./useBackends";
 import { useDevices } from "./useDevices";
 import { useLiveSession } from "./useLiveSession";
 import { useMetricsSummary } from "./useMetricsSummary";
 import { useRecentSessions } from "./useSessions";
 import { useTools } from "./useTools";
-import {
-  MOCK_BACKENDS,
-  MOCK_QUICK_ACTIONS,
-} from "./mockData";
+import { MOCK_QUICK_ACTIONS } from "./mockData";
 import type { KpiCardData } from "./types";
 
 export function DashboardPage() {
@@ -51,6 +49,7 @@ export function DashboardPage() {
   const live = useLiveSession(liveAudit.rawEvents);
   const tools = useTools();
   const metricsSummary = useMetricsSummary(300);
+  const backends = useBackends();
   const kpis = buildKpis(devices, recent, tools, metricsSummary, lang);
 
   return (
@@ -109,13 +108,9 @@ export function DashboardPage() {
         <section>
           <div className="group-head" style={{ marginTop: 0 }}>
             <h2>{lang === "zh" ? "LLM 后端" : "LLM backends"}</h2>
-            <span className="meta">
-              {lang === "zh"
-                ? "1 本地 · 1 暂停 · 2 未配置"
-                : "1 local · 1 paused · 2 unconfigured"}
-            </span>
+            <span className="meta">{backendMeta(backends, lang)}</span>
           </div>
-          <LlmBackendCards backends={MOCK_BACKENDS} />
+          <LlmBackendCards backends={backends.backends} />
         </section>
 
         <section>
@@ -312,6 +307,26 @@ function auditMeta(
     return `近 30 分钟 · ${count} 条 · ${liveLabel}${live ? " ●" : ""}`;
   }
   return `last 30 minutes · ${count} events · ${liveLabel}${live ? " ●" : ""}`;
+}
+
+function backendMeta(
+  vm: ReturnType<typeof useBackends>,
+  lang: Lang,
+): string {
+  if (vm.isLoading) return lang === "zh" ? "加载中…" : "Loading…";
+  if (vm.isError) return lang === "zh" ? "请求失败" : "request failed";
+  const total = vm.backends.length;
+  if (total === 0) {
+    return lang === "zh" ? "无注册后端" : "no backends registered";
+  }
+  const up = vm.backends.filter((b) => b.status === "up").length;
+  const planned = vm.backends.filter((b) => b.status === "unconfigured").length;
+  // "registered" rather than "implemented" — registry status="beta"
+  // means the backend class exists, NOT that the daemon is reachable
+  // or the model is pulled. Runtime health is DEBT-017.
+  return lang === "zh"
+    ? `${up} 已注册 · ${planned} 计划中`
+    : `${up} registered · ${planned} planned`;
 }
 
 function deviceMeta(
