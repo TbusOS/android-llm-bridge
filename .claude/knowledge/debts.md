@@ -48,34 +48,24 @@
 
 ---
 
-## DEBT-003 · KPI MCP tools 写死 21（partial-fix shipped）
+## DEBT-003 · KPI MCP tools 写死 21 —— **CLOSED 2026-04-29**
 
 - **severity**：low
 - **引入**：D step 4（commit 2af137c，2026-04-28）
-- **位置**：`web/src/features/dashboard/DashboardPage.tsx` `buildKpis`
-  里 MCP tools KPI value 写死 "21"
-- **原因**：现有后端没有"列 MCP tool"端点；写死避免接 21 这数字到 21
-  以外时还要改前端
-- **状态（2026-04-28 update）**：**partial-fix shipped**
-  - 后端就绪 ✓（F.4 ship · GET /tools 列 33 个 tool / 11 categories）
-  - 前端待做（F.7）：useTools hook + KpiStrip 用 hook 数据替代写死 21
-- **彻底关闭条件**：F.7 ship 后，KpiStrip MCP tools KPI 显示真实数（33
-  或后续）
+- **关闭**：F.7 ship（2026-04-29）—— useTools hook 接 GET /tools，
+  KpiStrip 显示真实 33 + 11 categories。验证报告
+  `.claude/reports/visual-2026-04-29-f7.md`
 
 ---
 
-## DEBT-004 · KPI LLM throughput 显示 "—"
+## DEBT-004 · KPI LLM throughput 显示 "—" —— **CLOSED 2026-04-29**
 
 - **severity**：mid
 - **引入**：D step 4（commit 2af137c）
-- **位置**：同上，LLM throughput KPI value="—"，deltaText="待 /metrics"
-- **原因**：tps 数据源没就绪（chat session 的 token usage 没全局聚合）
-- **状态（2026-04-28 update）**：**unblocked**
-  - 数据源就绪 ✓（F.1 ship · tps_sample 持续流到 events.jsonl）
-  - 后端 GET /metrics/summary 待加（F.3）
-  - 前端 useMetricsSummary 待加（F.7）
-- **还债 sketch**：F.3 加 `GET /metrics/summary?window=300s` 聚合最近 5 min
-  events.jsonl 的 tps_sample → mean / p50 / p95 / max。F.7 加前端 hook 接 KPI
+- **关闭**：F.7 ship（2026-04-29）—— useMetricsSummary hook 接 GET
+  /metrics/summary?window_seconds=300，KpiStrip 显示真实 mean=11.4
+  tok/s + "5m avg · N samples" label。LiveCard 同步标 "tok/s now /
+  现"区分瞬时 vs 窗口均值（落实 F.6 arch review #4 强制要求）
 
 ---
 
@@ -114,22 +104,29 @@
 
 ---
 
-## DEBT-008 · GET /metrics/summary 缺 short-TTL cache
+## DEBT-008 · GET /metrics/summary 缺 short-TTL cache —— severity 升 low → mid
 
-- **severity**：low
-- **引入**：F.3（commit pending，2026-04-28）
+- **severity**：~~low~~ → **mid**（2026-04-29 升级）
+- **引入**：F.3（commit 5dcc018，2026-04-28）
 - **位置**：`src/alb/api/metrics_summary_route.py` 每次请求全量扫
   `events.jsonl`
-- **原因**：`window_seconds` 上限 24h + events.jsonl 全量遍历。alb-api
-  默认 bind 127.0.0.1，但单机内同源前端循环刷新 / bug 死循环可放大
-  IO 压力。F.3 阶段 events.jsonl 还没积累，问题不显；DEBT-006 events.jsonl
-  rotate 落地前是廉价缓解点。
-- **是否计划修**：M3 一起（连同 DEBT-006 events rotate）
-- **还债 sketch**：进程级 `functools.lru_cache(maxsize=8)` + TTL 60s，
-  按 (window_seconds, session_id) cache 上次结果。或直接走 DEBT-006
-  rotate 后扫描量本身就小。
+- **原因**：`window_seconds` 上限 24h + events.jsonl 全量遍历。
+- **2026-04-29 升级理由**：F.7 ship `useMetricsSummary` 30s refetch +
+  refetchOnWindowFocus，是 DEBT-008 第一个稳定消费者。F.3 时假设
+  "events.jsonl 还没积累，问题不显" 已经废了。
+- **细化触发条件**：
+  - events.jsonl 行数 ≥ 10k（约 3 小时连续 chat 1Hz tps_sample 即达）
+  - 单机 ≥ 2 个 dashboard tab 持续打开 ≥ 1 小时
+  - 任一满足 → 还债优先级提到 M2（不再延后到 M3）
+- **是否计划修**：是（M2 候选，触发条件满足前可不阻塞）
+- **还债 sketch**（细化）：
+  1. 进程级 `functools.lru_cache(maxsize=8)` + TTL 60s，按
+     `(window_seconds, session_id)` cache 上次结果（首选，简单）
+  2. 或文件 mtime + size 校验，如果不变直接返 cache（更精准）
+  3. 客户端缓解：useMetricsSummary `refetchOnWindowFocus: false`
+     + refetchInterval 拉到 60s（不解决根因，但减压）
 - **备注**：security-and-neutrality-auditor agent 在 F.3 评审中提出
-  作为 low 风险，不阻塞 ship。
+  作为 low 风险；F.7 后由 architecture-reviewer 升级为 mid。
 
 
 ## DEBT-010 · /audit/stream WS 协议没预留 session_id / kinds 过滤
@@ -163,23 +160,36 @@
 
 ---
 
-## DEBT-011 · useAuditStream MAX_EVENTS 不分类型，metric 流挤掉 business
+## DEBT-011 · useAuditStream MAX_EVENTS 不分类型 —— **CLOSED 2026-04-29**
 
 - **severity**：mid
 - **引入**：F.5（commit c135816，2026-04-28）+ F.6 暴露
-- **位置**：`web/src/features/dashboard/useAuditStream.ts:31` `MAX_EVENTS = 200`
-- **原因**：双 WS 实例方案下，`liveAudit = useAuditStream({includeMetrics:true})`
-  同时收 business + metric。tps_sample 1Hz 推送，**约 200 秒**后最早
-  的 user / tool_call_start 事件被 `slice(0, MAX_EVENTS)` 挤出 rawEvents。
-  reducer 看不到 user 事件就拿不到 prompt / turn，长 session（> ~3 min）
-  LiveSessionCard 显示 "(no prompt yet)" 但 spark 继续滚动。F.6 没修。
-- **状态**：登记，F.7 一并改
-- **是否计划修**：是
-- **还债 sketch**：useAuditStream 改成按 kind 分桶：metric 桶 cap 60
-  （≈ 60s @ 1Hz，和 SPARK_WINDOW 对齐）+ business 桶 cap 200。或者
-  让 useLiveSession 在 reducer 上游就把两类拆开各自 cap。后者改动
-  范围更小。
-- **还债条件**：F.7 落地（同步动 useAuditStream / useLiveSession）
+- **关闭**：F.7 ship（2026-04-29）—— dual buffer 落地：business cap 200 +
+  metric cap 60（与 SPARK_WINDOW 对齐），useMemo merge 出 newest-first
+  rawEvents 给 reducer。模拟验证：合成 50 biz + 500 metric 事件，
+  旧单 cap 200 → biz 仅存活 18/50（丢 32），新 dual cap → biz 50/50
+  完整。报告 `.claude/reports/visual-2026-04-29-f7.md`
+
+---
+
+## DEBT-013 · 前端 METRIC_KINDS 与后端 _DEFAULT_METRIC_KINDS 双写不同步
+
+- **severity**：low（候选，未触发）
+- **引入**：F.7 dual buffer 落地（commit pending，2026-04-29）
+- **位置**：
+  - 客户端：`web/src/features/dashboard/useAuditStream.ts:36`
+    `const METRIC_KINDS = new Set(["tps_sample"])`
+  - 服务端：`src/alb/api/audit_route.py` `_DEFAULT_METRIC_KINDS`
+- **原因**：前端要按 kind 分桶 cap（business 200 + metric 60，DEBT-011
+  关闭物），但 metric 类目集合在两端各持一份独立 truth。当前 N=1，
+  双改成本可控；ADR-021 提示未来加 cmd_rate / push_rate，到 N≥3 时
+  漏改一边会让"server 推过来但前端当 business 处理"，挤掉真 user 事件。
+- **是否计划修**：视情况
+- **还债 sketch**：把 metric kinds set 由 server 在 audit/stream 首条
+  message 推下来；客户端先收再分桶。代价：增加首条 message schema
+  + 客户端 ready 状态机
+- **还债条件**：metric kinds ≥ 3 类，或前端测试发现"加了 metric 但
+  spark 没响应"
 
 ---
 

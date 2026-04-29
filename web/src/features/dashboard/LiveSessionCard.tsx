@@ -110,7 +110,10 @@ export function LiveSessionCard({ data, streamStatus, onInterrupt }: Props) {
       <div className="live-throughput">
         <span className="live-tps">
           {data.tps}
-          <span className="unit">tok/s</span>
+          {/* "now" / "现" makes the semantic split with the KPI's
+           * "5m avg" explicit (F.6 arch review #4). LiveCard shows
+           * the latest 1 s sample; KPI shows the windowed mean. */}
+          <span className="unit">{lang === "zh" ? "tok/s · 现" : "tok/s now"}</span>
           {streamWarning ? (
             <span
               className="live-tps-stale"

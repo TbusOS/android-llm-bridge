@@ -24,7 +24,9 @@ import { RecentSessions } from "./RecentSessions";
 import { useAuditStream } from "./useAuditStream";
 import { useDevices } from "./useDevices";
 import { useLiveSession } from "./useLiveSession";
+import { useMetricsSummary } from "./useMetricsSummary";
 import { useRecentSessions } from "./useSessions";
+import { useTools } from "./useTools";
 import {
   MOCK_BACKENDS,
   MOCK_QUICK_ACTIONS,
@@ -47,7 +49,9 @@ export function DashboardPage() {
   const audit = useAuditStream({ includeMetrics: false });
   const liveAudit = useAuditStream({ includeMetrics: true });
   const live = useLiveSession(liveAudit.rawEvents);
-  const kpis = buildKpis(devices, recent, lang);
+  const tools = useTools();
+  const metricsSummary = useMetricsSummary(300);
+  const kpis = buildKpis(devices, recent, tools, metricsSummary, lang);
 
   return (
     <section>
@@ -197,16 +201,37 @@ export function DashboardPage() {
   );
 }
 
-/** Compose the 4-tile KPI strip: 2 from real data + 2 still mocked. */
+/** Compose the 4-tile KPI strip from real backend data. */
 function buildKpis(
   devices: ReturnType<typeof useDevices>,
   recent: ReturnType<typeof useRecentSessions>,
+  tools: ReturnType<typeof useTools>,
+  metricsSummary: ReturnType<typeof useMetricsSummary>,
   lang: Lang,
 ): KpiCardData[] {
   const total = devices.devices.length;
   const online = devices.devices.filter((d) => d.status === "online").length;
   const sessions = recent.sessions.length;
   const live = recent.sessions.filter((s) => s.status === "live").length;
+
+  // F.6 architecture review #4: KPI throughput is a windowed mean
+  // (5m avg by default). LiveSessionCard.tps shows the latest sample
+  // ("now"). Both labels make the semantic split explicit so users
+  // don't read divergent numbers as a bug.
+  const throughputValue = metricsSummary.isLoading
+    ? "—"
+    : metricsSummary.meanRounded !== null
+      ? String(metricsSummary.meanRounded)
+      : "—";
+  const throughputDelta =
+    metricsSummary.meanRounded !== null
+      ? lang === "zh"
+        ? `5 分均 · ${metricsSummary.sampleCount} 个采样`
+        : `5m avg · ${metricsSummary.sampleCount} samples`
+      : lang === "zh"
+        ? "5 分均 · 暂无采样"
+        : "5m avg · no samples yet";
+
   return [
     {
       label: "Devices",
@@ -234,17 +259,40 @@ function buildKpis(
     {
       label: "MCP tools",
       labelZh: "MCP 工具",
-      value: "21",
-      deltaText: lang === "zh" ? "见 alb_describe" : "see alb_describe",
-      deltaTextZh: "见 alb_describe",
+      // Show "—" on both loading and error so a transient backend
+      // outage doesn't render a literal "0" (which would look like
+      // truth that 0 tools are registered). Same convention applies
+      // to the throughput tile below.
+      value:
+        tools.isLoading || tools.isError ? "—" : String(tools.count),
+      deltaText: tools.isError
+        ? lang === "zh"
+          ? "数据获取失败"
+          : "fetch failed"
+        : tools.isLoading
+          ? lang === "zh"
+            ? "见 alb_describe"
+            : "see alb_describe"
+          : lang === "zh"
+            ? `${tools.categoryCount} 类`
+            : `${tools.categoryCount} categories`,
+      deltaTextZh: tools.isError
+        ? "数据获取失败"
+        : tools.isLoading
+          ? "见 alb_describe"
+          : `${tools.categoryCount} 类`,
     },
     {
       label: "LLM throughput",
       labelZh: "LLM 吞吐",
-      value: "—",
+      value: metricsSummary.isError ? "—" : throughputValue,
       unit: "tok/s",
-      deltaText: "待 /metrics",
-      deltaTextZh: "待 /metrics",
+      deltaText: metricsSummary.isError
+        ? lang === "zh"
+          ? "数据获取失败"
+          : "fetch failed"
+        : throughputDelta,
+      deltaTextZh: metricsSummary.isError ? "数据获取失败" : throughputDelta,
     },
   ];
 }
