@@ -365,6 +365,54 @@ commit；拆 (a) 单独"加 dead code 等后续消费"反而显得不完整；DE
 
 ---
 
+## 2026-04-29 · F.8 视觉端到端 + /preflight F 档收官
+
+**触发**：F 档（接通 metric 流 + Dashboard 真数据）共 6 commits 累积，
+所有验证都是数据层（reducer 模拟、JSON 拉取），视觉层从未在端到端
+ollama 真跑下被验证过。F.8 收官档跑 Playwright 多分辨率截图 + sky-skills
+三闸 + /preflight 总检查。
+
+**执行内容**：
+- 起 alb-api + ollama gemma4:e4b，跑一段 chat 让 KPI / spark / timeline
+  累积真数据
+- 自定义 `scripts/f8_screenshots.mjs`：6 路由 × 2 viewport（1440/768）
+  = 12 截图，归档至 `.claude/reports/screenshots/2026-04-29-f8/`
+- sky-skills 三闸：verify.py / visual-audit.mjs 跑 mockup 基线 PASS
+- /preflight 总报告归档：`.claude/reports/preflight-2026-04-29-f-dock.md`
+
+**视觉重点验证（dashboard@1440）**：
+- KPI 4/4 全真数据：`Devices 1/1 / Sessions 1 / MCP Tools 33 (11
+  categories) / LLM Throughput 10.7 tok/s · 5m avg · 10 samples` ✓
+- Devices 真设备：`7bcb17848a177476` ✓
+- Recent activity 真事件：`agent done · 115881ms` + 用户 prompt ✓
+- LiveSession idle 态：chat 完成显示 "no live session"（设计正确）
+
+### F.8 自身暴露的问题
+
+1. **alb-api `mount_ui` 不支持 SPA fallback**：F.8 初版 Playwright
+   `page.goto(/app/dashboard)` 直接拍到 FastAPI 404 JSON 页面 →
+   登记 **DEBT-014**（severity mid）
+2. **cmd-palette 在 768 屏 placeholder 文字裁切换行不优雅**：UI fluency
+   候选，未登记债（M3 期 layout polish 一并）
+3. **LiveSession spark 滚动状态截图**需 chat 进行中触发，本档静态
+   截图拍不到（候选下一档 polish 用作 dev_team.html 素材）
+
+### 累计统计
+
+- 总评审次数：6（F.1 / F.3 / F.4 / F.5 / F.6 / F.7；F.8 不调 reviewer，
+  是收官视觉档不是代码档）
+- 总建议数：72，累计采纳率 82%
+- 形成规则数：5（L-013/014/015/016/017）+ 3 ADR + 6 DEBT 操作（4 关
+  / 1 升 / 1 候选）
+- F 档共 7 commits + 1 收官，**F 档完整 ship**
+
+### F 档 ship 决策
+
+✅ ship：见 preflight 报告。F.8 暴露的 DEBT-014 不阻塞收官（dev/local
+绕开有效，prod 影响待跟进）。
+
+---
+
 ## 2026-04-29 · F.6 端到端验证 + DEBT-001 关闭 + audit_route _project bug 修复
 
 **触发**：arch reviewer 在 F.6 评审里要求"DEBT-001 ship 前必须跑行为
