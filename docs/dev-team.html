@@ -1,0 +1,1173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How we ship — android-llm-bridge dev team</title>
+    <meta
+      name="description"
+      content="Inside the agents-team workflow that ships android-llm-bridge: 7 review agents, 4 slash commands, a knowledge base that gets smarter every commit. Real numbers from 8 reviews and 94 suggestions across the F-dock milestone."
+    />
+    <link rel="stylesheet" href="assets/fonts.css" />
+    <link rel="stylesheet" href="assets/anthropic.css" />
+    <style>
+      html[lang="en"] .lang-zh,
+      html[lang^="zh"] .lang-en {
+        display: none !important;
+      }
+      .lang-toggle {
+        font-family: var(--font-heading);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--anth-text-secondary);
+        background: transparent;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill);
+        padding: 6px 14px;
+        cursor: pointer;
+        transition: border-color var(--duration-sm) var(--ease-anth),
+          color var(--duration-sm) var(--ease-anth);
+      }
+      .lang-toggle:hover {
+        border-color: var(--anth-orange);
+        color: var(--anth-orange);
+      }
+      .anth-section {
+        padding: var(--space-9) var(--space-6);
+        max-width: 1120px;
+        margin: 0 auto;
+      }
+      .stat-strip {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: var(--space-4);
+        margin-top: var(--space-6);
+      }
+      .stat-tile {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-5);
+        text-align: center;
+        box-shadow: var(--shadow-card);
+      }
+      .stat-tile .num {
+        font-family: var(--font-heading);
+        font-size: 36px;
+        font-weight: 600;
+        color: var(--anth-orange);
+        line-height: 1.1;
+      }
+      .stat-tile .label {
+        font-family: var(--font-body);
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        margin-top: var(--space-2);
+      }
+      .agent-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-5);
+        margin-top: var(--space-6);
+      }
+      .agent-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-5);
+        box-shadow: var(--shadow-card);
+      }
+      .agent-card h3 {
+        font-family: var(--font-heading);
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0 0 var(--space-2);
+        color: var(--anth-text);
+      }
+      .agent-card .role {
+        font-family: var(--font-heading);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--anth-orange);
+        margin-bottom: var(--space-3);
+      }
+      .agent-card p {
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--anth-text-secondary);
+        margin: 0;
+      }
+      .agent-card .write-tag {
+        display: inline-block;
+        font-family: var(--font-heading);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: var(--radius-pill);
+        margin-top: var(--space-3);
+      }
+      .write-readonly {
+        background: var(--anth-light-gray);
+        color: var(--anth-text-secondary);
+      }
+      .write-reports {
+        background: rgba(217, 119, 87, 0.18);
+        color: #a8502f;
+      }
+      .step-list {
+        counter-reset: step;
+        margin: var(--space-6) 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .step-list li {
+        position: relative;
+        padding: var(--space-4) 0 var(--space-4) 56px;
+        border-bottom: 1px solid var(--anth-light-gray);
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.6;
+      }
+      .step-list li:last-child {
+        border-bottom: none;
+      }
+      .step-list li::before {
+        counter-increment: step;
+        content: counter(step);
+        position: absolute;
+        left: 0;
+        top: var(--space-4);
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius-pill);
+        background: var(--anth-orange);
+        color: #fff;
+        font-family: var(--font-heading);
+        font-weight: 600;
+        font-size: 16px;
+        display: grid;
+        place-items: center;
+      }
+      .step-list strong {
+        font-family: var(--font-heading);
+        font-weight: 600;
+        color: var(--anth-text);
+        display: block;
+        margin-bottom: 4px;
+      }
+      .review-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: var(--space-6);
+        font-family: var(--font-body);
+        font-size: 14px;
+        background: #ffffff;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        box-shadow: var(--shadow-card);
+      }
+      .review-table th,
+      .review-table td {
+        padding: var(--space-3) var(--space-4);
+        text-align: left;
+        border-bottom: 1px solid var(--anth-light-gray);
+      }
+      .review-table th {
+        font-family: var(--font-heading);
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        background: var(--anth-cream);
+        color: var(--anth-text-secondary);
+      }
+      .review-table tr:last-child td {
+        border-bottom: none;
+      }
+      .review-table .rate {
+        font-family: var(--font-heading);
+        font-weight: 600;
+        color: var(--anth-orange);
+      }
+      .review-table .keystroke {
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        font-style: italic;
+      }
+      .knowledge-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-4);
+        margin-top: var(--space-6);
+      }
+      .file-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-5);
+        box-shadow: var(--shadow-card);
+      }
+      .file-card .filename {
+        font-family: "JetBrains Mono", "Menlo", monospace;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--anth-orange);
+        margin-bottom: var(--space-2);
+      }
+      .file-card h3 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0 0 var(--space-2);
+      }
+      .file-card p {
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--anth-text-secondary);
+        margin: 0;
+      }
+      .file-card .writer {
+        font-family: var(--font-heading);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--anth-text-secondary);
+        margin-top: var(--space-3);
+      }
+      .closeup {
+        background: var(--anth-cream);
+        border-left: 4px solid var(--anth-orange);
+        padding: var(--space-5) var(--space-6);
+        margin-top: var(--space-6);
+        border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      }
+      .closeup h3 {
+        font-family: var(--font-heading);
+        font-size: 18px;
+        margin: 0 0 var(--space-3);
+      }
+      .closeup p {
+        font-family: var(--font-body);
+        font-size: 15px;
+        line-height: 1.65;
+        color: var(--anth-text-secondary);
+        margin: 0 0 var(--space-3);
+      }
+      .closeup p:last-child {
+        margin-bottom: 0;
+      }
+      .h-eyebrow {
+        font-family: var(--font-heading);
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--anth-orange);
+        margin-bottom: var(--space-3);
+      }
+      @media (max-width: 880px) {
+        .stat-strip {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .agent-grid,
+        .knowledge-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 540px) {
+        .stat-strip {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="anth-nav">
+      <div class="anth-nav-inner">
+        <nav aria-label="Primary" style="display: flex; align-items: center">
+          <a href="index.html"><span class="lang-en">Home</span><span class="lang-zh">首页</span></a>
+          <a href="agent.md"><span class="lang-en">On-device Agent</span><span class="lang-zh">设备端 Agent</span></a>
+          <a href="webui-preview.html"><span class="lang-en">Web UI Preview</span><span class="lang-zh">Web UI 预览</span></a>
+          <a href="https://github.com/TbusOS/android-llm-bridge" rel="noopener">GitHub</a>
+        </nav>
+        <button
+          type="button"
+          class="lang-toggle"
+          onclick="toggleLang()"
+          aria-label="toggle language"
+        >
+          <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="anth-section">
+      <div class="h-eyebrow">
+        <span class="lang-en">How we ship</span>
+        <span class="lang-zh">我们如何 ship</span>
+      </div>
+      <h1 style="font-size: 56px; line-height: 1.1; margin: 0 0 var(--space-5)">
+        <span class="lang-en"
+          >A review team that
+          <span style="color: var(--anth-orange)">ships in the open</span>.</span
+        >
+        <span class="lang-zh"
+          >把评审团队入仓，<span style="color: var(--anth-orange)"
+            >过程公开可追</span
+          >。</span
+        >
+      </h1>
+      <p
+        style="
+          font-family: var(--font-body);
+          font-size: 19px;
+          line-height: 1.6;
+          color: var(--anth-text-secondary);
+          max-width: 720px;
+        "
+      >
+        <span class="lang-en"
+          >alb's <code>.claude/</code> tree carries 7 review agents, 4 slash
+          commands, and a 5-file knowledge base. Every non-trivial commit goes
+          through the team, every accepted suggestion writes a regression note,
+          every reversed decision lands a fresh ADR. Below: the workflow, the
+          numbers, and what the team caught that humans missed.</span
+        >
+        <span class="lang-zh"
+          >alb 仓库的 <code>.claude/</code> 目录里入仓了 7 个评审 agent、4
+          条 slash 命令、5 份共享知识库。每条非 trivial 改动都过这套团队，
+          采纳的建议会留下回归记录，反转的决策会立新 ADR。下面是工作流、
+          实战数字，以及团队抓到的人没看出来的问题。</span
+        >
+      </p>
+
+      <div class="stat-strip" role="list" aria-label="agents team metrics">
+        <div class="stat-tile" role="listitem">
+          <div class="num">8</div>
+          <div class="label">
+            <span class="lang-en">reviews shipped</span>
+            <span class="lang-zh">已完成评审</span>
+          </div>
+        </div>
+        <div class="stat-tile" role="listitem">
+          <div class="num">94</div>
+          <div class="label">
+            <span class="lang-en">suggestions raised</span>
+            <span class="lang-zh">提出建议</span>
+          </div>
+        </div>
+        <div class="stat-tile" role="listitem">
+          <div class="num">84%</div>
+          <div class="label">
+            <span class="lang-en">acceptance rate</span>
+            <span class="lang-zh">采纳率</span>
+          </div>
+        </div>
+        <div class="stat-tile" role="listitem">
+          <div class="num">6</div>
+          <div class="label">
+            <span class="lang-en">lessons learned</span>
+            <span class="lang-zh">沉淀教训</span>
+          </div>
+        </div>
+        <div class="stat-tile" role="listitem">
+          <div class="num">4</div>
+          <div class="label">
+            <span class="lang-en">ADRs recorded</span>
+            <span class="lang-zh">立档决策</span>
+          </div>
+        </div>
+        <div class="stat-tile" role="listitem">
+          <div class="num">6</div>
+          <div class="label">
+            <span class="lang-en">debts closed</span>
+            <span class="lang-zh">已关技术债</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="anth-section" id="agents">
+      <div class="h-eyebrow">
+        <span class="lang-en">Roles</span><span class="lang-zh">角色</span>
+      </div>
+      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
+        <span class="lang-en">7 specialised reviewers, 5 read-only.</span>
+        <span class="lang-zh">7 个专项评审 · 5 个只读。</span>
+      </h2>
+      <p
+        style="
+          font-family: var(--font-body);
+          font-size: 16px;
+          line-height: 1.6;
+          color: var(--anth-text-secondary);
+          max-width: 720px;
+        "
+      >
+        <span class="lang-en"
+          >Each agent owns one slice of quality. Five agents have no Write
+          tool at all — their findings come back as a report; the main
+          conversation decides what to land. Two agents (perf / ui-fluency /
+          visual) can write only to <code>.claude/reports/&lt;agent&gt;-&lt;ts&gt;.md</code>.
+          No agent ever edits product code.</span
+        >
+        <span class="lang-zh"
+          >每个 agent 负责一个质量维度。5 个完全只读 —— 反馈以报告形式回到
+          主对话，由主对话决定是否落地。2 个能写但只能写到
+          <code>.claude/reports/&lt;agent&gt;-&lt;ts&gt;.md</code>。没有任何
+          agent 会改产品代码。</span
+        >
+      </p>
+
+      <div class="agent-grid">
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">code reviewer</span>
+            <span class="lang-zh">代码评审</span>
+          </div>
+          <h3>code-reviewer</h3>
+          <p>
+            <span class="lang-en"
+              >Resource lifetime, error propagation, race conditions, test
+              coverage, API contracts. Five dimensions, two findings each
+              max.</span
+            >
+            <span class="lang-zh"
+              >资源生命周期 · 错误传播 · 并发争用 · 测试覆盖 · API 设计。
+              五维度、每维度最多两条。</span
+            >
+          </p>
+          <span class="write-tag write-readonly">read-only</span>
+        </article>
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">architecture reviewer</span>
+            <span class="lang-zh">架构评审</span>
+          </div>
+          <h3>architecture-reviewer</h3>
+          <p>
+            <span class="lang-en"
+              >Module boundaries, dependency direction, debt accrual, ADR
+              consistency. Required to flag every reversal of a prior ADR's
+              alternatives.</span
+            >
+            <span class="lang-zh"
+              >模块边界 · 依赖方向 · 债务积累 · ADR 一致性。必须标记任何
+              反转既有 ADR 备选方案的改动。</span
+            >
+          </p>
+          <span class="write-tag write-readonly">read-only</span>
+        </article>
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">performance auditor</span>
+            <span class="lang-zh">性能审计</span>
+          </div>
+          <h3>performance-auditor</h3>
+          <p>
+            <span class="lang-en"
+              >Bundle size, render cost, memory footprint, network chatter,
+              long-task wallclock. Files reports per run.</span
+            >
+            <span class="lang-zh"
+              >包体积 · 渲染开销 · 内存 · 网络频次 · 长任务时长。每次运行
+              落一份报告。</span
+            >
+          </p>
+          <span class="write-tag write-reports">reports/</span>
+        </article>
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">ui fluency auditor</span>
+            <span class="lang-zh">界面流畅度</span>
+          </div>
+          <h3>ui-fluency-auditor</h3>
+          <p>
+            <span class="lang-en"
+              >Animation cadence, layout shift, three-state UI (loading / error
+              / data), keyboard nav, a11y. Captures screenshots when a smell
+              shows up.</span
+            >
+            <span class="lang-zh"
+              >动画节奏 · CLS · 三态 UI（加载 / 出错 / 有数据）· 键盘导航 ·
+              a11y。看到可疑迹象会截图存证。</span
+            >
+          </p>
+          <span class="write-tag write-reports">reports/</span>
+        </article>
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">mockup baseline checker</span>
+            <span class="lang-zh">基线对照</span>
+          </div>
+          <h3>mockup-baseline-checker</h3>
+          <p>
+            <span class="lang-en"
+              >Compares React render output against the source HTML mockup
+              (<code>docs/webui-preview-v*.html</code>). Catches drift before
+              it ships.</span
+            >
+            <span class="lang-zh"
+              >对照 React 渲染结果与源 HTML mockup
+              （<code>docs/webui-preview-v*.html</code>）。在偏离 ship 前抓住。</span
+            >
+          </p>
+          <span class="write-tag write-readonly">read-only</span>
+        </article>
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">visual audit runner</span>
+            <span class="lang-zh">视觉审验</span>
+          </div>
+          <h3>visual-audit-runner</h3>
+          <p>
+            <span class="lang-en"
+              >Wraps the sky-skills three-gate Playwright + WCAG scripts.
+              Files per-route screenshots into the timestamped reports
+              folder.</span
+            >
+            <span class="lang-zh"
+              >包装 sky-skills 三道闸 Playwright + WCAG 脚本。按路由出
+              截图，归档到时间戳报告目录。</span
+            >
+          </p>
+          <span class="write-tag write-reports">reports/</span>
+        </article>
+        <article class="agent-card">
+          <div class="role">
+            <span class="lang-en">security &amp; neutrality</span>
+            <span class="lang-zh">合规检查</span>
+          </div>
+          <h3>security-and-neutrality-auditor</h3>
+          <p>
+            <span class="lang-en"
+              >OWASP basics, XSS surfaces, credential exposure, plus the
+              project-specific neutrality rule (no employer brand names
+              leaking into open-source code).</span
+            >
+            <span class="lang-zh"
+              >OWASP 基本面 · XSS 表面 · 凭证泄漏，加上项目特定的中立性
+              规则（开源仓库不允许出现雇主品牌名）。</span
+            >
+          </p>
+          <span class="write-tag write-readonly">read-only</span>
+        </article>
+        <article class="agent-card" style="background: var(--anth-cream)">
+          <div class="role">
+            <span class="lang-en">main conversation</span>
+            <span class="lang-zh">主对话</span>
+          </div>
+          <h3>(you, the operator)</h3>
+          <p>
+            <span class="lang-en"
+              >Spawns reviewers, integrates feedback, asks the user to accept
+              or reject each suggestion, writes accepted ones into knowledge
+              files, and only commits after the user signs off the message.</span
+            >
+            <span class="lang-zh"
+              >调起评审者，整合反馈，逐条问用户采纳或驳回，把采纳的写入
+              知识库，commit message 用户审过后才执行 commit。</span
+            >
+          </p>
+          <span class="write-tag write-readonly">writes knowledge</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="anth-section" id="workflow">
+      <div class="h-eyebrow">
+        <span class="lang-en">Workflow</span>
+        <span class="lang-zh">工作流</span>
+      </div>
+      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
+        <span class="lang-en">Six steps from sketch to ship.</span>
+        <span class="lang-zh">从草图到 ship · 六步走完。</span>
+      </h2>
+      <ol class="step-list">
+        <li>
+          <strong>
+            <span class="lang-en">Write code, run the three gates</span>
+            <span class="lang-zh">写代码，过三道闸</span>
+          </strong>
+          <span class="lang-en"
+            >645+ pytest pass, sensitive-words 0, offline-purity clean. Tests
+            stay green before any reviewer is spawned.</span
+          >
+          <span class="lang-zh"
+            >645+ pytest 全过 · 敏感词 0 · offline-purity 干净。任何评审者
+            被调起之前，测试必须是绿的。</span
+          >
+        </li>
+        <li>
+          <strong>
+            <span class="lang-en">Stage and spawn reviewers in parallel</span>
+            <span class="lang-zh">stage 改动，并行调起评审者</span>
+          </strong>
+          <span class="lang-en"
+            >Code-review-only changes get code-reviewer + security; new modules
+            also get architecture-reviewer; UI changes go through ui-check
+            (mockup → fluency → visual, sequential).</span
+          >
+          <span class="lang-zh"
+            >只改代码 → code-reviewer + security 并行；引入新模块 → 加
+            architecture-reviewer；UI 改动走 ui-check（mockup → 流畅度 →
+            视觉，串行）。</span
+          >
+        </li>
+        <li>
+          <strong>
+            <span class="lang-en">Integrate findings, ask the user</span>
+            <span class="lang-zh">整合反馈，逐条问用户</span>
+          </strong>
+          <span class="lang-en"
+            >Main conversation summarises every finding, recommends accept /
+            reject / partial, and waits for the user to confirm. No silent
+            decisions.</span
+          >
+          <span class="lang-zh"
+            >主对话汇总每条建议，给出采纳 / 驳回 / 部分采纳推荐，等用户
+            确认。不允许默默决定。</span
+          >
+        </li>
+        <li>
+          <strong>
+            <span class="lang-en">Apply changes, end-to-end verify</span>
+            <span class="lang-zh">落地改动，端到端验证</span>
+          </strong>
+          <span class="lang-en"
+            >Re-run gates. For new data paths or deployment surfaces, run a
+            real browser hit (lesson L-017) — type-checking and unit tests do
+            not catch wiring bugs.</span
+          >
+          <span class="lang-zh"
+            >再过三闸。新数据路径或新部署表面要跑真浏览器（教训 L-017）
+            —— 类型检查和单元测试抓不住接线 bug。</span
+          >
+        </li>
+        <li>
+          <strong>
+            <span class="lang-en">Write knowledge before commit</span>
+            <span class="lang-zh">commit 前写知识库</span>
+          </strong>
+          <span class="lang-en"
+            >Accepted suggestions become diff comments; rejected ones become
+            <code>review-feedback.md</code> entries. New rules become lessons.
+            Reversed decisions become new ADRs.</span
+          >
+          <span class="lang-zh"
+            >采纳的建议变成 diff 注释；驳回的进
+            <code>review-feedback.md</code>。形成新规律 → lessons；反转
+            决策 → 新 ADR。</span
+          >
+        </li>
+        <li>
+          <strong>
+            <span class="lang-en">User reviews the commit message, then push</span>
+            <span class="lang-zh">用户审 commit message → push</span>
+          </strong>
+          <span class="lang-en"
+            >Two confirmations, two checkpoints: commit message before
+            <code>git commit</code>, push readiness before <code>git push</code>.</span
+          >
+          <span class="lang-zh"
+            >两道确认 · 两道关卡：<code>git commit</code> 前确认 message，
+            <code>git push</code> 前再次确认。</span
+          >
+        </li>
+      </ol>
+    </section>
+
+    <section class="anth-section" id="track-record">
+      <div class="h-eyebrow">
+        <span class="lang-en">Track record</span>
+        <span class="lang-zh">实战记录</span>
+      </div>
+      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
+        <span class="lang-en"
+          >Eight reviews across the F-dock milestone.</span
+        >
+        <span class="lang-zh">F 档里程碑 · 八次评审。</span>
+      </h2>
+      <p
+        style="
+          font-family: var(--font-body);
+          font-size: 16px;
+          line-height: 1.6;
+          color: var(--anth-text-secondary);
+          max-width: 720px;
+        "
+      >
+        <span class="lang-en"
+          >F-dock connected the live token-throughput stream end-to-end —
+          backend sampler, dual WS, reducer, KPI tile. Every step had a
+          review, every review left a paper trail in
+          <code>.claude/knowledge/review-feedback.md</code>.</span
+        >
+        <span class="lang-zh"
+          >F 档接通了端到端的 token 吞吐流：后端采样、双 WS、reducer、
+          KPI 卡片。每步都有评审，每次评审都在
+          <code>.claude/knowledge/review-feedback.md</code> 留痕。</span
+        >
+      </p>
+      <table class="review-table">
+        <thead>
+          <tr>
+            <th><span class="lang-en">step</span><span class="lang-zh">步骤</span></th>
+            <th><span class="lang-en">topic</span><span class="lang-zh">主题</span></th>
+            <th><span class="lang-en">suggestions</span><span class="lang-zh">建议数</span></th>
+            <th><span class="lang-en">acceptance</span><span class="lang-zh">采纳率</span></th>
+            <th><span class="lang-en">key output</span><span class="lang-zh">关键产出</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>F.1</td>
+            <td>
+              <span class="lang-en">TokenSampler + tps_sample bus</span>
+              <span class="lang-zh">TokenSampler + tps_sample 总线</span>
+            </td>
+            <td>18</td>
+            <td class="rate">65%</td>
+            <td>
+              <span class="lang-en"
+                >ADR-021, L-013 bus event split — caught a 2–3× precision bug
+                that would have shipped silently.</span
+              >
+              <span class="lang-zh"
+                >ADR-021、L-013 总线事件分类 —— 抓到一个会静默 ship 的
+                2–3 倍精度错。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>F.3</td>
+            <td><code>GET /metrics/summary</code></td>
+            <td>10</td>
+            <td class="rate">80%</td>
+            <td>
+              <span class="lang-en"
+                >Defensive type guards, DEBT-008 cache stub.</span
+              >
+              <span class="lang-zh"
+                >防御性类型守卫，DEBT-008 缓存条目登记。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>F.4</td>
+            <td><code>GET /tools</code></td>
+            <td>8</td>
+            <td class="rate">100%</td>
+            <td>
+              <span class="lang-en"
+                >L-014 — MCP tool docstrings are public API.</span
+              >
+              <span class="lang-zh"
+                >L-014 —— MCP 工具 docstring 是公开 API。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>F.5</td>
+            <td>
+              <span class="lang-en">Dual WS instances</span>
+              <span class="lang-zh">双 WS 实例</span>
+            </td>
+            <td>12</td>
+            <td class="rate">92%</td>
+            <td>
+              <span class="lang-en"
+                >ADR-022 reverses ADR-018 alt c; <strong>L-015 meta-rule
+                </strong>— reversed decisions need a fresh ADR, period.</span
+              >
+              <span class="lang-zh"
+                >ADR-022 反转 ADR-018 备选 c；<strong>L-015 元规则</strong> ——
+                反转决策必须立新 ADR。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>F.6</td>
+            <td>
+              <span class="lang-en">tps_sample reducer</span>
+              <span class="lang-zh">tps_sample reducer</span>
+            </td>
+            <td>15</td>
+            <td class="rate">87%</td>
+            <td>
+              <span class="lang-en"
+                >L-016 view-aware scaling, plus L-017 — end-to-end testing
+                discovered a 4-month-old projection bug that unit tests
+                missed.</span
+              >
+              <span class="lang-zh"
+                >L-016 view-aware 协议下 scaling 同层；L-017 触发 ——
+                端到端测试发现单元测试漏掉的、4 个月前就埋下的投影 bug。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>F.7</td>
+            <td>
+              <span class="lang-en">KpiStrip + dual buffer</span>
+              <span class="lang-zh">KpiStrip + 双缓冲</span>
+            </td>
+            <td>9</td>
+            <td class="rate">78%</td>
+            <td>
+              <span class="lang-en"
+                >Closed DEBT-003/004/011, escalated DEBT-008 low → mid (the
+                first stable consumer changed the calculus).</span
+              >
+              <span class="lang-zh"
+                >关闭 DEBT-003/004/011；DEBT-008 升级 low → mid（第一个稳定
+                消费者改变了优先级）。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>DEBT-014</td>
+            <td>
+              <span class="lang-en">alb-api SPA fallback</span>
+              <span class="lang-zh">alb-api SPA fallback</span>
+            </td>
+            <td>10</td>
+            <td class="rate">90%</td>
+            <td>
+              <span class="lang-en"
+                >Subclassed StaticFiles, kept asset 404s honest.</span
+              >
+              <span class="lang-zh"
+                >子类化 StaticFiles，保留 asset 真 404 不被改写成白页。</span
+              >
+            </td>
+          </tr>
+          <tr>
+            <td>DEBT-015</td>
+            <td>
+              <span class="lang-en">GH Pages SPA fallback</span>
+              <span class="lang-zh">GH Pages SPA fallback</span>
+            </td>
+            <td>12</td>
+            <td class="rate">92%</td>
+            <td>
+              <span class="lang-en"
+                >ADR-023 cross-surface heterogeneity, L-018 inline-recovery
+                rule. Prod verify exposed an unrelated 6-day-old vite-base bug
+                (DEBT-016).</span
+              >
+              <span class="lang-zh"
+                >ADR-023 跨部署 surface 异构；L-018 静态托管 recovery 必须
+                inline 同步。Prod 验证还暴露一个 6 天前就有的 vite base
+                bug（DEBT-016）。</span
+              >
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="closeup">
+        <h3>
+          <span class="lang-en">Highlight: F.5 reviewer caught a doc debt no human flagged</span>
+          <span class="lang-zh">高光：F.5 评审者抓到了人没看出来的文档债</span>
+        </h3>
+        <p>
+          <span class="lang-en"
+            >F.5 implemented "alt c" of ADR-018 (separate WS per kind) — but
+            ADR-018 had explicitly rejected that alternative. The
+            architecture-reviewer dug through the historical ADR, noticed the
+            reversal, and demanded a new ADR rather than letting the contradiction
+            ship as a sketch comment. ADR-022 was born; meta-rule L-015 was
+            promoted: reversed decisions never sneak through commit messages
+            again.</span
+          >
+          <span class="lang-zh"
+            >F.5 实施了 ADR-018 的"备选 c"（不同 kind 分别开 WS）—— 而 ADR-018
+            明确否决过这个备选。architecture-reviewer 翻了历史 ADR，识别出反转，
+            要求立新 ADR 而不是把矛盾留在 sketch 注释里。于是 ADR-022 诞生；
+            元规则 L-015 升级：反转决策再也不能从 commit message 偷偷过去了。</span
+          >
+        </p>
+      </div>
+
+      <div class="closeup">
+        <h3>
+          <span class="lang-en">Highlight: F.6 end-to-end run found a 4-month-old wiring bug</span>
+          <span class="lang-zh">高光：F.6 端到端跑出了 4 个月前的接线 bug</span>
+        </h3>
+        <p>
+          <span class="lang-en"
+            >Unit tests, type-check, sensitive-word scan, offline-purity check
+            — all green. Then the F.6 closing run booted alb-api, hit a real
+            chat session, and watched the LiveSession spark stay flat at zero.
+            Trace: <code>audit_route._project()</code> had been silently
+            dropping the <code>data</code> field on every event since C.1
+            (commit 36537d5, 4 months prior). The reducer's defensive
+            <code>data ?? {}</code> fallback masked it; only end-to-end
+            data flow exposed it.</span
+          >
+          <span class="lang-zh"
+            >单元测试、类型检查、敏感词、offline-purity 全绿。然后 F.6 收官
+            阶段起 alb-api 跑真 chat session，发现 LiveSession spark 贴底为零。
+            追根溯源：<code>audit_route._project()</code> 从 C.1（commit
+            36537d5，4 个月前）开始就一直在静默丢弃 <code>data</code> 字段。
+            reducer 的防御性 <code>data ?? {}</code> 兜底把这条 bug 盖住了 ——
+            只有端到端跑真数据才能挖出来。</span
+          >
+        </p>
+        <p>
+          <span class="lang-en"
+            >Lesson L-017: deployment-layer wiring (SPA fallback, projection,
+            CDN cache rules) is a path too. If you mount it, hit it with a real
+            browser before you ship.</span
+          >
+          <span class="lang-zh"
+            >教训 L-017：部署层兜底（SPA fallback、投影、CDN 缓存规则）也是
+            数据路径。挂上之后必须用真浏览器打一次再 ship。</span
+          >
+        </p>
+      </div>
+    </section>
+
+    <section class="anth-section" id="knowledge">
+      <div class="h-eyebrow">
+        <span class="lang-en">Knowledge base</span>
+        <span class="lang-zh">知识库</span>
+      </div>
+      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
+        <span class="lang-en">Five files agents read before reviewing.</span>
+        <span class="lang-zh">评审前必读的五份文件。</span>
+      </h2>
+      <p
+        style="
+          font-family: var(--font-body);
+          font-size: 16px;
+          line-height: 1.6;
+          color: var(--anth-text-secondary);
+          max-width: 720px;
+        "
+      >
+        <span class="lang-en"
+          >Only the main conversation writes here — agents read but never
+          touch. This keeps the team's shared memory clean from any single
+          run's hallucination.</span
+        >
+        <span class="lang-zh"
+          >只有主对话能写 —— agent 只读不改。这样团队记忆不会被任何单次
+          运行的幻觉污染。</span
+        >
+      </p>
+      <div class="knowledge-grid">
+        <div class="file-card">
+          <div class="filename">architecture.md</div>
+          <h3>
+            <span class="lang-en">Module map &amp; invariants</span>
+            <span class="lang-zh">模块地图与不变量</span>
+          </h3>
+          <p>
+            <span class="lang-en"
+              >Where things live, who depends on whom, and the cross-cutting
+              rules that must hold (e.g. SPA route paths cannot contain
+              <code>.</code>).</span
+            >
+            <span class="lang-zh"
+              >模块在哪、谁依赖谁、必须守住的横切规则（比如 SPA 路由路径
+              段不能含 <code>.</code>）。</span
+            >
+          </p>
+          <div class="writer">
+            <span class="lang-en">writer: main conversation</span>
+            <span class="lang-zh">写者：主对话</span>
+          </div>
+        </div>
+        <div class="file-card">
+          <div class="filename">decisions.md</div>
+          <h3>
+            <span class="lang-en">ADRs (4 active)</span>
+            <span class="lang-zh">ADR（已立 4 条）</span>
+          </h3>
+          <p>
+            <span class="lang-en"
+              >Each major decision: context, decision, alternatives, trade-off,
+              when to revisit. ADR-022 reverses ADR-018; ADR-023 documents
+              cross-surface heterogeneity.</span
+            >
+            <span class="lang-zh"
+              >每条重大决策：上下文、决定、备选、trade-off、何时重审。
+              ADR-022 反转 ADR-018；ADR-023 记录跨部署 surface 的异构。</span
+            >
+          </p>
+          <div class="writer">
+            <span class="lang-en">writer: main conversation</span>
+            <span class="lang-zh">写者：主对话</span>
+          </div>
+        </div>
+        <div class="file-card">
+          <div class="filename">debts.md</div>
+          <h3>
+            <span class="lang-en">Tracked technical debt</span>
+            <span class="lang-zh">登记的技术债</span>
+          </h3>
+          <p>
+            <span class="lang-en"
+              >Each debt: severity, where it lives, why we deferred, what
+              triggers repayment. Six closed, one upgraded, three new in this
+              cycle.</span
+            >
+            <span class="lang-zh"
+              >每条债：严重度、位置、为什么推迟、什么条件触发还。本周期
+              6 关 · 1 升 · 3 新。</span
+            >
+          </p>
+          <div class="writer">
+            <span class="lang-en">writer: main conversation</span>
+            <span class="lang-zh">写者：主对话</span>
+          </div>
+        </div>
+        <div class="file-card">
+          <div class="filename">lessons.md</div>
+          <h3>
+            <span class="lang-en">Lessons (L-013…L-018)</span>
+            <span class="lang-zh">教训 (L-013–L-018)</span>
+          </h3>
+          <p>
+            <span class="lang-en"
+              >Negative-pattern catalogue with root cause, rule, and
+              "where agents apply this". L-017 (end-to-end gates real bugs)
+              has its own positive case file.</span
+            >
+            <span class="lang-zh"
+              >反模式清单，记录根因、规则、agent 在哪应用。L-017
+              （端到端验证抓真 bug）配有专属正面案例。</span
+            >
+          </p>
+          <div class="writer">
+            <span class="lang-en">writer: main conversation</span>
+            <span class="lang-zh">写者：主对话</span>
+          </div>
+        </div>
+        <div class="file-card" style="grid-column: span 2">
+          <div class="filename">review-feedback.md</div>
+          <h3>
+            <span class="lang-en">Per-review log: what was rejected and why</span>
+            <span class="lang-zh">逐场评审日志：驳回了什么、理由</span>
+          </h3>
+          <p>
+            <span class="lang-en"
+              >Mandatory reading for every reviewer. Suggestions rejected
+              three times in a row are signals to tune the agent prompt;
+              suggestions accepted three times graduate into lessons.</span
+            >
+            <span class="lang-zh"
+              >每位评审者必读。同类建议被驳回三次是信号 ——
+              该调 agent prompt；被采纳三次则升级为 lesson。</span
+            >
+          </p>
+          <div class="writer">
+            <span class="lang-en">writer: main conversation · readers: every agent</span>
+            <span class="lang-zh">写者：主对话 · 读者：每个 agent</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="anth-section" id="reuse">
+      <div class="h-eyebrow">
+        <span class="lang-en">Reuse</span>
+        <span class="lang-zh">复用</span>
+      </div>
+      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
+        <span class="lang-en">Any clone gets the team for free.</span>
+        <span class="lang-zh">任意 clone · 团队即得即用。</span>
+      </h2>
+      <p
+        style="
+          font-family: var(--font-body);
+          font-size: 17px;
+          line-height: 1.65;
+          color: var(--anth-text-secondary);
+          max-width: 720px;
+        "
+      >
+        <span class="lang-en"
+          >Agent definitions live under <code>.claude/agents/</code>; slash
+          commands under <code>.claude/commands/</code>; the knowledge base
+          under <code>.claude/knowledge/</code>. They're all in-tree. Clone
+          the repo, open Claude Code, and the team is there. Type <code>/review</code>
+          on staged changes and the code-reviewer + security-and-neutrality
+          agents run in parallel; <code>/preflight</code> runs all seven
+          before a milestone.</span
+        >
+        <span class="lang-zh"
+          >Agent 定义在 <code>.claude/agents/</code>；slash 命令在
+          <code>.claude/commands/</code>；知识库在
+          <code>.claude/knowledge/</code>。全部入仓。clone 完打开 Claude
+          Code，团队就在。在 stage 的改动上敲 <code>/review</code>，
+          code-reviewer 和 security-and-neutrality 并行跑；
+          <code>/preflight</code> 在里程碑前跑全部七个。</span
+        >
+      </p>
+      <p
+        style="
+          font-family: var(--font-body);
+          font-size: 17px;
+          line-height: 1.65;
+          color: var(--anth-text-secondary);
+          max-width: 720px;
+          margin-top: var(--space-4);
+        "
+      >
+        <span class="lang-en"
+          >No CI dependency. No third-party service. No proprietary plugin.
+          The whole workflow is plain Markdown plus a few Python and Node
+          scripts. Fork it, adapt the agent prompts to your domain, and
+          ship.</span
+        >
+        <span class="lang-zh"
+          >不依赖 CI。不依赖第三方服务。不依赖私有插件。整套工作流就是
+          Markdown 加几个 Python 和 Node 脚本。fork 一份、把 agent
+          prompt 调成你的领域，就能 ship。</span
+        >
+      </p>
+    </section>
+
+    <footer
+      style="
+        background: var(--anth-cream);
+        padding: var(--space-8) var(--space-6);
+        text-align: center;
+        border-top: 1px solid var(--anth-light-gray);
+        font-family: var(--font-body);
+        color: var(--anth-text-secondary);
+      "
+    >
+      <p style="margin: 0">
+        <span class="lang-en">
+          Open source · MIT licence ·
+          <a href="https://github.com/TbusOS/android-llm-bridge" rel="noopener"
+            >github.com/TbusOS/android-llm-bridge</a
+          >
+        </span>
+        <span class="lang-zh">
+          开源 · MIT 协议 ·
+          <a href="https://github.com/TbusOS/android-llm-bridge" rel="noopener"
+            >github.com/TbusOS/android-llm-bridge</a
+          >
+        </span>
+      </p>
+    </footer>
+
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        html.lang = html.lang.startsWith("zh") ? "en" : "zh-CN";
+      }
+    </script>
+  </body>
+</html>
