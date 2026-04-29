@@ -126,6 +126,12 @@ ChatRequest ──┐
 - `workspace/events.jsonl` append-only，绝不就地改写已有行
 - `docs/webui-preview-v*.html` 改版 → 必须走三道闸再合入
 - React class 名要照搬 mockup（feedback_react_ui_design_baseline 规则）
+- **SPA route 路径段不能含 `.`**（DEBT-014 fix，2026-04-29）：
+  TanStack Router 路由（`web/src/router.tsx createRoute path:`）任何
+  段都不能有点。后端 SPA fallback 启发式（`src/alb/api/ui_static.py
+  SPAStaticFiles`）以"最后一段含 `.`" 判断"看起来是 asset"→ 真 404
+  propagate；不含点 → fallback 到 index.html。路由含点会被误判成
+  asset，浏览器深链 / 刷新 404。
 
 ## 测试地图
 

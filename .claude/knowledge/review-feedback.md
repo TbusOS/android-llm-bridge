@@ -413,6 +413,65 @@ ollama 真跑下被验证过。F.8 收官档跑 Playwright 多分辨率截图 + 
 
 ---
 
+## 2026-04-29 · DEBT-014 alb-api SPA fallback 修复
+
+**评审对象**：staged diff（`src/alb/api/ui_static.py` + `tests/api/test_ui_static.py`）
+
+**调动**：code-reviewer + architecture-reviewer 并行
+
+**改动**：新增 `SPAStaticFiles(StaticFiles)` 子类 override get_response，
+404 + 无扩展名 → fallback 到 index.html；含点 path（asset）让真 404
+propagate。+2 unit test。L-017 端到端验证规则的正面 case。
+
+### 采纳清单（已实施）
+
+- code [mid] **trailing slash / query string / multi-dot 边界没测** →
+  加 3 case 测试（trailing `/`、`?tab=charts`、`/app/foo.bar.baz` 真 404）
+- code [low] **get_response 缺返回类型注解** → 加 `-> Response`
+- code [low] **docstring 没说清 html=True 与 SPA fallback 职责分工**
+  → 加段说明两者覆盖正交 path 模式不冗余
+- code [low] **错误传播谱系完整性需说明** → docstring 加"401/405/OSError
+  propagate unchanged"
+- arch [low] **隐性合约：SPA route 不能含点** → SPAStaticFiles docstring
+  加硬合约 + `web/src/router.tsx` 顶部加注释指回
+- arch [low] **architecture.md 关键不变量加 SPA route 不变量** →
+  加一行
+- arch [mid] **范围拆分合理但 follow-up 需要载体** → 拆 **DEBT-015**
+  GH Pages prod 同问题，避免 DEBT-014"半 closed"
+- arch [low] **L-017 加正面 case 引用** → lessons.md L-017 段加 DEBT-014
+  详细案例，强调"部署层兜底也是 path，加 mount 后必须真浏览器 hit"
+- arch (建议) **f8_screenshots.mjs 改回直访不再绕开** → 已落地，12/12
+  直 page.goto 通过
+
+### 维持现状（reviewer 主动结论"现状对"）
+
+- code [mid] FileResponse 不传 stat_result，每次多一次 stat：observation
+  only，未 measure 性能问题不动
+- code [low] error 传播谱系完整：维持
+- arch [low] 不升级白名单方案：启发式失败模式清晰自限，over-engineering
+
+### 关闭 DEBT
+
+- ✅ DEBT-014 标 **CLOSED 2026-04-29 (alb-api side)** —— 含 +2 unit
+  test + 真浏览器 Playwright deep-link/refresh/nested 3/3 pass +
+  curl 5/5 SPA route 200 HTML / 3/3 missing asset 真 404
+
+### 新登记 DEBT
+
+- **DEBT-015**（low）· GH Pages prod 同 SPA fallback 缺失（DEBT-014
+  follow-up）。修法用 spa-github-pages 套路（404.html + query-encoded
+  redirect script），候选下一档
+
+### 累计统计调整
+
+- 总评审次数：7（F.1 / F.3 / F.4 / F.5 / F.6 / F.7 / **DEBT-014**）
+- 总建议数：82（前 72 + DEBT-014 10 条）
+- DEBT-014 采纳率：90%（9 全采纳 + 1 撤回 + 3 维持 reviewer 主动结论）
+- 形成 L-017 第一个正面 case 引用（DEBT-014 = L-017 实战范例）
+- DEBT 操作累计：5 关 + 1 升 + 2 新 + 1 候选
+
+---
+
 ## 2026-04-29 · F.6 端到端验证 + DEBT-001 关闭 + audit_route _project bug 修复
 
 **触发**：arch reviewer 在 F.6 评审里要求"DEBT-001 ship 前必须跑行为

@@ -172,34 +172,55 @@
 
 ---
 
-## DEBT-014 · alb-api `mount_ui` 缺 SPA fallback —— 深链 / 刷新 404
+## DEBT-014 · alb-api `mount_ui` 缺 SPA fallback —— **CLOSED 2026-04-29 (alb-api side)**
 
-- **severity**：mid（生产 UX 问题，dev/local 自己跑能绕过，prod 用户撞）
-- **引入**：M2 Web Tier 1（约 commit b07b930，2026-04-23 起）
-- **位置**：`src/alb/api/ui_static.py mount_ui()` 用
-  `StaticFiles(html=True)`，对 `/app/<route>` 这类深链直接 404
-- **症状**：
-  - 用户浏览器打开 `http://host:8765/app/dashboard` 直接 404 JSON
-    `{"detail":"Not Found"}`
-  - 用户在 SPA 内任意路由刷新页面 → 同样 404
-  - 用户分享深链给同事 → 同事打开 404
-- **绕过**：先进 `/app/` 再让 SPA client-side router push 跳转（F.8
-  Playwright 截图脚本已绕开）。但是这不是用户视角的解
-- **F.8 暴露过程**：F.8 端到端 Playwright 截图，初版 `page.goto(/app/dashboard)`
-  直接拍到 FastAPI 404 JSON 页面 → 修脚本绕开 → 暴露生产问题
-- **是否计划修**：是
-- **还债 sketch**：`mount_ui` 之外加一个 catch-all：
-  ```python
-  @app.get("/app/{path:path}")
-  async def spa_fallback(path: str) -> Response:
-      # If the path matches a real file in docs/app/, StaticFiles already
-      # served it (this handler runs after). Otherwise serve index.html
-      # so TanStack Router's BASEPATH-aware logic takes over client-side.
-      return FileResponse(app_dir / "index.html")
-  ```
-  注意路由顺序 + 不要让 `/app/assets/*.js` 也 fallback 到 HTML
-- **GitHub Pages 影响**：未验证 prod docs 页面对深链是否有同样问题
-  （404.html 重定向到 index.html 是常见 GH Pages SPA 解法）
+- **severity**：mid（生产 UX 问题）
+- **引入**：M2 Web Tier 1（约 commit b07b930，2026-04-23）
+- **关闭**：commit pending（2026-04-29）—— `SPAStaticFiles(StaticFiles)`
+  子类 override get_response，404 时如果 path tail 没扩展名就 fallback
+  到 index.html；含点的 path（asset）让真 404 propagate（不 silently
+  改写避免白页 debug 噩梦）。+2 unit test + 真浏览器 Playwright
+  deep-link/refresh/nested 3/3 pass。
+- **范围拆分**：本档只修 alb-api（dev/local）。GH Pages prod 同问题
+  拆作新 **DEBT-015**（spa-github-pages 套路：404.html + query-encoded
+  redirect script）。
+- **正面 case 引用**：见 lessons.md L-017 — F.8 端到端 Playwright
+  `page.goto(/app/dashboard)` 直接拍到 FastAPI 404 JSON 暴露 SPA fallback
+  缺失。code review / typecheck / unit test 都看不出。
+
+---
+
+## DEBT-015 · GH Pages prod 同 SPA fallback 缺失（DEBT-014 follow-up）
+
+- **severity**：low（影响"分享深链"少数场景，主用户走 alb-api）
+- **引入**：本仓 GitHub Pages 部署（最早 1f2522d，2026-04-19）
+- **位置**：`docs/` 作为 GH Pages root；GH Pages 静态托管对未知路径
+  服务 `docs/404.html`（不存在则浏览器 404）
+- **症状**：`https://tbusos.github.io/android-llm-bridge/app/dashboard`
+  HTTP 404（已 verify，2026-04-29）
+- **修法 sketch**（spa-github-pages 套路）：
+  1. 写 `docs/404.html`，含一段 redirect script：
+     ```html
+     <script>
+       const path = window.location.pathname;
+       const APP_BASE = "/android-llm-bridge/app/";
+       if (path.startsWith(APP_BASE)) {
+         const rest = path.slice(APP_BASE.length);
+         window.location.replace(`${APP_BASE}?spa=1&p=${encodeURIComponent(rest)}`);
+       } else {
+         document.body.innerHTML = "<h1>404</h1>";
+       }
+     </script>
+     ```
+  2. SPA index.html 启动时检测 `?spa=1&p=...`，用 `history.replaceState`
+     还原 URL → TanStack Router 接管
+- **是否计划修**：是（候选下一档）
+- **不阻塞条件**：
+  - alb-api 用户已 covered（DEBT-014 alb-api side closed）
+  - GH Pages 部署是项目方法论展示用（landing + offline-first 演示），
+    分享深链场景不多
+- **关闭条件**：浏览器开 `https://tbusos.github.io/android-llm-bridge/app/dashboard`
+  能直达，控制台无 404 / redirect loop
 
 ---
 

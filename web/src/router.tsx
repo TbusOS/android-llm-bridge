@@ -4,6 +4,13 @@
  * activity bar): Dashboard / Chat / Terminal / Inspect / Playground /
  * Sessions / Files / Audit.  Only Dashboard and Chat are real today;
  * the rest render StubPage.
+ *
+ * Cross-repo invariant (DEBT-014, 2026-04-29): every `path:` value
+ * below MUST NOT contain `.` in any segment. The backend SPA fallback
+ * (`src/alb/api/ui_static.py SPAStaticFiles`) uses presence of `.` in
+ * the last path segment to distinguish "missing asset" from "SPA
+ * route", so a route like `/app/v2.0/foo` would be misclassified as
+ * an asset 404. See `.claude/knowledge/architecture.md` 关键不变量.
  */
 import {
   createRootRoute,

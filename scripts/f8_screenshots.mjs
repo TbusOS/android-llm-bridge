@@ -39,60 +39,33 @@ let pass = 0;
 let fail = 0;
 const fails = [];
 
+// Direct page.goto deep-links work after DEBT-014 fix landed
+// (`src/alb/api/ui_static.py SPAStaticFiles`). Earlier the script had
+// to load `/app/` first then push routes via history because the old
+// StaticFiles 404'd deep paths — that workaround is no longer needed.
 for (const vp of VIEWPORTS) {
   const ctx = await browser.newContext({
     viewport: { width: vp.width, height: vp.height },
     deviceScaleFactor: 2,
   });
-  // One persistent page per viewport; SPA navigation via client-side
-  // router avoids the alb-api StaticFiles 404 on deep paths.
-  const page = await ctx.newPage();
-  try {
-    await page.goto(`${BASE}/`, { waitUntil: "networkidle", timeout: 15_000 });
-    // First-render settle (KPI / sessions hooks fire on mount).
-    await page.waitForTimeout(1500);
-  } catch (e) {
-    console.log(`✗ initial load @ ${vp.tag}: ${e.message}`);
-    fail++;
-    fails.push(`init-${vp.tag}: ${e.message}`);
-    await ctx.close();
-    continue;
-  }
   for (const r of ROUTES) {
+    const page = await ctx.newPage();
+    const url = `${BASE}${r.path}`;
     try {
-      // Click the matching nav link (sidebar / topnav anchor). Falls
-      // back to history.pushState if no link is found (some routes
-      // like /audit aren't in the visible nav).
-      const navigated = await page.evaluate((path) => {
-        const anchors = Array.from(document.querySelectorAll("a"));
-        const target = anchors.find((a) => {
-          const href = a.getAttribute("href") || "";
-          return href === path || href.endsWith(path);
-        });
-        if (target) {
-          target.click();
-          return true;
-        }
-        // Fallback: synth a click via TanStack Router's history. The
-        // router subscribes to popstate/pushstate, so this works.
-        history.pushState({}, "", path);
-        window.dispatchEvent(new PopStateEvent("popstate"));
-        return false;
-      }, r.path);
-      await page.waitForTimeout(navigated ? 1200 : 1500);
+      await page.goto(url, { waitUntil: "networkidle", timeout: 15_000 });
+      await page.waitForTimeout(1200);
       const out = join(OUT_DIR, `${r.name}-${vp.tag}.png`);
       await page.screenshot({ path: out, fullPage: true });
-      console.log(
-        `✓ ${r.name} @ ${vp.tag}  (${navigated ? "click" : "history"}) →  ${out}`,
-      );
+      console.log(`✓ ${r.name} @ ${vp.tag}  →  ${out}`);
       pass++;
     } catch (e) {
       console.log(`✗ ${r.name} @ ${vp.tag}  →  ${e.message}`);
       fail++;
       fails.push(`${r.name}-${vp.tag}: ${e.message}`);
+    } finally {
+      await page.close();
     }
   }
-  await page.close();
   await ctx.close();
 }
 await browser.close();
