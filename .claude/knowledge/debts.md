@@ -12,18 +12,25 @@
 
 ---
 
-## DEBT-001 · LiveSession tps 退化为整段平均（spark 空）
+## DEBT-001 · LiveSession tps 退化为整段平均（spark 空）—— **CLOSED 2026-04-29**
 
 - **severity**：mid（用户体感"实时"被削弱，但不影响功能）
 - **引入**：C.5（commit a03cbab，2026-04-28）
+- **关闭**：F.6 ship + 端到端验证（2026-04-29）
 - **位置**：`web/src/features/dashboard/useLiveSession.ts` `tpsSpark: []`
-- **原因**：C.2 决定 token 事件不广播（ADR-019），导致 LiveSession 没有
-  逐字粒度的 tps 数据。tps 只能在 done 时取整段平均，spark 没采样可放。
-- **状态（2026-04-28 update）**：**partial-fix shipped**
-  - 后端就绪 ✓（F.1 ship · ADR-021 实施）：tps_sample 1Hz 流上 bus
-  - 前端待做（F.5/F.6）：useAuditStream 加 include_metrics + useLiveSession
-    reducer 识别 tps_sample → tpsSpark
-- **彻底关闭条件**：F.6 ship 后，LiveSessionCard 实际渲染滚动 spark
+- **解决路径**：
+  1. F.1 后端 TokenSampler 1Hz 发 tps_sample（ADR-021）
+  2. F.5 前端双 WS 实例订阅 metric 流（ADR-022）
+  3. F.6 reducer 加 tps_sample 分支 + scaleSparkPoints
+  4. **2026-04-29 端到端验证**发现并修一个 P0 bug：`audit_route._project()`
+     一直把事件的 `data` 字段 silently drop，导致前端 reducer 拿不到
+     `rate_per_s` / `total_tokens` / tool_call `id`/`name` / done `usage`
+     —— 修法是 `_project()` 加 `data` 字段 + TS AuditEvent 类型同步
+- **验证证据**：`.claude/reports/visual-2026-04-29-debt001.md` —— 真实
+  ollama gemma4:e4b 跑 chat，reducer 拿到 tpsSamples=[3,12,11,12,12,11,
+  12,12,12,12,9]（真实生成曲线），spark scale 后正确分布 0..27（peak
+  normalize），prompt/turn/modelName/totalTokens 全部正确显示
+- **后续**：F.8 阶段补 Playwright 视觉截图（不阻塞本次关闭）
 
 ---
 
