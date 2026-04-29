@@ -294,4 +294,32 @@ audit 默认过滤要一起做"。
 
 ---
 
+## L-016 · view-aware 协议，scaling 也属 hook 层
+
+**坑**：F.6 实施 LiveSession spark 时会有"该不该把 SVG 坐标换算放进
+component"的犹豫——hook 层算意味着 hook 里有 SVG 高度常量
+（`SPARK_HEIGHT=36`），看起来"hook 知道太多 view"。
+
+**根因**：types.ts 里 `tpsSpark: y-coords 0..36` 这个协议本身就是
+view-aware（不是 raw rate 数组）。换算放在哪就是"协议在哪一层"的
+问题，不是"代码风格选择"。
+
+**规则**：
+1. types.ts 协议字段如果已经是 view-aware（明确写"y-coords 0..N"
+   / "0..32 for inline sparkline" / "px"），那 normalize / scale
+   函数也应该在生产这个值的 hook 层（`useLiveSession.ts` /
+   `useDeviceTrend.ts` 等），不是 component
+2. 例外：当**有 ≥ 2 个 view**复用同一份 raw 数据，把协议改成 raw
+   + 把 scaling 推到 component（避免不同 view 用不同 scale 但 hook
+   只能选一个）
+3. 副推论：双写硬编码（hook 里 `SPARK_HEIGHT=36` + component 里
+   `height={36}`）是这种 view-aware 协议的代价；下次视觉调整两边
+   要同步改
+
+**应用到 agents**：architecture-reviewer 评审 hook 层出现"看起来像
+view 常量"时，先查 types.ts 是不是 view-aware 协议，是的话不要建议
+把常量挪到 component。
+
+---
+
 （新教训按此格式追加）

@@ -213,6 +213,75 @@ schema/server +2 +2 + 测试 167 行）
 
 ---
 
+## 2026-04-28 · F.6 useLiveSession reducer 加 tps_sample 分支
+
+**评审对象**：F.6 staged diff（useLiveSession.ts +50/-7）让
+LiveSessionCard.tpsSpark 从空 → 滚动；落实 ADR-021 / ADR-022 前端消费侧；
+目标关闭 DEBT-001。
+
+**调动**：code-reviewer + architecture-reviewer 并行（项目 agents 在当前
+session runtime 未自动加载，主对话用 general-purpose 代理 + 注入 agent 定义）
+
+### 采纳清单（已实施）
+
+- code [mid] **MAX_EVENTS=200 vs metric 1Hz 流冲突，长 session > 200s 后
+  user 事件被挤出** → **登记 DEBT-011**，F.7 一并修
+- code [mid] **totalTokens 单调守卫跨 sampler 重启会卡住** → 删 `>=`
+  守卫，加 invariant 注释（per-session sampler 不重启）
+- code [mid] **done fallback 注释 "legacy sessions" 不准确** → 改
+  "legacy or chats shorter than sample interval"
+- code [low] **rate 守卫接受 NaN/Infinity** → 加 `Number.isFinite`
+- code [low] **chat-only filter 加注释说明意图**
+- code [low] **reducer 纯函数无单测** → **登记 DEBT-012**
+- arch [low] **DEBT-001 关闭前必须跑行为验证** → ship 后跑一次 chat
+  看 spark 真滚动 + 截图，再标 closed
+- arch [mid] **LiveCard tps（瞬时） vs F.7 KPI throughput（窗口）数据源
+  不一致** → **F.7 落地时强制给两个数字加 label**：LiveCard `tok/s now`
+  / KPI `tok/s · 5m avg`（写入本文件作为 F.7 硬性要求，下次评审引用）
+- arch [low] **升级 lessons L-016：view-aware 协议 + scaling 同层** →
+  写入 lessons.md
+
+### 部分采纳（变通）
+
+- code [mid] SPARK_WINDOW=60 注释假设 1Hz，env 可调失真
+  - **变通**：改注释（明示"≈60s when interval=1s"），写入 L-016；
+    不做动态 cap（增加复杂度 vs 默认 1Hz 现实价值低）
+
+### 维持现状（reviewer 主动结论"现状对"）
+
+- arch [low] scaleSparkPoints 在 hook 层是对的（types.ts 协议已 view-aware）
+- arch [low] 200 cap 不卡 UI（rawEvents 已是 200 cap，reducer reverse + for-of 不构成卡顿）
+- arch [low] L-015 不触发（F.6 不引入新决策，只实施 ADR-021 / ADR-022）
+- arch [low] 不抽 TpsSampleEvent type（避免给"前端单边类型 = 安全"假象）
+- arch [low] 跨 session 切换 spark 从 0 重建（这是用户期望，无 carry-over 才对）
+
+### 对应 agent prompt 调整建议
+
+- 暂无。两个 reviewer 反馈质量高，无重复驳回。
+- **runtime 问题**：项目 `.claude/agents/*.md` 在本次 session 未被
+  Claude Code 自动加载（只显示内置 5 个 subagent_type）。临时方案：
+  用 general-purpose 注入 agent 定义代理。需 follow-up 排查（可能是
+  Claude Code session 启动时机或 frontmatter format 问题）。
+
+### 学到的新规则（升级到 lessons.md）
+
+- **L-016 · view-aware 协议，scaling 也属 hook 层**
+
+### F.7 硬性要求（来自 arch reviewer · 写在这里给下次评审引用）
+
+> **F.7 落地 useMetricsSummary 时必须给 LiveCard tps 和 KPI throughput
+> 加 label 区分语义**：LiveCard 显示瞬时 rate（label 标 `tok/s now` /
+> 中文"现"），KPI throughput 显示 5min 窗口平均（label 标
+> `tok/s · 5m avg` / 中文"5 分均"）。否则用户看到"LiveCard 24, KPI 18"
+> 会困惑。F.7 评审时强制校验。
+
+### 新登记 DEBT
+
+- **DEBT-011** · useAuditStream MAX_EVENTS 不分类型（mid，F.7 一并修）
+- **DEBT-012** · web/ reducer 纯函数无单测（low，等 vitest 引入）
+
+---
+
 预期写入流程：
 1. agents 完成评审
 2. 主对话整理建议清单 + 询问用户
@@ -242,17 +311,21 @@ schema/server +2 +2 + 测试 167 行）
 
 > dev-team 展示页会读这里的统计，让外部看到团队成长证据。
 
-**当前（2026-04-28 update · F.5 完成后）**：
-- 总评审次数：4（F.1 / F.3 / F.4 / F.5）
-- 总建议数：48（F.1: 18 / F.3: 10 / F.4: 8 / F.5: 12）
-- 采纳率：79%（27 + 11 = 38 / 48）
+**当前（2026-04-28 update · F.6 完成后）**：
+- 总评审次数：5（F.1 / F.3 / F.4 / F.5 / F.6）
+- 总建议数：63（F.1: 18 / F.3: 10 / F.4: 8 / F.5: 12 / **F.6: 15**）
+- 采纳率：81%（27 + 11 + 13 = 51 / 63）
 - 驳回类型分布：模块归属偏好 1 / 已登记 DEBT 复提 2 / 未来 milestone 范围 2 / 测试便利权衡 1 / "不强求"风格调整 1 / 无场景的防御 1 / premature abstraction 1 / 影响轻不修 1
-- 形成新规则数：3（L-013 / L-014 / **L-015 元规则**）+ 3 ADR（ADR-020/021/022）+ 2 DEBT（DEBT-008/010）
+- 形成新规则数：4（L-013 / L-014 / **L-015 元规则** / **L-016 view-aware**）
+  + 3 ADR（ADR-020/021/022）+ 4 DEBT（DEBT-008/010/**011**/**012**）
 - F.1 发现 2 条 high 级架构问题 → 推迟 ship，重做调整版
 - **F.5 architecture-reviewer 主动翻历史 ADR 备选段，识别"反转未立新
   ADR"的文档债 → 升级为元规则 L-015**（agents 团队"会演进"的具体证据）
-- F.3 / F.4 / F.5 reviewer 反馈持续聚焦代码质量 + 架构债识别，**采纳率
-  稳定在 78-79%**
+- **F.6 code-reviewer 识别"双 WS 实例下 metric 流挤掉 business 事件"
+  跨档隐患 → 登记 DEBT-011 让 F.7 一并修**（agents "看一档发现下一档
+  问题" 的具体证据）
+- F.3 / F.4 / F.5 / F.6 reviewer 反馈持续聚焦代码质量 + 架构债识别，
+  **采纳率稳定在 78-87%**，F.6 创单档新高 87%
 
 > 每次评审后由主对话更新（commit message 里附带"review-feedback +N
 > 条"作为信号）。
