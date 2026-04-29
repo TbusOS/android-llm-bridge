@@ -519,13 +519,42 @@ inline recovery `history.replaceState` 还原。
 
 ### 关闭 DEBT
 
-- ✅ DEBT-015 标 **CLOSED 2026-04-29**
+- ✅ DEBT-015 标 **CLOSED (mechanism) 2026-04-29** —— SPA fallback 协议
+  层面已 prod verify，详见下方 prod 验证
+
+### Prod 验证发现的独立问题
+
+DEBT-015 commit `64ad2e1` push 后 240s ScheduleWakeup curl + Playwright
+真浏览器跑完整 redirect chain：
+
+**机制层 5/6 pass**：
+- ✅ redirect chain：`/app/dashboard` → `/app/?spa=1&p=dashboard` → 还原
+- ✅ URL 最终态干净（无 `?spa=1` 残留）
+- ✅ nested route：`/app/sessions/abc-123` 链路正确
+- ✅ refresh on `/app/inspect` 还原
+- ✅ `/app/` 直访无回归
+- ❌ Dashboard h1 missing（root div 空白）
+
+**根因**（不是 DEBT-015 引入）：vite `base: "/app/"` 但 GH Pages 部署在
+`/android-llm-bridge/app/`，bundle 出 `<link href="/app/anthropic.css">`
+绝对路径在 `doc.tbusos.com` 下解析 → 缺 `/android-llm-bridge/` 前缀 →
+4 个资源全 404 → SPA shell 启动失败。这是 commit `b07b930` (M2 Web
+Tier 1，6 天前) 起一直存在的 bug，没人主动访问 GH Pages /app/ 才一直
+没暴露（landing 没指向 /app/，只有 webui-preview.html mockup）。
+
+**决策**：拆 **DEBT-016**（vite base 部署 base 错配，独立 issue）。
+DEBT-015 评审定义的关闭条件是"SPA fallback 工作"，狭义看（fallback
+协议机制本身）已 ✓；广义看（SPA 在 GH Pages 真能用）⚠（DEBT-016
+阻塞）。机制层 PASS 已足够标 CLOSED，DEBT-016 单独跟进。
 
 ### 学到的新规则
 
 - **ADR-023** SPA fallback 跨部署 surface 异构实现
 - **L-018** 静态托管 SPA URL 闪现 + recovery 必须 inline 同步
 - architecture.md 关键不变量段 +3 条 SPA route 合约
+- **L-017 强化案例**：DEBT-015 prod verify 发现 DEBT-016（一直存在
+  的独立 bug）—— "端到端 prod 验证才能暴露 wiring 静默 bug" 又一次
+  应验，Playwright 真浏览器 hit 比 curl 多看到 console errors
 
 ### 累计统计调整
 
@@ -534,7 +563,8 @@ inline recovery `history.replaceState` 还原。
 - DEBT-015 采纳率：92%（11 全采纳 + 1 维持 + 0 驳回）
 - 累计形成规则：6 lessons (L-013/014/015/016/017/**018**) + **4 ADR**
   (020/021/022/**023**)
-- DEBT 操作累计：6 关（含 014/015）+ 1 升 + 2 新 + 1 候选
+- DEBT 操作累计：6 关（含 014/015 mechanism）+ 1 升 + **3 新（含 016）**
+  + 1 候选
 
 ---
 
