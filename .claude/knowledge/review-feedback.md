@@ -472,6 +472,72 @@ propagate。+2 unit test。L-017 端到端验证规则的正面 case。
 
 ---
 
+## 2026-04-29 · DEBT-015 GH Pages SPA fallback（DEBT-014 follow-up）
+
+**评审对象**：staged diff（`docs/404.html` 新 / `web/index.html` 改 /
+`docs/app/index.html` rebuild 产物 / `tests/web/spa_fallback_test.mjs` 新）
+
+**调动**：code-reviewer + arch-reviewer 并行
+
+**改动**：spa-github-pages 套路修 GH Pages prod surface SPA fallback。
+`docs/404.html` redirect → `/app/?spa=1&p=<route>` → `web/index.html`
+inline recovery `history.replaceState` 还原。
+
+### 采纳清单（已实施 11/12）
+
+#### code-reviewer
+- [mid] **recovery script 不消费 `?spa=1` 残留** → 加 cleanup 路径
+  （`?spa=1` 缺 `p` 时清掉 query 让 URL bar 干净）
+- [mid] **404.html 死循环防御不足** → 加 `if (search has spa=1) return;`
+  早 return 防止递归 wrap
+- [mid] **recovery `pathname.replace(/\/$/, "")` 在 `pathname === "/"`
+  边界** → `pathname === "/" ? "" : pathname.replace(/\/$/, "")`，
+  避免 `//foo` 双斜杠
+- [mid] **404.html `rest === ""` 边界** → 加 `if (rest === "") return;`
+  让 /app/ 直访不走 SPA 流
+- [low] **404.html dev 时 CSS 加载失败** → 加 prod-only 注释
+- [low] **测试持久化** → 新建 `tests/web/spa_fallback_test.mjs` 12 case
+  入仓（node + vm.runInContext 跑两个脚本逻辑）
+
+#### arch-reviewer
+- [mid] **新立 ADR-023** → SPA fallback 跨部署 surface 异构实现，
+  alb-api server-side intercept vs GH Pages client-side roundtrip，
+  不统一原因 + 共享不变量
+- [mid] **architecture.md 关键不变量加 3 条** → SPA route 不能含
+  `? # &` / 不能以 `assets/` 开头 / GH Pages 协议保留 query 名
+  `spa / p / qs`
+- [mid] **新立 L-018** → 静态托管 SPA URL 闪现 + recovery 必须 inline
+  同步（不 defer/async/module）+ 必须在 main bundle 之前
+- [low] push 后 ScheduleWakeup(180s) curl prod 复检（强制 L-017，
+  alb-api 关闭走过同流程）
+
+### 维持现状（reviewer 主动结论"现状对"）
+
+- code [low] 404.html dev CSS 失败：可接受（prod 兜底页 dev 不需好看）
+- arch [low] vite build 入仓策略合理：维持
+- arch [low] 404.html 非 /app 降级 UX OK：维持
+
+### 关闭 DEBT
+
+- ✅ DEBT-015 标 **CLOSED 2026-04-29**
+
+### 学到的新规则
+
+- **ADR-023** SPA fallback 跨部署 surface 异构实现
+- **L-018** 静态托管 SPA URL 闪现 + recovery 必须 inline 同步
+- architecture.md 关键不变量段 +3 条 SPA route 合约
+
+### 累计统计调整
+
+- 总评审次数：8（前 7 + DEBT-015）
+- 总建议数：94（前 82 + DEBT-015 12 条）
+- DEBT-015 采纳率：92%（11 全采纳 + 1 维持 + 0 驳回）
+- 累计形成规则：6 lessons (L-013/014/015/016/017/**018**) + **4 ADR**
+  (020/021/022/**023**)
+- DEBT 操作累计：6 关（含 014/015）+ 1 升 + 2 新 + 1 候选
+
+---
+
 ## 2026-04-29 · F.6 端到端验证 + DEBT-001 关闭 + audit_route _project bug 修复
 
 **触发**：arch reviewer 在 F.6 评审里要求"DEBT-001 ship 前必须跑行为

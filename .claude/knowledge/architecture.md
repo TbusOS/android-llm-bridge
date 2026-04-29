@@ -132,6 +132,17 @@ ChatRequest ──┐
   SPAStaticFiles`）以"最后一段含 `.`" 判断"看起来是 asset"→ 真 404
   propagate；不含点 → fallback 到 index.html。路由含点会被误判成
   asset，浏览器深链 / 刷新 404。
+- **SPA route 路径段不能含 `?` `#` `&`**（DEBT-015 fix，2026-04-29）：
+  `docs/404.html` redirect script 把原 path 用 `encodeURIComponent`
+  拼到 `?spa=1&p=<encoded>` 协议，路径里出现裸 query/hash 字符会
+  让 spa-github-pages 协议 ambiguity。
+- **SPA route 不能以 `assets/` 开头**（DEBT-015 fix，2026-04-29）：
+  与 vite build 产物 `/app/assets/index-*.js` 命名空间冲突。后端
+  SPAStaticFiles 会优先服务真实文件，路由 `/app/assets/foo` 永远
+  404。
+- **GH Pages 协议保留 query 名**（DEBT-015 fix）：`spa` / `p` / `qs`
+  三个 query 名被 spa-github-pages 套路占用；TanStack Router 业务
+  search params 不可用这三个名。共享 SPA fallback 协议见 ADR-023。
 
 ## 测试地图
 

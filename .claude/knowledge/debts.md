@@ -190,37 +190,32 @@
 
 ---
 
-## DEBT-015 · GH Pages prod 同 SPA fallback 缺失（DEBT-014 follow-up）
+## DEBT-015 · GH Pages prod 同 SPA fallback 缺失 —— **CLOSED 2026-04-29**
 
 - **severity**：low（影响"分享深链"少数场景，主用户走 alb-api）
 - **引入**：本仓 GitHub Pages 部署（最早 1f2522d，2026-04-19）
-- **位置**：`docs/` 作为 GH Pages root；GH Pages 静态托管对未知路径
-  服务 `docs/404.html`（不存在则浏览器 404）
-- **症状**：`https://tbusos.github.io/android-llm-bridge/app/dashboard`
-  HTTP 404（已 verify，2026-04-29）
-- **修法 sketch**（spa-github-pages 套路）：
-  1. 写 `docs/404.html`，含一段 redirect script：
-     ```html
-     <script>
-       const path = window.location.pathname;
-       const APP_BASE = "/android-llm-bridge/app/";
-       if (path.startsWith(APP_BASE)) {
-         const rest = path.slice(APP_BASE.length);
-         window.location.replace(`${APP_BASE}?spa=1&p=${encodeURIComponent(rest)}`);
-       } else {
-         document.body.innerHTML = "<h1>404</h1>";
-       }
-     </script>
-     ```
-  2. SPA index.html 启动时检测 `?spa=1&p=...`，用 `history.replaceState`
-     还原 URL → TanStack Router 接管
-- **是否计划修**：是（候选下一档）
-- **不阻塞条件**：
-  - alb-api 用户已 covered（DEBT-014 alb-api side closed）
-  - GH Pages 部署是项目方法论展示用（landing + offline-first 演示），
-    分享深链场景不多
-- **关闭条件**：浏览器开 `https://tbusos.github.io/android-llm-bridge/app/dashboard`
-  能直达，控制台无 404 / redirect loop
+- **关闭**：commit pending（2026-04-29）—— 落地 spa-github-pages 套路：
+  1. `docs/404.html`（新）：GH Pages 自动服务 + 条件 redirect script，
+     `/android-llm-bridge/app/<route>` → `/app/?spa=1&p=<encoded>&qs=<query>#hash`，
+     非 /app 路径显示 anthropic-style 404 landing
+  2. `web/index.html` + recovery inline script（vite build 进
+     `docs/app/index.html`）：检测 `?spa=1`，`history.replaceState`
+     还原原 URL → TanStack Router 接管
+  3. 死循环防御：404.html 检测已 wrap 的 `?spa=1` URL 不再 wrap
+  4. 残留参数清理：recovery script 检测 `?spa=1` 缺 `p` 时清掉
+     query 让 URL bar 干净
+- **测试**：`tests/web/spa_fallback_test.mjs` 12 case 持久化（node +
+  vm.runInContext 跑两个脚本逻辑，含 trailing slash / qs / hash /
+  loop guard / dev pathname=/ 边界）
+- **prod 验证**：GitHub Actions Pages 部署 ~1-2min 后，主对话
+  ScheduleWakeup 跑 curl `-IL https://tbusos.github.io/android-llm-bridge/app/dashboard`
+  确认 redirect chain → 200 SPA shell（参考 L-018）
+- **关联产出**：**ADR-023** 跨 surface 异构 SPA fallback / **L-018**
+  静态托管 URL 闪现 + recovery 必须 inline 同步执行
+- **共享不变量**（写入 architecture.md）：
+  - SPA route 路径段不能含 `?` `#` `&`（GH Pages 协议保留）
+  - SPA route 不能以 `assets/` 开头（与 vite build 产物冲突）
+  - GH Pages 协议保留 query 名 `spa` / `p` / `qs`
 
 ---
 

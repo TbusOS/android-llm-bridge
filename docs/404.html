@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Not found — android-llm-bridge</title>
+    <!-- Prod-only paths. Opening this file via file:// in dev will
+         have the CSS 404 silently and render a default-styled 404 —
+         that's intentional, this page is the GH Pages fallback. -->
+    <link rel="stylesheet" href="/android-llm-bridge/assets/fonts.css" />
+    <link rel="stylesheet" href="/android-llm-bridge/assets/anthropic.css" />
+    <!--
+      DEBT-015 fix · 2026-04-29 · GitHub Pages SPA fallback.
+
+      Mirrors the spa-github-pages convention: any path under
+      /android-llm-bridge/app/ that GH Pages can't find as a file is
+      a TanStack Router HTML5 history-mode route. Encode the path into
+      ?spa=1&p=<rest> and bounce to the SPA shell at /app/. The shell
+      (docs/app/index.html) has a tiny matching recovery script that
+      runs BEFORE the React bundle and uses history.replaceState to
+      rewrite the URL back to the original deep link, so the router
+      sees the right path.
+
+      For non-/app paths, fall back to the project landing page so
+      typo'd repo URLs still feel like part of this site.
+    -->
+    <script>
+      (function () {
+        var path = window.location.pathname || "";
+        var search = window.location.search || "";
+        var hash = window.location.hash || "";
+        var APP_BASE = "/android-llm-bridge/app/";
+        // Loop guard: if we landed here with ?spa=1 already, the SPA
+        // shell itself was missing (deploy-time race / cdn cache).
+        // Don't re-wrap or we'd accumulate &qs=spa%3D1%26p%3D... etc.
+        if (search.indexOf("spa=1") !== -1) return;
+        if (path.indexOf(APP_BASE) !== 0) return;
+        var rest = path.slice(APP_BASE.length);
+        if (rest === "") return; // landed at /app/ itself; nothing to do.
+        // Drop trailing slash so the recovery script restores a
+        // canonical path. TanStack Router doesn't distinguish
+        // /dashboard vs /dashboard/ but the URL bar should be tidy.
+        if (rest.length > 1 && rest.charAt(rest.length - 1) === "/") {
+          rest = rest.slice(0, -1);
+        }
+        // Carry the original querystring through as `qs=<encoded>`
+        // so the recovery script can restore ?tab=charts etc.
+        var qsParam =
+          search.length > 1 ? "&qs=" + encodeURIComponent(search.slice(1)) : "";
+        var target =
+          APP_BASE +
+          "?spa=1&p=" +
+          encodeURIComponent(rest) +
+          qsParam +
+          hash;
+        window.location.replace(target);
+      })();
+    </script>
+    <style>
+      body {
+        font-family: var(--font-heading, system-ui, sans-serif);
+        background: var(--anth-cream, #faf9f5);
+        color: var(--anth-ink, #1f1e1c);
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 24px;
+      }
+      .nf {
+        max-width: 560px;
+        text-align: center;
+      }
+      .nf h1 {
+        font-size: 64px;
+        margin: 0 0 12px;
+        color: var(--anth-orange, #d97757);
+      }
+      .nf p {
+        font-family: var(--font-body, Georgia, serif);
+        font-size: 18px;
+        line-height: 1.6;
+        color: var(--anth-text-secondary, #69655d);
+      }
+      .nf a {
+        color: var(--anth-orange, #d97757);
+        text-decoration: none;
+        border-bottom: 1px solid currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="nf">
+      <h1>404</h1>
+      <p>
+        That page isn't here. Head back to the
+        <a href="/android-llm-bridge/">project home</a>
+        or open the
+        <a href="/android-llm-bridge/app/">Web UI</a>.
+      </p>
+    </div>
+  </body>
+</html>

@@ -256,4 +256,60 @@ metric 流后变成必须。**这次反转给后续 reviewer 重要信号**：AD
 
 ---
 
+## ADR-023 · SPA fallback 跨部署 surface 异构实现
+
+**Status**：accepted (2026-04-29，DEBT-014/015 关闭物)
+
+**Context**：
+项目有两个 Web UI 部署 surface，TanStack Router HTML5 history 模式
+要求服务端在深链 / 刷新时 fallback 到 SPA shell：
+
+- **alb-api dev/local**（FastAPI + StaticFiles）：用户主路径
+- **GH Pages prod**（静态托管）：方法论展示 + offline-first 演示
+
+DEBT-014 / DEBT-015 是同一不变量（"SPA route 直访不能 404"）的两
+个部署 surface 实例化。
+
+**Decision**：**两 surface 异构实现**：
+
+| surface | 机制 | 实现 | 跳转 |
+|---|---|---|---|
+| alb-api | server-side intercept | `SPAStaticFiles(StaticFiles)` 子类 override get_response，404 + path tail 无扩展名 → 服务 index.html | 1 hop |
+| GH Pages | client-side roundtrip | `docs/404.html` redirect script + `docs/app/index.html` recovery script（spa-github-pages 套路） | 2 hops + history.replaceState 静默还原 |
+
+**不统一的原因**：GH Pages 静态托管无 server-side hook，server-side
+intercept 不可行。这是部署 surface 硬约束，不是设计偏好。
+
+**共享不变量**（写入 architecture.md 关键不变量段）：
+- SPA route 路径段不能含 `.`（DEBT-014 启发式：`tail.includes(".")` 判
+  为 asset）
+- SPA route 路径段不能含 `?` `#` `&`（DEBT-015 用作 spa-github-pages
+  协议保留）
+- SPA route 不能以 `assets/` 开头（与 vite build 产物冲突）
+- 任一违反 → 后端启发式 / GH Pages redirect 误判，浏览器深链 / 刷新
+  404
+
+**备选**：
+- (a) 两 surface 都用 client-side roundtrip：alb-api 也走 404.html，
+  统一一套机制 —— **否决**：alb-api 有 server hook 用之，多一次
+  redirect 是无谓的 user-perceived latency
+- (b) 项目迁出 GH Pages（Cloudflare Pages / Vercel / Netlify 都支持
+  `_redirects` server-side rewrite）—— **暂不**：GH Pages 是项目方法
+  论展示用，迁移收益边际
+
+**Trade-off**：
+- 放弃：两 surface 一套实现，需双写双测
+- 获得：每个 surface 用最适合的机制（alb-api 一次 200 / GH Pages 走
+  社区标准 spa-github-pages 协议），用户体感都是"深链直达"
+
+**何时推翻**：
+- 迁出 GH Pages → 备选 (b) 触发，client-side roundtrip 可删
+- 共享不变量被新需求打破（比如某天非要支持 `.` 路由名）→ 重审两
+  surface 的 fallback 协议
+
+**关联**：DEBT-014 / DEBT-015 / L-017 端到端验证铁律 / **L-018**
+静态托管 SPA URL 闪现。
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）
