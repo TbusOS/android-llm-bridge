@@ -172,7 +172,45 @@
 
 ---
 
-## DEBT-014 · alb-api `mount_ui` 缺 SPA fallback —— **CLOSED 2026-04-29 (alb-api side)**
+---
+
+## DEBT-016 · vite base 在 GH Pages 部署不正确，SPA shell 资源加载 404
+
+- **severity**：low（GH Pages 上 SPA 完全不可用，但 landing 没指向 /app/，
+  零真实用户场景；主用户走 alb-api dev/local 不受影响）
+- **引入**：M2 Web Tier 1（commit `b07b930`，2026-04-23 起，6 天前）
+- **位置**：`web/vite.config.ts:55` `base: process.env.VITE_BASE ?? "/app/"`
+- **症状**：
+  - GH Pages 部署在 `/android-llm-bridge/app/`（自定义域名 `doc.tbusos.com/android-llm-bridge/app/`）
+  - vite build 出 `docs/app/index.html` 含 `<link href="/app/anthropic.css">`
+    `<script src="/app/assets/index-XYZ.js">` 等绝对路径
+  - 浏览器在 `doc.tbusos.com` 下解析这些绝对 path → `doc.tbusos.com/app/anthropic.css`
+    缺 `/android-llm-bridge/` 前缀 → 404
+  - 实际资源在 `doc.tbusos.com/android-llm-bridge/app/anthropic.css` HTTP 200
+  - 结果：GH Pages 上 SPA shell 启动失败，root div 空白
+- **DEBT-015 prod 验证暴露过程**：DEBT-015 修 SPA fallback 协议后做
+  prod verify，跑 Playwright `/app/dashboard` chain 还原后看 React 没
+  渲染 → 调试 console errors 看到 4 个 404（fonts.css / anthropic.css /
+  index-XYZ.js / index-XYZ.css）→ 检查 vite base 配置发现错配
+- **为什么之前没暴露**：landing page (`docs/index.html`) 没真实 link
+  指向 `/app/`，只指向 `webui-preview.html` mockup。没人主动访问
+  `/app/` 深链所以一直没炸
+- **是否计划修**：视情况
+- **不阻塞条件**：
+  - 主用户走 alb-api dev/local（base="/app/" 正确）
+  - GH Pages 用作"项目方法论展示 + landing"，不强求 SPA 真实可用
+- **修法选项**（trade-off 重）：
+  - **A**. GitHub Actions CI build with `VITE_BASE=/android-llm-bridge/app/`
+    → publish to gh-pages branch。**违反 offline-first 原则**（项目
+    README + memory 都强调 docs/ commit 进仓不依赖 CI）
+  - **B**. 改 vite base 为 `/android-llm-bridge/app/` + alb-api mount
+    path 也改。破坏 alb-api 默认用法（URL 变长难看）
+  - **C**. 两份 docs/app/ 各 commit 一份 base（仓库膨胀，git diff 噪音）
+  - **D**. **接受 GH Pages 不支持 SPA**，调整 landing 文案"Web UI 需
+    本地运行 alb-api"，移除任何指向 GH Pages /app/ 的链接（事实上现
+    状已经没有真实入口指向 SPA）—— **可能是最 pragmatic 选项**
+- **触发还债条件**：用户明确报告"想在 GH Pages 上看 SPA 截图分享给同事"，
+  或 dev-team.html 等展示页需要嵌入 SPA iframe
 
 - **severity**：mid（生产 UX 问题）
 - **引入**：M2 Web Tier 1（约 commit b07b930，2026-04-23）
@@ -190,11 +228,29 @@
 
 ---
 
-## DEBT-015 · GH Pages prod 同 SPA fallback 缺失 —— **CLOSED 2026-04-29**
+## DEBT-015 · GH Pages prod 同 SPA fallback 缺失 —— **CLOSED (mechanism) 2026-04-29**
 
 - **severity**：low（影响"分享深链"少数场景，主用户走 alb-api）
 - **引入**：本仓 GitHub Pages 部署（最早 1f2522d，2026-04-19）
-- **关闭**：commit pending（2026-04-29）—— 落地 spa-github-pages 套路：
+- **关闭范围**：**SPA fallback 协议层**（URL 跳转还原机制）已完整 ship +
+  prod verify。**SPA shell 资源加载**层面的独立问题拆 DEBT-016（vite
+  base 在 GH Pages 部署不正确，6 天前 commit `b07b930` 起一直存在）
+- **prod 验证**（2026-04-29，commit 64ad2e1 部署 4min 后）:
+  - ✅ redirect chain：`/app/dashboard` → `?spa=1&p=dashboard` → `/app/dashboard`
+  - ✅ URL 最终态干净（无 `?spa=1` 残留）
+  - ✅ nested route 保留：`/app/sessions/abc-123` chain 正确
+  - ✅ refresh on `/app/inspect` 正确还原
+  - ✅ `/app/` 直访无回归
+  - ❌ **SPA shell 资源加载 404**（DEBT-016，独立 issue）—— 真浏览器
+    Playwright 看到 `<link href="/app/anthropic.css">` 在 `doc.tbusos.com`
+    base 下加载 `doc.tbusos.com/app/anthropic.css` 而非
+    `doc.tbusos.com/android-llm-bridge/app/anthropic.css`，所有 React
+    bundle 也同样 404 → SPA shell 启动失败
+- **关闭范围注释**：DEBT-015 关闭条件原文 "浏览器开 prod 深链能直达"。
+  狭义看（fallback 机制本身正确）pass；广义看（SPA 在 GH Pages 真能用）
+  fail（DEBT-016 阻塞）。机制层 PASS 已足够标 CLOSED，DEBT-016 单独
+  跟进
+- **关联产出**：
   1. `docs/404.html`（新）：GH Pages 自动服务 + 条件 redirect script，
      `/android-llm-bridge/app/<route>` → `/app/?spa=1&p=<encoded>&qs=<query>#hash`，
      非 /app 路径显示 anthropic-style 404 landing
