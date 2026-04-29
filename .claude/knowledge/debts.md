@@ -172,6 +172,37 @@
 
 ---
 
+## DEBT-014 · alb-api `mount_ui` 缺 SPA fallback —— 深链 / 刷新 404
+
+- **severity**：mid（生产 UX 问题，dev/local 自己跑能绕过，prod 用户撞）
+- **引入**：M2 Web Tier 1（约 commit b07b930，2026-04-23 起）
+- **位置**：`src/alb/api/ui_static.py mount_ui()` 用
+  `StaticFiles(html=True)`，对 `/app/<route>` 这类深链直接 404
+- **症状**：
+  - 用户浏览器打开 `http://host:8765/app/dashboard` 直接 404 JSON
+    `{"detail":"Not Found"}`
+  - 用户在 SPA 内任意路由刷新页面 → 同样 404
+  - 用户分享深链给同事 → 同事打开 404
+- **绕过**：先进 `/app/` 再让 SPA client-side router push 跳转（F.8
+  Playwright 截图脚本已绕开）。但是这不是用户视角的解
+- **F.8 暴露过程**：F.8 端到端 Playwright 截图，初版 `page.goto(/app/dashboard)`
+  直接拍到 FastAPI 404 JSON 页面 → 修脚本绕开 → 暴露生产问题
+- **是否计划修**：是
+- **还债 sketch**：`mount_ui` 之外加一个 catch-all：
+  ```python
+  @app.get("/app/{path:path}")
+  async def spa_fallback(path: str) -> Response:
+      # If the path matches a real file in docs/app/, StaticFiles already
+      # served it (this handler runs after). Otherwise serve index.html
+      # so TanStack Router's BASEPATH-aware logic takes over client-side.
+      return FileResponse(app_dir / "index.html")
+  ```
+  注意路由顺序 + 不要让 `/app/assets/*.js` 也 fallback 到 HTML
+- **GitHub Pages 影响**：未验证 prod docs 页面对深链是否有同样问题
+  （404.html 重定向到 index.html 是常见 GH Pages SPA 解法）
+
+---
+
 ## DEBT-013 · 前端 METRIC_KINDS 与后端 _DEFAULT_METRIC_KINDS 双写不同步
 
 - **severity**：low（候选，未触发）
