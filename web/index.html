@@ -11,6 +11,47 @@
     <title>alb · Web UI</title>
     <link rel="stylesheet" href="/fonts.css" />
     <link rel="stylesheet" href="/anthropic.css" />
+    <!--
+      DEBT-015 fix · 2026-04-29 · spa-github-pages recovery.
+      Inline (no external resource) and runs BEFORE the React bundle,
+      so TanStack Router sees the correct path on first render. Only
+      activates when GH Pages bounced us here from docs/404.html with
+      ?spa=1&p=<encoded>. alb-api dev/local doesn't need this branch
+      (SPAStaticFiles already serves index.html for deep paths) but
+      the script is a no-op there since ?spa=1 isn't set.
+    -->
+    <script>
+      (function () {
+        var search = window.location.search || "";
+        if (search.indexOf("spa=1") === -1) return;
+        var params = new URLSearchParams(search);
+        if (params.get("spa") !== "1") return;
+        var p = params.get("p");
+        var pathname = window.location.pathname || "/";
+        // pathname === "/" only happens during local dev (vite serves
+        // root). Don't strip the leading slash to "" or we end up
+        // with a "//foo" double-slash url.
+        var basePath = pathname === "/" ? "" : pathname.replace(/\/$/, "");
+        if (p === null || p === "") {
+          // ?spa=1 set without a path payload — clean residual query
+          // so business code doesn't see "spa" as a real search param.
+          window.history.replaceState(
+            {},
+            "",
+            (pathname === "" ? "/" : pathname) + window.location.hash,
+          );
+          return;
+        }
+        var qs = params.get("qs");
+        var restored =
+          basePath +
+          "/" +
+          p +
+          (qs ? "?" + qs : "") +
+          window.location.hash;
+        window.history.replaceState({}, "", restored);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -385,4 +385,61 @@ bug 从 M2 Web Tier 1（commit b07b930，2026-04-23）就存在 6 天，
 
 ---
 
+## L-018 · 静态托管 SPA fallback 用 client-side roundtrip 时的 URL 闪现 + recovery 必须 inline 同步
+
+**坑**：DEBT-015 用 spa-github-pages 套路修 GH Pages SPA fallback。
+用户从 `/app/dashboard` 进站，体感流程：
+
+```
+浏览器 GET /app/dashboard
+  → GH Pages 找不到 → 服务 docs/404.html (HTTP 404 但 body 是 HTML)
+  → docs/404.html redirect script 跑 → window.location.replace(
+      "/app/?spa=1&p=dashboard")
+  → 浏览器 GET /app/?spa=1&p=dashboard
+  → GH Pages 服务 docs/app/index.html (HTTP 200)
+  → docs/app/index.html recovery script 跑 → history.replaceState(
+      {}, "", "/app/dashboard")
+  → React 加载，TanStack Router 看到 /app/dashboard
+```
+
+URL 在 ~50ms 内闪现一次 `?spa=1`。如果 recovery script 没在 React
+加载前同步执行（比如被 vite plugin 改成 `defer` / async / 异步
+import），TanStack Router 第一次解析路径会拿到 `?spa=1&p=dashboard`
+而不是 `/app/dashboard`，路由匹配失败显示 404 页面。
+
+**根因**：
+- spa-github-pages 是 client-side 协议，URL 闪现是协议固有行为
+- recovery 必须 inline + 同步：放在 `<head>` 里 inline `<script>`，
+  不能 `<script type="module">` / `<script defer>` / `<script async>`
+- 必须在加载主 React bundle 之前执行，否则 router 拿到错误 URL
+
+**规则**：
+1. 静态托管 SPA fallback（GH Pages / S3 / Netlify w/o redirects）
+   不可避免 client-side roundtrip + URL 短暂闪现协议参数
+2. recovery script 必须 inline `<script>` 在 `<head>` 同步执行，
+   **不能** defer / async / module
+3. 必须在 main bundle `<script type="module" src=".../index-XYZ.js">`
+   之前出现
+4. vite 默认把 main bundle 注入 `<head>` 末尾，inline recovery 在
+   main bundle import 之前 → 顺序对；如果未来 vite plugin 改 inject
+   顺序，本档失效但**没有自动检测**——`tests/web/spa_fallback_test.mjs`
+   只测纯逻辑，不测 inject 顺序
+
+**应用到工作流**：
+- 任何静态托管的 SPA fallback 改动都必须真浏览器 hit deep link 验证
+  （不能只 node 模拟纯逻辑）
+- 改 vite plugin / 升级 vite 版本时，必须 grep 确认 `web/index.html`
+  里的 inline recovery 还在 `<script src=...>` 之前
+- L-017 + L-018 联合应用：reducer-level / vm node 模拟可验逻辑，
+  真浏览器 prod 验视觉 / 时序 / DOM 副作用
+
+**应用到 agents**：
+- architecture-reviewer 评审涉及 SPA inline script 的改动时，强制
+  问 "recovery script 是否在 main bundle 之前？是否同步执行（不
+  defer/async/module）？"
+- code-reviewer 评审 vite plugin 升级时，加入"inline script inject
+  顺序回归"check
+
+---
+
 （新教训按此格式追加）
