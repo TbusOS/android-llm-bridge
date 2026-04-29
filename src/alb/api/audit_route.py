@@ -68,12 +68,19 @@ def _project(raw: dict[str, Any]) -> dict[str, Any] | None:
     ts = _parse_ts(raw.get("ts") or "")
     if ts is None:
         return None
+    # Preserve `data` so downstream consumers (web reducer, LiveSession
+    # spark, KPI hooks) can read kind-specific fields like rate_per_s,
+    # tool_call id/name, usage.total_tokens. Pre-bug, this field was
+    # silently dropped here, leaving the spark flat at zero and tool
+    # entries showing "?" — fixed when end-to-end DEBT-001 verification
+    # surfaced it.
     return {
         "ts": ts.isoformat(),
         "session_id": raw.get("session_id") or "",
         "source": raw.get("source") or "system",
         "kind": raw.get("kind") or "unknown",
         "summary": raw.get("summary") or "",
+        "data": raw.get("data"),
         "ts_approx": False,
     }
 

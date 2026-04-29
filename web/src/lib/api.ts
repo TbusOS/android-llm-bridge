@@ -111,6 +111,10 @@ export interface AuditEvent {
   source: "chat" | "terminal";
   kind: string;
   summary: string;
+  /** Kind-specific payload — `rate_per_s` for tps_sample, `id`/`name`
+   * for tool_call_*, `usage`/`model` for done, etc. Reducers narrow
+   * by `kind` then read fields here at runtime (no static schema). */
+  data?: Record<string, unknown> | null;
   ts_approx: boolean;
 }
 

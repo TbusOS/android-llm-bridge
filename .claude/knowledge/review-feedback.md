@@ -282,6 +282,58 @@ session runtime 未自动加载，主对话用 general-purpose 代理 + 注入 a
 
 ---
 
+## 2026-04-29 · F.6 端到端验证 + DEBT-001 关闭 + audit_route _project bug 修复
+
+**触发**：arch reviewer 在 F.6 评审里要求"DEBT-001 ship 前必须跑行为
+验证才能标 closed"，主对话执行验证。
+
+**验证手段**：起新版 alb-api（commit 606b88d 含 F.6）→ ollama gemma4:e4b
+真实 chat → GET /audit?include_metrics=true → Node 跑等同 useLiveSession
+reducer 纯函数逻辑（reducer 是纯函数，Node 跑结果 = React useMemo 跑结果）。
+
+### 端到端发现的 P0 bug
+
+`src/alb/api/audit_route.py:62 _project()` 把事件的 `data` 字段 silently
+dropped。从 C.1（commit 36537d5，4 个月前）就存在，C.5 ship 时没真跑
+tool 触发就没人发现，F.5 ship 双 WS 时也没端到端跑就没暴露，到 F.6
+端到端验证才炸。
+
+修复：`_project()` 加 `data: raw.get("data")` 字段 + TS `AuditEvent.data?`
+类型同步。一行修。645 pytest pass · web bundle 不变（TS-only 类型字段）。
+
+### 验证结果（修后）
+
+```
+prompt:     真实显示 ✓
+modelName:  gemma4:e4b ✓
+totalTokens: 118 (sampler 累计，非 done 平均) ✓
+tps:        9 tok/s (瞬时) ✓
+tpsSamples: [3, 12, 11, 12, 12, 11, 12, 12, 12, 12, 9]  ← 真实曲线
+tpsSpark:   [27, 0, 3, 0, 0, 3, 0, 0, 0, 0, 9]  ← peak normalize 正确
+```
+
+DEBT-001 关闭（debts.md 标 CLOSED 2026-04-29）。F.8 阶段补 Playwright
+视觉截图（不阻塞本次关闭）。
+
+### 学到的新规则（升级到 lessons.md）
+
+- **L-017 · 端到端验证才能发现 wiring 静默 bug —— code review 看不出**
+
+### 对应 agent prompt 调整建议
+
+- code-reviewer / architecture-reviewer 在评审"新数据 path 接通"类
+  改动时，强制问 "reducer 依赖的 data 字段，从 producer 一路到
+  consumer 是否被中间所有层原样保留？"
+- 评审报告加一节 "端到端验证状态"：✓ done / ⚠ pending / ✗ skipped
+
+### 累计统计调整
+
+- F.6 验证额外发现 1 P0 bug + 1 新 lesson L-017，agents 间接立功
+  （是 arch reviewer 坚持"行为验证"才让 bug 暴露 —— 否则 F.7 开工
+  会撞同样问题但定位更难）
+
+---
+
 预期写入流程：
 1. agents 完成评审
 2. 主对话整理建议清单 + 询问用户
