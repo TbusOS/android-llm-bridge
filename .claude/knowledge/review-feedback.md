@@ -568,6 +568,72 @@ DEBT-015 评审定义的关闭条件是"SPA fallback 工作"，狭义看（fallb
 
 ---
 
+## 2026-04-29 · G 档 DEBT-002 LlmBackendCards 接真数据
+
+**评审对象**：staged diff（5 web 文件）。useBackends hook 调
+GET /playground/backends，DashboardPage 替换 MOCK_BACKENDS。
+
+**调动**：code + architecture reviewer 合体（一份合并报告）。
+
+### 采纳清单（已实施 4/5）
+
+- **arch [mid]** "registry beta → UI up 是语义抹平，用户看到 — 会误
+  解为'刚启动'而非'未知'" → 落地 alt 建议：backendMeta caption
+  "implemented" → "registered"（zh "已注册"），reviewer 提的更深改
+  动（LlmBackendCards 三槽改文案）拆 **DEBT-017** 一并做（health
+  endpoint 来时改一次更经济）
+- **arch [low]** BackendCardData 死字段 lastUsed/budget → DEBT-017
+  type 清理 sketch
+- **code [low]** mapApiBackendToCard 5 case → DEBT-012 sketch 段补
+  一行
+- **code [low]** MOCK_BACKENDS 加 dev fixture 注释 → 已落地
+
+### 部分采纳（DEBT-017 follow-up）
+
+- **arch [mid]** runtime health 缺口 → 登记新 DEBT-017（mid，含
+  health endpoint sketch + UI 文案 + type 清理 + isError empty
+  placeholder）
+- **code [low]** isError 空 grid → DEBT-017 sketch 第 5 项 follow-up
+
+### 关闭 DEBT
+
+- ✅ DEBT-002 标 **CLOSED 2026-04-29** —— 范围 "mock → registry 真
+  数据"，runtime health 拆 DEBT-017
+
+### 新登记 DEBT
+
+- **DEBT-017** (mid) · LLM backend runtime health 缺口（DEBT-002
+  follow-up）—— 含完整 sketch（后端 health endpoint / 前端 ping /
+  UI 文案 / type 清理 / empty placeholder）
+
+### 学到的新规则
+
+- 暂无新 lesson（registry 语义 ≠ runtime 语义已隐含在 architecture.md，
+  不升新 lesson）
+
+### 端到端验证状态（L-017 规则）
+
+✅ done · `.claude/reports/screenshots/2026-04-29-g/dashboard-1440.png`：
+
+- 起 alb-api → /playground/backends 返回 4 backends（1 beta + 3 planned）
+- Playwright 真浏览器渲染 4 cards / 0 console errors / 1 implemented →
+  "1 registered · 3 planned" caption / ollama 卡 latency/tps/errors
+  显示 "—"（不是 0 假数据）/ 3 planned 卡显示 "unconfigured"
+- L-017 强化点：本次端到端 hit 暴露 reviewer 发现 #1（"用户看到
+  — 是 unknown 还是 0？"）—— 视觉验证才能注意到的语义模糊
+
+### 累计统计调整
+
+- 总评审次数：9（前 8 + **G 档 DEBT-002**）
+- 总建议数：99（前 94 + G 档 5 条）
+- G 档采纳率：80%（4 完全采纳 + 1 部分采纳 follow-up DEBT-017 + 0
+  维持 + 0 驳回）
+- 累计采纳率：83%（前 84% 微调）
+- 累计形成规则：6 lessons + **4 ADR**（不变）
+- DEBT 操作累计：**7 关 + 1 升 + 4 新（含 017）+ 1 候选**
+
+---
+
 ## 2026-04-29 · F.6 端到端验证 + DEBT-001 关闭 + audit_route _project bug 修复
 
 **触发**：arch reviewer 在 F.6 评审里要求"DEBT-001 ship 前必须跑行为

@@ -204,3 +204,36 @@ export async function fetchMetricsSummary(
   }
   return (await r.json()) as MetricsSummaryResponse;
 }
+
+/** Static manifest entry for an LLM backend (alb.infra.registry). The
+ * server returns the *registered shape*, not runtime health — see
+ * `BackendSpec` in `src/alb/infra/registry.py`. Runtime health (latency,
+ * throughput, error rate) requires a separate metric source not yet
+ * wired up; for now the LlmBackendCards UI only knows whether each
+ * backend is implemented (status="beta") or planned. */
+export interface ApiBackend {
+  name: string;
+  status: "beta" | "planned" | string;
+  runs_on_cpu: boolean;
+  supports_tool_calls: boolean;
+  requires: string[];
+  description: string;
+}
+
+export interface BackendsResponse {
+  backends: ApiBackend[];
+}
+
+export async function fetchBackends(
+  signal?: AbortSignal,
+): Promise<BackendsResponse> {
+  const r = await fetch(`/playground/backends`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /playground/backends returned ${r.status}`,
+      r.status,
+      "BACKENDS_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as BackendsResponse;
+}
