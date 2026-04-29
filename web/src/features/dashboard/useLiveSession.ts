@@ -34,7 +34,20 @@ interface SessionAccum {
   modelName: string;
   totalTokens: number;
   tps: number;
+  /** Raw rate_per_s samples from `tps_sample` events, oldest → newest,
+   * capped to the last SPARK_WINDOW entries (≈60 s at 1 Hz). */
+  tpsSamples: number[];
 }
+
+/** Sparkline window: 60 samples (≈60 s when ALB_TPS_SAMPLE_INTERVAL_S=1).
+ * If sample interval is changed via env, the visible time window scales
+ * accordingly; the LiveSessionCard ariaLabel still says "last 60 s",
+ * which is the deployed-default copy and intentional. */
+const SPARK_WINDOW = 60;
+/** SVG viewBox height used by LiveSessionCard's Sparkline. */
+const SPARK_HEIGHT = 36;
+/** Min ceiling for the y-scale so tiny rates (1–2 tok/s) stay visible. */
+const SPARK_MIN_CEILING = 10;
 
 function tsMillis(ts: string): number {
   const n = new Date(ts).getTime();
@@ -55,6 +68,7 @@ function emptyAccum(sessionId: string, ts: number): SessionAccum {
     modelName: "",
     totalTokens: 0,
     tps: 0,
+    tpsSamples: [],
   };
 }
 
@@ -64,6 +78,8 @@ export function reduceSessions(events: AuditEvent[]): Map<string, SessionAccum> 
   const ordered = [...events].reverse();
   const map = new Map<string, SessionAccum>();
   for (const e of ordered) {
+    // chat-only filter is intentional: terminal / future metric kinds
+    // (e.g. cmd_rate) belong to other dashboard panels, not LiveSession.
     if (e.source !== "chat") continue;
     const ts = tsMillis(e.ts);
     let acc = map.get(e.session_id);
@@ -94,18 +110,44 @@ export function reduceSessions(events: AuditEvent[]): Map<string, SessionAccum> 
         tool.state = data.ok === false ? "err" : "done";
         tool.elapsedSec = (ts - tool.startedTs) / 1000;
       }
+    } else if (e.kind === "tps_sample") {
+      // Aggregated throughput sample emitted by TokenSampler at
+      // ALB_TPS_SAMPLE_INTERVAL_S (default 1 Hz). Invariant: one
+      // sampler per session_id, counters never reset mid-session,
+      // so total_tokens is monotonic — we trust it directly.
+      const rateRaw = data.rate_per_s;
+      const totalRaw = data.total_tokens;
+      const rate =
+        typeof rateRaw === "number" && Number.isFinite(rateRaw)
+          ? Math.max(0, rateRaw)
+          : 0;
+      acc.tpsSamples.push(rate);
+      if (acc.tpsSamples.length > SPARK_WINDOW) {
+        acc.tpsSamples.splice(0, acc.tpsSamples.length - SPARK_WINDOW);
+      }
+      acc.tps = rate;
+      if (typeof totalRaw === "number" && Number.isFinite(totalRaw)) {
+        acc.totalTokens = totalRaw;
+      }
     } else if (e.kind === "done") {
       acc.done = true;
       const model = data.model;
       if (typeof model === "string" && model) acc.modelName = model;
       const usage = (data.usage as Record<string, number> | undefined) ?? {};
       const tokens = usage.total_tokens ?? usage.output_tokens ?? 0;
-      acc.totalTokens += tokens;
-      const elapsedMs = ts - acc.firstTs;
-      acc.tps =
-        elapsedMs > 0 && acc.totalTokens > 0
-          ? Math.round((acc.totalTokens / elapsedMs) * 1000)
-          : 0;
+      // Only fall back to usage-derived total when the sampler hasn't
+      // already supplied a higher cumulative count. Avoids double counting.
+      if (tokens > acc.totalTokens) acc.totalTokens = tokens;
+      // Keep the last sampled tps as the displayed rate; only fall back
+      // to the average when no tps_sample arrived — either legacy sessions
+      // pre-F.1 or chats shorter than the sample interval.
+      if (acc.tpsSamples.length === 0) {
+        const elapsedMs = ts - acc.firstTs;
+        acc.tps =
+          elapsedMs > 0 && acc.totalTokens > 0
+            ? Math.round((acc.totalTokens / elapsedMs) * 1000)
+            : 0;
+      }
     } else if (e.kind === "error") {
       acc.errored = true;
       acc.done = true; // error terminates the session for "live" purposes
@@ -124,6 +166,19 @@ export function selectActiveSession(
     if (best === null || acc.lastTs > best.lastTs) best = acc;
   }
   return best;
+}
+
+/** Map raw rate_per_s samples (oldest → newest) to SVG y-coords
+ * (0 = top of the spark, SPARK_HEIGHT = bottom).  Ceiling is dynamic so
+ * tiny tps values (3 tok/s on a heavy model) still produce a visible
+ * profile, but the floor SPARK_MIN_CEILING avoids amplifying pure noise. */
+function scaleSparkPoints(samples: number[]): number[] {
+  if (samples.length === 0) return [];
+  const peak = Math.max(SPARK_MIN_CEILING, ...samples);
+  return samples.map((rate) => {
+    const norm = peak > 0 ? rate / peak : 0;
+    return Math.max(0, Math.min(SPARK_HEIGHT, SPARK_HEIGHT * (1 - norm)));
+  });
 }
 
 function formatElapsed(ms: number): string {
@@ -161,7 +216,7 @@ export function toLiveSessionData(
     tps: acc.tps,
     totalTokens: acc.totalTokens,
     modelName: acc.modelName || "?",
-    tpsSpark: [],
+    tpsSpark: scaleSparkPoints(acc.tpsSamples),
   };
 }
 

@@ -156,4 +156,40 @@
 
 ---
 
+## DEBT-011 · useAuditStream MAX_EVENTS 不分类型，metric 流挤掉 business
+
+- **severity**：mid
+- **引入**：F.5（commit c135816，2026-04-28）+ F.6 暴露
+- **位置**：`web/src/features/dashboard/useAuditStream.ts:31` `MAX_EVENTS = 200`
+- **原因**：双 WS 实例方案下，`liveAudit = useAuditStream({includeMetrics:true})`
+  同时收 business + metric。tps_sample 1Hz 推送，**约 200 秒**后最早
+  的 user / tool_call_start 事件被 `slice(0, MAX_EVENTS)` 挤出 rawEvents。
+  reducer 看不到 user 事件就拿不到 prompt / turn，长 session（> ~3 min）
+  LiveSessionCard 显示 "(no prompt yet)" 但 spark 继续滚动。F.6 没修。
+- **状态**：登记，F.7 一并改
+- **是否计划修**：是
+- **还债 sketch**：useAuditStream 改成按 kind 分桶：metric 桶 cap 60
+  （≈ 60s @ 1Hz，和 SPARK_WINDOW 对齐）+ business 桶 cap 200。或者
+  让 useLiveSession 在 reducer 上游就把两类拆开各自 cap。后者改动
+  范围更小。
+- **还债条件**：F.7 落地（同步动 useAuditStream / useLiveSession）
+
+---
+
+## DEBT-012 · web/ reducer 纯函数无单测
+
+- **severity**：low
+- **引入**：C.5（a03cbab）至 F.6（pending）累积
+- **位置**：`web/src/features/dashboard/useLiveSession.ts` 的 reduceSessions /
+  selectActiveSession / toLiveSessionData / scaleSparkPoints 全部纯函数
+- **原因**：web/ 没装测试框架（约束：M2 Tier 1 不引 vitest 保 bundle 小）。
+  reducer 是数据正确性核心，下次 fallback 逻辑改动 / 新事件 kind 加分支
+  没有回归网。
+- **是否计划修**：是
+- **还债 sketch**：web/ 引入 vitest 时一起补 6-8 case：单 sample / 多 sample /
+  done 后续 sample / NaN 守卫 / SPARK_WINDOW cap / 跨 session 切换
+- **还债条件**：web/ 引入测试框架（候选 G/H 档）
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）
