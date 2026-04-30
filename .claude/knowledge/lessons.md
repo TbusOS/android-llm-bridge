@@ -442,4 +442,88 @@ import），TanStack Router 第一次解析路径会拿到 `?spa=1&p=dashboard`
 
 ---
 
+## L-019 · ABC 默认方法用 sentinel flag 表达 capability 否定 = 反模式
+
+**坑**：DEBT-017 主 commit `67c0820` 在 `LLMBackend.health()` 默认实
+现里返回 `{reachable: False, implemented: False}`。端点 `if not
+result.get("implemented")` 反查这个 dict key 来判定"未接探测"。
+OllamaBackend.health() 不显式设 `implemented: True`（依赖 key 缺失
+fallthrough 走 truthy 路径），arch-reviewer + code-reviewer 同时指
+出：下个 backend 复制 ABC 模板做基础时，留 `implemented: False` +
+返回 reachable=True，端点会**静默判错**为 unprobed，明明在跑显示成
+"未探测"。
+
+**根因**：
+
+1. **dict-as-interface 没 schema**：endpoint 读 `result.get("model")`
+   / `result.get("model_present")` / `result.get("implemented")`，
+   concrete backend 加字段 / 改字段 / 漏字段都 type-check 不出。
+   ChatResponse / ToolCall / Message 早 dataclass 化，health() 是孤儿。
+2. **capability 隐式表达**：用"返回字典里的 sentinel key"声明"我有
+   probe 能力"，与项目里其他 capability（`supports_tool_calls` /
+   `supports_streaming` 都是 class attribute）格调不一。
+3. **sentinel 反向语义**：False 表示"我没接"，必须**两边**（基类 +
+   子类）都正确写才工作。基类写 True 子类没传 → 误报有；基类写
+   False 子类传 True → 当时对，复制时忘改 → 误报无。
+
+**规则**：
+
+1. ABC 表达 capability 否定 / 缺失能力，**用 class attribute**（默
+   认 False，子类显式设 True 才生效）。例：`has_health_probe: bool
+   = False`，对齐 `supports_tool_calls` 模式。
+2. ABC 默认方法**不留占位 dict**。改 `raise NotImplementedError`，
+   让"调用未声明能力的方法"变成 loud failure。
+3. ABC 方法返回值**用 dataclass**，每个字段 type 化。增加字段时全
+   局扩，删除 / 改名时调用方都报错。
+4. 调用方先 `getattr(type(b), "<capability>", False)` 查 capability，
+   再 call。
+
+**反例 / 正例对比**：
+
+```python
+# ❌ 反例（DEBT-017 主 commit 67c0820 一度采用）
+class LLMBackend(ABC):
+    async def health(self) -> dict[str, Any]:
+        return {"reachable": False, "implemented": False, ...}
+
+# 调用方
+result = await b.health()
+if not result.get("implemented"):  # 隐式契约
+    return _no_probe()
+
+# ✅ 正例（DEBT-017 follow-up commit 63a10c2 修正后）
+class LLMBackend(ABC):
+    has_health_probe: bool = False
+
+    async def health(self) -> HealthResult:
+        raise NotImplementedError(
+            f"{type(self).__name__} has no health probe wired; "
+            "set has_health_probe=True and override health()."
+        )
+
+# 调用方
+if not getattr(type(b), "has_health_probe", False):
+    return _no_probe()
+result = await b.health()  # type-checked HealthResult
+```
+
+**应用到工作流**：
+
+- 写 ABC / interface 时，capability advertise 用 class attribute；
+  默认方法要么 abstractmethod 要么 raise NotImplementedError；返回值
+  用 dataclass 或 TypedDict（dataclass 强于 TypedDict 因 runtime 校验
+  字段）。
+- 调用方查能力先 gate（`if not has_capability` 短路），不调"可能没接"
+  的方法。
+
+**应用到 agents**：
+
+- code-reviewer / architecture-reviewer 看到 ABC 默认方法返回 dict
+  + 子类靠 dict key 反向 fallthrough 表达 capability 时，立即提
+  L-019 + 引 ADR-024。
+- 看到 `result.get("...")` chain 在 endpoint / hot path，建议升级
+  为 dataclass。
+
+---
+
 （新教训按此格式追加）
