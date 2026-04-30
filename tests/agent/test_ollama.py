@@ -300,6 +300,42 @@ async def test_health_unreachable() -> None:
     assert snap.error is not None
 
 
+# ─── DEBT-019 client reuse + aclose ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_client_reused_across_calls() -> None:
+    """Two consecutive health() calls reuse the same client — no
+    per-call open/close churn against ollama."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"models": []})
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    assert b._client is None
+    await b.health()
+    first = b._client
+    assert first is not None
+    await b.health()
+    assert b._client is first
+    await b.aclose()
+    assert b._client is None
+
+
+@pytest.mark.asyncio
+async def test_aclose_idempotent_and_reusable() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"models": []})
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    await b.health()
+    await b.aclose()
+    await b.aclose()  # idempotent
+    snap = await b.health()
+    assert snap.reachable is True
+    assert b._client is not None
+
+
 # ─── Streaming ───────────────────────────────────────────────────────
 
 

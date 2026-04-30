@@ -72,6 +72,15 @@ def create_app() -> FastAPI:
         from alb.capabilities.metrics import shutdown_all_streamers
         await shutdown_all_streamers()
 
+    @app.on_event("shutdown")
+    async def _close_backend_clients() -> None:  # noqa: ANN001 — FastAPI hook
+        # DEBT-019: backends in alb.agent.backends._PROBE_CACHE keep
+        # a long-lived httpx.AsyncClient open against their daemon
+        # for connection reuse. Close on app shutdown so we don't
+        # leave half-open TCP sockets behind in tests / dev reload.
+        from alb.agent.backends import close_probe_cache
+        await close_probe_cache()
+
     return app
 
 

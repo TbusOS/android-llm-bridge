@@ -708,6 +708,53 @@ async def test_chat_default_options_cannot_override_reserved_fields() -> None:
 # ─── list_models() ───────────────────────────────────────────────────
 
 
+# ─── DEBT-019 client reuse + aclose ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_client_reused_across_calls() -> None:
+    """Two consecutive health() probes should reuse the same
+    httpx.AsyncClient instance — no per-call open/close churn."""
+    call_count = {"n": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        return httpx.Response(200, json={"data": []})
+
+    b = OpenAICompatBackend(transport=_mock_transport(handler))
+    assert b._client is None
+    await b.health()
+    first = b._client
+    assert first is not None
+    await b.health()
+    assert b._client is first  # same instance
+    assert call_count["n"] == 2
+    await b.aclose()
+    assert b._client is None
+
+
+@pytest.mark.asyncio
+async def test_aclose_idempotent_and_reusable() -> None:
+    """aclose() is safe to call twice and a closed backend rebuilds
+    its client on next use (covers the cache-then-shutdown-then-
+    reuse path for `_PROBE_CACHE`-cached backends)."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": []})
+
+    b = OpenAICompatBackend(transport=_mock_transport(handler))
+    await b.health()
+    await b.aclose()
+    await b.aclose()  # idempotent
+    # next call rebuilds client
+    snap = await b.health()
+    assert snap.reachable is True
+    assert b._client is not None
+
+
+# ─── list_models() ───────────────────────────────────────────────────
+
+
 @pytest.mark.asyncio
 async def test_list_models_passthrough() -> None:
     def handler(req: httpx.Request) -> httpx.Response:

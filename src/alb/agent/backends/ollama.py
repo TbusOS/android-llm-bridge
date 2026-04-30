@@ -97,6 +97,15 @@ class OllamaBackend(LLMBackend):
         self.think = think
         # Testing hook: inject httpx.MockTransport to avoid real network.
         self._transport = transport
+        # DEBT-019 closed: lazy-init shared httpx.AsyncClient so the
+        # 4 paths (chat/stream/health/list_models) reuse one TCP/TLS
+        # connection pool instead of opening + closing one per call.
+        # Lifecycle: built on first use, closed by aclose() (called
+        # from alb-api shutdown lifespan event). is_closed check on
+        # rebuild covers the post-aclose path so the cached backend
+        # in `alb.agent.backends._PROBE_CACHE` keeps working after a
+        # close cycle.
+        self._client: httpx.AsyncClient | None = None
 
     # ── Public API ──────────────────────────────────────────────
     async def chat(
@@ -140,64 +149,62 @@ class OllamaBackend(LLMBackend):
 
         url = f"{self.base_url}/api/chat"
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, transport=self._transport
-            ) as client:
-                async with client.stream("POST", url, json=body) as r:
-                    if r.status_code >= 400:
-                        text = (await r.aread()).decode("utf-8", errors="replace")[:500]
-                        raise BackendError(
-                            "BACKEND_HTTP_ERROR",
-                            f"ollama stream returned {r.status_code}: {text}",
-                            suggestion="check model name and stream support",
-                        )
-                    async for line in r.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        msg = chunk.get("message") or {}
-                        delta_c = msg.get("content", "") or ""
-                        delta_t = msg.get("thinking", "") or ""
-                        if delta_c:
-                            content_parts.append(delta_c)
-                            # Ollama streams 1 token per chunk (after applying
-                            # its tokenizer); see ABC contract in
-                            # alb.agent.backend.LLMBackend.stream — tokens=1
-                            # per token-event so MetricSampler doesn't have to
-                            # guess from char length.
-                            yield {"type": "token", "delta": delta_c, "tokens": 1}
-                        if delta_t:
-                            thinking_parts.append(delta_t)
-                        if chunk.get("model"):
-                            model_reply = chunk["model"]
-                        if chunk.get("done"):
-                            # Terminal chunk: tool_calls (if any) + usage
-                            for tc in msg.get("tool_calls") or []:
-                                fn = tc.get("function") or {}
-                                name = fn.get("name") or ""
-                                args = fn.get("arguments") or {}
-                                if isinstance(args, str):
-                                    try:
-                                        args = json.loads(args) if args.strip() else {}
-                                    except json.JSONDecodeError:
-                                        args = {"__raw__": args}
-                                if not name:
-                                    continue
-                                tool_calls.append(
-                                    ToolCall(
-                                        id=tc.get("id") or f"tc_{uuid4().hex[:8]}",
-                                        name=name,
-                                        arguments=args,
-                                    )
+            client = self._get_client()
+            async with client.stream("POST", url, json=body) as r:
+                if r.status_code >= 400:
+                    text = (await r.aread()).decode("utf-8", errors="replace")[:500]
+                    raise BackendError(
+                        "BACKEND_HTTP_ERROR",
+                        f"ollama stream returned {r.status_code}: {text}",
+                        suggestion="check model name and stream support",
+                    )
+                async for line in r.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = chunk.get("message") or {}
+                    delta_c = msg.get("content", "") or ""
+                    delta_t = msg.get("thinking", "") or ""
+                    if delta_c:
+                        content_parts.append(delta_c)
+                        # Ollama streams 1 token per chunk (after applying
+                        # its tokenizer); see ABC contract in
+                        # alb.agent.backend.LLMBackend.stream — tokens=1
+                        # per token-event so MetricSampler doesn't have to
+                        # guess from char length.
+                        yield {"type": "token", "delta": delta_c, "tokens": 1}
+                    if delta_t:
+                        thinking_parts.append(delta_t)
+                    if chunk.get("model"):
+                        model_reply = chunk["model"]
+                    if chunk.get("done"):
+                        # Terminal chunk: tool_calls (if any) + usage
+                        for tc in msg.get("tool_calls") or []:
+                            fn = tc.get("function") or {}
+                            name = fn.get("name") or ""
+                            args = fn.get("arguments") or {}
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args) if args.strip() else {}
+                                except json.JSONDecodeError:
+                                    args = {"__raw__": args}
+                            if not name:
+                                continue
+                            tool_calls.append(
+                                ToolCall(
+                                    id=tc.get("id") or f"tc_{uuid4().hex[:8]}",
+                                    name=name,
+                                    arguments=args,
                                 )
-                            finish_reason = (
-                                "tool_calls" if tool_calls else _classify_done(chunk)
                             )
-                            usage = _build_usage_dict(chunk)
-                            break
+                        finish_reason = (
+                            "tool_calls" if tool_calls else _classify_done(chunk)
+                        )
+                        usage = _build_usage_dict(chunk)
+                        break
         except httpx.ConnectError as e:
             raise BackendError(
                 "BACKEND_UNREACHABLE",
@@ -230,12 +237,10 @@ class OllamaBackend(LLMBackend):
     async def health(self) -> HealthResult:
         """Hit `/api/tags` to check connectivity + whether our model is present."""
         try:
-            async with httpx.AsyncClient(
-                timeout=5.0, transport=self._transport
-            ) as client:
-                r = await client.get(f"{self.base_url}/api/tags")
-                r.raise_for_status()
-                data = r.json()
+            client = self._get_client()
+            r = await client.get(f"{self.base_url}/api/tags", timeout=5.0)
+            r.raise_for_status()
+            data = r.json()
         except httpx.HTTPError as e:
             return HealthResult(
                 reachable=False,
@@ -277,13 +282,34 @@ class OllamaBackend(LLMBackend):
             body["tools"] = [_tool_to_ollama(t) for t in tools]
         return body
 
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazy-init the shared httpx.AsyncClient.
+
+        Reused across chat/stream/health/list_models so we keep a TCP
+        connection pool open against the daemon instead of reopening
+        on every call. Per-request timeout overrides on health() let
+        the same client serve fast probes (5 s) and slow chat (120 s).
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout, transport=self._transport
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the shared httpx client. Idempotent + post-close
+        re-init via _get_client() works (alb-api lifespan calls this
+        once at shutdown, but the cached backend in
+        `alb.agent.backends._PROBE_CACHE` may be reused after)."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, transport=self._transport
-            ) as client:
-                r = await client.post(url, json=body)
+            client = self._get_client()
+            r = await client.post(url, json=body)
         except httpx.ConnectError as e:
             raise BackendError(
                 "BACKEND_UNREACHABLE",
@@ -362,10 +388,8 @@ class OllamaBackend(LLMBackend):
         """
         url = f"{self.base_url}/api/tags"
         try:
-            async with httpx.AsyncClient(
-                timeout=5.0, transport=self._transport
-            ) as client:
-                r = await client.get(url)
+            client = self._get_client()
+            r = await client.get(url, timeout=5.0)
         except httpx.ConnectError as e:
             raise BackendError(
                 "BACKEND_UNREACHABLE",
