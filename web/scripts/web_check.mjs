@@ -3,11 +3,15 @@
 // structured signals (a11y tree, console errors, DOM counts, screenshot).
 //
 // usage:
-//   node scripts/dev/web_check.mjs [route] [outDir]
+//   node scripts/web_check.mjs [route] [outDir]
 // env:
-//   WEB_CHECK_BASE_URL  default http://127.0.0.1:5173
-//   WEB_CHECK_TIMEOUT   default 15000  (ms, page.goto)
-//   WEB_CHECK_WAIT      default networkidle
+//   WEB_CHECK_BASE_URL          default http://127.0.0.1:5173
+//   WEB_CHECK_TIMEOUT           default 20000  (ms, page.goto)
+//   WEB_CHECK_WAIT              default networkidle
+//   WEB_CHECK_WAIT_FOR_SELECTOR optional, e.g. "article" — wait for
+//                               element to appear before sampling DOM
+//   WEB_CHECK_SELECTOR_TIMEOUT  default 10000  (ms, only if selector set)
+//   WEB_CHECK_SETTLE_MS         default 1500   (final settle before sample)
 //
 // exits non-zero on navigation error / page error / console error.
 
@@ -19,8 +23,11 @@ const route = process.argv[2] || '/app/';
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
 const outDir = resolve(process.argv[3] || `.claude/reports/web-check/${stamp}`);
 const baseUrl = process.env.WEB_CHECK_BASE_URL || 'http://127.0.0.1:5173';
-const timeout = Number(process.env.WEB_CHECK_TIMEOUT || 15000);
+const timeout = Number(process.env.WEB_CHECK_TIMEOUT || 20000);
 const waitUntil = process.env.WEB_CHECK_WAIT || 'networkidle';
+const waitForSelector = process.env.WEB_CHECK_WAIT_FOR_SELECTOR || null;
+const selectorTimeout = Number(process.env.WEB_CHECK_SELECTOR_TIMEOUT || 10000);
+const settleMs = Number(process.env.WEB_CHECK_SETTLE_MS || 1500);
 const url = baseUrl.replace(/\/$/, '') + route;
 
 await mkdir(outDir, { recursive: true });
@@ -50,7 +57,16 @@ try {
   navError = e.message;
 }
 
-await page.waitForTimeout(800);
+let selectorWaitError = null;
+if (waitForSelector) {
+  try {
+    await page.waitForSelector(waitForSelector, { timeout: selectorTimeout });
+  } catch (e) {
+    selectorWaitError = e.message;
+  }
+}
+
+await page.waitForTimeout(settleMs);
 
 const title = await page.title().catch(() => null);
 const ariaSnapshot = await page.locator('body').ariaSnapshot().catch(e => `(aria-snapshot failed: ${e.message})`);
@@ -80,6 +96,9 @@ const consoleErrorCount = consoleMessages.filter(m => m.type === 'error').length
 const report = {
   url,
   navError,
+  selectorWaitError,
+  waitForSelector,
+  settleMs,
   title,
   domCounts,
   consoleErrorCount,
