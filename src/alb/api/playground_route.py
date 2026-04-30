@@ -263,6 +263,15 @@ async def backend_health(name: str) -> dict[str, Any]:
 
     backend_model = getattr(b, "model", None)
 
+    # Capability advertising via class attribute (mirrors
+    # supports_tool_calls / supports_streaming) — no probe wired
+    # short-circuits BEFORE we'd raise NotImplementedError from the
+    # ABC default.
+    if not getattr(type(b), "has_health_probe", False):
+        return _make_health_response(
+            name=name, reachable=False, reason="no_probe", model=backend_model
+        )
+
     t0 = time.perf_counter()
     try:
         result = await asyncio.wait_for(
@@ -287,34 +296,20 @@ async def backend_health(name: str) -> dict[str, Any]:
         )
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
-    # Concrete backends signal a real probe by returning
-    # `implemented: True`. The ABC default omits the key (and returns
-    # reachable=False), so anything that isn't truthy means "no probe
-    # wired" — surface it as the explicit `no_probe` reason instead of
-    # forwarding a meaningless reachable=False/0-ms latency.
-    if not result.get("implemented"):
-        return _make_health_response(
-            name=name, reachable=False, reason="no_probe", model=backend_model
-        )
-
-    reachable = result.get("reachable")
-    resolved_reachable = bool(reachable) if reachable is not None else None
-    # Keep `reason` consistent with the contract that any False
-    # `reachable` carries a discriminator; concrete backends rarely
-    # provide one (they put the cause in `error`), so fall back to
-    # the generic 'down' bucket.
-    if resolved_reachable is False:
-        resolved_reason = result.get("reason") or "down"
-    else:
-        resolved_reason = result.get("reason")
+    # `result` is a typed HealthResult. Map False → reason='down' so
+    # every reachable=False response carries a discriminator.
+    resolved_reachable = (
+        bool(result.reachable) if result.reachable is not None else None
+    )
+    resolved_reason = "down" if resolved_reachable is False else None
     return _make_health_response(
         name=name,
         reachable=resolved_reachable,
         reason=resolved_reason,
         latency_ms=latency_ms,
-        model=result.get("model") or backend_model,
-        model_present=result.get("model_present"),
-        error=result.get("error"),
+        model=result.model or backend_model,
+        model_present=result.model_present,
+        error=result.error,
     )
 
 

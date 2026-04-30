@@ -312,4 +312,126 @@ intercept 不可行。这是部署 surface 硬约束，不是设计偏好。
 
 ---
 
+## ADR-024 · LLMBackend ABC capability 改用 class attribute（amends ADR-016）
+
+**Status**: accepted, supersedes ABC default-method-with-sentinel-flag pattern
+**Date**: 2026-04-30
+**Context**: DEBT-017 主 commit `67c0820` 在 ABC 默认 `health()` 里加
+`implemented: False` sentinel，由端点 `if not result.get("implemented")`
+反查这个 dict key 来判定"未接探测"。arch reviewer / code reviewer
+同时指出 3 处脆性：
+
+1. OllamaBackend.health() 不返回 `implemented` 字段，端点靠"key 缺失
+   == implemented=True"的隐式 fallthrough。下一个 backend 复制 ABC
+   模板做基础时，留 `implemented: False` 又返回 reachable=True →
+   端点把它判成 unprobed，明明在跑显示成"未探测"，**静默错读**。
+2. dict-as-interface 没有 schema：endpoint 读 `result.get("model_present")`、
+   `result.get("model")` 等，concrete backend 加字段 / 改字段 / 漏字段
+   都不 type-check。
+3. ChatResponse / ToolCall / Message 早已 dataclass 化，`health()`
+   仍返回 dict，是孤儿。
+
+**Decision**：
+
+1. ABC 加 `class.has_health_probe: bool = False`，与
+   `supports_tool_calls` / `supports_streaming` / `runs_on_cpu` 一组，
+   显式 declare capability。
+2. ABC 默认 `health()` 改 `raise NotImplementedError` —— "调用未接探测
+   的 health()" 是 programmer error，loud failure 比 silent placeholder
+   值得。
+3. 新增 `HealthResult` dataclass（`reachable: bool | None` /
+   `model: str | None` / `model_present: bool | None` / `error: str | None`），
+   `health()` 返回 typed value。
+4. endpoint 改读 `getattr(type(b), "has_health_probe", False)` 决定
+   是否调 health()；调用后读 `result.reachable` / `result.model` /
+   `result.model_present` / `result.error` typed 字段。
+
+**Trade-off**：
+- 放弃：dict-as-interface 的"加字段不破坏老调用方"灵活
+- 获得：static type 校验 / IDE 补全 / capability 显式声明 / "忘了
+  override" loud failure / ChatResponse-级别契约一致性
+
+**备选**：
+- (a) 保留 dict 但加 `TypedDict` schema —— **否决**：runtime 不强
+  制，只骗 mypy，丢失"忘了 override 应失败"信号
+- (b) 改 dict + 显式 enum field 替代 sentinel —— **否决**：本质还
+  是约定胜过类型，下次评审还要重审
+- (c) 当前选项 dataclass + class attr —— **采用**
+
+**何时推翻**：
+- 加 OpenAI-compat 后发现需要返回比 4 字段更灵活的 metadata（比如
+  rate-limit headers）—— 扩 dataclass 而非回 dict
+- 出现某 backend 需"探测能力随运行时配置改变"（has_health_probe 不
+  是静态而是动态）—— 那时改 instance attribute / property，不是回
+  dict
+
+**测试覆盖**：`test_health_abc_default_raises`（直接 unit 验证 ABC
+default raise）+ `test_health_no_probe_wired`（_FakeBackend 没 set
+has_health_probe → endpoint 短路给 no_probe）+ `test_health_with_method`
+（has_health_probe=True 走真探测分支）。
+
+**关联**：
+- ADR-016（LLMBackend ABC 设计原则）—— 本 ADR 是对它的 amendment
+- DEBT-017（运行时 health 缺口）—— 主 commit `67c0820` 落，本 ADR
+  在 follow-up 的 commit 里 supersede 掉 sentinel pattern
+- L-019（待写）：ABC 默认方法用 sentinel flag 表达 capability 否定
+  是反模式
+
+---
+
+## ADR-025 · per-backend 并行 useQueries · Dashboard 健康探测 polling 分层
+
+**Status**: accepted（描述当前实现，未来 N≥6 时重审）
+**Date**: 2026-04-30
+**Context**: DEBT-017 给 Dashboard 加"每个 backend 独立 health
+probe"。N=4 today（1 ollama beta + 3 planned）。两个设计选择需文档：
+
+1. **per-backend useQuery（fan-out）vs single batch endpoint**：
+   - 当前选 fan-out（`useQueries` 4 路并行 GET /playground/backends/<n>/health）
+   - perf-auditor 测算 N=8 时 32 r/min idle，N=16 时 65 r/min
+   - alternative: `GET /playground/backends/health` batch 一次返回
+     所有 backend health
+2. **polling 频率分层**：
+   - 静态 manifest（注册表 / 描述）：60 s
+   - 运行时 health：15 s（normal）/ 60 s（after error，TanStack
+     refetchInterval 函数式 backoff）
+   - 长期 metrics window：5 min（DEBT-008 cache 候选）
+   - 真实时（audit / tps_sample）：WebSocket（ADR-022 双 WS 实例）
+
+**Decision**：
+
+1. fan-out 直到 N ≥ 6 backends 或 idle QPS > 1。理由：失败隔离（一个
+   probe 挂死不影响其他）+ TanStack 单 query 状态独立 + 每 query
+   各自 backoff。
+2. 频率分层定调：60 s manifest / 15 s health / 60 s health-on-error
+   / 5 min metrics / WS realtime。新增同档 polling 沿用此层级。
+3. health useQueries 显式配置：
+   - `enabled: api.status !== "planned"` —— planned 不浪费 round-trip
+   - `refetchOnWindowFocus: false` —— 与 interval 重叠的 focus
+     refetch 在 N 路 fan-out 时会雪崩
+   - `refetchIntervalInBackground: false` —— hidden tab 不该烧
+     daemon，10-100× 节省
+   - `retry: 1` —— probe 失败本身就是要展示的信号，retry-storm 噪声
+
+**Trade-off**：
+- 放弃：N≥6 时 batch endpoint 的请求量收敛
+- 获得：N<6 时 fan-out 简单 / 失败隔离 / 单 query 独立 backoff
+
+**备选**：
+- (a) batch endpoint —— 暂不（N=4 还在 fan-out 甜点；切换成本不高，
+  M3 加 OpenAI-compat 时再评估）
+- (b) WebSocket push（server 主动 push health change）—— **否决**：
+  health 不是高频信号（变化≈daemon up/down 事件），polling 足够
+
+**何时推翻**：
+- N ≥ 6 backend 真上线 → 触发 batch endpoint 评估
+- DEBT-006（events.jsonl rotate）期间发现 health polling 是 events
+  写盘热点 → polling 频率重审
+- M2.5 Windows standalone 上线后 idle 桌面 app 长开 → 进 visibility-
+  aware refetch 也覆盖一阶段
+
+**关联**：DEBT-017 / DEBT-NEW-C(httpx client 复用) / ADR-022 双 WS
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）

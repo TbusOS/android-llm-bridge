@@ -108,6 +108,34 @@ class ToolSpec:
 
 
 @dataclass(frozen=True)
+class HealthResult:
+    """Runtime probe outcome for a concrete LLM backend.
+
+    Concrete backends with `has_health_probe = True` must return one
+    of these from `health()`. The shape is intentionally narrow:
+    every field is what the *probe* actually observed (or None when
+    the probe couldn't determine it). Cross-cutting meta like the
+    backend's name or the dashboard `reason` enum is added by the
+    caller (`/playground/backends/{name}/health`).
+    """
+
+    reachable: bool | None
+    """True (probe says up), False (probe says down), None (probe ran
+    but couldn't decide — reserved for future async-pending probes)."""
+
+    model: str | None = None
+    """Model tag the daemon is configured for, if known."""
+
+    model_present: bool | None = None
+    """True/False if the probe could check whether `model` is loaded
+    (e.g. Ollama /api/tags listing); None if the probe doesn't expose
+    that signal."""
+
+    error: str | None = None
+    """Free-form diagnostic string when reachable=False."""
+
+
+@dataclass(frozen=True)
 class ChatResponse:
     """Unified backend reply.
 
@@ -158,6 +186,13 @@ class LLMBackend(ABC):
     supports_tool_calls: bool = False
     supports_streaming: bool = False
     runs_on_cpu: bool = False  # True for llama.cpp / Ollama CPU builds
+    # Whether the concrete backend wires up a real `health()` probe
+    # against its daemon. Callers (e.g. the playground health
+    # endpoint) MUST gate on this before calling `health()` — calling
+    # the ABC default raises NotImplementedError on purpose, so
+    # capability advertising stays explicit (mirrors
+    # `supports_tool_calls` / `supports_streaming`).
+    has_health_probe: bool = False
 
     @abstractmethod
     async def chat(
@@ -207,22 +242,21 @@ class LLMBackend(ABC):
         raise NotImplementedError(f"{self.name} does not support streaming")
         yield {}  # pragma: no cover — makes this an async generator for typing
 
-    async def health(self) -> dict[str, Any]:
-        """Connectivity & model-loaded snapshot for `alb status`.
+    async def health(self) -> HealthResult:
+        """Connectivity & model-loaded snapshot.
 
-        Default implementation is a placeholder. Concrete backends that
-        can probe their daemon (e.g. OllamaBackend hits `/api/tags`)
-        override this to return `reachable: bool` plus model info.
-        Callers (`alb status`, `GET /playground/backends/{name}/health`)
-        check `implemented` to distinguish "real probe failed" from
-        "no probe wired up yet"."""
-        return {
-            "backend": self.name,
-            "model": self.model,
-            "reachable": False,
-            "implemented": False,
-            "note": "health() not implemented by concrete backend",
-        }
+        Concrete backends with a real probe override this AND set
+        ``has_health_probe = True``. The default refuses to run so
+        that "I forgot to wire up the probe" is a loud failure
+        (NotImplementedError) instead of a silent placeholder.
+
+        Callers must gate on ``has_health_probe`` first — see
+        ``alb.api.playground_route.backend_health``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no health probe wired; "
+            "set has_health_probe=True and override health()."
+        )
 
 
 class BackendError(RuntimeError):
