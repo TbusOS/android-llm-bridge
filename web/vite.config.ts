@@ -17,6 +17,13 @@ export default defineConfig({
     proxy: {
       "/health": "http://localhost:8765",
       "/api": "http://localhost:8765",
+      "/devices": "http://localhost:8765",
+      "/sessions": "http://localhost:8765",
+      "/tools": "http://localhost:8765",
+      "/audit": {
+        target: "http://localhost:8765",
+        ws: true,
+      },
       "/chat": {
         target: "http://localhost:8765",
         ws: true,
