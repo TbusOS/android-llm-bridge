@@ -226,7 +226,12 @@ class OllamaBackend(LLMBackend):
         }
 
     async def health(self) -> dict[str, Any]:
-        """Hit `/api/tags` to check connectivity + whether our model is present."""
+        """Hit `/api/tags` to check connectivity + whether our model is present.
+
+        Concrete probe — sets `implemented: True` so the playground
+        health endpoint can distinguish "real probe ran" from the ABC
+        default placeholder (which never sets the key).
+        """
         try:
             async with httpx.AsyncClient(
                 timeout=5.0, transport=self._transport
@@ -240,6 +245,7 @@ class OllamaBackend(LLMBackend):
                 "model": self.model,
                 "base_url": self.base_url,
                 "reachable": False,
+                "implemented": True,
                 "error": str(e),
             }
         names = [m.get("name", "") for m in data.get("models", [])]
@@ -248,6 +254,7 @@ class OllamaBackend(LLMBackend):
             "model": self.model,
             "base_url": self.base_url,
             "reachable": True,
+            "implemented": True,
             "model_present": any(n == self.model or n.startswith(f"{self.model}:") for n in names),
             "installed_models": names,
         }

@@ -27,12 +27,33 @@ from alb.agent.backend import LLMBackend
 __all__ = ["get_backend"]
 
 
+# Process-lifetime cache for the no-kwargs construction path used by
+# `GET /playground/backends/{name}/health` — that endpoint hits us
+# every 15 s per backend per dashboard tab, and a fresh instance per
+# probe means re-running the (small) constructor + creating fresh
+# httpx clients underneath. We only cache the no-kwargs case so chat
+# call sites that pass per-call overrides (model / base_url) still get
+# a fresh instance with their settings.
+_PROBE_CACHE: dict[str, LLMBackend] = {}
+
+
 def get_backend(name: str, **kwargs: Any) -> LLMBackend:
     """Lazy-import and construct a concrete backend by name.
 
     Raises `ValueError` on unknown name, `ImportError` on missing
     optional dependency.
     """
+    if not kwargs and name in _PROBE_CACHE:
+        return _PROBE_CACHE[name]
+
+    backend = _construct(name, **kwargs)
+
+    if not kwargs:
+        _PROBE_CACHE[name] = backend
+    return backend
+
+
+def _construct(name: str, **kwargs: Any) -> LLMBackend:
     if name == "ollama":
         from alb.agent.backends.ollama import OllamaBackend
 

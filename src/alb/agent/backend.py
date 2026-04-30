@@ -208,11 +208,19 @@ class LLMBackend(ABC):
         yield {}  # pragma: no cover — makes this an async generator for typing
 
     async def health(self) -> dict[str, Any]:
-        """Connectivity & model-loaded snapshot for `alb status`."""
+        """Connectivity & model-loaded snapshot for `alb status`.
+
+        Default implementation is a placeholder. Concrete backends that
+        can probe their daemon (e.g. OllamaBackend hits `/api/tags`)
+        override this to return `reachable: bool` plus model info.
+        Callers (`alb status`, `GET /playground/backends/{name}/health`)
+        check `implemented` to distinguish "real probe failed" from
+        "no probe wired up yet"."""
         return {
             "backend": self.name,
             "model": self.model,
             "reachable": False,
+            "implemented": False,
             "note": "health() not implemented by concrete backend",
         }
 

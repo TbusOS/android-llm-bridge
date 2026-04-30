@@ -540,6 +540,29 @@
         font-family: var(--font-mono); font-weight: 600; font-size: 16px;
         color: var(--anth-text);
       }
+      /* DEBT-017 health-state modifiers (mockup v2 update 2026-04-30):
+         four runtime states (no_probe / planned / down / fetch-error /
+         probing) collapse the 3-column be-grid-stats into a single
+         caption row, so the .be-stat--full modifier stays available to
+         React. .be-stat-value--ellipsis truncates a long probe error
+         (e.g. "connection refused to http://ollama-host.internal:11434") inside
+         the .be-stat-value cell so the card height remains uniform.
+         .be-card--empty is the section-level placeholder used while
+         the manifest fetch is pending or has failed. */
+      .be-stat--full { grid-column: 1 / -1; }
+      .be-stat-value--ellipsis {
+        max-width: 100%; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
+      .be-card--empty {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-5);
+        font-family: var(--font-body);
+        font-size: 14px;
+        color: var(--anth-text-secondary);
+      }
 
       /* ==========================================================
          Sessions list
@@ -1155,21 +1178,92 @@
                   <div class="be-grid-stats">
                     <div>
                       <div class="be-stat-label"><span class="lang-en">status</span><span class="lang-zh">状态</span></div>
-                      <div class="be-stat-value" style="color:var(--anth-text-secondary); font-family:var(--font-heading); font-size:13px;"><span class="lang-en">paused</span><span class="lang-zh">暂停</span></div>
+                      <div class="be-stat-value is-text"><span class="lang-en">paused</span><span class="lang-zh">暂停</span></div>
                     </div>
                     <div>
                       <div class="be-stat-label"><span class="lang-en">last used</span><span class="lang-zh">上次使用</span></div>
-                      <div class="be-stat-value" style="font-family:var(--font-heading); font-size:13px;"><span class="lang-en">2 h ago</span><span class="lang-zh">2 小时前</span></div>
+                      <div class="be-stat-value is-text"><span class="lang-en">2 h ago</span><span class="lang-zh">2 小时前</span></div>
                     </div>
                     <div>
                       <div class="be-stat-label"><span class="lang-en">budget</span><span class="lang-zh">预算</span></div>
-                      <div class="be-stat-value" style="font-family:var(--font-heading); font-size:13px;">—</div>
+                      <div class="be-stat-value is-text">—</div>
                     </div>
                   </div>
                   <svg class="spark-svg" viewBox="0 0 280 32" preserveAspectRatio="none" role="img" aria-label="No recent throughput">
                     <line x1="0" y1="22" x2="280" y2="22" stroke="#b0aea5" stroke-width="1" stroke-dasharray="2 4"/>
                   </svg>
                 </article>
+
+                <!-- DEBT-017 runtime states (mockup v2 update 2026-04-30) -->
+                <!-- 3. unprobed: registered but no concrete health() probe wired -->
+                <article class="be-card">
+                  <div class="be-head">
+                    <span class="be-name">llama-cpp</span>
+                    <span class="be-model"><span class="lang-en">embedded llama.cpp</span><span class="lang-zh">内嵌 llama.cpp</span></span>
+                  </div>
+                  <div class="be-grid-stats">
+                    <div class="be-stat--full">
+                      <div class="be-stat-label"><span class="lang-en">runtime</span><span class="lang-zh">运行状态</span></div>
+                      <div class="be-stat-value is-text"><span class="lang-en">registered · runtime: unknown</span><span class="lang-zh">已注册 · 未做活性探测</span></div>
+                    </div>
+                  </div>
+                </article>
+
+                <!-- 4. planned: registry status, no construction attempted -->
+                <article class="be-card">
+                  <div class="be-head">
+                    <span class="be-name">anthropic</span>
+                    <span class="be-model"><span class="lang-en">Claude API</span><span class="lang-zh">Claude API</span></span>
+                  </div>
+                  <div class="be-grid-stats">
+                    <div class="be-stat--full">
+                      <div class="be-stat-label"><span class="lang-en">status</span><span class="lang-zh">状态</span></div>
+                      <div class="be-stat-value is-text"><span class="lang-en">planned · not implemented</span><span class="lang-zh">计划中 · 待实现</span></div>
+                    </div>
+                  </div>
+                </article>
+
+                <!-- 5. down: probe ran but failed (e.g. ollama daemon offline) -->
+                <article class="be-card">
+                  <div class="be-head">
+                    <span class="be-name">ollama</span>
+                    <span class="be-model">qwen2.5:7b</span>
+                  </div>
+                  <div class="be-grid-stats">
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">status</span><span class="lang-zh">状态</span></div>
+                      <div class="be-stat-value is-text"><span class="lang-en">down</span><span class="lang-zh">不可达</span></div>
+                    </div>
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">reason</span><span class="lang-zh">原因</span></div>
+                      <div class="be-stat-value is-text">probe_failed</div>
+                    </div>
+                    <div>
+                      <div class="be-stat-label"><span class="lang-en">error</span><span class="lang-zh">错误</span></div>
+                      <div class="be-stat-value is-text be-stat-value--ellipsis" title="connection refused to http://&lt;ollama-host&gt;:11434">connection refused…</div>
+                    </div>
+                  </div>
+                </article>
+
+                <!-- 6. fetch error: server didn't respond at all (network / 5xx) -->
+                <article class="be-card">
+                  <div class="be-head">
+                    <span class="be-name">openai-compat</span>
+                    <span class="be-model">lm-studio · gemma3</span>
+                  </div>
+                  <div class="be-grid-stats">
+                    <div class="be-stat--full">
+                      <div class="be-stat-label"><span class="lang-en">probe</span><span class="lang-zh">探测</span></div>
+                      <div class="be-stat-value is-text"><span class="lang-en">fetch failed</span><span class="lang-zh">请求失败</span></div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <!-- 7. section-level empty placeholder while manifest pending / failed -->
+              <div class="be-card--empty" style="margin-top: var(--space-3);">
+                <span class="lang-en">Could not fetch backends — is alb-api running?</span>
+                <span class="lang-zh">无法获取后端列表，检查 alb-api 是否在运行</span>
               </div>
             </section>
 

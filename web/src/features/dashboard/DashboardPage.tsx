@@ -110,7 +110,22 @@ export function DashboardPage() {
             <h2>{lang === "zh" ? "LLM 后端" : "LLM backends"}</h2>
             <span className="meta">{backendMeta(backends, lang)}</span>
           </div>
-          <LlmBackendCards backends={backends.backends} />
+          {backends.isError ? (
+            <div className="be-card--empty">
+              {lang === "zh"
+                ? "无法获取后端列表，检查 alb-api 是否在运行"
+                : "Could not fetch backends — is alb-api running?"}
+            </div>
+          ) : backends.isLoading ? (
+            <div className="be-card--empty">
+              {lang === "zh" ? "加载中…" : "Loading…"}
+            </div>
+          ) : (
+            <LlmBackendCards
+              backends={backends.backends}
+              runtime={backends.runtime}
+            />
+          )}
         </section>
 
         <section>
