@@ -350,27 +350,20 @@
 
 ---
 
-## DEBT-019 · httpx.AsyncClient 实例复用（OllamaBackend）
+## DEBT-019 · httpx.AsyncClient 实例复用 —— **CLOSED 2026-04-30**
 
-- **severity**：low（localhost 上 TCP 复用收益边际；远端 LAN 上 RTT
-  收益明显）
+- **severity**：low → mid（M3 step 1 触发条件满足后升级）
 - **引入**：M2 早期 OllamaBackend 实现
-- **暴露**：DEBT-017 perf-auditor F2 报告。N=4 backend 每 15s probe
-  各开/关一个 httpx.AsyncClient（即使 _PROBE_CACHE 复用了 backend 实例，
-  health() 内部仍是 `async with httpx.AsyncClient(...)` 一次性 client）
-- **位置**：`src/alb/agent/backends/ollama.py:228-262` (`health()`) +
-  其他 chat / stream 路径同样模式
-- **是否计划修**：暂不（gated on 第二个 concrete backend 出现 / 项目
-  跑在远端 LAN 高频 polling 时）
-- **还债 sketch**：
-  1. OllamaBackend 加 `_client: httpx.AsyncClient | None` 实例属性，
-     lazy init in chat/stream/health
-  2. 加 `aclose()` 方法 + 在 alb-api FastAPI lifespan shutdown event
-     里集中关
-  3. 测试 fixture 加 cleanup 防 socket 泄漏
-- **还债条件**：M3 上 OpenAI-compat 后两 backend 都开 polling；或
-  perf-auditor 测出 health probe 是测试套件的 socket 泄漏源
-- **来源**：DEBT-017 perf-auditor F2 报告，主对话登记不阻塞合入
+- **关闭**：commit `121106b`（M3 step 1 follow-up）。OllamaBackend +
+  OpenAICompatBackend 加 lazy `_client` + `aclose()` + alb-api FastAPI
+  shutdown 调 `close_probe_cache()` 集中关。chat/stream/health/list_models
+  4 路全覆盖。新增 `tests/agent/test_backend_registry.py` 锁 6 行为测试 +
+  各 backend 加 2 个 client_reused / aclose_idempotent 测试 = +10 tests。
+- **agents 评审**：M3 step 1 arch-reviewer #1 推动（"不能让 DEBT-019
+  静默留成忘记修，与 L-019 sentinel 反模式同源"）
+- **性能影响**：N=4 backend × 4 r/min health = 16 r/min 现在共享 16 个
+  keep-alive 连接，单 backend 减 ~1ms setup × 16 = 16ms/min CPU 省 +
+  消除 N TCP TIME_WAIT 积累
 
 ---
 

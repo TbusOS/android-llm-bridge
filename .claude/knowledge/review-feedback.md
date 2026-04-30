@@ -568,6 +568,101 @@ DEBT-015 评审定义的关闭条件是"SPA fallback 工作"，狭义看（fallb
 
 ---
 
+## 2026-04-30 · M3 step 1 OpenAICompatBackend + DEBT-019 follow-up
+
+**评审对象**：staged WIP（M3 step 1 主 commit `344fb47` + DEBT-019
+follow-up commit `121106b`）。新增 `OpenAICompatBackend` 实现（vLLM /
+LM Studio / llamafile / cloud 兼容）+ httpx client 复用重构。
+
+**调动**：code-reviewer + architecture-reviewer 并行（mockup-baseline
+/ perf 跳过：本档无 UI 改动 + httpx client 改造已在 perf 评审视野内
+通过 DEBT-019 跟踪）。
+
+### 采纳清单（已实施 11 + 部分 1 + 不采纳 2 + follow-up 0 = 14 条）
+
+完全采纳（11 条）：
+
+- **arch [mid #1]** DEBT-019 触发条件已满足 → 不让"暂不修"静默留成
+  "忘记修"（与 L-019 sentinel 反模式同源）→ 拆 follow-up commit
+  `121106b` 当场关闭 DEBT-019
+- **arch [mid #2]** status:planned→beta + localhost:8080 默认 → dev 机
+  永远红卡，废 dashboard 报警价值 → 退回 status=planned + 注释说明
+  M3 step 2 接 cloud 时再翻 + 升 **L-021** lesson
+- **arch [mid #3]** `HealthResult.model` 三态化 contract drift → 加
+  HealthResult docstring 约定（"" 是契约违规，None 表"未知"）+
+  playground_route `backend_model = getattr(...) or None` 一致性兜底
+- **code [mid #1]** SSE 解析 single-line / event:/comment 注释空白 →
+  stream() docstring 加 scope 注解承认简化（实践无 server 触发）
+- **code [mid #2]** stream 缺 `httpx.HTTPError` 兜底 catch（mid-stream
+  RemoteProtocolError 会裸抛绕过 BackendError）→ 加 `except httpx.
+  HTTPError as e: raise BackendError(BACKEND_HTTP_ERROR, ...) from e`
+- **code [mid #3]** `json.dumps(arguments)` 对非 JSON-safe 类型抛 →
+  `default=str` best-effort（与 OllamaBackend 解析 forgiveness 对称）
+- **code [mid #4]** `_build_body` extra 静默覆盖 messages/model →
+  `_RESERVED_BODY_KEYS` + `_OLLAMA_ONLY_KEYS` 过滤，反例 hostile
+  kwargs 测试锁定
+- **code [mid #5]** _PROBE_CACHE × 默认 model="" 一致性 → endpoint
+  层 `getattr(...) or None` 配合 backend `model or None` 双向 normalize
+- **code [low #6]** stream 内 model/usage 读取在 if-choices 外 →
+  加注释 "usage / model can appear in the no-choices final event when
+  stream_options.include_usage=true"
+- **code [low #7]** test transport never-called fixture 噪音 →
+  mid 优先级，本次 PR 跳过（后续小改可一并）
+- **code [low #8]** 测试 gap：401 mid-stream / interleaved tool+content
+  → 各加 1 case（test_stream_401_wrapped + test_stream_tool_call_with
+  _interleaved_content）
+- **code [mid extra]** `_build_body` reserved keys 测试覆盖 → 加 2
+  case（hostile **kwargs + hostile default_options）
+
+部分采纳（1 条）：
+
+- **arch [low #5]** CLI flag 模式（N×flag vs `--backend-arg` vs config
+  文件）→ 留 **ADR-026 seed**，M3 step 2 LlamaCpp 落地时拍板。当前
+  PR 不动 chat_cli。
+
+不采纳（2 条）：
+
+- **arch [low #4]** N=2 不抽 HttpLLMBackend base class → 升 **L-020
+  N=3 rule** 写入 lessons.md
+- **arch [low #6]** runs_on_cpu 改名 → 留 **ADR-027 seed**，M3 step 3
+  AnthropicBackend 落地时一并改
+
+### 关闭 DEBT
+
+- ✅ DEBT-019 标 **CLOSED 2026-04-30** —— commit `121106b`，4 路（chat
+  / stream / health / list_models）全覆盖，+10 行为锁定测试
+
+### 新立 ADR
+
+- **ADR-026 seed** · backend 配置边界（CLI flag vs config 文件）
+- **ADR-027 seed** · BackendSpec.runs_on_cpu 语义改名 / 拆分
+
+### 新立 lesson
+
+- **L-020** · ABC 第 1 个非首例消费者 = 抽象设计的免费检验（N=2 不
+  抽象，N=3 才抽 base class）
+- **L-021** · status:planned→beta 是用户可见状态变更，不是无副作用
+  flag（dev 默认配置必须验证 dashboard 卡片颜色）
+
+### 端到端验证状态（L-017 规则）
+
+✅ done · 真起 alb-api → curl /playground/chat openai-compat 返
+`BACKEND_MISCONFIGURED`（dispatch 走通，不再是 not-implemented）。
+dashboard 视觉无新状态（status=planned 后 openai-compat 仍走 planned
+卡片，已被 DEBT-017 L-017 报告覆盖）。
+
+### 累计统计调整
+
+- 总评审次数：**14**（前 13 + **M3 step 1 2 并行**）
+- 总建议数：**137**（前 123 + M3 step 1 14 条）
+- M3 step 1 采纳率：**86%**（11 完全 + 1 部分 + 2 不采纳 = 12/14）
+- 累计采纳率：**85%**（前 85% 不变）
+- 累计形成规则：**9 lessons** (L-013 ~ L-021) + **6 ADR** (020~025) +
+  **2 ADR seed** (026/027)
+- DEBT 操作累计：**9 关 + 1 升 + 6 新（含 017/018/019）+ 1 候选**
+
+---
+
 ## 2026-04-30 · DEBT-017 backend health probe 6 状态运行时面板
 
 **评审对象**：staged WIP（11 文件）。后端 GET /playground/backends/{name}/health
@@ -836,15 +931,16 @@ DEBT-001 关闭（debts.md 标 CLOSED 2026-04-29）。F.8 阶段补 Playwright
 
 > dev-team 展示页会读这里的统计，让外部看到团队成长证据。
 
-**当前（2026-04-30 update · DEBT-017 完成后）**：
-- 总评审次数：**13**（F.1 / F.3 / F.4 / F.5 / F.6 / F.6 端到端 / F.7 /
-  F.8 / DEBT-014 / DEBT-015 / G 档 DEBT-002 / **DEBT-017 4 并行**）
-- 总建议数：**123**（前 99 + **DEBT-017: 24**）
-- 采纳率：**85%**（累计 105 采纳 / 123 建议；含 DEBT-017 92% 单档新高）
-- 形成新规则数：**7 lessons**（L-013 ~ L-018 + **L-019 sentinel
-  flag 反模式**）+ **6 ADR**（ADR-020 ~ ADR-023 + **ADR-024 ABC
-  capability via class attr** + **ADR-025 polling 频率分层**）
-  + 累计 **8 关 + 1 升 + 6 新（含 017/018/019）+ 1 候选** DEBT
+**当前（2026-04-30 update · M3 step 1 完成后）**：
+- 总评审次数：**14**（前 13 + **M3 step 1 2 并行 + DEBT-019**）
+- 总建议数：**137**（前 123 + **M3 step 1: 14**）
+- 采纳率：**85%**（累计 117 采纳 / 137 建议；含 DEBT-017 92% 单档新高
+  + M3 step 1 86%）
+- 形成新规则数：**9 lessons**（L-013 ~ L-021 含 **L-020 N=3 抽象规则
+  + L-021 status:planned→beta 用户可见**）+ **6 ADR**（ADR-020 ~
+  ADR-025）+ **2 ADR seed**（ADR-026 backend 配置边界 + ADR-027
+  runs_on_cpu 改名）
+  + 累计 **9 关 + 1 升 + 6 新（含 017/018/019）+ 1 候选** DEBT
 - F.1 发现 2 条 high 级架构问题 → 推迟 ship，重做调整版
 - **F.5 architecture-reviewer 主动翻历史 ADR 备选段，识别"反转未立新
   ADR"的文档债 → 升级为元规则 L-015**（agents 团队"会演进"的具体证据）
