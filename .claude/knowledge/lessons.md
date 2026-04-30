@@ -526,4 +526,142 @@ result = await b.health()  # type-checked HealthResult
 
 ---
 
+## L-020 · ABC 第 1 个非首例消费者 = 抽象设计的免费检验（N=2 不抽象）
+
+**坑**：M3 step 1 (commit `344fb47`) 落 OpenAICompatBackend 时，arch-
+reviewer 提议抽 `HttpLLMBackend` base class，理由是 OllamaBackend 与
+OpenAICompatBackend 共享 `_post` / 错误映射 / `list_models` / `_PROBE_CACHE`
+互动等约 80-100 行。仔细看反而抽不出干净 base：(1) `_build_body` 形状
+差异大（Ollama `options` 嵌套 vs OpenAI 平铺 + `stream_options`）；
+(2) `_parse_response` 流式 framing 完全不同（NDJSON `done:true` vs SSE
+`[DONE]` + per-index tool_call accumulator）；(3) `_message_to_*` /
+`_tool_to_*` wire format 必然分叉。能干净抽的只有 `_map_httpx_error`
+和 `_PROBE_CACHE` 装饰器，**收益小于 N=3 才抽的开销**。
+
+**根因**：
+
+1. **N=1 不知道哪部分会重复**：写 OllamaBackend 时不知道哪些是 ollama
+   特殊 vs 哪些是"任何 HTTP backend 都该这样"。N=1 时定的 helper 边
+   界主导抽象方向，必然有 wire-format 偏见。
+2. **N=2 看到形状但不知道哪部分是真共享**：N=2 容易看到"两 backend
+   共有 `_post` + 错误映射"，但实际 N=3 加上 LlamaCpp（无 HTTP 层 ·
+   in-process）就废了。N=2 抽 base 经常被 N=3 推翻。
+3. **抽象的成本**：抽 base class 后调试一个 backend 要看 2 个文件 +
+   理解 base 提供的钩子点 + 后续每加新 backend 评估"我能放进 base
+   还是要写 override"。这个隐性 cognitive load 在 N=2 时不值。
+
+**规则**：
+
+1. **N=1 → 写实现，不抽 base**：第一个 concrete impl 全文留在
+   subclass，don't try 提前预测共享点。
+2. **N=2 → 仍不抽 base，但记录差异点**：在 lesson / commit message
+   里写下"两 backend 共享了哪些代码段，差异在哪"。这个观察是 N=3 抽
+   象决策的输入。
+3. **N=3 → 真抽 base**：这时 3 个 concrete impl 给的"共有 vs 差异"
+   信号足够强，base class 设计能避开 N=2 时的局部偏见。
+4. **N=2 阶段允许的抽象**：纯函数 helper（`_map_httpx_error` /
+   `_normalize_finish_reason`）抽到模块级，不抽 class。class-level
+   抽象等 N=3。
+
+**ABC 第 1 个非首例消费者的额外价值**：
+
+**ADR-024 case study**：OllamaBackend 落地后 ABC 看似自洽，arch-
+reviewer 评 ADR-024 时也通过。但只有等 OpenAICompatBackend 这个
+**第 1 个非首例消费者**真接进来，才暴露 `HealthResult.model` 三态
+化漂移（OllamaBackend 默认 `qwen2.5:3b` 永远填，OpenAICompatBackend
+默认 `""` → 隐式三态）。N=2 是 ABC 设计的**免费 stress test**。
+
+**应用到工作流**：
+
+- 写 ABC + N=1 实现时：commit message 注明"contract 由 N=1 验证，N=2
+  落地时复审"
+- 写 N=2 实现时：在 review-feedback 里专门加一段"ABC 契约压力测试"
+  评论，重点看是否有"OllamaBackend 隐式假设但 OpenAICompatBackend 暴
+  露"的字段语义
+- N=2 落地的 PR 必含"ABC contract 是否需要 amendment"的 ADR seed 或
+  amendment（M3 step 1 → HealthResult.model docstring 加约定）
+- N=3 落地的 PR 必评估 base class 抽取（M3 LlamaCpp 时）
+
+**应用到 agents**：
+
+- code-reviewer / architecture-reviewer 看到 N=2 PR 提议抽 base class
+  时，立即引 L-020：列出 (a) 共享代码段 (b) 差异点，**不抽**，等 N=3
+- ABC 设计 review 时主动问"N=2 时第 1 个非首例消费者是什么？还没有的
+  话契约弹性如何验证？"
+
+---
+
+## L-021 · `status: planned → beta` 是用户可见状态变更，不是无副作用 flag
+
+**坑**：M3 step 1 (commit `344fb47`) 落 OpenAICompatBackend 时，最初
+我把 registry status 从 `planned` 改 `beta`（"实现 ship 了，自然就是
+beta"）。arch-reviewer 当场打回：默认 `base_url=http://localhost:8080/v1`
+在没装 vLLM/llamafile/LM Studio 的 dev 机上永远不可达 → dashboard
+ADR-025 polling 命中 → 永远显示**红卡**。
+
+**根因**：
+
+1. **默认 base_url 是 byo-server 兜底**：OpenAI-compat 是 BYO（"bring
+   your own"）协议，没有官方默认 server。`http://localhost:8080/v1`
+   是 vLLM/llamafile 自托管的最常见端口，但不会在 dev 机上自动启动。
+2. **dashboard `polling` × `down`**：ADR-025 定的 health probe 每 15s
+   跑一次 → 每 15s 一次"unreachable" → 卡片永远红。
+3. **红色常态化 = dashboard 报警价值废掉**：dashboard 的 red signal
+   原本表示"这事该处理"。如果 1/4 卡固定红色，用户会训练成"忽略红
+   卡"——下次 ollama 真挂了反而不警觉。这是**新增的固定噪音**，比
+   "卡是 planned 灰底"更糟。
+
+**规则**：
+
+1. **status 翻 beta 前必须验**：dev 默认配置（无 env / 无 flag）下，
+   dashboard 这张卡是绿、灰、还是红？红是回归。
+2. **如果默认配置必然 unreachable**（BYO 协议 / 需 API key / 需远程
+   server），有 3 个选项：
+   - (a) **status 留 planned** + 实现已 ship 但 UI 不主动暴露（M3 step
+     1 选这条 — "实现可用，dashboard 等接 cloud 时再亮"）
+   - (b) **加新 status `beta-byo`** + dashboard 加新 reason
+     `not_configured`（蓝灰，不是红）
+   - (c) **加默认 cloud target**（OpenAI proper / DeepSeek free tier）
+     让 dev 默认就能 reach
+3. **永远不该的做法**：让 status=beta + 默认 base_url 不可达 + dashboard
+   永远红卡。
+
+**反例 / 正例对比**：
+
+```python
+# ❌ 反例（M3 step 1 主对话第一版）
+BackendSpec(
+    name="openai-compat",
+    status="beta",  # 实现 ship 了
+    ...
+)
+# 后果：dev 机 dashboard 永远红卡，红色常态化
+
+# ✅ 正例（arch-reviewer 拍回后改）
+BackendSpec(
+    name="openai-compat",
+    # 实现已 ship，但默认 base_url 在 dev 机不可达；改 beta 会让
+    # dashboard 永远显红卡，废掉报警价值。M3 step 2 接 cloud 时再翻
+    # beta（或加 status="beta-byo" + reason="not_configured"）。
+    status="planned",
+    ...
+)
+```
+
+**应用到工作流**：
+
+- registry status 改动是 commit 必单独说明的项 + ship 前必须真起
+  alb-api 看 dashboard 卡片
+- 任何"状态改 flag" PR 必经 mockup-baseline-checker（看新视觉）+
+  arch-reviewer（看 UX 影响）
+
+**应用到 agents**：
+
+- architecture-reviewer 看到 BackendSpec / CapabilitySpec status 字段
+  改动时，强制问"dev 默认配置下 dashboard 卡是什么颜色"
+- mockup-baseline-checker 看到 status 改动时，主动跑一遍 dashboard
+  视觉验证
+
+---
+
 （新教训按此格式追加）
