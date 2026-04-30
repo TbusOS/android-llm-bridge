@@ -124,7 +124,12 @@ class HealthResult:
     but couldn't decide — reserved for future async-pending probes)."""
 
     model: str | None = None
-    """Model tag the daemon is configured for, if known."""
+    """Model tag the daemon is configured for. Concrete backends
+    SHOULD return None (not the empty string) when the user hasn't
+    configured a model yet — `None` means 'unknown', empty string is
+    a contract violation. Callers can safely render with
+    ``model ?? "<not configured>"`` (TypeScript) or
+    ``model or "<not configured>"`` (Python)."""
 
     model_present: bool | None = None
     """True/False if the probe could check whether `model` is loaded

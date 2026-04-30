@@ -261,7 +261,11 @@ async def backend_health(name: str) -> dict[str, Any]:
             name=name, reachable=False, reason="init_failed", error=str(e)
         )
 
-    backend_model = getattr(b, "model", None)
+    # Normalise empty-string `model` to None so the response contract
+    # ('None means unknown') stays consistent across backends — Ollama
+    # always has a default, OpenAI-compat may legitimately have no
+    # model set yet (BYO-model spec).
+    backend_model = getattr(b, "model", None) or None
 
     # Capability advertising via class attribute (mirrors
     # supports_tool_calls / supports_streaming) — no probe wired

@@ -13,7 +13,7 @@ Registered backends (check `alb.infra.registry.BACKENDS` for the canonical
 list + status):
 
     ollama          — local HTTP (recommended for CPU-only)          (M2 beta)
-    openai-compat   — any OpenAI-compatible /v1/chat/completions    (M2 planned)
+    openai-compat   — any OpenAI-compatible /v1/chat/completions     (M2 beta)
     llama-cpp       — embedded llama.cpp                             (M3 planned)
     anthropic       — Claude API                                      (M3 planned)
 """
@@ -59,7 +59,9 @@ def _construct(name: str, **kwargs: Any) -> LLMBackend:
 
         return OllamaBackend(**kwargs)
     if name == "openai-compat":
-        raise ValueError("openai-compat backend not yet implemented (M2)")
+        from alb.agent.backends.openai_compat import OpenAICompatBackend
+
+        return OpenAICompatBackend(**kwargs)
     if name == "llama-cpp":
         raise ValueError("llama-cpp backend not yet implemented (M3)")
     if name == "anthropic":

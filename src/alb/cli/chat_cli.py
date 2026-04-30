@@ -65,6 +65,21 @@ def chat(
         envvar="ALB_OLLAMA_URL",
         help="Ollama daemon URL (e.g. http://localhost:11434).",
     ),
+    openai_url: str | None = typer.Option(
+        None,
+        "--openai-url",
+        envvar="ALB_OPENAI_COMPAT_URL",
+        help=(
+            "OpenAI-compatible server URL up to /v1 "
+            "(e.g. http://localhost:8080/v1 for vLLM, http://localhost:1234/v1 for LM Studio)."
+        ),
+    ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar=["ALB_OPENAI_COMPAT_KEY", "OPENAI_API_KEY"],
+        help="Bearer token for openai-compat backends; omit for self-hosted servers.",
+    ),
     fast: bool = typer.Option(
         False,
         "--fast",
@@ -93,6 +108,11 @@ def chat(
     backend_kwargs: dict = {}
     if model:
         backend_kwargs["model"] = model
+    if backend == "openai-compat":
+        if openai_url:
+            backend_kwargs["base_url"] = openai_url
+        if api_key:
+            backend_kwargs["api_key"] = api_key
     if ollama_url and backend == "ollama":
         backend_kwargs["base_url"] = ollama_url
 

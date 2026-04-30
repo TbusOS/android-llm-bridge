@@ -220,6 +220,14 @@ BACKENDS: list[BackendSpec] = [
         impl_path="alb.agent.backends.openai_compat.OpenAICompatBackend",
         runs_on_cpu=True,
         supports_tool_calls=True,
+        # Implementation is shipped (M3 step 1, 2026-04-30), but
+        # status stays 'planned' on purpose: the default base_url
+        # http://localhost:8080/v1 is unreachable on most dev
+        # machines, and a registered+down card permanently red would
+        # train users to ignore the dashboard's failure signal. Flip
+        # to 'beta' once the dashboard learns a "byo-server"
+        # presentation (ADR seed: status='beta-byo' + reason
+        # 'not_configured') OR once we ship a default cloud target.
         status="planned",
         requires=["OpenAI-compatible endpoint (vLLM / llamafile / LM Studio)"],
         description="Any OpenAI-compatible chat/completions endpoint.",
