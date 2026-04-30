@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from alb.agent.backend import (
     BackendError,
     ChatResponse,
+    HealthResult,
     LLMBackend,
     Message,
     ToolSpec,
@@ -130,16 +131,16 @@ def test_health_planned_backend(client) -> None:
 
 
 def test_health_no_probe_wired(client) -> None:
-    """Concrete backends that don't override `health()` inherit the
-    ABC placeholder (no `implemented: True` flag). The endpoint
-    surfaces this as the explicit 'no_probe' reason so the UI can
-    distinguish 'registered but unprobed' from 'probe says down'."""
+    """Backends that didn't opt into a real probe (has_health_probe=
+    False, the ABC default) short-circuit before health() runs. The
+    endpoint surfaces 'no_probe' so the UI can distinguish
+    'registered but unprobed' from 'probe says down'."""
     r = client.get("/playground/backends/ollama/health")
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "ollama"
-    # _FakeBackend inherits the ABC default health() which returns
-    # implemented=False — endpoint folds it into reason='no_probe'.
+    # _FakeBackend doesn't set has_health_probe → endpoint folds it
+    # into reason='no_probe' without invoking health().
     assert body["reachable"] is False
     assert body["reason"] == "no_probe"
     assert body["latency_ms"] is None
@@ -147,19 +148,19 @@ def test_health_no_probe_wired(client) -> None:
 
 
 def test_health_with_method(client, monkeypatch) -> None:
-    """When the backend exposes async health() (signalling
-    implemented=True) we call it inside a perf timer and forward
-    reachable/model/error onto the response."""
+    """Backend with has_health_probe=True returns a HealthResult; the
+    endpoint times the call and forwards reachable / model /
+    model_present onto the response."""
 
     class _BackendWithHealth(_FakeBackend):
-        async def health(self) -> dict[str, Any]:  # type: ignore[override]
-            return {
-                "backend": self.name,
-                "reachable": True,
-                "implemented": True,
-                "model": "qwen2.5:3b",
-                "model_present": True,
-            }
+        has_health_probe = True
+
+        async def health(self) -> HealthResult:  # type: ignore[override]
+            return HealthResult(
+                reachable=True,
+                model="qwen2.5:3b",
+                model_present=True,
+            )
 
     monkeypatch.setattr(
         "alb.api.playground_route.get_backend",
@@ -181,7 +182,9 @@ def test_health_probe_failure(client, monkeypatch) -> None:
     so the card can render a clear 'down · network' state."""
 
     class _BackendThatExplodes(_FakeBackend):
-        async def health(self) -> dict[str, Any]:  # type: ignore[override]
+        has_health_probe = True
+
+        async def health(self) -> HealthResult:  # type: ignore[override]
             raise RuntimeError("connection refused")
 
     monkeypatch.setattr(
@@ -203,9 +206,11 @@ def test_health_probe_timeout(client, monkeypatch) -> None:
     import asyncio
 
     class _BackendThatStalls(_FakeBackend):
-        async def health(self) -> dict[str, Any]:  # type: ignore[override]
+        has_health_probe = True
+
+        async def health(self) -> HealthResult:  # type: ignore[override]
             await asyncio.sleep(60)  # never returns within deadline
-            return {"reachable": True, "implemented": True}
+            return HealthResult(reachable=True)
 
     monkeypatch.setattr(
         "alb.api.playground_route.get_backend",
@@ -221,6 +226,26 @@ def test_health_probe_timeout(client, monkeypatch) -> None:
     body = r.json()
     assert body["reachable"] is False
     assert body["reason"] == "probe_timeout"
+
+
+def test_health_abc_default_raises() -> None:
+    """The ABC default health() must raise NotImplementedError — the
+    'forgot to wire up the probe' error path is intentionally loud
+    so the gate (has_health_probe) stays the canonical capability
+    advertise. Direct unit test (no HTTP)."""
+    import asyncio
+
+    class _NoProbeBackend(LLMBackend):
+        name = "test"
+        model = "fake"
+        supports_tool_calls = False
+
+        async def chat(self, messages, **kwargs):  # type: ignore[override]
+            return ChatResponse(content="ok", model=self.model)
+
+    b = _NoProbeBackend()
+    with pytest.raises(NotImplementedError):
+        asyncio.get_event_loop().run_until_complete(b.health())
 
 
 def test_health_init_failure(client, monkeypatch) -> None:

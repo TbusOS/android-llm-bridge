@@ -44,6 +44,7 @@ from alb.agent.backend import (
     BackendError,
     ChatResponse,
     FinishReason,
+    HealthResult,
     LLMBackend,
     Message,
     ToolCall,
@@ -77,6 +78,7 @@ class OllamaBackend(LLMBackend):
     supports_tool_calls = True
     supports_streaming = True
     runs_on_cpu = True
+    has_health_probe = True
 
     def __init__(
         self,
@@ -225,13 +227,8 @@ class OllamaBackend(LLMBackend):
             "thinking": thinking,
         }
 
-    async def health(self) -> dict[str, Any]:
-        """Hit `/api/tags` to check connectivity + whether our model is present.
-
-        Concrete probe — sets `implemented: True` so the playground
-        health endpoint can distinguish "real probe ran" from the ABC
-        default placeholder (which never sets the key).
-        """
+    async def health(self) -> HealthResult:
+        """Hit `/api/tags` to check connectivity + whether our model is present."""
         try:
             async with httpx.AsyncClient(
                 timeout=5.0, transport=self._transport
@@ -240,24 +237,19 @@ class OllamaBackend(LLMBackend):
                 r.raise_for_status()
                 data = r.json()
         except httpx.HTTPError as e:
-            return {
-                "backend": self.name,
-                "model": self.model,
-                "base_url": self.base_url,
-                "reachable": False,
-                "implemented": True,
-                "error": str(e),
-            }
+            return HealthResult(
+                reachable=False,
+                model=self.model,
+                error=str(e),
+            )
         names = [m.get("name", "") for m in data.get("models", [])]
-        return {
-            "backend": self.name,
-            "model": self.model,
-            "base_url": self.base_url,
-            "reachable": True,
-            "implemented": True,
-            "model_present": any(n == self.model or n.startswith(f"{self.model}:") for n in names),
-            "installed_models": names,
-        }
+        return HealthResult(
+            reachable=True,
+            model=self.model,
+            model_present=any(
+                n == self.model or n.startswith(f"{self.model}:") for n in names
+            ),
+        )
 
     # ── Internal ─────────────────────────────────────────────────
     def _build_body(

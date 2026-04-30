@@ -273,9 +273,9 @@ async def test_health_reachable_with_model() -> None:
 
     b = OllamaBackend(model="qwen2.5:3b", transport=_mock_transport(handler))
     snap = await b.health()
-    assert snap["reachable"] is True
-    assert snap["model_present"] is True
-    assert "qwen2.5:3b" in snap["installed_models"]
+    assert snap.reachable is True
+    assert snap.model_present is True
+    assert snap.model == "qwen2.5:3b"
 
 
 @pytest.mark.asyncio
@@ -285,8 +285,8 @@ async def test_health_reachable_missing_model() -> None:
 
     b = OllamaBackend(model="qwen2.5:3b", transport=_mock_transport(handler))
     snap = await b.health()
-    assert snap["reachable"] is True
-    assert snap["model_present"] is False
+    assert snap.reachable is True
+    assert snap.model_present is False
 
 
 @pytest.mark.asyncio
@@ -296,8 +296,8 @@ async def test_health_unreachable() -> None:
 
     b = OllamaBackend(transport=_mock_transport(handler))
     snap = await b.health()
-    assert snap["reachable"] is False
-    assert "error" in snap
+    assert snap.reachable is False
+    assert snap.error is not None
 
 
 # ─── Streaming ───────────────────────────────────────────────────────
