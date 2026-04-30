@@ -59,17 +59,23 @@ export interface LiveSessionData {
   tpsSpark: number[];
 }
 
+/** Static identity for a backend card.
+ *
+ * Runtime data (latency / probe status / model presence / errors)
+ * lives on `BackendRuntimeState` in `useBackends.ts`, indexed by
+ * `name`. Keeping the two shapes parallel lets the static manifest
+ * (60 s refetch) stay stable while the per-backend health probe
+ * (15 s refetch) churns independently.
+ */
 export interface BackendCardData {
   name: string;
+  /** Headline subtitle — usually the configured model tag, falling
+   * back to the registry description for planned backends. */
   model: string;
+  /** Card layout mode. `up` shows the runtime stat row; `unconfigured`
+   * shows the planned/registered placeholder. (`paused` reserved for
+   * a future "explicitly disabled" state.) */
   status: "up" | "paused" | "unconfigured";
-  latencyMs?: number;
-  tps?: number;
-  errors?: { count: number; total: number };
-  lastUsed?: string; // "2 h ago"
-  lastUsedZh?: string;
-  budget?: string;
-  spark: number[]; // 0..32 y-coords for inline sparkline
 }
 
 export interface RecentSessionData {

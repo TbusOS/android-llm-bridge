@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -177,6 +178,144 @@ async def list_models(backend: str) -> dict[str, Any]:
             },
         )
     return {"backend": backend, "models": models}
+
+
+# How long the endpoint waits for a backend's health() before
+# treating it as a probe timeout. Concrete backends should keep their
+# own internal timeout shorter (Ollama uses 5 s); this is a hard
+# upper bound so a misconfigured backend can't stall the dashboard.
+_HEALTH_PROBE_DEADLINE_S = 8.0
+
+
+def _make_health_response(
+    *,
+    name: str,
+    reachable: bool | None,
+    reason: str | None = None,
+    latency_ms: int | None = None,
+    model: str | None = None,
+    model_present: bool | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Single shape for /playground/backends/{name}/health responses.
+
+    Centralised so adding a new field (or changing nullability rules)
+    is one edit, not five. Field semantics:
+      - reachable: True (probe says up) / False (probe says down or
+        backend can't even be constructed) / None (truly unknown,
+        reserved for future async-pending probes).
+      - reason: enum-like discriminator carried whenever
+        reachable=False — 'no_probe' (ABC default, no probe wired),
+        'not_implemented' (registry status='planned'), 'init_failed'
+        (construction raised), 'probe_failed' (health() raised),
+        'probe_timeout' (health() exceeded the deadline).
+    """
+    return {
+        "name": name,
+        "reachable": reachable,
+        "reason": reason,
+        "latency_ms": latency_ms,
+        "model": model,
+        "model_present": model_present,
+        "error": error,
+    }
+
+
+@router.get("/playground/backends/{name}/health")
+async def backend_health(name: str) -> dict[str, Any]:
+    """Probe a registered backend without actually running chat.
+
+    Designed for the Dashboard's LlmBackendCards (DEBT-017): the
+    registry tells us a backend is *registered*, not whether the
+    daemon is reachable. This endpoint is a cheap reachability +
+    last-latency check (e.g. Ollama → GET /api/tags) so the UI can
+    distinguish "running" from "registered but unknown".
+
+    Behaviour (`reachable=False` always carries a `reason`):
+      - status='planned' → `reachable=False, reason='not_implemented'`
+        (no construction attempt)
+      - construction fails (ImportError / ValueError) →
+        `reachable=False, reason='init_failed', error=<message>`
+      - ABC default `health()` (no concrete probe wired) →
+        `reachable=False, reason='no_probe'`
+      - concrete `health()` raises →
+        `reachable=False, reason='probe_failed', error=<message>`
+      - concrete `health()` exceeds the endpoint deadline →
+        `reachable=False, reason='probe_timeout'`
+      - concrete `health()` returns reachable=True/False →
+        forwarded as-is, with measured `latency_ms`
+    """
+    spec = _backend_spec(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"unknown backend '{name}'")
+
+    if spec.status == "planned":
+        return _make_health_response(
+            name=name, reachable=False, reason="not_implemented"
+        )
+
+    try:
+        b = get_backend(name)
+    except (ValueError, ImportError) as e:
+        return _make_health_response(
+            name=name, reachable=False, reason="init_failed", error=str(e)
+        )
+
+    backend_model = getattr(b, "model", None)
+
+    t0 = time.perf_counter()
+    try:
+        result = await asyncio.wait_for(
+            b.health(), timeout=_HEALTH_PROBE_DEADLINE_S
+        )
+    except asyncio.TimeoutError:
+        return _make_health_response(
+            name=name,
+            reachable=False,
+            reason="probe_timeout",
+            latency_ms=int(_HEALTH_PROBE_DEADLINE_S * 1000),
+            model=backend_model,
+        )
+    except Exception as e:  # noqa: BLE001 — best-effort probe, swallow + report
+        return _make_health_response(
+            name=name,
+            reachable=False,
+            reason="probe_failed",
+            latency_ms=int((time.perf_counter() - t0) * 1000),
+            model=backend_model,
+            error=str(e),
+        )
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    # Concrete backends signal a real probe by returning
+    # `implemented: True`. The ABC default omits the key (and returns
+    # reachable=False), so anything that isn't truthy means "no probe
+    # wired" — surface it as the explicit `no_probe` reason instead of
+    # forwarding a meaningless reachable=False/0-ms latency.
+    if not result.get("implemented"):
+        return _make_health_response(
+            name=name, reachable=False, reason="no_probe", model=backend_model
+        )
+
+    reachable = result.get("reachable")
+    resolved_reachable = bool(reachable) if reachable is not None else None
+    # Keep `reason` consistent with the contract that any False
+    # `reachable` carries a discriminator; concrete backends rarely
+    # provide one (they put the cause in `error`), so fall back to
+    # the generic 'down' bucket.
+    if resolved_reachable is False:
+        resolved_reason = result.get("reason") or "down"
+    else:
+        resolved_reason = result.get("reason")
+    return _make_health_response(
+        name=name,
+        reachable=resolved_reachable,
+        reason=resolved_reason,
+        latency_ms=latency_ms,
+        model=result.get("model") or backend_model,
+        model_present=result.get("model_present"),
+        error=result.get("error"),
+    )
 
 
 # ─── REST: non-streaming chat ──────────────────────────────────────

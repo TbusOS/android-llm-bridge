@@ -155,23 +155,8 @@ export const MOCK_DEVICES: DeviceCardData[] = [
  * vitest snapshots have stable seed data without hitting alb-api.
  */
 export const MOCK_BACKENDS: BackendCardData[] = [
-  {
-    name: "ollama",
-    model: "qwen2.5:7b",
-    status: "up",
-    latencyMs: 8,
-    tps: 38,
-    errors: { count: 0, total: 64 },
-    spark: [18, 16, 14, 18, 12, 15, 11, 14, 8, 12, 9, 11, 8, 10, 7],
-  },
-  {
-    name: "openai-compat",
-    model: "lm-studio · gemma3",
-    status: "paused",
-    lastUsed: "2 h ago",
-    lastUsedZh: "2 小时前",
-    spark: [],
-  },
+  { name: "ollama", model: "qwen2.5:7b", status: "up" },
+  { name: "openai-compat", model: "lm-studio · gemma3", status: "unconfigured" },
 ];
 
 export const MOCK_SESSIONS: RecentSessionData[] = [

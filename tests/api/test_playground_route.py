@@ -107,6 +107,139 @@ def test_list_models_unknown_backend(client) -> None:
     assert r.status_code == 404
 
 
+# ─── /playground/backends/{name}/health (DEBT-017) ─────────────────
+
+
+def test_health_unknown_backend(client) -> None:
+    r = client.get("/playground/backends/no-such-backend/health")
+    assert r.status_code == 404
+
+
+def test_health_planned_backend(client) -> None:
+    """`status="planned"` backends short-circuit before construction —
+    no daemon ping, just a clear 'not implemented' signal so the UI
+    can grey out the card without surfacing an error toast."""
+    r = client.get("/playground/backends/anthropic/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "anthropic"
+    assert body["reachable"] is False
+    assert body["reason"] == "not_implemented"
+    assert body["latency_ms"] is None
+    assert body["model"] is None
+
+
+def test_health_no_probe_wired(client) -> None:
+    """Concrete backends that don't override `health()` inherit the
+    ABC placeholder (no `implemented: True` flag). The endpoint
+    surfaces this as the explicit 'no_probe' reason so the UI can
+    distinguish 'registered but unprobed' from 'probe says down'."""
+    r = client.get("/playground/backends/ollama/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "ollama"
+    # _FakeBackend inherits the ABC default health() which returns
+    # implemented=False — endpoint folds it into reason='no_probe'.
+    assert body["reachable"] is False
+    assert body["reason"] == "no_probe"
+    assert body["latency_ms"] is None
+    assert body["model"] == "fake-model"
+
+
+def test_health_with_method(client, monkeypatch) -> None:
+    """When the backend exposes async health() (signalling
+    implemented=True) we call it inside a perf timer and forward
+    reachable/model/error onto the response."""
+
+    class _BackendWithHealth(_FakeBackend):
+        async def health(self) -> dict[str, Any]:  # type: ignore[override]
+            return {
+                "backend": self.name,
+                "reachable": True,
+                "implemented": True,
+                "model": "qwen2.5:3b",
+                "model_present": True,
+            }
+
+    monkeypatch.setattr(
+        "alb.api.playground_route.get_backend",
+        lambda name, **kw: _BackendWithHealth(**kw),
+    )
+    r = client.get("/playground/backends/ollama/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reachable"] is True
+    assert body["reason"] is None
+    assert body["model"] == "qwen2.5:3b"
+    assert body["model_present"] is True
+    assert isinstance(body["latency_ms"], int) and body["latency_ms"] >= 0
+
+
+def test_health_probe_failure(client, monkeypatch) -> None:
+    """A health() that raises is treated as a probe failure — caller
+    sees reachable=false + reason=probe_failed + the error message,
+    so the card can render a clear 'down · network' state."""
+
+    class _BackendThatExplodes(_FakeBackend):
+        async def health(self) -> dict[str, Any]:  # type: ignore[override]
+            raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(
+        "alb.api.playground_route.get_backend",
+        lambda name, **kw: _BackendThatExplodes(**kw),
+    )
+    r = client.get("/playground/backends/ollama/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reachable"] is False
+    assert body["reason"] == "probe_failed"
+    assert "connection refused" in body["error"]
+
+
+def test_health_probe_timeout(client, monkeypatch) -> None:
+    """A health() that exceeds the endpoint deadline is reported as
+    probe_timeout so the UI can show a clear stall reason instead of
+    waiting alongside the upstream socket."""
+    import asyncio
+
+    class _BackendThatStalls(_FakeBackend):
+        async def health(self) -> dict[str, Any]:  # type: ignore[override]
+            await asyncio.sleep(60)  # never returns within deadline
+            return {"reachable": True, "implemented": True}
+
+    monkeypatch.setattr(
+        "alb.api.playground_route.get_backend",
+        lambda name, **kw: _BackendThatStalls(**kw),
+    )
+    # Shorten the deadline to keep the test fast — the endpoint reads
+    # this module-level constant, so monkeypatch is enough.
+    monkeypatch.setattr(
+        "alb.api.playground_route._HEALTH_PROBE_DEADLINE_S", 0.05
+    )
+    r = client.get("/playground/backends/ollama/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reachable"] is False
+    assert body["reason"] == "probe_timeout"
+
+
+def test_health_init_failure(client, monkeypatch) -> None:
+    """If construction itself raises (missing dep / bad config) we
+    surface reason='init_failed' with the error so the user sees why
+    the backend was registered but unreachable."""
+
+    def _bad_factory(name: str, **kw: Any) -> LLMBackend:
+        raise ImportError("anthropic SDK not installed")
+
+    monkeypatch.setattr("alb.api.playground_route.get_backend", _bad_factory)
+    r = client.get("/playground/backends/ollama/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reachable"] is False
+    assert body["reason"] == "init_failed"
+    assert "anthropic SDK not installed" in body["error"]
+
+
 def test_chat_post_happy_path(client) -> None:
     r = client.post("/playground/chat", json={
         "backend": "ollama",

@@ -237,3 +237,54 @@ export async function fetchBackends(
   }
   return (await r.json()) as BackendsResponse;
 }
+
+/** Live probe of a registered backend — see DEBT-017 + ADR-021 doctrine
+ * (registry tells us what's *implemented*, this tells us what's *running*).
+ *
+ * `reachable` is the headline:
+ *   - true  → probe says up (latency_ms and usually model populated)
+ *   - false → probe says down OR backend can't be probed at all (in
+ *             which case `reason` is always set)
+ *   - null  → reserved for future async-pending probes (today the
+ *             server never returns null; UI treats it as "unknown")
+ *
+ * `reason` is a closed enum; when a future server adds new variants
+ * the UI will see the unknown string and fall back to the generic
+ * "down" rendering. */
+export type BackendHealthReason =
+  | "no_probe" // ABC default, no concrete probe wired
+  | "not_implemented" // registry status='planned'
+  | "init_failed" // construction raised
+  | "probe_failed" // health() raised
+  | "probe_timeout" // health() exceeded the endpoint deadline
+  | "down"; // health() ran cleanly and reported reachable=false
+
+export interface BackendHealth {
+  name: string;
+  reachable: boolean | null;
+  latency_ms: number | null;
+  model: string | null;
+  model_present?: boolean | null;
+  /** Discriminator carried whenever `reachable === false`. Always null
+   * when reachable=true. */
+  reason?: BackendHealthReason | null;
+  error?: string | null;
+}
+
+export async function fetchBackendHealth(
+  name: string,
+  signal?: AbortSignal,
+): Promise<BackendHealth> {
+  const r = await fetch(
+    `/playground/backends/${encodeURIComponent(name)}/health`,
+    { signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /playground/backends/${name}/health returned ${r.status}`,
+      r.status,
+      "BACKEND_HEALTH_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as BackendHealth;
+}

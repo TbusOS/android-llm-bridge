@@ -1017,6 +1017,36 @@ html[lang^="zh"] h3 {
   height: 32px;
 }
 
+/* DEBT-017: states with no per-stat row (planned / unprobed / down /
+   loading / error) span the whole .be-grid-stats grid so the single
+   line of copy doesn't sit in a 1/3 column. */
+.be-stat--full {
+  grid-column: 1 / -1;
+}
+
+/* DEBT-017: probe error messages can be long ("connection refused
+   to http://<ollama-host>:11434"); keep the card height stable by
+   single-line truncating with a tooltip on hover. */
+.be-stat-value--ellipsis {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* DEBT-017 / DEBT-018 sketch: shared placeholder card for loading
+   and error states across dashboard sections (today only used by the
+   LLM backends section; the wider rollout is tracked as DEBT-018). */
+.be-card--empty {
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--anth-text-secondary);
+}
+
 /* ==========================================================
    Sessions list
    ========================================================== */
