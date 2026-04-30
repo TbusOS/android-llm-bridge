@@ -367,4 +367,71 @@
 
 ---
 
+## DEBT-020 · alb-api backend health 端点不读 ALB_*_URL / ALB_*_MODEL env
+
+- **severity**：mid（dashboard 显示永远是 manifest 默认值，不反映用户 env 配置 —— 用户体感为"模型/URL 配错了"）
+- **引入**：M3 step 1（OpenAICompatBackend 加 health 端点时，沿用 OllamaBackend 的 health 端点路径，两者都不读 env）
+- **位置**：`src/alb/api/playground_route.py:225` `backend_health()` 端点 + 各 backend `health()` 实现
+- **现象**（2026-04-30 真机验证暴露）：
+  - dev 机 `.bashrc` 设 `ALB_OLLAMA_URL=http://<llm-host>:11434` + `ALB_OLLAMA_MODEL=qwen2.5:7b`
+  - alb-api 子进程 env 拿到了（`/proc/<pid>/environ` 验证）
+  - 但 `/playground/backends/ollama/health` 返回 `model=qwen2.5:3b`（manifest 默认）
+    + `reachable=false reason=down latency=2ms`（打了 localhost:11434 而不是 env 的 <llm-host>:11434）
+- **是否计划修**：是
+- **还债 sketch**：health 端点构造时读对应 backend 的 env override（参考
+  `src/alb/api/chat_route.py:245-246` 的 `req.ollama_url or os.environ.get("ALB_OLLAMA_URL")`
+  pattern），各 backend 的 `health()` 调用前注入 base_url / model
+- **还债条件**：device card 丰富化时一并修（用户 dashboard 体验问题同源）
+- **来源**：2026-04-30 真机验证 + L1 web_check.mjs 暴露
+
+---
+
+## DEBT-021 · 历史 tracked 文件含敏感词 · CI `--all` 模式会挂
+
+- **severity**：mid（CI 全量扫挂；staged 模式不影响日常 commit）
+- **位置**：
+  - `.claude/reports/visual-2026-04-29-debt001.md` 含 `<llm-host>`
+  - `scripts/f8_screenshots.mjs` 含 hardcoded 个人家目录路径 + 真实用户名字面
+- **现象**：`bash scripts/check_sensitive_words.sh --all` 4 处命中
+- **是否计划修**：是
+- **还债 sketch**：
+  - `f8_screenshots.mjs`：把 hardcoded `/home/&lt;user&gt;/...` 路径改 `process.env.HOME` /
+    相对路径（参考新加的 `web/scripts/web_check.mjs` 模式 —— 用 web/node_modules 标准解析，
+    不绝对路径 import）
+  - `visual-2026-04-29-debt001.md`：把 `<llm-host>` 改 `<llm-host>` 占位
+- **还债条件**：next session（不阻塞当前 work）
+- **来源**：2026-04-30 commit `0ef2d87` 前 `--all` 扫描发现
+
+---
+
+## DEBT-022 · device card 信息薄 · 缺刷新机制 + 多维元数据
+
+- **severity**：mid（功能缺失。当前 device card 只显示 serial / product / model / transport
+  几个浅字段 + 空 cpu/温度，工程师视角"完全看不见板子")
+- **引入**：D 档 device strip（dashboard 早期）
+- **位置**：
+  - `src/alb/api/<devices_route>` 当前 `/devices` 端点只返回 adb 层基础元数据
+  - `web/src/features/dashboard/DeviceStrip.tsx`（或同等）—— 渲染薄字段
+  - `web/src/features/inspect/`（如有）—— 详情页占位
+- **是否计划修**：是
+- **用户诉求（2026-04-30）**：
+  1. **dashboard summary 卡片**：补 SoC 具体型号 / RAM 用量 / 存储用量 / 电池 / Android 版本
+  2. **inspect 详情页**：分区表（`ls /dev/block/by-name/` + `/proc/partitions` + `/proc/mounts`）
+     + 内存布局（`/proc/meminfo` + `dumpsys meminfo` + `/proc/iomem`） + flash 布局
+     （`lsblk` + `/proc/mtd` + `/sys/block/*/size`） + 网络接口 + 温度 + 全 props
+  3. **手动刷新按钮** + 自动 polling（refetchInterval）
+  4. **明确不依赖 LLM**：alb_devinfo 已经在做确定性 RPC 拉数据，alb-api 只需 surface 成 endpoint
+- **还债 sketch**（拆 2 PR）：
+  - PR-A · dashboard summary card（~2-3h）：alb-api `GET /devices/{serial}/details` →
+    内部调 `alb_devinfo` + 多 1-2 个 grep（SoC / cores / 屏幕） → frontend 多字段渲染 +
+    RefreshCw 按钮 + useQuery refetchInterval(30000)
+  - PR-B · inspect 详情页（~4-5h）：alb-api `GET /devices/{serial}/system` 返回完整
+    partition / memory / flash 三视图 → frontend `/inspect` 页面表格 + 手动刷新
+- **还债条件**：下次会话专做（用户 2026-04-30 明确诉求）
+- **关联 ADR seed**：ADR-028（device 信息分层 dashboard summary vs inspect details）
+  + ADR-029（auto refresh 策略 refetchInterval vs WS push vs button-only）
+- **来源**：2026-04-30 真机验证 user UX 反馈
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）
