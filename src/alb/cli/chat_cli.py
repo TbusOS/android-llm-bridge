@@ -68,7 +68,10 @@ def chat(
     fast: bool = typer.Option(
         False,
         "--fast",
-        help="Shorthand: use gemma4:e4b (smaller, ~9G, same speed as 26b).",
+        help=(
+            "Shorthand: use gemma4:e4b (smaller, ~9G, same speed as 26b). "
+            "Ignored if --model is given or ALB_OLLAMA_MODEL is set in env."
+        ),
     ),
     session_id: str | None = typer.Option(
         None,
