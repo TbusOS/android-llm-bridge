@@ -132,6 +132,7 @@ docs/reference/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .claude/reports/screenshots/
+.claude/reports/web-check/
 # Personal operating guides kept out of the open-source repo
 adb-via-ssh-tunnel-guide*.md
 # Anything in a user's home directory tree
