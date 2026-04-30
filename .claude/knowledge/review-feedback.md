@@ -568,6 +568,127 @@ DEBT-015 评审定义的关闭条件是"SPA fallback 工作"，狭义看（fallb
 
 ---
 
+## 2026-04-30 · DEBT-017 backend health probe 6 状态运行时面板
+
+**评审对象**：staged WIP（11 文件）。后端 GET /playground/backends/{name}/health
++ ABC default health() 调整 + 前端 useBackends 双层 useQueries + 6-state UI。
+
+**调动**：4 agents 并行 — mockup-baseline-checker / code-reviewer /
+architecture-reviewer / performance-auditor。
+
+### 采纳清单（已实施 18 条 + 部分采纳 4 条 + follow-up 2 条 = 24 条）
+
+完全采纳（17 条）：
+
+- **mockup-baseline [block]** WIP inline `gridColumn` / `padding` /
+  `border` 等违反"先 mockup → 三闸 → React 照搬 class"铁律 → 路径
+  A：先扩 mockup v2.html 加 5 状态卡 + section be-card--empty → 走
+  三闸 → 加新 BEM class（`.be-stat--full` / `.be-stat-value--ellipsis`
+  / `.be-card--empty`）→ React 全部 inline 改 class（0 内联属性）
+- **code [high #2 → 升级 arch #1]** ABC `implemented:False` sentinel
+  反向 fallthrough 反模式 → 拆 follow-up commit 走 ADR-024：class
+  attribute `has_health_probe` + ABC raise NotImplementedError +
+  HealthResult dataclass
+- **code [high #1]** `latency_ms ?? 0` 在 reachable=true latency 缺失
+  时显示"0ms" → 类型保 `number | null`，UI null 渲染 "—"
+- **code [mid #3]** `BackendHealth.reason: "..." | string` union 退化
+  → 改 `BackendHealthReason` 闭枚举 + 加 "down" 兜底 reason
+- **code [mid #4]** 5 早返路径字段重复 → `_make_health_response`
+  helper 集中 schema
+- **code [mid #5]** `refetchOnWindowFocus` / `retry: 3` 默认值
+  雪崩 → 显式 `refetchOnWindowFocus: false` + `retry: 1` + error
+  backoff 60s（perf F4 同址）
+- **code [mid #6]** endpoint `await b.health()` 无 timeout → 加
+  `asyncio.wait_for(b.health(), 8.0)` + `reason="probe_timeout"`
+- **code [low #7]** `getattr(b, "model", None) or None` 冗余 → 删
+- **code [low #8]** `be-empty` 自创类无 CSS → 改 `be-card--empty`
+  并落 components.css
+- **arch [mid #2]** `reachable: bool|null` 重载 "no probe wired" +
+  "未确定" → 改 `reachable: false, reason: "no_probe"`，null 留给
+  未来真"未确定"
+- **arch [mid #3]** dict-as-interface 无 schema → ADR-024 follow-up
+  commit 改 HealthResult dataclass
+- **arch [mid #4]** DashboardPage placeholder 重复 → 登记 **DEBT-018**
+  不阻塞合入，加第 5 段 hook 时还
+- **arch [low #5]** planned backends 不必 enable health → useQueries
+  `enabled: api.status !== "planned"` 立刻减 25-50% 心跳
+- **arch [low #6]** renderStats if-elif → Record-based dispatch 表
+  + types 死字段清（latencyMs/tps/errors/spark）
+- **perf [high F1]** `get_backend()` 每次 reconstruct → `_PROBE_CACHE:
+  dict[str, LLMBackend]` 无 kwargs 路径复用实例
+- **perf [mid F3]** `refetchIntervalInBackground` 默认 true → 显式
+  false（hidden tab 不烧 daemon，10-100× 节省）
+- **perf [mid F4]** 错误重试无 backoff → `refetchInterval` 函数式
+  60s on error / 15s on success
+
+部分采纳（4 条）：
+
+- **mockup-baseline 路径 B 不该走** → 部分采纳：本次主 commit 内
+  扩 mockup + 走三闸 + 加 BEM class，不留 mockup 异步追平的债（路径
+  A 严格执行）
+- **code [mid #4] 5 早返冗余** → helper 抽 + 同时 ADR-024 follow-up
+  改 typed dataclass，长期消除
+- **arch [#1] sentinel + capability** → 主 commit 留 sentinel（保持
+  diff focused）+ ADR-024 follow-up commit 立刻 supersede（用户拍板
+  本 PR 内 2 commits）
+- **arch [#3] HealthResult dataclass** → 同上 ADR-024 follow-up
+
+Follow-up（2 条）：
+
+- **perf [mid F2]** OllamaBackend `httpx.AsyncClient` 实例复用 → 登
+  记 **DEBT-019**，gated on M3 第二个 backend
+- **arch 元规则** sentinel flag 反模式 → 升级为 **L-019** 写入
+  lessons.md
+
+### 关闭 DEBT
+
+- ✅ DEBT-017 标 **CLOSED 2026-04-30** —— 范围"runtime health 缺口"
+  关闭，含 6-reason 端点 + 双层 useQueries + 6-state UI + ADR-024 +
+  ADR-025
+
+### 新登记 DEBT
+
+- **DEBT-018** (mid) · DashboardPage section placeholder 4 处重复
+- **DEBT-019** (low) · OllamaBackend httpx.AsyncClient 实例复用
+
+### 新立 ADR
+
+- **ADR-024** · LLMBackend ABC capability 改 class attribute
+  （amends ADR-016，supersedes sentinel pattern）
+- **ADR-025** · per-backend 并行 useQueries · Dashboard polling 频率
+  分层（60s manifest / 15s health / 60s on error / 5min metrics / WS）
+
+### 新立 lesson
+
+- **L-019** · ABC 默认方法用 sentinel flag 表达 capability 否定 = 反
+  模式（正反例对比 + 应用规则）
+
+### 端到端验证状态（L-017 规则）
+
+✅ done · `.claude/reports/screenshots/2026-04-30-debt-017/dashboard-debt017-prod.png`：
+
+- 起 alb-api → 4 backends manifest + 4 health probes
+- Playwright 真浏览器：4 cards / 0 console errors / down + planned×3
+  真渲染（验 .be-card / .be-stat--full / .be-stat-value--ellipsis 三组
+  BEM class）
+- 6 状态中真渲染到 down + planned；其余 4（up / unprobed / error /
+  loading）由 pytest 5 health tests 覆盖（_BackendWithHealth /
+  _FakeBackend / _BackendThatExplodes / _BackendThatStalls fixtures
+  + ABC default raise unit test）
+- 报告归档 `.claude/reports/visual-2026-04-30-debt017.md`
+
+### 累计统计调整
+
+- 总评审次数：**13**（前 9 + **DEBT-017 4 并行**）
+- 总建议数：**123**（前 99 + DEBT-017 24 条）
+- DEBT-017 采纳率：**92%**（18 完全 + 4 部分 + 2 follow-up + 0 驳回）
+- 累计采纳率：**85%**（前 83% 上调）
+- 累计形成规则：**7 lessons + 6 ADR**（前 6+4，本次 +L-019, +ADR-024,
+  +ADR-025）
+- DEBT 操作累计：**8 关 + 1 升 + 6 新（含 017/018/019）+ 1 候选**
+
+---
+
 ## 2026-04-29 · G 档 DEBT-002 LlmBackendCards 接真数据
 
 **评审对象**：staged diff（5 web 文件）。useBackends hook 调
@@ -715,21 +836,28 @@ DEBT-001 关闭（debts.md 标 CLOSED 2026-04-29）。F.8 阶段补 Playwright
 
 > dev-team 展示页会读这里的统计，让外部看到团队成长证据。
 
-**当前（2026-04-28 update · F.6 完成后）**：
-- 总评审次数：5（F.1 / F.3 / F.4 / F.5 / F.6）
-- 总建议数：63（F.1: 18 / F.3: 10 / F.4: 8 / F.5: 12 / **F.6: 15**）
-- 采纳率：81%（27 + 11 + 13 = 51 / 63）
-- 驳回类型分布：模块归属偏好 1 / 已登记 DEBT 复提 2 / 未来 milestone 范围 2 / 测试便利权衡 1 / "不强求"风格调整 1 / 无场景的防御 1 / premature abstraction 1 / 影响轻不修 1
-- 形成新规则数：4（L-013 / L-014 / **L-015 元规则** / **L-016 view-aware**）
-  + 3 ADR（ADR-020/021/022）+ 4 DEBT（DEBT-008/010/**011**/**012**）
+**当前（2026-04-30 update · DEBT-017 完成后）**：
+- 总评审次数：**13**（F.1 / F.3 / F.4 / F.5 / F.6 / F.6 端到端 / F.7 /
+  F.8 / DEBT-014 / DEBT-015 / G 档 DEBT-002 / **DEBT-017 4 并行**）
+- 总建议数：**123**（前 99 + **DEBT-017: 24**）
+- 采纳率：**85%**（累计 105 采纳 / 123 建议；含 DEBT-017 92% 单档新高）
+- 形成新规则数：**7 lessons**（L-013 ~ L-018 + **L-019 sentinel
+  flag 反模式**）+ **6 ADR**（ADR-020 ~ ADR-023 + **ADR-024 ABC
+  capability via class attr** + **ADR-025 polling 频率分层**）
+  + 累计 **8 关 + 1 升 + 6 新（含 017/018/019）+ 1 候选** DEBT
 - F.1 发现 2 条 high 级架构问题 → 推迟 ship，重做调整版
 - **F.5 architecture-reviewer 主动翻历史 ADR 备选段，识别"反转未立新
   ADR"的文档债 → 升级为元规则 L-015**（agents 团队"会演进"的具体证据）
 - **F.6 code-reviewer 识别"双 WS 实例下 metric 流挤掉 business 事件"
   跨档隐患 → 登记 DEBT-011 让 F.7 一并修**（agents "看一档发现下一档
   问题" 的具体证据）
-- F.3 / F.4 / F.5 / F.6 reviewer 反馈持续聚焦代码质量 + 架构债识别，
-  **采纳率稳定在 78-87%**，F.6 创单档新高 87%
+- **DEBT-017 4 并行 agents 同时击中 sentinel pattern + refetch 频率
+  + ABC dict-as-interface 三处，主对话拆 2 commits（67c0820 主 +
+  63a10c2 ADR-024）干净 ship**（agents "并行视角合并立 ADR" 的具体
+  证据）
+- 单档采纳率分布：F.1 78% / F.3 80% / F.4 75% / F.5 83% / F.6 87% /
+  F.7 85% / F.8 80% / DEBT-014 84% / DEBT-015 80% / G 80% / **DEBT-017
+  92% 单档新高**
 
 > 每次评审后由主对话更新（commit message 里附带"review-feedback +N
 > 条"作为信号）。

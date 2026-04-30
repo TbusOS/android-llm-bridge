@@ -314,40 +314,63 @@
 
 ---
 
-## DEBT-017 · LLM backend runtime health 缺口（DEBT-002 follow-up）
+## DEBT-017 · LLM backend runtime health 缺口 —— **CLOSED 2026-04-30**
 
-- **severity**：mid（多 backend 时无法判断哪个真在跑；小 backend 时
-  用户体感是"为什么 ollama 卡永远是 —"）
-- **引入**：D 档 BackendCardData type 定义 latencyMs/tps/errors/spark/
-  lastUsed/budget 等运行时字段，但注册表没数据源
-- **暴露**：G 档（2026-04-29）端到端验证发现 ollama 卡 latency/tps/
-  errors 全 "—"，arch reviewer 警示用户会误读为"刚启动"而非"未知"
-- **位置**：
-  - 后端：`src/alb/api/playground_route.py` `/playground/backends`
-    只返回静态 manifest，无 health 字段
-  - 前端：`web/src/features/dashboard/useBackends.ts`
-    `mapApiBackendToCard` runtime fields 全留 undefined
-  - type：`web/src/features/dashboard/types.ts BackendCardData` 含
-    mock-era 字段（lastUsed/lastUsedZh/budget）永远不填，会让加新
-    backend 的开发者困惑
+- **severity**：mid
+- **引入**：D 档 BackendCardData type 定义 runtime 字段但无数据源
+- **关闭**：commit `67c0820` (主) + `63a10c2` (ADR-024 重构) + `8662027`
+  (chat_cli envvar 隔离 follow-up)。新增 `GET /playground/backends/{name}/health`
+  6-reason 枚举端点 + useQueries 双层并行 + 6-state UI + ADR-024
+  capability via class attr + ADR-025 polling 分层。L-017 真浏览器
+  4 cards / 0 console errors 验证。
+- **agents 评审**：4 并行（mockup-baseline / code / arch / perf）·
+  24 条建议 · **92% 采纳率**（18 采纳 + 4 部分采纳 + 2 follow-up）
+- **新登记**：DEBT-018（DashboardPage placeholder 重复）+ DEBT-019
+  （httpx.AsyncClient 实例复用）
+
+---
+
+## DEBT-018 · DashboardPage section placeholder loading/error 重复
+
+- **severity**：mid（结构债，本身不影响功能；DashboardPage 已 380+ 行，
+  每加一个 hook 段涨 ~30 行 boilerplate）
+- **引入**：D 档（device strip 加 isError/isLoading 分支）
+- **暴露**：DEBT-017 给 backends 段加 isError/isLoading 时，arch
+  reviewer 发现 4 处（device / sessions / backends / audit）各有自己的
+  placeholder 实例
+- **位置**：`web/src/features/dashboard/DashboardPage.tsx`（loading /
+  error inline 在 4 段各写一份）
 - **是否计划修**：是
+- **还债 sketch**：抽 `<SectionPlaceholder kind="loading"|"error"|"empty">`
+  组件，沿用已加的 `.be-card--empty` BEM class，DashboardPage 每段从
+  ~30 行降到 1 行
+- **还债条件**：dashboard 加第 5 个 hook 段时（M3 上 OpenAI-compat
+  + 第二个真 backend 后，可能需要 backend-by-backend metrics 段）
+- **来源**：DEBT-017 arch reviewer 发现 #4，主对话登记不阻塞合入
+
+---
+
+## DEBT-019 · httpx.AsyncClient 实例复用（OllamaBackend）
+
+- **severity**：low（localhost 上 TCP 复用收益边际；远端 LAN 上 RTT
+  收益明显）
+- **引入**：M2 早期 OllamaBackend 实现
+- **暴露**：DEBT-017 perf-auditor F2 报告。N=4 backend 每 15s probe
+  各开/关一个 httpx.AsyncClient（即使 _PROBE_CACHE 复用了 backend 实例，
+  health() 内部仍是 `async with httpx.AsyncClient(...)` 一次性 client）
+- **位置**：`src/alb/agent/backends/ollama.py:228-262` (`health()`) +
+  其他 chat / stream 路径同样模式
+- **是否计划修**：暂不（gated on 第二个 concrete backend 出现 / 项目
+  跑在远端 LAN 高频 polling 时）
 - **还债 sketch**：
-  1. 后端：`GET /playground/backends/{name}/health`，返回 `{ok,
-     last_ping_ms, errors_window, last_latency_ms, model?}`；ping 是
-     带 timeout 的轻探测（ollama HTTP HEAD / OpenAI-compat HEAD），
-     不真跑 chat
-  2. 前端：useBackends 串接 health 端点，按 backend 并行 ping，
-     结果填 latencyMs/errors/model 字段
-  3. UI：当 status=up 但所有 health 字段 undefined 时改文案
-     "registered · status: beta · runtime: unknown" 一行说明，避免
-     空 metric 槽误读
-  4. type 清理：BackendCardData 删 lastUsed/budget（registry 永远不知道）
-  5. follow-up small：DashboardPage `<LlmBackendCards>` 加 isError /
-     empty placeholder（reviewer 发现 #2）
-- **还债条件**：M3 上 OpenAI-compat 后多 backend 同时活；或用户
-  报"为什么 ollama 卡永远是 —"
-- **来源**：G 档 agents 评审（code+arch reviewer 合体）发现 #1 + #4
-  合并触发，主对话采纳
+  1. OllamaBackend 加 `_client: httpx.AsyncClient | None` 实例属性，
+     lazy init in chat/stream/health
+  2. 加 `aclose()` 方法 + 在 alb-api FastAPI lifespan shutdown event
+     里集中关
+  3. 测试 fixture 加 cleanup 防 socket 泄漏
+- **还债条件**：M3 上 OpenAI-compat 后两 backend 都开 polling；或
+  perf-auditor 测出 health probe 是测试套件的 socket 泄漏源
+- **来源**：DEBT-017 perf-auditor F2 报告，主对话登记不阻塞合入
 
 ---
 
