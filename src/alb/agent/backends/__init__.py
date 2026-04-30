@@ -24,7 +24,7 @@ from typing import Any
 
 from alb.agent.backend import LLMBackend
 
-__all__ = ["get_backend"]
+__all__ = ["close_probe_cache", "get_backend"]
 
 
 # Process-lifetime cache for the no-kwargs construction path used by
@@ -51,6 +51,28 @@ def get_backend(name: str, **kwargs: Any) -> LLMBackend:
     if not kwargs:
         _PROBE_CACHE[name] = backend
     return backend
+
+
+async def close_probe_cache() -> None:
+    """Close every cached probe-path backend's shared httpx client.
+
+    Called from alb-api FastAPI shutdown lifespan event so the
+    DEBT-019 reused clients release their TCP/TLS pools cleanly on
+    server stop. Per-CLI invocations (`alb chat ...`) instantiate
+    fresh backends with kwargs (no cache hit), so they're unaffected
+    — they exit when the process exits.
+    """
+    for backend in list(_PROBE_CACHE.values()):
+        aclose = getattr(backend, "aclose", None)
+        if aclose is None:
+            continue
+        try:
+            await aclose()
+        except Exception:  # noqa: BLE001 — best-effort shutdown
+            # Already-closed / network-failed close shouldn't block
+            # the rest of the shutdown sequence.
+            pass
+    _PROBE_CACHE.clear()
 
 
 def _construct(name: str, **kwargs: Any) -> LLMBackend:

@@ -102,6 +102,12 @@ class OpenAICompatBackend(LLMBackend):
         self.default_options: dict[str, Any] = default_options or {}
         # Testing hook: inject httpx.MockTransport to avoid real network.
         self._transport = transport
+        # DEBT-019: lazy-init shared httpx client so the 4 paths
+        # (chat/stream/health/list_models) reuse one keep-alive
+        # connection. Same lifecycle pattern as OllamaBackend —
+        # built on first use, closed by aclose() (called from
+        # alb-api shutdown lifespan event).
+        self._client: httpx.AsyncClient | None = None
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -164,55 +170,56 @@ class OpenAICompatBackend(LLMBackend):
 
         url = f"{self.base_url}/chat/completions"
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, transport=self._transport
-            ) as client:
-                async with client.stream(
-                    "POST", url, json=body, headers=self._headers()
-                ) as r:
-                    if r.status_code >= 400:
-                        text = (await r.aread()).decode(
-                            "utf-8", errors="replace"
-                        )[:500]
-                        raise BackendError(
-                            "BACKEND_HTTP_ERROR",
-                            f"openai-compat stream returned {r.status_code}: {text}",
-                            suggestion="check model name + auth header",
-                        )
-                    async for line in r.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        payload = line[5:].strip()
-                        if not payload or payload == "[DONE]":
-                            continue
-                        try:
-                            chunk = json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
-                        choices = chunk.get("choices") or []
-                        if choices:
-                            delta = choices[0].get("delta") or {}
-                            delta_c = delta.get("content") or ""
-                            if delta_c:
-                                content_parts.append(delta_c)
-                                # OpenAI servers don't expose per-chunk
-                                # token counts, so we report 1 per
-                                # delta — same convention as Ollama.
-                                # tps_sample is approximate.
-                                yield {
-                                    "type": "token",
-                                    "delta": delta_c,
-                                    "tokens": 1,
-                                }
-                            for tc_delta in delta.get("tool_calls") or []:
-                                _accumulate_tool_call(tc_buffers, tc_delta)
-                            fr = choices[0].get("finish_reason")
-                            if fr:
-                                finish_reason = _normalize_finish_reason(fr)
-                        if chunk.get("model"):
-                            model_reply = chunk["model"]
-                        if chunk.get("usage"):
-                            usage = _build_usage_dict(chunk["usage"])
+            client = self._get_client()
+            async with client.stream(
+                "POST", url, json=body, headers=self._headers()
+            ) as r:
+                if r.status_code >= 400:
+                    text = (await r.aread()).decode(
+                        "utf-8", errors="replace"
+                    )[:500]
+                    raise BackendError(
+                        "BACKEND_HTTP_ERROR",
+                        f"openai-compat stream returned {r.status_code}: {text}",
+                        suggestion="check model name + auth header",
+                    )
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if not payload or payload == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        delta_c = delta.get("content") or ""
+                        if delta_c:
+                            content_parts.append(delta_c)
+                            # OpenAI servers don't expose per-chunk
+                            # token counts, so we report 1 per
+                            # delta — same convention as Ollama.
+                            # tps_sample is approximate.
+                            yield {
+                                "type": "token",
+                                "delta": delta_c,
+                                "tokens": 1,
+                            }
+                        for tc_delta in delta.get("tool_calls") or []:
+                            _accumulate_tool_call(tc_buffers, tc_delta)
+                        fr = choices[0].get("finish_reason")
+                        if fr:
+                            finish_reason = _normalize_finish_reason(fr)
+                    # usage / model can appear in the no-choices final
+                    # event when stream_options.include_usage=true, so
+                    # read them outside the `if choices` branch.
+                    if chunk.get("model"):
+                        model_reply = chunk["model"]
+                    if chunk.get("usage"):
+                        usage = _build_usage_dict(chunk["usage"])
         except httpx.ConnectError as e:
             raise BackendError(
                 "BACKEND_UNREACHABLE",
@@ -262,14 +269,14 @@ class OpenAICompatBackend(LLMBackend):
         (when self.model is empty).
         """
         try:
-            async with httpx.AsyncClient(
-                timeout=5.0, transport=self._transport
-            ) as client:
-                r = await client.get(
-                    f"{self.base_url}/models", headers=self._headers()
-                )
-                r.raise_for_status()
-                data = r.json()
+            client = self._get_client()
+            r = await client.get(
+                f"{self.base_url}/models",
+                headers=self._headers(),
+                timeout=5.0,
+            )
+            r.raise_for_status()
+            data = r.json()
         except httpx.HTTPError as e:
             return HealthResult(
                 reachable=False,
@@ -294,10 +301,8 @@ class OpenAICompatBackend(LLMBackend):
         """
         url = f"{self.base_url}/models"
         try:
-            async with httpx.AsyncClient(
-                timeout=5.0, transport=self._transport
-            ) as client:
-                r = await client.get(url, headers=self._headers())
+            client = self._get_client()
+            r = await client.get(url, headers=self._headers(), timeout=5.0)
         except httpx.ConnectError as e:
             raise BackendError(
                 "BACKEND_UNREACHABLE",
@@ -376,13 +381,30 @@ class OpenAICompatBackend(LLMBackend):
             body.setdefault("stream_options", {"include_usage": True})
         return body
 
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazy-init the shared httpx client (DEBT-019). Reused across
+        chat/stream/health/list_models with per-request timeout
+        overrides on health/list_models so one client serves both
+        fast probes (5 s) and slow chat (timeout default)."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout, transport=self._transport
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the shared httpx client. Idempotent + safe to call
+        on a backend whose client was never built (planned/probe
+        short-circuit)."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout, transport=self._transport
-            ) as client:
-                r = await client.post(url, json=body, headers=self._headers())
+            client = self._get_client()
+            r = await client.post(url, json=body, headers=self._headers())
         except httpx.ConnectError as e:
             raise BackendError(
                 "BACKEND_UNREACHABLE",
