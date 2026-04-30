@@ -518,4 +518,68 @@ CPU 跑"。
 
 ---
 
+## ADR-028 (seed) · device 信息分层 · dashboard summary vs inspect details
+
+**Status**: seed（DEBT-022 PR-A / PR-B 落地时拍板）
+**Date**: 2026-04-30
+**Context**: 2026-04-30 真机验证暴露 device card 信息薄（只 serial / product /
+model / transport 4 字段）。用户诉求要补 SoC / RAM / 存储 / 电池 / 分区表 /
+内存布局 / flash 布局 / 网络 / 温度。`alb_devinfo` 工具已实现 9 字段，
+追加 ~50 字段后 dashboard 单卡装不下，必须分层。
+
+**Decision**：暂不决策，留 seed。DEBT-022 PR-A 落地时拍板。
+
+**3 备选**：
+
+- (a) **2 endpoint 分层**：`/devices/{serial}/details`（summary，dashboard 用）
+  + `/devices/{serial}/system`（full，inspect 详情页用）。优势：dashboard
+  payload 小、刷新快；劣势：2 个 endpoint 维护，summary/full 字段定义需对齐
+- (b) **1 endpoint + level 参数**：`/devices/{serial}/details?level=summary|full`
+  优势：1 个 endpoint；劣势：level=full 时 payload 大，dashboard 误传 full
+  会拖慢
+- (c) **GraphQL 风格 fields 选择**：`/devices/{serial}/details?fields=model,ram,storage`
+  优势：精确控制；劣势：本仓没 GraphQL 基础设施、字段名暴露 schema 锁死
+
+**推荐方向**（待 PR-A 验证）：(a) 2 endpoint。原因：
+- summary 30s polling、full 按需手动拉，刷新频率不一样 → 2 endpoint 自然
+- summary 字段稳定（10 个左右），full 字段会随时间扩张 → 解耦版本演进
+
+**何时拍板**：DEBT-022 PR-A 落地时本 ADR 升正式。
+
+**关联**：DEBT-022 / ADR-029（refresh 策略，独立维度）
+
+---
+
+## ADR-029 (seed) · device 信息刷新策略 · auto polling vs button vs WS push
+
+**Status**: seed（DEBT-022 PR-A 落地时拍板）
+**Date**: 2026-04-30
+**Context**: device summary 数据有些字段动（电池 / 温度 / RAM 用量 / 存储用量
+/ 在线状态），有些静（model / SoC / build / Android 版本）。刷新机制
+3 备选。
+
+**3 备选**：
+
+- (a) **`refetchInterval: 30000` auto polling + 手动 refetch 按钮**：react-query
+  原生模式。优势：dev 简单 / 跟现有 useBackends pattern 一致；劣势：N 设备
+  × 30s polling 会累 / electron 后台 tab 浪费
+- (b) **button-only 手动刷新**：用户按按钮才拉。优势：0 polling 成本；
+  劣势：电池/温度永远滞后，违反"实时面板"定位
+- (c) **WebSocket push**：alb-api 主动 push 板子状态变化。优势：实时；
+  劣势：alb-api 要主动 polling 板子（成本转移）+ 设计 WS event schema
+  + 频繁数据触发 React 重渲染抖动
+
+**推荐方向**（待 PR-A 验证）：(a) auto polling 30s + 手动 refetch button +
+分字段刷新策略：
+- 静态字段（model / SoC / build）：mount 时拉一次，永不 refetch
+- 动态字段（电池 / 温度 / RAM 用量）：refetchInterval 30s
+- 静态/动态字段拆 2 个 useQuery（cache key 分离）
+
+**何时拍板**：DEBT-022 PR-A 落地时本 ADR 升正式。
+
+**关联**：DEBT-022 / ADR-028（分层 endpoint，独立维度）/ ADR-025（polling
+分层模式 · 已落地的 backend health polling 可复用）
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）
