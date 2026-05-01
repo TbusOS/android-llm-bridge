@@ -12,6 +12,8 @@
  * Data is currently mock; each section's `data` prop will swap to a
  * real fetcher once /devices /tunnels /sessions /metrics ship.
  */
+import { useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import type { Lang } from "../../stores/app";
 import { useApp } from "../../stores/app";
 import { ActivityTimeline } from "./ActivityTimeline";
@@ -34,8 +36,13 @@ import type { KpiCardData } from "./types";
 export function DashboardPage() {
   const lang = useApp((s) => s.lang);
   const setDevice = useApp((s) => s.setDevice);
+  const queryClient = useQueryClient();
   const recent = useRecentSessions();
   const devices = useDevices();
+  const onRefreshDevices = () => {
+    devices.refetch?.();
+    queryClient.invalidateQueries({ queryKey: ["device-details"] });
+  };
   // Two separate WS subscriptions on /audit/stream — see ADR-022:
   //   1. timeline view: business events only (tps_sample filtered)
   //   2. live view: metric events included so LiveSession can drive
@@ -72,6 +79,15 @@ export function DashboardPage() {
         <h2>{lang === "zh" ? "设备" : "Devices"}</h2>
         <span className="meta">{deviceMeta(devices, lang)}</span>
         <span className="right">
+          <button
+            type="button"
+            className="link-arrow link-arrow--btn"
+            onClick={onRefreshDevices}
+            aria-label={lang === "zh" ? "刷新设备信息" : "Refresh devices"}
+          >
+            <RefreshCw size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            {lang === "zh" ? "刷新" : "Refresh"}
+          </button>
           <a className="link-arrow" href="#all-devices">
             {lang === "zh" ? "所有设备" : "All devices"}
           </a>

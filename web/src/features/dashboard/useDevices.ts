@@ -74,6 +74,7 @@ export interface DevicesViewModel {
   isLoading: boolean;
   isError: boolean;
   error: unknown;
+  refetch: () => void;
 }
 
 export function useDevices(): DevicesViewModel {
@@ -91,5 +92,6 @@ export function useDevices(): DevicesViewModel {
     isLoading: q.isLoading,
     isError: q.isError,
     error: q.error,
+    refetch: q.refetch,
   };
 }

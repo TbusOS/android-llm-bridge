@@ -153,3 +153,127 @@ def test_endpoint_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [(e["method"], e["path"]) for e in body["rest"]]
     assert ("GET", "/devices") in paths
+
+
+# ─── /devices/{serial}/details (DEBT-022 PR-A) ─────────────────────
+class _DevinfoTransport(_FakeAdbTransport):
+    """Returns a realistic getprop / proc / wm / thermal command tree."""
+
+    async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+        if cmd.startswith("getprop"):
+            return ShellResult(
+                ok=True,
+                exit_code=0,
+                stdout=(
+                    "[ro.product.model]: [Pixel 7]\n"
+                    "[ro.product.brand]: [google]\n"
+                    "[ro.boot.soc.product]: [Tensor G2]\n"
+                    "[ro.product.cpu.abi]: [arm64-v8a]\n"
+                    "[ro.serialno]: [TEST123]\n"
+                ),
+                stderr="",
+                duration_ms=1,
+            )
+        if cmd.startswith("dumpsys battery"):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="  level: 75\n", stderr="", duration_ms=1)
+        if cmd.startswith("cat /proc/uptime"):
+            return ShellResult(ok=True, exit_code=0, stdout="9999.5 1.0\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("df /data"):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="Filesystem 1K Used Avail Use% Mounted\n"
+                                      "/dev/x 1000 500 500 50% /data\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("cat /proc/cpuinfo"):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="processor\t: 0\n\nprocessor\t: 1\n\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("cat /proc/meminfo"):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="MemTotal:    7929164 kB\n"
+                                      "MemAvailable:  5500000 kB\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("wm size"):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="Physical size: 1080x2400\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("wm density"):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="Physical density: 420\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("cat /sys/class/thermal"):
+            return ShellResult(ok=True, exit_code=0, stdout="47350\n",
+                               stderr="", duration_ms=1)
+        if cmd.startswith("cat /sys/devices/system/cpu"):
+            return ShellResult(ok=True, exit_code=0, stdout="2802000\n",
+                               stderr="", duration_ms=1)
+        return ShellResult(ok=False, exit_code=1, stderr="unhandled",
+                           duration_ms=0, error_code="ADB_COMMAND_FAILED")
+
+
+def test_device_details_happy(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **kwargs: _DevinfoTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.get("/devices/TEST123/details")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["serial"] == "TEST123"
+    assert body["transport"] == "_DevinfoTransport"
+    dev = body["device"]
+    assert dev["model"] == "Pixel 7"
+    assert dev["abi"] == "arm64-v8a"
+    assert dev["battery_level"] == 75
+    assert dev["uptime_sec"] == 9999
+    assert dev["extras"]["soc"] == "Tensor G2"
+    assert dev["extras"]["cpu_cores"] == 2
+    assert dev["extras"]["cpu_max_khz"] == 2802000
+    assert dev["extras"]["ram_total_kb"] == 7929164
+    assert dev["extras"]["display"]["size"] == "1080x2400"
+    assert dev["extras"]["temp_c"] == pytest.approx(47.35)
+
+
+def test_device_details_build_transport_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(**kwargs: Any):
+        raise ValueError("no transport configured")
+
+    monkeypatch.setattr("alb.api.devices_route.build_transport", _boom)
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.get("/devices/TEST/details")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["device"] is None
+    assert "ValueError" in body["error"]
+
+
+def test_device_details_devinfo_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class _BadShellTransport(_FakeAdbTransport):
+        async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+            # getprop fails → devinfo returns ok=False
+            return ShellResult(ok=False, exit_code=1, stderr="permission denied",
+                               duration_ms=0, error_code="ADB_COMMAND_FAILED")
+
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **kwargs: _BadShellTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.get("/devices/TEST/details")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["device"] is None
+    assert body["error"]

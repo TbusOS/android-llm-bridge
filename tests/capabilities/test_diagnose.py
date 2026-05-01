@@ -7,8 +7,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from alb.capabilities.diagnose import (
+    _count_cpu_cores,
     _parse_bugreportz_output,
     _parse_getprop,
+    _parse_meminfo,
+    _parse_wm_density,
+    _parse_wm_size,
     anr_pull,
     devinfo,
 )
@@ -128,3 +132,109 @@ async def test_devinfo_happy() -> None:
     assert r.data.battery_level == 82
     assert r.data.uptime_sec == 12345
     assert "/data" in r.data.storage
+    # Extras present even when extra collectors fail (DEBT-022 PR-A
+    # fallback contract): keys exist with default values.
+    assert r.data.extras["soc"] == ""
+    assert r.data.extras["cpu_cores"] == 0
+    assert r.data.extras["cpu_max_khz"] == 0
+    assert r.data.extras["ram_total_kb"] == 0
+    assert r.data.extras["temp_c"] == -1.0
+    assert r.data.extras["display"] == {}
+
+
+# ─── Extra collector parsers (DEBT-022 PR-A) ───────────────────────
+def test_count_cpu_cores() -> None:
+    cpuinfo = (
+        "processor\t: 0\nBogoMIPS\t: 38\n\n"
+        "processor\t: 1\nBogoMIPS\t: 38\n\n"
+        "processor\t: 2\nBogoMIPS\t: 38\n\n"
+    )
+    assert _count_cpu_cores(cpuinfo) == 3
+    assert _count_cpu_cores("") == 0
+
+
+def test_parse_meminfo() -> None:
+    mem = (
+        "MemTotal:        7929164 kB\n"
+        "MemFree:         3000000 kB\n"
+        "MemAvailable:    5500000 kB\n"
+        "Buffers:           50000 kB\n"
+    )
+    total, avail = _parse_meminfo(mem)
+    assert total == 7929164
+    assert avail == 5500000
+
+
+def test_parse_meminfo_empty() -> None:
+    assert _parse_meminfo("") == (0, 0)
+
+
+def test_parse_wm_size() -> None:
+    out = "Physical size: 1080x2400\nOverride size: 720x1600\n"
+    assert _parse_wm_size(out) == "1080x2400"
+    assert _parse_wm_size("") == ""
+
+
+def test_parse_wm_density() -> None:
+    out = "Physical density: 420\nOverride density: 320\n"
+    assert _parse_wm_density(out) == "420"
+    assert _parse_wm_density("") == ""
+
+
+@pytest.mark.asyncio
+async def test_devinfo_extras_full() -> None:
+    """Happy path with all extra collectors returning data."""
+    props_output = (
+        "[ro.product.model]: [Pixel 7]\n"
+        "[ro.boot.soc.product]: [Tensor G2]\n"
+        "[ro.product.cpu.abi]: [arm64-v8a]\n"
+    )
+    cpuinfo = (
+        "processor\t: 0\n\nprocessor\t: 1\n\n"
+        "processor\t: 2\n\nprocessor\t: 3\n\n"
+    )
+    meminfo = "MemTotal:    7929164 kB\nMemAvailable:  5500000 kB\n"
+    wm_size = "Physical size: 1080x2400\n"
+    wm_density = "Physical density: 420\n"
+    thermal = "47350\n"  # millicelsius → 47.35 C
+    cpufreq = "2802000\n"  # max 2.802 GHz
+
+    t = _mk_transport({
+        "getprop": ShellResult(ok=True, exit_code=0, stdout=props_output, stderr="", duration_ms=1),
+        "dumpsys battery": ShellResult(ok=False, exit_code=1, stderr="", duration_ms=1),
+        "cat /proc/uptime": ShellResult(ok=False, exit_code=1, stderr="", duration_ms=1),
+        "df /data": ShellResult(ok=False, exit_code=1, stderr="", duration_ms=1),
+        "cat /proc/cpuinfo": ShellResult(ok=True, exit_code=0, stdout=cpuinfo, stderr="", duration_ms=1),
+        "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq": ShellResult(
+            ok=True, exit_code=0, stdout=cpufreq, stderr="", duration_ms=1),
+        "cat /proc/meminfo": ShellResult(ok=True, exit_code=0, stdout=meminfo, stderr="", duration_ms=1),
+        "wm size": ShellResult(ok=True, exit_code=0, stdout=wm_size, stderr="", duration_ms=1),
+        "wm density": ShellResult(ok=True, exit_code=0, stdout=wm_density, stderr="", duration_ms=1),
+        "cat /sys/class/thermal/thermal_zone0/temp": ShellResult(
+            ok=True, exit_code=0, stdout=thermal, stderr="", duration_ms=1),
+    })
+    r = await devinfo(t)
+    assert r.ok
+    assert r.data is not None
+    assert r.data.extras["soc"] == "Tensor G2"
+    assert r.data.extras["cpu_cores"] == 4
+    assert r.data.extras["cpu_max_khz"] == 2802000
+    assert r.data.extras["ram_total_kb"] == 7929164
+    assert r.data.extras["ram_avail_kb"] == 5500000
+    assert r.data.extras["display"] == {"size": "1080x2400", "density": "420"}
+    assert r.data.extras["temp_c"] == pytest.approx(47.35)
+
+
+@pytest.mark.asyncio
+async def test_devinfo_soc_fallback_chain() -> None:
+    """SoC field falls through ro.boot.soc.product → ro.hardware.chipname → ro.board.platform."""
+    props_output = (
+        "[ro.product.model]: [Test]\n"
+        "[ro.hardware.chipname]: [SM8650]\n"
+    )
+    t = _mk_transport({
+        "getprop": ShellResult(ok=True, exit_code=0, stdout=props_output, stderr="", duration_ms=1),
+    })
+    r = await devinfo(t)
+    assert r.ok
+    assert r.data.extras["soc"] == "SM8650"

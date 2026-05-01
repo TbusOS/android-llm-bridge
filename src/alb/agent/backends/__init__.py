@@ -20,6 +20,7 @@ list + status):
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from alb.agent.backend import LLMBackend
@@ -79,6 +80,17 @@ def _construct(name: str, **kwargs: Any) -> LLMBackend:
     if name == "ollama":
         from alb.agent.backends.ollama import OllamaBackend
 
+        # DEBT-020 close: probe-path constructions (no kwargs) honour
+        # ALB_OLLAMA_URL / ALB_OLLAMA_MODEL env so dashboard health
+        # reflects the actually-configured Ollama, not the manifest
+        # default. Same precedence as chat_route.py:
+        #   caller kwargs > env > library default.
+        env_base = os.environ.get("ALB_OLLAMA_URL")
+        env_model = os.environ.get("ALB_OLLAMA_MODEL")
+        if env_base and "base_url" not in kwargs:
+            kwargs["base_url"] = env_base
+        if env_model and "model" not in kwargs:
+            kwargs["model"] = env_model
         return OllamaBackend(**kwargs)
     if name == "openai-compat":
         from alb.agent.backends.openai_compat import OpenAICompatBackend

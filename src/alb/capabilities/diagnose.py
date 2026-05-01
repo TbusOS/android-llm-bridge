@@ -53,7 +53,7 @@ class DeviceInfo:
     uptime_sec: int
     battery_level: int
     storage: dict[str, str]
-    extras: dict[str, str]
+    extras: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -250,6 +250,34 @@ async def devinfo(transport: Transport) -> Result[DeviceInfo]:
     df_r = await transport.shell("df /data /sdcard 2>/dev/null", timeout=10)
     storage = _parse_df(df_r.stdout if df_r.ok else "")
 
+    cpu_r = await transport.shell("cat /proc/cpuinfo 2>/dev/null", timeout=5)
+    cpu_cores = _count_cpu_cores(cpu_r.stdout if cpu_r.ok else "")
+    cpu_max_khz = await _read_cpu_max_khz(transport)
+
+    mem_r = await transport.shell("cat /proc/meminfo 2>/dev/null", timeout=5)
+    ram_total_kb, ram_avail_kb = _parse_meminfo(mem_r.stdout if mem_r.ok else "")
+
+    display = await _collect_display(transport)
+
+    temp_c = await _read_thermal_c(transport)
+
+    soc = (
+        props.get("ro.boot.soc.product")
+        or props.get("ro.hardware.chipname")
+        or props.get("ro.board.platform")
+        or ""
+    )
+
+    extras: dict[str, Any] = {
+        "soc": soc,
+        "cpu_cores": cpu_cores,
+        "cpu_max_khz": cpu_max_khz,
+        "ram_total_kb": ram_total_kb,
+        "ram_avail_kb": ram_avail_kb,
+        "display": display,
+        "temp_c": temp_c,
+    }
+
     info = DeviceInfo(
         model=props.get("ro.product.model", ""),
         brand=props.get("ro.product.brand", ""),
@@ -263,9 +291,54 @@ async def devinfo(transport: Transport) -> Result[DeviceInfo]:
         uptime_sec=uptime_sec,
         battery_level=battery_level,
         storage=storage,
-        extras={},
+        extras=extras,
     )
     return ok(data=info)
+
+
+# ─── extra collectors (DEBT-022 PR-A · device card 丰富化) ─────────
+async def _read_cpu_max_khz(transport: Transport) -> int:
+    """Best-effort: read max CPU freq from cpufreq sysfs. 0 if unavailable."""
+    r = await transport.shell(
+        "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null",
+        timeout=5,
+    )
+    if not r.ok or not r.stdout.strip():
+        return 0
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
+
+
+async def _collect_display(transport: Transport) -> dict[str, str]:
+    """`wm size` + `wm density`. Empty dict if any fail."""
+    out: dict[str, str] = {}
+    size_r = await transport.shell("wm size 2>/dev/null", timeout=5)
+    if size_r.ok:
+        size = _parse_wm_size(size_r.stdout)
+        if size:
+            out["size"] = size
+    dens_r = await transport.shell("wm density 2>/dev/null", timeout=5)
+    if dens_r.ok:
+        dens = _parse_wm_density(dens_r.stdout)
+        if dens:
+            out["density"] = dens
+    return out
+
+
+async def _read_thermal_c(transport: Transport) -> float:
+    """Read thermal_zone0/temp (millicelsius). -1.0 if unavailable."""
+    r = await transport.shell(
+        "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null",
+        timeout=5,
+    )
+    if not r.ok or not r.stdout.strip():
+        return -1.0
+    try:
+        return int(r.stdout.strip()) / 1000.0
+    except ValueError:
+        return -1.0
 
 
 # ─── Parsers ───────────────────────────────────────────────────────
@@ -316,3 +389,53 @@ def _parse_df(stdout: str) -> dict[str, str]:
             # Example: Filesystem 1K-blocks  Used Available Use% Mounted
             res[mount] = f"used={parts[-4]} avail={parts[-3]} use%={parts[-2]}"
     return res
+
+
+def _count_cpu_cores(stdout: str) -> int:
+    """Count `processor	: N` lines in /proc/cpuinfo. 0 if not parseable."""
+    count = 0
+    for line in stdout.splitlines():
+        if line.startswith("processor"):
+            count += 1
+    return count
+
+
+def _parse_meminfo(stdout: str) -> tuple[int, int]:
+    """Return (MemTotal_kB, MemAvailable_kB). 0,0 on parse failure."""
+    total = 0
+    avail = 0
+    for line in stdout.splitlines():
+        if line.startswith("MemTotal:"):
+            total = _meminfo_value_kb(line)
+        elif line.startswith("MemAvailable:"):
+            avail = _meminfo_value_kb(line)
+    return total, avail
+
+
+def _meminfo_value_kb(line: str) -> int:
+    # `MemTotal:        7929164 kB`
+    parts = line.split()
+    if len(parts) >= 2:
+        try:
+            return int(parts[1])
+        except ValueError:
+            return 0
+    return 0
+
+
+def _parse_wm_size(stdout: str) -> str:
+    # `Physical size: 1080x2400` or `Override size: ...`
+    for line in stdout.splitlines():
+        s = line.strip()
+        if s.startswith("Physical size:"):
+            return s.split(":", 1)[1].strip()
+    return ""
+
+
+def _parse_wm_density(stdout: str) -> str:
+    # `Physical density: 420`
+    for line in stdout.splitlines():
+        s = line.strip()
+        if s.startswith("Physical density:"):
+            return s.split(":", 1)[1].strip()
+    return ""

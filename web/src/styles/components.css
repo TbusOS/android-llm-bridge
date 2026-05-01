@@ -448,6 +448,31 @@ html[lang^="zh"] h3 {
   content: " \2192";
 }
 
+.link-arrow--btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-right: var(--space-3);
+  cursor: pointer;
+  color: var(--anth-orange);
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.link-arrow--btn::after {
+  content: "";
+}
+
+.link-arrow--btn:hover {
+  text-decoration: underline;
+}
+
+.link-arrow--btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ==========================================================
    Hero row — Live session card + KPI 2x2 grid
    ========================================================== */
@@ -899,6 +924,37 @@ html[lang^="zh"] h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dev-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px var(--space-2);
+  margin: 4px 0 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.dev-detail__row {
+  display: contents;
+}
+
+.dev-detail__row dt {
+  color: var(--anth-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  align-self: center;
+}
+
+.dev-detail__row dd {
+  margin: 0;
+  color: var(--anth-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dev-metrics {
