@@ -105,6 +105,55 @@ export async function fetchDevices(signal?: AbortSignal): Promise<DevicesRespons
   return (await r.json()) as DevicesResponse;
 }
 
+export interface ApiDeviceDetailsExtras {
+  soc: string;
+  cpu_cores: number;
+  cpu_max_khz: number;
+  ram_total_kb: number;
+  ram_avail_kb: number;
+  display: { size?: string; density?: string };
+  temp_c: number;
+}
+
+export interface ApiDeviceDetails {
+  model: string;
+  brand: string;
+  manufacturer: string;
+  sdk: string;
+  release: string;
+  build_fingerprint: string;
+  abi: string;
+  hardware: string;
+  serialno: string;
+  uptime_sec: number;
+  battery_level: number;
+  storage: Record<string, string>;
+  extras: ApiDeviceDetailsExtras;
+}
+
+export interface DeviceDetailsResponse {
+  ok: boolean;
+  serial: string;
+  transport: string | null;
+  device: ApiDeviceDetails | null;
+  error?: string;
+}
+
+export async function fetchDeviceDetails(
+  serial: string,
+  signal?: AbortSignal,
+): Promise<DeviceDetailsResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/details`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /devices/${serial}/details returned ${r.status}`,
+      r.status,
+      "DEVICE_DETAILS_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as DeviceDetailsResponse;
+}
+
 export interface AuditEvent {
   ts: string;
   session_id: string;

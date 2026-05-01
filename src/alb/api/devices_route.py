@@ -7,6 +7,11 @@ response so the Web UI doesn't have to peel off a `data` envelope.
 Transports without a `.devices()` method (ssh / serial) return an empty
 list rather than 404 — the UI can still ask "what's the active
 transport?" and render an empty state.
+
+Also serves `GET /devices/{serial}/details` — composite device snapshot
+(brand / SoC / RAM / display / temperature / battery / storage) for the
+dashboard device card. ADR-028 (a) — split summary endpoint from the
+inspect "full system dump" endpoint that PR-B will add.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from alb.capabilities.diagnose import devinfo
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
@@ -77,4 +83,79 @@ async def list_devices() -> dict[str, Any]:
         "ok": True,
         "transport": transport_name,
         "devices": [_to_jsonable(d) for d in devs],
+    }
+
+
+@router.get("/devices/{serial}/details")
+async def device_details(serial: str) -> dict[str, Any]:
+    """Composite device snapshot for the dashboard summary card.
+
+    Wraps `alb.capabilities.diagnose.devinfo()` — same data as the
+    `alb_devinfo` MCP tool but reachable via HTTP. ADR-028 (a) — this
+    endpoint is the **summary** view; the **full system dump**
+    (partition / memory / flash layout) belongs to a future
+    `/devices/{serial}/system` endpoint (DEBT-022 PR-B).
+
+    Shape::
+
+        {
+          "ok": true,
+          "serial": "<requested serial>",
+          "transport": "AdbTransport",
+          "device": {
+            "model": "...", "brand": "...", "manufacturer": "...",
+            "sdk": "33", "release": "13", "abi": "arm64-v8a",
+            "hardware": "...", "build_fingerprint": "...",
+            "serialno": "...", "uptime_sec": 12345,
+            "battery_level": 82,
+            "storage": {"/data": "used=... avail=..."},
+            "extras": {
+              "soc": "Tensor G2", "cpu_cores": 8,
+              "cpu_max_khz": 2802000,
+              "ram_total_kb": 7929164, "ram_avail_kb": 5500000,
+              "display": {"size": "1080x2400", "density": "420"},
+              "temp_c": 47.35
+            }
+          }
+        }
+
+    On transport / shell failure stays HTTP 200 with `ok: false` so the
+    UI can render a per-card error inline.
+    """
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": None,
+            "device": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        r = await devinfo(t)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "device": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    if not r.ok:
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "device": None,
+            "error": r.error.message if r.error else "devinfo failed",
+        }
+
+    return {
+        "ok": True,
+        "serial": serial,
+        "transport": type(t).__name__,
+        "device": r.data.to_dict() if r.data else None,
     }

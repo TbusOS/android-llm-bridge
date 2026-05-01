@@ -23,6 +23,30 @@ export interface DeviceCardData {
   tempColor: "blue" | "green" | "orange";
   /** Last-seen freeform note shown when offline. */
   offlineNote?: string;
+  /** Detail fields from GET /devices/{serial}/details — populated by
+   * useDeviceDetails. Undefined while loading or on detail-fetch error;
+   * the device strip falls back to the list view's serial / model. */
+  details?: DeviceDetailsSummary;
+}
+
+/** Subset of GET /devices/{serial}/details that the dashboard summary
+ * card actually renders. ADR-028 (a) — keep this surface narrow; the
+ * full snapshot belongs to the inspect page (PR-B). */
+export interface DeviceDetailsSummary {
+  soc: string;
+  cpuCores: number;
+  cpuMaxGhz: number;
+  ramTotalGb: number;
+  ramUsedPct: number;
+  displaySize: string;
+  displayDensity: string;
+  tempC: number;
+  batteryPct: number;
+  androidRelease: string;
+  sdk: string;
+  uptimeSec: number;
+  buildFingerprint: string;
+  fetchedAt: number;
 }
 
 export interface KpiCardData {
