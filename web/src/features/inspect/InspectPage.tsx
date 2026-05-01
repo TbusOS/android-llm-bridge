@@ -13,9 +13,11 @@ import { SubNav } from "../../components/SubNav";
 import { useApp } from "../../stores/app";
 import { ChartsTab } from "./ChartsTab";
 import { LogcatTab } from "./LogcatTab";
+import { ScreenshotTab } from "./ScreenshotTab";
 import { ShellTab } from "./ShellTab";
 import { SystemInfoTab } from "./SystemInfoTab";
 import { UartTab } from "./UartTab";
+import { UiDumpTab } from "./UiDumpTab";
 
 type TabKey =
   | "system"
@@ -96,8 +98,8 @@ export function InspectPage() {
       {tab === "uart" ? <UartTab /> : null}
       {tab === "logcat" ? <LogcatTab /> : null}
       {tab === "shell" ? <ShellTab /> : null}
-      {tab === "screenshot" ? <PendingTab kind="screenshot" /> : null}
-      {tab === "ui-dump" ? <PendingTab kind="ui-dump" /> : null}
+      {tab === "screenshot" ? <ScreenshotTab /> : null}
+      {tab === "ui-dump" ? <UiDumpTab /> : null}
       {tab === "files" ? <PendingTab kind="files" /> : null}
     </section>
   );

@@ -21,7 +21,11 @@ from typing import Any
 
 from fastapi import APIRouter
 
+import base64
+from pathlib import Path
+
 from alb.capabilities.diagnose import device_system, devinfo
+from alb.capabilities.ui import screenshot, ui_dump
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
@@ -209,4 +213,119 @@ async def device_system_endpoint(serial: str) -> dict[str, Any]:
         "serial": serial,
         "transport": type(t).__name__,
         "system": r.data.to_dict() if r.data else None,
+    }
+
+
+@router.post("/devices/{serial}/screenshot")
+async def device_screenshot(serial: str) -> dict[str, Any]:
+    """Capture a fresh PNG framebuffer + return base64 inline (PR-G).
+
+    base64 inflates the payload by ~33% but skips the second-round
+    fetch — the dashboard inspect tab can `<img src="data:...">`
+    immediately. v1 simplification; if PNGs ever exceed a few MB we'll
+    add a separate `GET /devices/{serial}/screenshots/{filename}` for
+    binary streaming.
+    """
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": None,
+            "screenshot": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        r = await screenshot(t, device=serial, include_thumbnail=False)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "screenshot": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    if not r.ok or r.data is None:
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "screenshot": None,
+            "error": r.error.message if r.error else "screenshot failed",
+        }
+
+    try:
+        png_bytes = Path(r.data.path).read_bytes()
+        png_b64 = base64.b64encode(png_bytes).decode("ascii")
+    except OSError as exc:
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "screenshot": None,
+            "error": f"OSError reading PNG: {exc}",
+        }
+
+    return {
+        "ok": True,
+        "serial": serial,
+        "transport": type(t).__name__,
+        "screenshot": {
+            "filename": Path(r.data.path).name,
+            "path": r.data.path,
+            "device_path": r.data.device_path,
+            "size_bytes": r.data.size_bytes,
+            "width": r.data.width,
+            "height": r.data.height,
+            "png_base64": png_b64,
+        },
+    }
+
+
+@router.post("/devices/{serial}/ui-dump")
+async def device_ui_dump(serial: str) -> dict[str, Any]:
+    """Dump the current view hierarchy to JSON (PR-G).
+
+    Returns the parsed UINode tree + top_activity + node_count. The
+    raw XML is also kept on disk (dump.path) for advanced debugging.
+    """
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": None,
+            "ui_dump": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        r = await ui_dump(t, device=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "ui_dump": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    if not r.ok or r.data is None:
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "ui_dump": None,
+            "error": r.error.message if r.error else "ui_dump failed",
+        }
+
+    return {
+        "ok": True,
+        "serial": serial,
+        "transport": type(t).__name__,
+        "ui_dump": r.data.to_dict(),
     }

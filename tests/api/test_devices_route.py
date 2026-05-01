@@ -449,3 +449,152 @@ def test_device_system_endpoint_listed_in_schema(monkeypatch, tmp_path) -> None:
         body = c.get("/api/version").json()
     paths = [(e["method"], e["path"]) for e in body["rest"]]
     assert ("GET", "/devices/{serial}/system") in paths
+
+
+# ─── /devices/{serial}/screenshot + /ui-dump (PR-G) ────────────────
+def test_device_screenshot_happy(monkeypatch, tmp_path) -> None:
+    """Endpoint reads the PNG file from disk and inlines it as base64."""
+    from alb.capabilities.ui import ScreenshotData
+    from alb.infra.result import ok as ok_result
+
+    png_file = tmp_path / "snap.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"FAKEDATA" * 4)
+
+    async def fake_screenshot(transport, *, device=None, **kwargs):
+        return ok_result(
+            data=ScreenshotData(
+                path=str(png_file),
+                device_path="/sdcard/alb-screenshot-x.png",
+                size_bytes=png_file.stat().st_size,
+                width=1080,
+                height=2400,
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("alb.api.devices_route.screenshot", fake_screenshot)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **_: _FakeAdbTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.post("/devices/TEST/screenshot").json()
+    assert body["ok"] is True
+    s = body["screenshot"]
+    assert s["filename"] == "snap.png"
+    assert s["width"] == 1080
+    assert s["height"] == 2400
+    assert s["png_base64"]
+    # Base64 round-trip yields the original bytes back.
+    import base64 as b64
+    assert b64.b64decode(s["png_base64"]).startswith(b"\x89PNG")
+
+
+def test_device_screenshot_capability_failure_inline(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    from alb.infra.result import fail as fail_result
+
+    async def fake_screenshot(transport, **kwargs):
+        return fail_result(code="SCREENCAP_FAILED", message="device asleep")
+
+    monkeypatch.setattr("alb.api.devices_route.screenshot", fake_screenshot)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **_: _FakeAdbTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.post("/devices/TEST/screenshot").json()
+    assert body["ok"] is False
+    assert body["screenshot"] is None
+    assert "device asleep" in body["error"]
+
+
+def test_device_screenshot_build_transport_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(**_):
+        raise RuntimeError("no transport configured")
+
+    monkeypatch.setattr("alb.api.devices_route.build_transport", _boom)
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.post("/devices/TEST/screenshot").json()
+    assert body["ok"] is False
+    assert "RuntimeError" in body["error"]
+
+
+def test_device_ui_dump_happy(monkeypatch, tmp_path) -> None:
+    from alb.capabilities.ui import UIDumpData, UINode
+    from alb.infra.result import ok as ok_result
+
+    root = UINode(
+        index=0, class_name="android.widget.FrameLayout",
+        resource_id="", text="", content_desc="",
+        bounds=(0, 0, 1080, 2400),
+        clickable=False, enabled=True, focused=False, selected=False,
+        package="com.example",
+    )
+
+    async def fake_ui_dump(transport, **kwargs):
+        return ok_result(
+            data=UIDumpData(
+                path=str(tmp_path / "ui.xml"),
+                device_path="/sdcard/window_dump.xml",
+                size_bytes=512,
+                root=root,
+                top_activity="com.example/.MainActivity",
+                package_name="com.example",
+                node_count=1,
+            )
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("alb.api.devices_route.ui_dump", fake_ui_dump)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **_: _FakeAdbTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.post("/devices/TEST/ui-dump").json()
+    assert body["ok"] is True
+    d = body["ui_dump"]
+    assert d["top_activity"] == "com.example/.MainActivity"
+    assert d["node_count"] == 1
+    assert d["root"]["class"] == "android.widget.FrameLayout"
+
+
+def test_device_ui_dump_capability_failure_inline(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    from alb.infra.result import fail as fail_result
+
+    async def fake_ui_dump(transport, **kwargs):
+        return fail_result(code="UIAUTOMATOR_FAILED", message="device locked")
+
+    monkeypatch.setattr("alb.api.devices_route.ui_dump", fake_ui_dump)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **_: _FakeAdbTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.post("/devices/TEST/ui-dump").json()
+    assert body["ok"] is False
+    assert body["ui_dump"] is None
+    assert "device locked" in body["error"]
+
+
+def test_pr_g_endpoints_listed_in_schema(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **_: _FakeAdbTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.get("/api/version").json()
+    paths = [(e["method"], e["path"]) for e in body["rest"]]
+    assert ("POST", "/devices/{serial}/screenshot") in paths
+    assert ("POST", "/devices/{serial}/ui-dump") in paths
