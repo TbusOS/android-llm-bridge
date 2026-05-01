@@ -664,4 +664,58 @@ BackendSpec(
 
 ---
 
+## L-022 · 设计良好的错误态是双刃剑 · 视觉 review 看不出 vite proxy 之类的配置 stale
+
+**Date**: 2026-05-01（commit `0ef2d87` web_check.mjs 落地 + 当场暴露
+vite proxy 漏 /devices /sessions /tools /audit 4 endpoint）
+
+**规则**：错误态显示得"自然"（"Couldn't load devices" 文案 + KPI 显 0
++ Recent activity "connecting..." 都是设计过的合理空态）时，**人眼 review
+看不出是 bug 还是预期**。必须有自动化脚本断言"应该有 N 个 article 卡 /
+应该 0 console error / 应该有特定 fetch 命中"，否则 dev 模式可以好几天
+没人发现 stale 配置。
+
+**Why**:
+- 2026-04-26 F.4/F.6/G 档加了 `/devices /sessions /tools /audit` 4 个
+  endpoints，但 `web/vite.config.ts` proxy 没同步加。
+- dev 模式下 dashboard fetch 这些路径直接打到 vite (5173) → 404。
+- 但前端有错误态 fallback：device 段显"Couldn't load devices"、sessions
+  显"No sessions yet"、KPI 显 0、activity 显"connecting..."。
+- 这些错误态显示得**很像合理空态**——视觉上看不出是 bug。
+- 4 天里跑了 mockup-baseline-checker / ui-fluency-auditor / visual-audit
+  -runner 多轮人/agent review，全没发现。
+- 直到 2026-04-30 跑 `web/scripts/web_check.mjs` 第一次自动化跑，
+  console.json 里 6 console errors + 5 network failures 立刻暴露。
+
+**How to apply**:
+- 任何加新 alb-api endpoint 的 PR：必须 grep `web/vite.config.ts` 确认
+  proxy 段已包（prefix 命中即可）。
+- preflight 流程加一道"无 web_check 验证不放行"闸（dashboard 关键 route
+  必须 0 console error / articles ≥ 期望数）。
+- 视觉 review（mockup-baseline-checker / visual-audit-runner）不能替代
+  console error 验证 —— 设计良好的错误态本来就该看起来"自然"，是优点
+  也是盲区。
+- 写 web_check 测试时，对每个有意义的 route 都列出"应该有的关键元素 /
+  应该有的 fetch / 应该 0 console errors"，让脚本断言。
+
+**触发条件**:
+- 加新 alb-api HTTP endpoint
+- 改 vite.config 的 proxy 段
+- 加新 dashboard 段（新 useQuery）
+
+**反面教材记录**:
+- 2026-04-26 加 GET /devices /sessions /tools /audit 后，4 天内 mockup
+  -baseline / 人眼 review 都没发现 vite proxy 没跟上 → console 全红但
+  视觉无异常
+- 2026-04-30 第一次 web_check.mjs 跑就暴露 6 console errors → 当场修
+  vite.config.ts
+
+**应用到 agents**:
+- 任何加 alb-api endpoint 的 PR，code-reviewer 必须 grep vite.config.ts
+  proxy 段确认覆盖
+- ui-fluency-auditor / visual-audit-runner 报告里要附 web_check.mjs 的
+  console.json 摘要（不能只看视觉）
+
+---
+
 （新教训按此格式追加）
