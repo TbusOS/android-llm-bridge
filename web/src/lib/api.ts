@@ -276,6 +276,96 @@ export async function fetchDeviceSystem(
   return (await r.json()) as DeviceSystemResponse;
 }
 
+// ── Screenshot + UI dump (PR-G) ───────────────────────────────────
+
+export interface ScreenshotPayload {
+  filename: string;
+  path: string;
+  device_path: string;
+  size_bytes: number;
+  width: number;
+  height: number;
+  png_base64: string;
+}
+
+export interface ScreenshotResponse {
+  ok: boolean;
+  serial: string;
+  transport: string | null;
+  screenshot: ScreenshotPayload | null;
+  error?: string;
+}
+
+export async function captureScreenshot(
+  serial: string,
+  signal?: AbortSignal,
+): Promise<ScreenshotResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/screenshot`, {
+    method: "POST",
+    signal,
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `POST /devices/${serial}/screenshot returned ${r.status}`,
+      r.status,
+      "SCREENSHOT_FAILED",
+    );
+  }
+  return (await r.json()) as ScreenshotResponse;
+}
+
+export interface UiNode {
+  index: number;
+  class: string;
+  resource_id: string;
+  text: string;
+  content_desc: string;
+  bounds: [number, number, number, number];
+  clickable: boolean;
+  enabled: boolean;
+  focused: boolean;
+  selected: boolean;
+  package: string;
+  children: UiNode[];
+}
+
+export interface UiDumpPayload {
+  path: string;
+  device_path: string;
+  size_bytes: number;
+  root: UiNode | null;
+  top_activity: string | null;
+  package_name: string | null;
+  node_count: number;
+  rotation: number;
+}
+
+export interface UiDumpResponse {
+  ok: boolean;
+  serial: string;
+  transport: string | null;
+  ui_dump: UiDumpPayload | null;
+  error?: string;
+}
+
+export async function captureUiDump(
+  serial: string,
+  signal?: AbortSignal,
+): Promise<UiDumpResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/ui-dump`, {
+    method: "POST",
+    signal,
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `POST /devices/${serial}/ui-dump returned ${r.status}`,
+      r.status,
+      "UI_DUMP_FAILED",
+    );
+  }
+  return (await r.json()) as UiDumpResponse;
+}
+
 export interface AuditEvent {
   ts: string;
   session_id: string;
