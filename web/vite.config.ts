@@ -20,6 +20,7 @@ export default defineConfig({
       "/devices": "http://localhost:8765",
       "/sessions": "http://localhost:8765",
       "/tools": "http://localhost:8765",
+      "/uart": "http://localhost:8765",
       "/audit": {
         target: "http://localhost:8765",
         ws: true,

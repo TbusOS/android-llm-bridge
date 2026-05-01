@@ -1865,3 +1865,214 @@ html[lang^="zh"] h3 {
 .spin {
   animation: spin 1s linear infinite;
 }
+
+/* ==========================================================
+   UART tab — capture viewer (PR-C.a)
+   ========================================================== */
+
+.uart-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.uart-tab__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--anth-cream);
+  border: 1px solid var(--anth-border);
+  border-radius: var(--radius-md);
+}
+
+.uart-tab__duration {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+}
+
+.uart-tab__duration input {
+  width: 64px;
+  padding: 4px 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  border: 1px solid var(--anth-border);
+  border-radius: var(--radius-sm);
+  background: white;
+}
+
+.uart-tab .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--anth-border);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: var(--anth-text);
+  cursor: pointer;
+}
+
+.uart-tab .btn:hover:not(:disabled) {
+  border-color: var(--anth-orange);
+}
+
+.uart-tab .btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.uart-tab .btn--primary {
+  background: var(--anth-orange);
+  color: white;
+  border-color: var(--anth-orange);
+}
+
+.uart-tab .btn--primary:hover:not(:disabled) {
+  background: var(--anth-orange-hover, #c5663f);
+}
+
+.uart-tab__last {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--anth-text-tertiary);
+}
+
+.uart-tab__last--err {
+  color: var(--anth-red, #b94545);
+}
+
+.uart-tab__body {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: var(--space-3);
+  min-height: 480px;
+}
+
+.uart-tab__list {
+  border: 1px solid var(--anth-border);
+  border-radius: var(--radius-md);
+  background: var(--anth-cream);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.uart-tab__list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--anth-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--anth-border);
+}
+
+.uart-tab__count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--anth-text-tertiary);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.uart-tab__list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 480px;
+}
+
+.uart-tab__list li {
+  border-bottom: 1px solid var(--anth-border);
+}
+
+.uart-tab__list li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  color: inherit;
+}
+
+.uart-tab__list li button:hover {
+  background: white;
+}
+
+.uart-tab__list li.is-active button {
+  background: white;
+  border-left: 3px solid var(--anth-orange);
+  padding-left: calc(var(--space-3) - 3px);
+}
+
+.uart-tab__cap-name {
+  font-size: 11px;
+  color: var(--anth-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uart-tab__cap-meta {
+  font-size: 10px;
+  color: var(--anth-text-tertiary);
+  margin-top: 2px;
+}
+
+.uart-tab__empty {
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--anth-text-tertiary);
+  text-align: center;
+}
+
+.uart-tab__empty--err {
+  color: var(--anth-red, #b94545);
+}
+
+.uart-tab__viewer {
+  border: 1px solid var(--anth-border);
+  border-radius: var(--radius-md);
+  background: #1e1e1e;
+  color: #e0e0e0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.uart-tab__viewer .uart-tab__empty {
+  color: #888;
+}
+
+.uart-tab__pre {
+  margin: 0;
+  padding: var(--space-3);
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e0e0e0;
+  background: transparent;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

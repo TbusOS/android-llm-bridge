@@ -59,6 +59,14 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Windowed aggregation of tps_sample events (KPI throughput)"},
     {"method": "GET",  "path": "/tools",
      "description": "List MCP tools registered by alb (KPI MCP tools count)"},
+    {"method": "GET",  "path": "/devices/{serial}/details",
+     "description": "Composite device snapshot for the dashboard summary card"},
+    {"method": "POST", "path": "/uart/capture",
+     "description": "Run a fresh UART capture for N seconds (PR-C.a)"},
+    {"method": "GET",  "path": "/uart/captures",
+     "description": "List UART captures (newest first)"},
+    {"method": "GET",  "path": "/uart/captures/{name}",
+     "description": "Read one UART capture's text content"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [
