@@ -457,15 +457,34 @@
   useTerminalSession hook · 双向 WS（sendBytes/sendResize）· 后端
   /terminal/ws 在 M2 已 ship · HITL prompt v1 自动 deny + console.warn ·
   N=3 stream 组件落地，触发 ADR-030 抽象时机评估（不立抽，等 N=4）
+- **PR-B 关闭 2026-05-01**：commit `d109a6a`。alb-api 加
+  `GET /devices/{serial}/system` endpoint + `device_system()` capability
+  拉 10 字段（props/partitions/mounts/block_devices/meminfo/storage/
+  network/battery/thermal）· 任一 collector 失败 fallback 不影响其他 ·
+  frontend SystemInfoTab 重写接真数据 10 cards · +4 tests
+- **PR-G 关闭 2026-05-01**：commit `a1ef214`。alb-api POST 2 endpoint
+  /devices/{serial}/screenshot (PNG base64 inline) + /ui-dump (UINode
+  tree) · 复用 capabilities/ui.py screenshot/ui_dump · frontend
+  ScreenshotTab (img + Download) + UiDumpTab (filter + 缩进 tree) ·
+  替换 inspect 2 个 PendingTab · +6 tests
+- **PR-F 关闭 2026-05-01**：commit `1e82760`。frontend useMetricsStream
+  hook 接现有 /metrics/stream WS（M2 ship 时已有，1Hz device telemetry）
+  · ChartsTab 重写 6 charts (CPU/CPU温度/Mem%/GPU/Bat温度/Net rx) 真时序
+  · pause/resume/disconnect 控制 · ADR-030 评估升 N=4，但 metrics 协议
+  差异化（JSON sample + history snapshot + control_ack）共有逻辑反少，
+  继续不抽，等 N=5
 - **PR-C.c 候选**：双向 UART 输入（让 web 终端打字到 UART，进 u-boot /
   sysrq）· v1 read-only 留出的 follow-up
 - **PR-E.v2 候选**：HITL approve / deny modal UI（v1 auto-deny，遇到
   rm -rf 这种命令直接静默拒绝不友好）· 多 shell session tab strip
-- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板) · PR-C.a/b/D/E 同
-  pattern · ADR-030 seed (stream hook base 抽象，DEBT-022 batch 末尾立)
+- **PR-H 候选**：文件浏览器（adb pull/push UI · workspace ls + 远端
+  /sdcard ls + 双向传输 + HITL gates 非 /sdcard 写入）· batch 最后一个
+- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板，PR-B 二 endpoint 模式
+  完成) · PR-C.a/b/D/E/F 同 stream pattern · ADR-030 seed (stream hook
+  base 抽象，N=5 时再评估)
 - **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
   "现在能显示 uart 打印的内容在 web 上吗" + "uart 调试 adb 调试 web 全部
-  开发完全"
+  开发完全" → PR-A/C.a/C.b/D/E/B/G/F 全 ship · 仅 PR-H 文件浏览器待
 
 ---
 
