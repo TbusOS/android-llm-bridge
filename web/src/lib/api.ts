@@ -549,3 +549,159 @@ export async function fetchBackendHealth(
   }
   return (await r.json()) as BackendHealth;
 }
+
+// ─── Files browser (PR-H) ─────────────────────────────────────────
+export interface DeviceFileEntry {
+  name: string;
+  is_dir: boolean;
+  is_link: boolean;
+  link_target: string | null;
+  size: number;
+  mode: string;
+  owner: string;
+  group: string;
+  mtime: string;
+}
+
+export interface DeviceFilesResponse {
+  ok: boolean;
+  serial: string;
+  path: string;
+  entries: DeviceFileEntry[];
+  truncated?: boolean;
+  exit_code?: number;
+  error?: string;
+}
+
+export async function listDeviceFiles(
+  serial: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<DeviceFilesResponse> {
+  const r = await fetch(
+    `/devices/${encodeURIComponent(serial)}/files?path=${encodeURIComponent(path)}`,
+    { signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /devices/${serial}/files returned ${r.status}`,
+      r.status,
+      "DEVICE_FILES_FAILED",
+    );
+  }
+  return (await r.json()) as DeviceFilesResponse;
+}
+
+export interface WorkspaceFileEntry {
+  name: string;
+  is_dir: boolean;
+  is_link: boolean;
+  size: number;
+  mtime_epoch: number;
+}
+
+export interface WorkspaceFilesResponse {
+  ok: boolean;
+  path: string;
+  absolute_path?: string;
+  entries: WorkspaceFileEntry[];
+  truncated?: boolean;
+  error?: string;
+}
+
+export async function listWorkspaceFiles(
+  path: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceFilesResponse> {
+  const r = await fetch(
+    `/workspace/files?path=${encodeURIComponent(path)}`,
+    { signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /workspace/files returned ${r.status}`,
+      r.status,
+      "WORKSPACE_FILES_FAILED",
+    );
+  }
+  return (await r.json()) as WorkspaceFilesResponse;
+}
+
+export interface PullResponse {
+  ok: boolean;
+  serial: string;
+  remote: string;
+  local?: string | null;
+  local_workspace_rel?: string | null;
+  duration_ms?: number;
+  error?: string;
+}
+
+export async function pullDeviceFile(
+  serial: string,
+  remote: string,
+  local?: string,
+): Promise<PullResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/files/pull`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(local ? { remote, local } : { remote }),
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `POST /devices/${serial}/files/pull returned ${r.status}`,
+      r.status,
+      "DEVICE_PULL_FAILED",
+    );
+  }
+  return (await r.json()) as PullResponse;
+}
+
+export interface PushResponse {
+  ok: boolean;
+  serial: string;
+  local?: string;
+  remote: string;
+  bytes_transferred?: number;
+  duration_ms?: number;
+  /** True when the path is in a sensitive prefix (/system /vendor …)
+   * and the user must confirm before resubmitting with `force: true`. */
+  requires_confirm?: boolean;
+  error?: string;
+}
+
+export async function pushDeviceFile(
+  serial: string,
+  local: string,
+  remote: string,
+  opts?: { force?: boolean },
+): Promise<PushResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/files/push`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      local,
+      remote,
+      ...(opts?.force ? { force: true } : {}),
+    }),
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `POST /devices/${serial}/files/push returned ${r.status}`,
+      r.status,
+      "DEVICE_PUSH_FAILED",
+    );
+  }
+  return (await r.json()) as PushResponse;
+}
+
+/** Browser-friendly download URL — anchors point straight at the API
+ * so the browser handles the stream itself; no JS buffering needed. */
+export function workspaceDownloadUrl(workspaceRelPath: string): string {
+  const safe = workspaceRelPath
+    .split("/")
+    .filter((seg) => seg.length > 0)
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+  return `/workspace/files/download/${safe}`;
+}
