@@ -24,6 +24,10 @@ export default defineConfig({
         target: "http://localhost:8765",
         ws: true,
       },
+      "/logcat": {
+        target: "http://localhost:8765",
+        ws: true,
+      },
       "/audit": {
         target: "http://localhost:8765",
         ws: true,
