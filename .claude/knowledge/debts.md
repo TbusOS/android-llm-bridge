@@ -449,11 +449,20 @@
   UI 截图 + python websockets 直连后端 收到 ready JSON + binary 3359 bytes
   真实 SE Linux audit 行。**用户能在 web 上实时看 UART 打印（现场观察
   模式）**。
+- **PR-D 关闭 2026-05-01**：commit `14f2e00`。alb-api `WS /logcat/stream`
+  + frontend useLogcatStream hook + LogcatTab 组件 · 加 filter input
+  ("*:E"/"Tag:V *:S") + tags 短语展开 · ADR-028 (a) 模式扩展到 adb 线 ·
+  +6 tests · python websockets 直连后端收 ready frame 验证
+- **PR-E 关闭 2026-05-01**：commit `fea4c26`。frontend ShellTab +
+  useTerminalSession hook · 双向 WS（sendBytes/sendResize）· 后端
+  /terminal/ws 在 M2 已 ship · HITL prompt v1 自动 deny + console.warn ·
+  N=3 stream 组件落地，触发 ADR-030 抽象时机评估（不立抽，等 N=4）
 - **PR-C.c 候选**：双向 UART 输入（让 web 终端打字到 UART，进 u-boot /
   sysrq）· v1 read-only 留出的 follow-up
-- **PR-D 候选（adb 调试线）**：adb logcat 实时 stream（套用 PR-C.b 的
-  WS + xterm pattern，不 force serial transport）
-- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板) · PR-C.a/b 同 pattern
+- **PR-E.v2 候选**：HITL approve / deny modal UI（v1 auto-deny，遇到
+  rm -rf 这种命令直接静默拒绝不友好）· 多 shell session tab strip
+- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板) · PR-C.a/b/D/E 同
+  pattern · ADR-030 seed (stream hook base 抽象，DEBT-022 batch 末尾立)
 - **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
   "现在能显示 uart 打印的内容在 web 上吗" + "uart 调试 adb 调试 web 全部
   开发完全"

@@ -593,4 +593,56 @@ fetch/min 成本可忽略。N≥4 设备时再考虑拆 2 个 useQuery。
 
 ---
 
+## ADR-030 (seed) · stream hook 抽象时机评估（useUart/Logcat/Terminal Session）
+
+**Status**: seed（DEBT-022 PR-D/E 落地观察 · N=4 出现时拍板）
+**Date**: 2026-05-01
+**Context**: PR-C.b/PR-D/PR-E 三个 stream 风格 hook 已落地：
+- `useUartStream` (~110 行) · read-only · WS /uart/stream
+- `useLogcatStream` (~125 行) · read-only · WS /logcat/stream + filter/tags
+- `useTerminalSession` (~190 行) · bidirectional · WS /terminal/ws +
+  sendBytes/sendResize/HITL
+
+共有逻辑（~80 行 / hook）：
+- WS lifecycle（open/message/error/close）
+- state machine: idle → connecting → ready → ended/error
+- onBytes 订阅者 Set + 派发
+- cleanup 在 unmount + manual disconnect
+
+差异：
+- read-only vs bidirectional（terminal 加 sendBytes/sendResize）
+- 协议 close 帧形态（uart/logcat: `{type:"close"}` · terminal:
+  `{type:"control", action:"close"}`）
+- ready 后续帧（terminal 有 hitl_request / closed.exit_code）
+
+**Decision**：暂不抽，留 seed。N=4（PR-G adb screenshot 用 streaming
+fb 抓 / 或 PR-F metrics chart 复用 stream pattern）出现时再评估，跟 ADR-024
+"ABC 第 1 个非首例消费者 = 免费 stress test" 同思路。
+
+**3 备选**（待 N=4 时拍板）：
+
+- (a) **抽 useStreamWs(path, opts) base hook**：返回通用 state/error/
+  onBytes/cleanup，sub-hook 调 base + 加自己的 sendBytes/HITL 处理。
+  优势：dedup ~80 行 × N；劣势：base hook 不知所有协议变体（HITL /
+  exit_code / control 帧形态），还得加 hooks/callback 注入
+- (b) **共享 utility 函数**（不抽 hook）：`createWsStateMachine()` +
+  `createOnBytesEmitter()` 当工厂，hook 内部组合。优势：每个 hook 还
+  自治；劣势：抽不彻底
+- (c) **不抽，3 个 hook 共存**：N=3 不抽是合理保守做法（参考 L-020
+  "N=3 才是抽 base 的安全时机"）
+
+**为什么 seed 不立刻拍**：N=3 处于"ABC 第 1 个非首例消费者"边界，
+PR-E 落地后 ShellTab 的 bidirectional + HITL 让差异性显著，base hook
+的接口设计还不清晰（多塞 callback 还是抽 protocol adapter 不明）。
+等 N=4 出现，base 接口形状会被第 4 个消费者"压"出来。
+
+**何时拍板**：DEBT-022 batch 内出现第 4 个 stream 消费者时（PR-F
+metrics stream 复用 / PR-G screenshot streaming / PR-H file pull
+progress stream 等候选）。
+
+**关联**：L-020 (N=3 才抽 base class) · ADR-024 (ABC 第 1 个非首例
+消费者 = 免费 stress test) · DEBT-022 PR-C.b/D/E
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）
