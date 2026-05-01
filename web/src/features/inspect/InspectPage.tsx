@@ -13,6 +13,7 @@ import { SubNav } from "../../components/SubNav";
 import { useApp } from "../../stores/app";
 import { ChartsTab } from "./ChartsTab";
 import { LogcatTab } from "./LogcatTab";
+import { ShellTab } from "./ShellTab";
 import { SystemInfoTab } from "./SystemInfoTab";
 import { UartTab } from "./UartTab";
 
@@ -21,6 +22,7 @@ type TabKey =
   | "charts"
   | "uart"
   | "logcat"
+  | "shell"
   | "screenshot"
   | "ui-dump"
   | "files";
@@ -46,6 +48,10 @@ export function InspectPage() {
     {
       key: "logcat" as TabKey,
       label: lang === "zh" ? "Logcat 实时" : "Logcat",
+    },
+    {
+      key: "shell" as TabKey,
+      label: lang === "zh" ? "Shell 终端" : "Shell",
     },
     {
       key: "screenshot" as TabKey,
@@ -89,6 +95,7 @@ export function InspectPage() {
       {tab === "charts" ? <ChartsTab /> : null}
       {tab === "uart" ? <UartTab /> : null}
       {tab === "logcat" ? <LogcatTab /> : null}
+      {tab === "shell" ? <ShellTab /> : null}
       {tab === "screenshot" ? <PendingTab kind="screenshot" /> : null}
       {tab === "ui-dump" ? <PendingTab kind="ui-dump" /> : null}
       {tab === "files" ? <PendingTab kind="files" /> : null}
