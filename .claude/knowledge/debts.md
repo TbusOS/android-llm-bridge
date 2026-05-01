@@ -367,22 +367,16 @@
 
 ---
 
-## DEBT-020 · alb-api backend health 端点不读 ALB_*_URL / ALB_*_MODEL env
+## DEBT-020 · alb-api backend health 端点不读 ALB_*_URL / ALB_*_MODEL env —— **CLOSED 2026-05-01**
 
 - **severity**：mid（dashboard 显示永远是 manifest 默认值，不反映用户 env 配置 —— 用户体感为"模型/URL 配错了"）
 - **引入**：M3 step 1（OpenAICompatBackend 加 health 端点时，沿用 OllamaBackend 的 health 端点路径，两者都不读 env）
-- **位置**：`src/alb/api/playground_route.py:225` `backend_health()` 端点 + 各 backend `health()` 实现
-- **现象**（2026-04-30 真机验证暴露）：
-  - dev 机 `.bashrc` 设 `ALB_OLLAMA_URL=http://<llm-host>:11434` + `ALB_OLLAMA_MODEL=qwen2.5:7b`
-  - alb-api 子进程 env 拿到了（`/proc/<pid>/environ` 验证）
-  - 但 `/playground/backends/ollama/health` 返回 `model=qwen2.5:3b`（manifest 默认）
-    + `reachable=false reason=down latency=2ms`（打了 localhost:11434 而不是 env 的 <llm-host>:11434）
-- **是否计划修**：是
-- **还债 sketch**：health 端点构造时读对应 backend 的 env override（参考
-  `src/alb/api/chat_route.py:245-246` 的 `req.ollama_url or os.environ.get("ALB_OLLAMA_URL")`
-  pattern），各 backend 的 `health()` 调用前注入 base_url / model
-- **还债条件**：device card 丰富化时一并修（用户 dashboard 体验问题同源）
-- **来源**：2026-04-30 真机验证 + L1 web_check.mjs 暴露
+- **关闭**：commit `fe92583`（DEBT-022 PR-A 同期）。`src/alb/agent/backends/__init__.py:78` `_construct()`
+  在 ollama 分支注入 `ALB_OLLAMA_URL` / `ALB_OLLAMA_MODEL` env override（caller kwargs > env > default
+  同 `src/alb/api/chat_route.py:245-246` 已有 pattern）。3 测试覆盖：env 注入 / kwargs 优先 / 无 env 默认。
+- **真机验证**：probe 之前 `reachable=false reason=down model=qwen2.5:3b latency=2ms` →
+  现在 `reachable=true latency=186ms model=qwen2.5:7b`（env 配的）
+- **同源问题预防**：openai-compat 同样 pattern 待 M3 step 3 (Anthropic) 落地时一并加（用户尚未报问题）
 
 ---
 
@@ -427,9 +421,16 @@
     RefreshCw 按钮 + useQuery refetchInterval(30000)
   - PR-B · inspect 详情页（~4-5h）：alb-api `GET /devices/{serial}/system` 返回完整
     partition / memory / flash 三视图 → frontend `/inspect` 页面表格 + 手动刷新
-- **还债条件**：下次会话专做（用户 2026-04-30 明确诉求）
-- **关联 ADR seed**：ADR-028（device 信息分层 dashboard summary vs inspect details）
-  + ADR-029（auto refresh 策略 refetchInterval vs WS push vs button-only）
+- **PR-A 关闭 2026-05-01**：commit `fe92583`。devinfo() 加 7 extras 字段
+  (soc/cpu_cores/cpu_max_khz/ram_total/avail/display/temp_c) + alb-api
+  `GET /devices/{serial}/details` endpoint + frontend useDeviceDetails
+  hook + DeviceCard 子组件（per-card 30s polling）+ DashboardPage 顶层
+  RefreshCw 按钮（invalidateQueries 触发全 cards 重 fetch）+ CSS。
+  ADR-028 (a) + ADR-029 (a) 拍板正式（见 decisions.md）。+13 tests 全过。
+  真机验证：dashboard 显 SOC/CPU/RAM/DISPLAY/BATTERY 5 行 + temp 真值。
+- **PR-B 仍 OPEN**：inspect 详情页 partition/memory/flash 三视图 + 全 props 表格
+  · 待 next session（独立 PR）
+- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板)
 - **来源**：2026-04-30 真机验证 user UX 反馈
 
 ---
