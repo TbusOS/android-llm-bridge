@@ -154,6 +154,91 @@ export async function fetchDeviceDetails(
   return (await r.json()) as DeviceDetailsResponse;
 }
 
+// ── UART captures (PR-C.a) ────────────────────────────────────────
+
+export interface UartCaptureSummary {
+  name: string;
+  size_bytes: number;
+  mtime: number;
+}
+
+export interface UartCaptureListResponse {
+  ok: boolean;
+  device: string | null;
+  captures: UartCaptureSummary[];
+}
+
+export interface UartCaptureReadResponse {
+  ok: boolean;
+  name: string;
+  size_bytes: number;
+  text: string;
+}
+
+export interface UartCaptureTriggerResponse {
+  ok: boolean;
+  duration: number;
+  lines?: number;
+  errors?: number;
+  filename?: string | null;
+  path?: string | null;
+  error?: string;
+}
+
+export async function fetchUartCaptures(
+  device?: string | null,
+  signal?: AbortSignal,
+): Promise<UartCaptureListResponse> {
+  const qs = device ? `?device=${encodeURIComponent(device)}` : "";
+  const r = await fetch(`/uart/captures${qs}`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /uart/captures returned ${r.status}`,
+      r.status,
+      "UART_CAPTURES_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as UartCaptureListResponse;
+}
+
+export async function readUartCapture(
+  name: string,
+  device?: string | null,
+  signal?: AbortSignal,
+): Promise<UartCaptureReadResponse> {
+  const qs = device ? `?device=${encodeURIComponent(device)}` : "";
+  const r = await fetch(`/uart/captures/${encodeURIComponent(name)}${qs}`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /uart/captures/${name} returned ${r.status}`,
+      r.status,
+      "UART_CAPTURE_READ_FAILED",
+    );
+  }
+  return (await r.json()) as UartCaptureReadResponse;
+}
+
+export async function triggerUartCapture(
+  duration: number,
+  device?: string | null,
+  signal?: AbortSignal,
+): Promise<UartCaptureTriggerResponse> {
+  const params = new URLSearchParams({ duration: String(duration) });
+  if (device) params.set("device", device);
+  const r = await fetch(`/uart/capture?${params.toString()}`, {
+    method: "POST",
+    signal,
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `POST /uart/capture returned ${r.status}`,
+      r.status,
+      "UART_CAPTURE_TRIGGER_FAILED",
+    );
+  }
+  return (await r.json()) as UartCaptureTriggerResponse;
+}
+
 export interface AuditEvent {
   ts: string;
   session_id: string;
