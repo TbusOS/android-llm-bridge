@@ -428,10 +428,23 @@
   RefreshCw 按钮（invalidateQueries 触发全 cards 重 fetch）+ CSS。
   ADR-028 (a) + ADR-029 (a) 拍板正式（见 decisions.md）。+13 tests 全过。
   真机验证：dashboard 显 SOC/CPU/RAM/DISPLAY/BATTERY 5 行 + temp 真值。
+- **PR-C.a 关闭 2026-05-01**：commit `70ba2a4`。alb-api 加 `/uart/capture`
+  POST + `/uart/captures` GET list + `/uart/captures/{name}` GET read 三
+  endpoint（ADR-028 (a) 同 pattern：summary endpoint + read endpoint）+
+  inspect 第 6 个 tab UartTab + useUartCaptures 三 hook（list / read /
+  trigger mutation）+ vite.config.ts 加 /uart proxy（应用 L-022 lesson
+  主动 grep）。+13 tests 全过。真机验证：playwright click UART tab +
+  Capture(3s) → 截图右侧暗 viewer 满屏真实 UART logd 行 + 0 console
+  errors + 2 captures 列表项。**用户能在 web 上看 UART 打印了（事后翻账
+  模式）**。
 - **PR-B 仍 OPEN**：inspect 详情页 partition/memory/flash 三视图 + 全 props 表格
   · 待 next session（独立 PR）
-- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板)
-- **来源**：2026-04-30 真机验证 user UX 反馈
+- **PR-C.b 仍 OPEN**：UART 实时 stream WS endpoint + xterm.js viewer
+  · 现场观察模式（vs PR-C.a 的事后翻账） · 待 next session（独立 PR，
+  避免一锅 commit 风险高）
+- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板) · PR-C.a 同 pattern
+- **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
+  "现在能显示 uart 打印的内容在 web 上吗"
 
 ---
 
