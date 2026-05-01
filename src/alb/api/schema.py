@@ -159,6 +159,23 @@ WS_ENDPOINTS: list[WSSpec] = [
              "description": "Terminal; includes exit_code and error if any"},
         ],
     },
+    {
+        "path": "/uart/stream",
+        "description": "Live UART byte stream (PR-C.b). Read-only in v1; "
+                       "binary frames carry raw UART bytes for xterm.js.",
+        "messages": [
+            {"type": "<client-first>",   "direction": "C→S",
+             "description": "Optional {device}"},
+            {"type": "ready",            "direction": "S→C",
+             "description": "{device, transport} — stream is open"},
+            {"type": "<binary>",         "direction": "S→C",
+             "description": "Raw UART bytes (verbatim, ANSI preserved)"},
+            {"type": "control",          "direction": "C→S",
+             "description": "{type: 'close'} — client-initiated shutdown"},
+            {"type": "closed",           "direction": "S→C",
+             "description": "Terminal; carries reason / error"},
+        ],
+    },
 ]
 
 
