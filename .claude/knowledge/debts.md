@@ -439,12 +439,24 @@
   模式）**。
 - **PR-B 仍 OPEN**：inspect 详情页 partition/memory/flash 三视图 + 全 props 表格
   · 待 next session（独立 PR）
-- **PR-C.b 仍 OPEN**：UART 实时 stream WS endpoint + xterm.js viewer
-  · 现场观察模式（vs PR-C.a 的事后翻账） · 待 next session（独立 PR，
-  避免一锅 commit 风险高）
-- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板) · PR-C.a 同 pattern
+- **PR-C.b 关闭 2026-05-01**：commit `96a539a`。alb-api `WS /uart/stream`
+  endpoint（pump task 推 SerialTransport.stream_read('uart') binary frames
+  + recv task 监 client close 帧 + asyncio.wait FIRST_COMPLETED 双协程）
+  + frontend useUartStream hook（state machine idle→connecting→ready→
+  ended/error，不 auto-reconnect）+ UartLiveStream 组件（xterm.Terminal
+  + FitAddon + Connect/Disconnect/Clear + state pill）+ UartTab 拆 mode
+  toggle（Capture/Live segment）。+5 tests 全过。真机验证：playwright
+  UI 截图 + python websockets 直连后端 收到 ready JSON + binary 3359 bytes
+  真实 SE Linux audit 行。**用户能在 web 上实时看 UART 打印（现场观察
+  模式）**。
+- **PR-C.c 候选**：双向 UART 输入（让 web 终端打字到 UART，进 u-boot /
+  sysrq）· v1 read-only 留出的 follow-up
+- **PR-D 候选（adb 调试线）**：adb logcat 实时 stream（套用 PR-C.b 的
+  WS + xterm pattern，不 force serial transport）
+- **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板) · PR-C.a/b 同 pattern
 - **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
-  "现在能显示 uart 打印的内容在 web 上吗"
+  "现在能显示 uart 打印的内容在 web 上吗" + "uart 调试 adb 调试 web 全部
+  开发完全"
 
 ---
 
