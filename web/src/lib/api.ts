@@ -239,6 +239,43 @@ export async function triggerUartCapture(
   return (await r.json()) as UartCaptureTriggerResponse;
 }
 
+// ── Device system snapshot (PR-B) ─────────────────────────────────
+
+export interface ApiDeviceSystem {
+  props: Record<string, string>;
+  partitions: { name: string; target: string }[];
+  mounts: { device: string; mount_point: string; fstype: string; opts: string }[];
+  block_devices: { major: string; minor: string; size_kib: string; name: string }[];
+  meminfo: Record<string, number>;
+  storage: Record<string, { used_kib: string; avail_kib: string; use_pct: string; device: string }>;
+  network: { iface: string; ipv4?: string; ipv6?: string; mac?: string }[];
+  battery: Record<string, string>;
+  thermal: { zone: string; type: string; temp_c: string }[];
+}
+
+export interface DeviceSystemResponse {
+  ok: boolean;
+  serial: string;
+  transport: string | null;
+  system: ApiDeviceSystem | null;
+  error?: string;
+}
+
+export async function fetchDeviceSystem(
+  serial: string,
+  signal?: AbortSignal,
+): Promise<DeviceSystemResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/system`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /devices/${serial}/system returned ${r.status}`,
+      r.status,
+      "DEVICE_SYSTEM_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as DeviceSystemResponse;
+}
+
 export interface AuditEvent {
   ts: string;
   session_id: string;

@@ -277,3 +277,175 @@ def test_device_details_devinfo_failure(monkeypatch, tmp_path) -> None:
     assert body["ok"] is False
     assert body["device"] is None
     assert body["error"]
+
+
+# ─── /devices/{serial}/system (DEBT-022 PR-B) ──────────────────────
+class _SystemTransport(_FakeAdbTransport):
+    """Realistic shell command tree for device_system()."""
+
+    async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+        if cmd.startswith("getprop"):
+            return ShellResult(
+                ok=True,
+                exit_code=0,
+                stdout=(
+                    "[ro.product.model]: [Pixel 7]\n"
+                    "[ro.boot.soc.product]: [Tensor G2]\n"
+                ),
+                stderr="",
+                duration_ms=1,
+            )
+        if cmd.startswith("ls -la /dev/block/by-name"):
+            return ShellResult(
+                ok=True,
+                exit_code=0,
+                stdout=(
+                    "lrwxrwxrwx 1 root root 21 Jan 1 boot -> /dev/block/mmcblk0p20\n"
+                    "lrwxrwxrwx 1 root root 21 Jan 1 system -> /dev/block/mmcblk0p21\n"
+                ),
+                stderr="",
+                duration_ms=1,
+            )
+        if cmd.startswith("cat /proc/mounts"):
+            return ShellResult(
+                ok=True,
+                exit_code=0,
+                stdout=(
+                    "/dev/block/mmcblk0p20 / ext4 ro,seclabel 0 0\n"
+                    "tmpfs /dev tmpfs rw,seclabel 0 0\n"
+                ),
+                stderr="",
+                duration_ms=1,
+            )
+        if cmd.startswith("cat /proc/partitions"):
+            return ShellResult(
+                ok=True,
+                exit_code=0,
+                stdout=(
+                    "major minor  #blocks  name\n"
+                    " 179        0  61071360 mmcblk0\n"
+                    " 179       20    65536 mmcblk0p20\n"
+                ),
+                stderr="",
+                duration_ms=1,
+            )
+        if cmd.startswith("cat /proc/meminfo"):
+            return ShellResult(
+                ok=True, exit_code=0,
+                stdout="MemTotal:    7929164 kB\nMemFree:    3000000 kB\n",
+                stderr="", duration_ms=1,
+            )
+        if cmd.startswith("df /data"):
+            return ShellResult(
+                ok=True, exit_code=0,
+                stdout=(
+                    "Filesystem 1K-blocks Used Avail Use% Mounted\n"
+                    "/dev/x 1000000 500000 500000 50% /data\n"
+                ),
+                stderr="", duration_ms=1,
+            )
+        if cmd.startswith("ip -o addr"):
+            return ShellResult(
+                ok=True, exit_code=0,
+                stdout=(
+                    "2: wlan0    inet 192.168.1.10/24 brd 192.168.1.255 scope global\n"
+                    "2: wlan0    inet6 fe80::1/64 scope link\n"
+                ),
+                stderr="", duration_ms=1,
+            )
+        if cmd.startswith("dumpsys battery"):
+            return ShellResult(
+                ok=True, exit_code=0,
+                stdout=(
+                    "Current Battery Service state:\n"
+                    "  level: 75\n"
+                    "  scale: 100\n"
+                    "  status: 2\n"
+                ),
+                stderr="", duration_ms=1,
+            )
+        if cmd.startswith("for d in /sys/class/thermal"):
+            return ShellResult(
+                ok=True, exit_code=0,
+                stdout="thermal_zone0|cpu|47350\nthermal_zone1|battery|31200\n",
+                stderr="", duration_ms=1,
+            )
+        return ShellResult(ok=False, exit_code=1, stderr="unhandled",
+                           duration_ms=0, error_code="ADB_COMMAND_FAILED")
+
+
+def test_device_system_happy(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.devices_route.build_transport",
+        lambda **kwargs: _SystemTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.get("/devices/TEST/system")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    sys = body["system"]
+    assert sys["props"]["ro.boot.soc.product"] == "Tensor G2"
+    assert any(p["name"] == "boot" for p in sys["partitions"])
+    assert any(m["mount_point"] == "/" for m in sys["mounts"])
+    assert any(b["name"] == "mmcblk0p20" for b in sys["block_devices"])
+    assert sys["meminfo"]["MemTotal"] == 7929164
+    assert "/data" in sys["storage"]
+    assert any(n["iface"] == "wlan0" and n.get("ipv4") for n in sys["network"])
+    assert sys["battery"]["level"] == "75"
+    assert any(t["zone"] == "thermal_zone0" and t["temp_c"] == "47.4" for t in sys["thermal"])
+
+
+def test_device_system_partial_failure_still_returns_data(monkeypatch, tmp_path) -> None:
+    """If one collector fails, others still populate."""
+    monkeypatch.chdir(tmp_path)
+
+    class _MostFailTransport(_FakeAdbTransport):
+        async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+            if cmd.startswith("getprop"):
+                return ShellResult(ok=True, exit_code=0,
+                                   stdout="[ro.product.model]: [Test]\n",
+                                   stderr="", duration_ms=1)
+            return ShellResult(ok=False, exit_code=1, stderr="",
+                               duration_ms=0, error_code="ADB_COMMAND_FAILED")
+
+    monkeypatch.setattr("alb.api.devices_route.build_transport",
+                        lambda **kwargs: _MostFailTransport())
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.get("/devices/TEST/system").json()
+    assert body["ok"] is True
+    assert body["system"]["props"]["ro.product.model"] == "Test"
+    assert body["system"]["partitions"] == []
+    assert body["system"]["meminfo"] == {}
+
+
+def test_device_system_getprop_failure_returns_inline(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class _NoPropsTransport(_FakeAdbTransport):
+        async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+            return ShellResult(ok=False, exit_code=1, stderr="device offline",
+                               duration_ms=0, error_code="ADB_COMMAND_FAILED")
+
+    monkeypatch.setattr("alb.api.devices_route.build_transport",
+                        lambda **kwargs: _NoPropsTransport())
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.get("/devices/TEST/system").json()
+    assert body["ok"] is False
+    assert body["system"] is None
+    assert body["error"]
+
+
+def test_device_system_endpoint_listed_in_schema(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("alb.api.devices_route.build_transport",
+                        lambda **kwargs: _SystemTransport())
+    app = create_app()
+    with TestClient(app) as c:
+        body = c.get("/api/version").json()
+    paths = [(e["method"], e["path"]) for e in body["rest"]]
+    assert ("GET", "/devices/{serial}/system") in paths
