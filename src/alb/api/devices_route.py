@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from alb.capabilities.diagnose import devinfo
+from alb.capabilities.diagnose import device_system, devinfo
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
@@ -158,4 +158,55 @@ async def device_details(serial: str) -> dict[str, Any]:
         "serial": serial,
         "transport": type(t).__name__,
         "device": r.data.to_dict() if r.data else None,
+    }
+
+
+@router.get("/devices/{serial}/system")
+async def device_system_endpoint(serial: str) -> dict[str, Any]:
+    """Full system snapshot for the inspect detail page (DEBT-022 PR-B).
+
+    ADR-028 (a) — this is the **system** view: heavier payload than
+    `/details` (full props + partitions + mounts + block devices +
+    full meminfo + storage + network + battery + thermal). Pulled on
+    demand by inspect SystemInfoTab; not on the dashboard polling
+    path so payload size doesn't matter.
+
+    Errors stay 200 with ok=false so the UI can render inline.
+    """
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": None,
+            "system": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        r = await device_system(t)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "system": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    if not r.ok:
+        return {
+            "ok": False,
+            "serial": serial,
+            "transport": type(t).__name__,
+            "system": None,
+            "error": r.error.message if r.error else "device_system failed",
+        }
+
+    return {
+        "ok": True,
+        "serial": serial,
+        "transport": type(t).__name__,
+        "system": r.data.to_dict() if r.data else None,
     }

@@ -296,6 +296,286 @@ async def devinfo(transport: Transport) -> Result[DeviceInfo]:
     return ok(data=info)
 
 
+# ─── device_system (DEBT-022 PR-B · inspect 详情页 full system dump) ─
+
+@dataclass(frozen=True)
+class DeviceSystem:
+    """Composite system snapshot for the inspect detail page.
+
+    All fields are best-effort — any individual collector failure
+    leaves its slot at "" / [] / {} so partial data still renders.
+    Fast (~1-2 s on a healthy device); not a substitute for
+    bugreport for forensic depth.
+    """
+
+    props: dict[str, str]
+    partitions: list[dict[str, str]]
+    mounts: list[dict[str, str]]
+    block_devices: list[dict[str, str]]
+    meminfo: dict[str, int]
+    storage: dict[str, dict[str, str]]
+    network: list[dict[str, str]]
+    battery: dict[str, str]
+    thermal: list[dict[str, str]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "props": self.props,
+            "partitions": self.partitions,
+            "mounts": self.mounts,
+            "block_devices": self.block_devices,
+            "meminfo": self.meminfo,
+            "storage": self.storage,
+            "network": self.network,
+            "battery": self.battery,
+            "thermal": self.thermal,
+        }
+
+
+async def device_system(transport: Transport) -> Result[DeviceSystem]:
+    """Composite full-system snapshot. ADR-028 (a) — 'system' endpoint.
+
+    Failure modes:
+      - getprop fails → return ok=False (every other field depends on
+        being able to talk to the shell at all; if getprop is dead, so
+        is everything)
+      - any other collector fails → that field is empty, others
+        continue
+    """
+    props_r = await transport.shell("getprop", timeout=15)
+    if not props_r.ok:
+        return fail(
+            code=props_r.error_code or "ADB_COMMAND_FAILED",
+            message="getprop failed",
+            suggestion="Device may be offline or unauthorized",
+            category="transport",
+        )
+    props = _parse_getprop(props_r.stdout)
+
+    partitions = await _collect_partitions(transport)
+    mounts = await _collect_mounts(transport)
+    block_devices = await _collect_block_devices(transport)
+    meminfo_full = await _collect_meminfo_full(transport)
+    storage = await _collect_storage(transport)
+    network = await _collect_network(transport)
+    battery_full = await _collect_battery_full(transport)
+    thermal = await _collect_thermal(transport)
+
+    snapshot = DeviceSystem(
+        props=props,
+        partitions=partitions,
+        mounts=mounts,
+        block_devices=block_devices,
+        meminfo=meminfo_full,
+        storage=storage,
+        network=network,
+        battery=battery_full,
+        thermal=thermal,
+    )
+    return ok(data=snapshot)
+
+
+async def _collect_partitions(transport: Transport) -> list[dict[str, str]]:
+    """`ls -la /dev/block/by-name/` → [{name, target, dev?}, ...]"""
+    r = await transport.shell("ls -la /dev/block/by-name/ 2>/dev/null", timeout=10)
+    if not r.ok:
+        return []
+    return _parse_partitions_listing(r.stdout)
+
+
+def _parse_partitions_listing(stdout: str) -> list[dict[str, str]]:
+    """ls -la output looks like:
+       lrwxr-xr-x 1 root root 21 ... boot -> /dev/block/mmcblk0p20
+    """
+    out: list[dict[str, str]] = []
+    for line in stdout.splitlines():
+        if " -> " not in line:
+            continue
+        head, _, target = line.partition(" -> ")
+        # name is the last whitespace-separated token in head
+        parts = head.rstrip().split()
+        if not parts:
+            continue
+        name = parts[-1]
+        out.append({"name": name, "target": target.strip()})
+    return out
+
+
+async def _collect_mounts(transport: Transport) -> list[dict[str, str]]:
+    r = await transport.shell("cat /proc/mounts 2>/dev/null", timeout=10)
+    if not r.ok:
+        return []
+    out: list[dict[str, str]] = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            out.append(
+                {
+                    "device": parts[0],
+                    "mount_point": parts[1],
+                    "fstype": parts[2],
+                    "opts": parts[3],
+                }
+            )
+    return out
+
+
+async def _collect_block_devices(transport: Transport) -> list[dict[str, str]]:
+    """`cat /proc/partitions` → [{major, minor, blocks_kib, name}, ...]"""
+    r = await transport.shell("cat /proc/partitions 2>/dev/null", timeout=10)
+    if not r.ok:
+        return []
+    out: list[dict[str, str]] = []
+    for line in r.stdout.splitlines()[1:]:  # skip header
+        parts = line.split()
+        if len(parts) >= 4:
+            out.append(
+                {
+                    "major": parts[0],
+                    "minor": parts[1],
+                    "size_kib": parts[2],
+                    "name": parts[3],
+                }
+            )
+    return out
+
+
+async def _collect_meminfo_full(transport: Transport) -> dict[str, int]:
+    """Full /proc/meminfo as {key: kB int}."""
+    r = await transport.shell("cat /proc/meminfo 2>/dev/null", timeout=5)
+    if not r.ok:
+        return {}
+    out: dict[str, int] = {}
+    for line in r.stdout.splitlines():
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        rest = rest.strip().split()
+        if rest:
+            try:
+                out[key.strip()] = int(rest[0])
+            except ValueError:
+                pass
+    return out
+
+
+async def _collect_storage(transport: Transport) -> dict[str, dict[str, str]]:
+    """df on common mount points → {mount: {used, avail, use_pct}}."""
+    r = await transport.shell(
+        "df /data /sdcard /storage/emulated /cache 2>/dev/null", timeout=10
+    )
+    if not r.ok:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for line in r.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 6:
+            mount = parts[-1]
+            out[mount] = {
+                "used_kib": parts[-4],
+                "avail_kib": parts[-3],
+                "use_pct": parts[-2],
+                "device": parts[0],
+            }
+    return out
+
+
+async def _collect_network(transport: Transport) -> list[dict[str, str]]:
+    """`ip addr` → [{iface, state, mac, ipv4?, ipv6?}, ...]"""
+    r = await transport.shell("ip -o addr 2>/dev/null", timeout=10)
+    if not r.ok:
+        # Fallback to ifconfig
+        r = await transport.shell("ifconfig -a 2>/dev/null", timeout=10)
+        if not r.ok:
+            return []
+        return _parse_ifconfig(r.stdout)
+    return _parse_ip_oneliner(r.stdout)
+
+
+def _parse_ip_oneliner(stdout: str) -> list[dict[str, str]]:
+    """`ip -o addr` lines look like:
+       2: wlan0    inet 192.168.1.10/24 brd ... scope global
+    """
+    by_iface: dict[str, dict[str, str]] = {}
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        iface = parts[1]
+        family = parts[2]
+        addr = parts[3]
+        entry = by_iface.setdefault(iface, {"iface": iface})
+        if family == "inet":
+            entry["ipv4"] = addr
+        elif family == "inet6":
+            entry["ipv6"] = addr
+    return list(by_iface.values())
+
+
+def _parse_ifconfig(stdout: str) -> list[dict[str, str]]:
+    """Light ifconfig parser — Android busybox / toybox flavour. Only
+    pulls iface name + ipv4 + mac for the inspect summary."""
+    out: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for raw in stdout.splitlines():
+        line = raw.rstrip()
+        if not line:
+            current = None
+            continue
+        if not line.startswith((" ", "\t")):
+            iface = line.split(":", 1)[0].split()[0]
+            current = {"iface": iface}
+            out.append(current)
+            continue
+        if current is None:
+            continue
+        stripped = line.strip()
+        if "inet " in stripped:
+            for tok in stripped.split():
+                if tok.count(".") == 3 and "/" not in tok:
+                    current["ipv4"] = tok
+                    break
+        if "ether " in stripped:
+            tok = stripped.split("ether ", 1)[1].split()[0]
+            current["mac"] = tok
+    return out
+
+
+async def _collect_battery_full(transport: Transport) -> dict[str, str]:
+    """Full `dumpsys battery` as a flat KV dict."""
+    r = await transport.shell("dumpsys battery 2>/dev/null", timeout=10)
+    if not r.ok:
+        return {}
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            out[key.strip()] = value.strip()
+    return out
+
+
+async def _collect_thermal(transport: Transport) -> list[dict[str, str]]:
+    """List thermal zones with type + temp."""
+    r = await transport.shell(
+        "for d in /sys/class/thermal/thermal_zone*; do "
+        "echo \"$(basename $d)|$(cat $d/type 2>/dev/null)|$(cat $d/temp 2>/dev/null)\"; "
+        "done 2>/dev/null",
+        timeout=10,
+    )
+    if not r.ok:
+        return []
+    out: list[dict[str, str]] = []
+    for line in r.stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) >= 3 and parts[0].startswith("thermal_zone"):
+            try:
+                temp_c = f"{int(parts[2]) / 1000:.1f}"
+            except ValueError:
+                temp_c = ""
+            out.append({"zone": parts[0], "type": parts[1], "temp_c": temp_c})
+    return out
+
+
 # ─── extra collectors (DEBT-022 PR-A · device card 丰富化) ─────────
 async def _read_cpu_max_khz(transport: Transport) -> int:
     """Best-effort: read max CPU freq from cpufreq sysfs. 0 if unavailable."""
