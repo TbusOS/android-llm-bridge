@@ -1,0 +1,408 @@
+"""File browser endpoints for the inspect Files tab (DEBT-022 PR-H).
+
+Five endpoints surface device + workspace file IO so the user can pull
+artifacts off a device, push files onto it, and walk both trees in the
+browser without dropping to a shell.
+
+    GET  /devices/{serial}/files?path=/sdcard/
+        ls -la on the device, parsed into structured entries.
+        Always forces the device serial through build_transport.
+
+    GET  /workspace/files?path=devices/<serial>/pulls
+        Local workspace listing. Path is workspace-root-relative; we
+        refuse anything that resolves outside workspace_root.
+
+    POST /devices/{serial}/files/pull   {remote, local?}
+        device → workspace via filesync.pull. `local` is workspace-
+        relative; defaults to pulls/<basename>-<ts>.
+
+    POST /devices/{serial}/files/push   {local, remote, force?}
+        workspace → device via filesync.push. HITL gate: pushes that
+        target a sensitive prefix (/system, /vendor, /data, /dev,
+        /proc, /sys, /persist, /oem) come back as
+        ok=false / requires_confirm=true unless `force=true` was set.
+        The UI surfaces the warning then re-submits with force.
+
+    GET  /workspace/files/download/{path:path}
+        Raw bytes — FileResponse stream so big pulls don't fan out
+        through JSON+base64. Path must resolve inside workspace_root.
+
+We deliberately do not invoke the M1 PermissionEngine for filesync —
+it currently only inspects shell `cmd` strings. The path-prefix HITL
+here covers the write-side risk surface until the engine grows
+filesync rules (tracked under the broader permissions backlog).
+"""
+
+from __future__ import annotations
+
+import shlex
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import FileResponse
+
+from alb.capabilities.filesync import pull as filesync_pull
+from alb.capabilities.filesync import push as filesync_push
+from alb.infra.workspace import iso_timestamp, workspace_root
+from alb.mcp.transport_factory import build_transport
+
+router = APIRouter()
+
+# Paths that require an explicit user confirm before a push lands —
+# these are the prefixes where a wrong byte can soft-brick a board or
+# overwrite something the bootloader cares about. Anything outside
+# this list (incl. /sdcard, /data/local/tmp) writes without prompting.
+_SENSITIVE_REMOTE_PREFIXES: tuple[str, ...] = (
+    "/system",
+    "/vendor",
+    "/data",  # /data/local/tmp is excepted below
+    "/dev",
+    "/proc",
+    "/sys",
+    "/persist",
+    "/oem",
+    "/boot",
+    "/recovery",
+    "/metadata",
+)
+
+# Whitelisted exception inside /data — the standard scratch dir.
+_SENSITIVE_REMOTE_EXEMPTIONS: tuple[str, ...] = (
+    "/data/local/tmp",
+)
+
+# Cap directory listings so we don't ship 50k entries to the browser
+# when the user accidentally opens /. The UI shows the truncation hint.
+_MAX_ENTRIES = 2000
+
+
+# ─── Path validation helpers ─────────────────────────────────────────
+def _is_safe_remote_path(p: str) -> bool:
+    """Reject obvious shell-injection / traversal attempts.
+
+    shlex.quote handles the actual shell escaping when we build the
+    `ls` command, but a few patterns are nonsense for a path browser
+    and we'd rather 400 than execute them.
+    """
+    if not p or not p.startswith("/"):
+        return False
+    if "\x00" in p or "\n" in p or "\r" in p:
+        return False
+    if len(p) > 4096:
+        return False
+    return True
+
+
+def _resolve_workspace_path(rel: str) -> Path:
+    """Resolve a workspace-relative path and assert it stays inside.
+
+    `..`, absolute paths, and symlinks pointing outside the workspace
+    are all rejected (HTTPException 400). Returns the absolute Path
+    that the caller can stat / open.
+    """
+    root = workspace_root().resolve()
+    # Strip leading slashes so a user pasting `/devices/...` still
+    # resolves under the workspace root rather than the filesystem
+    # root. Preserve everything else.
+    rel = rel.lstrip("/")
+    candidate = (root / rel).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"path escapes workspace: {rel}"
+        ) from exc
+    return candidate
+
+
+def _is_sensitive_remote(remote: str) -> bool:
+    """Return True if `remote` lands in a path that warrants a confirm.
+
+    /data/local/tmp/foo → False (scratch is fine)
+    /data/anything-else → True
+    /sdcard/...         → False
+    """
+    norm = remote.rstrip("/") or "/"
+    for ex in _SENSITIVE_REMOTE_EXEMPTIONS:
+        if norm == ex or norm.startswith(ex + "/"):
+            return False
+    for prefix in _SENSITIVE_REMOTE_PREFIXES:
+        if norm == prefix or norm.startswith(prefix + "/"):
+            return True
+    return False
+
+
+# ─── ls -la parser ───────────────────────────────────────────────────
+def _parse_ls_line(line: str) -> dict[str, Any] | None:
+    """Parse one `ls -la --time-style=long-iso` line.
+
+    Format (toybox / coreutils both):
+        drwxr-xr-x  2 root root    4096 2026-04-30 12:34 dirname
+        -rw-r--r--  1 root root  123456 2026-04-30 12:34 file with spaces
+        lrwxrwxrwx  1 root root      11 2026-04-30 12:34 link -> /target
+
+    Returns None for the `total N` header / blank lines.
+    """
+    line = line.rstrip("\n").rstrip("\r")
+    if not line or line.startswith("total "):
+        return None
+
+    # Split into at most 8 parts so multi-word filenames stay intact.
+    parts = line.split(None, 7)
+    if len(parts) < 8:
+        return None
+
+    mode, _nlinks, owner, group, size_s, date, time_s, rest = parts
+    # Symlink: split on " -> " so target is preserved separately.
+    name: str
+    target: str | None = None
+    if mode.startswith("l") and " -> " in rest:
+        name, target = rest.split(" -> ", 1)
+    else:
+        name = rest
+
+    try:
+        size = int(size_s)
+    except ValueError:
+        size = 0
+
+    is_dir = mode.startswith("d")
+    is_link = mode.startswith("l")
+    return {
+        "name": name,
+        "is_dir": is_dir,
+        "is_link": is_link,
+        "link_target": target,
+        "size": size,
+        "mode": mode,
+        "owner": owner,
+        "group": group,
+        "mtime": f"{date} {time_s}",
+    }
+
+
+# ─── Endpoints ──────────────────────────────────────────────────────
+@router.get("/devices/{serial}/files")
+async def device_files(
+    serial: str,
+    path: str = Query("/sdcard/", description="Absolute device path"),
+) -> dict[str, Any]:
+    """List a device directory. Always 200 with `ok=false` on errors."""
+    if not _is_safe_remote_path(path):
+        return {"ok": False, "serial": serial, "path": path,
+                "entries": [], "error": "invalid path"}
+
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "serial": serial, "path": path,
+                "entries": [], "error": f"{type(exc).__name__}: {exc}"}
+
+    cmd = f"ls -la --time-style=long-iso {shlex.quote(path)}"
+    r = await t.shell(cmd, timeout=30)
+    if not r.ok:
+        return {
+            "ok": False,
+            "serial": serial,
+            "path": path,
+            "entries": [],
+            "error": (r.stderr or "ls failed").strip(),
+            "exit_code": r.exit_code,
+        }
+
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    for raw in r.stdout.splitlines():
+        e = _parse_ls_line(raw)
+        if e is None:
+            continue
+        if e["name"] in (".", ".."):
+            continue
+        entries.append(e)
+        if len(entries) >= _MAX_ENTRIES:
+            truncated = True
+            break
+
+    entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+    return {
+        "ok": True,
+        "serial": serial,
+        "path": path,
+        "entries": entries,
+        "truncated": truncated,
+    }
+
+
+@router.get("/workspace/files")
+async def workspace_files(
+    path: str = Query("", description="Workspace-root-relative path"),
+) -> dict[str, Any]:
+    """List a workspace directory. Symlinks resolved against ws root."""
+    try:
+        target = _resolve_workspace_path(path)
+    except HTTPException as exc:
+        return {"ok": False, "path": path, "entries": [], "error": exc.detail}
+
+    if not target.exists():
+        return {"ok": False, "path": path, "entries": [],
+                "error": "path does not exist"}
+    if not target.is_dir():
+        return {"ok": False, "path": path, "entries": [],
+                "error": "path is not a directory"}
+
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        try:
+            stat = child.stat()
+        except OSError:
+            continue
+        entries.append({
+            "name": child.name,
+            "is_dir": child.is_dir(),
+            "is_link": child.is_symlink(),
+            "size": stat.st_size if child.is_file() else 0,
+            "mtime_epoch": stat.st_mtime,
+        })
+        if len(entries) >= _MAX_ENTRIES:
+            truncated = True
+            break
+
+    root = workspace_root().resolve()
+    rel_to_root = str(target.relative_to(root)) if target != root else ""
+    return {
+        "ok": True,
+        "path": rel_to_root,
+        "absolute_path": str(target),
+        "entries": entries,
+        "truncated": truncated,
+    }
+
+
+@router.post("/devices/{serial}/files/pull")
+async def device_pull(
+    serial: str,
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Pull a device path → workspace. `local` defaults under pulls/."""
+    remote = body.get("remote")
+    if not isinstance(remote, str) or not _is_safe_remote_path(remote):
+        return {"ok": False, "serial": serial, "error": "invalid 'remote' path"}
+
+    local_rel = body.get("local")
+    local_abs: Path | None = None
+    if isinstance(local_rel, str) and local_rel.strip():
+        try:
+            local_abs = _resolve_workspace_path(local_rel)
+        except HTTPException as exc:
+            return {"ok": False, "serial": serial, "error": exc.detail}
+        local_abs.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "serial": serial,
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    r = await filesync_pull(t, remote, local_abs, device=serial)
+    if not r.ok:
+        return {
+            "ok": False,
+            "serial": serial,
+            "remote": remote,
+            "error": r.error.message if r.error else "pull failed",
+        }
+
+    root = workspace_root().resolve()
+    pulled = Path(r.data.local).resolve() if r.data else None
+    pulled_rel = (
+        str(pulled.relative_to(root)) if pulled and pulled.is_relative_to(root)
+        else (str(pulled) if pulled else None)
+    )
+    return {
+        "ok": True,
+        "serial": serial,
+        "remote": remote,
+        "local": str(pulled) if pulled else None,
+        "local_workspace_rel": pulled_rel,
+        "duration_ms": r.data.duration_ms if r.data else 0,
+    }
+
+
+@router.post("/devices/{serial}/files/push")
+async def device_push(
+    serial: str,
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Push a workspace file → device. HITL gate on sensitive prefixes."""
+    local_rel = body.get("local")
+    remote = body.get("remote")
+    force = bool(body.get("force"))
+
+    if not isinstance(local_rel, str) or not local_rel.strip():
+        return {"ok": False, "serial": serial, "error": "missing 'local'"}
+    if not isinstance(remote, str) or not _is_safe_remote_path(remote):
+        return {"ok": False, "serial": serial, "error": "invalid 'remote' path"}
+
+    try:
+        local_abs = _resolve_workspace_path(local_rel)
+    except HTTPException as exc:
+        return {"ok": False, "serial": serial, "error": exc.detail}
+    if not local_abs.exists():
+        return {"ok": False, "serial": serial,
+                "error": f"local does not exist: {local_rel}"}
+
+    if _is_sensitive_remote(remote) and not force:
+        return {
+            "ok": False,
+            "serial": serial,
+            "remote": remote,
+            "requires_confirm": True,
+            "error": (
+                f"target prefix is sensitive ({remote}); resubmit with"
+                " force=true after user confirmation"
+            ),
+        }
+
+    try:
+        t = build_transport(device_serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "serial": serial,
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    r = await filesync_push(t, local_abs, remote, verify=False)
+    if not r.ok:
+        return {
+            "ok": False,
+            "serial": serial,
+            "local": str(local_abs),
+            "remote": remote,
+            "error": r.error.message if r.error else "push failed",
+        }
+
+    return {
+        "ok": True,
+        "serial": serial,
+        "local": str(local_abs),
+        "remote": remote,
+        "bytes_transferred": r.data.bytes_transferred if r.data else 0,
+        "duration_ms": r.data.duration_ms if r.data else 0,
+    }
+
+
+@router.get("/workspace/files/download/{path:path}")
+async def workspace_download(path: str) -> FileResponse:
+    """Stream a workspace file to the browser as a download."""
+    target = _resolve_workspace_path(path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="not a workspace file")
+    return FileResponse(
+        path=str(target),
+        filename=target.name,
+        media_type="application/octet-stream",
+    )
+
+
+# Re-export so tests can patch deterministic timestamps if needed.
+__all__ = ["router", "iso_timestamp"]

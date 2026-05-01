@@ -73,6 +73,16 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "List UART captures (newest first)"},
     {"method": "GET",  "path": "/uart/captures/{name}",
      "description": "Read one UART capture's text content"},
+    {"method": "GET",  "path": "/devices/{serial}/files",
+     "description": "List a device directory (ls -la parsed) (PR-H)"},
+    {"method": "GET",  "path": "/workspace/files",
+     "description": "List a workspace directory under workspace_root (PR-H)"},
+    {"method": "POST", "path": "/devices/{serial}/files/pull",
+     "description": "Pull device→workspace via filesync (PR-H)"},
+    {"method": "POST", "path": "/devices/{serial}/files/push",
+     "description": "Push workspace→device; HITL gate on sensitive prefixes (PR-H)"},
+    {"method": "GET",  "path": "/workspace/files/download/{path}",
+     "description": "Stream a workspace file as a download (PR-H)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

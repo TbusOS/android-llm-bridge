@@ -12,6 +12,7 @@ import { useState } from "react";
 import { SubNav } from "../../components/SubNav";
 import { useApp } from "../../stores/app";
 import { ChartsTab } from "./ChartsTab";
+import { FilesTab } from "./FilesTab";
 import { LogcatTab } from "./LogcatTab";
 import { ScreenshotTab } from "./ScreenshotTab";
 import { ShellTab } from "./ShellTab";
@@ -100,54 +101,7 @@ export function InspectPage() {
       {tab === "shell" ? <ShellTab /> : null}
       {tab === "screenshot" ? <ScreenshotTab /> : null}
       {tab === "ui-dump" ? <UiDumpTab /> : null}
-      {tab === "files" ? <PendingTab kind="files" /> : null}
+      {tab === "files" ? <FilesTab /> : null}
     </section>
-  );
-}
-
-function PendingTab({ kind }: { kind: "screenshot" | "ui-dump" | "files" }) {
-  const lang = useApp((s) => s.lang);
-  const en = {
-    screenshot: {
-      title: "Screenshot",
-      sub: "On-demand framebuffer capture — saves to workspace/<device>/, served back inline.  Endpoint: POST /devices/{id}/screenshot.",
-    },
-    "ui-dump": {
-      title: "UI Dump",
-      sub: "uiautomator dump — view-tree explorer with bounds overlay on a freshly-captured screenshot.  Endpoint: POST /devices/{id}/ui-dump.",
-    },
-    files: {
-      title: "Files",
-      sub: "Browse, push, pull, rsync.  HITL gates non-/sdcard writes.  See the Files top-level module too — this tab is the device-scoped lite version.",
-    },
-  } as const;
-  const zh = {
-    screenshot: {
-      title: "屏幕截图",
-      sub: "按需 framebuffer 抓屏，存到 workspace/<device>/，回传内联展示。端点：POST /devices/{id}/screenshot。",
-    },
-    "ui-dump": {
-      title: "UI 树",
-      sub: "uiautomator dump —— view-tree 浏览，新抓的截图上叠 bounds 高亮。端点：POST /devices/{id}/ui-dump。",
-    },
-    files: {
-      title: "文件",
-      sub: "浏览 / push / pull / rsync。非 /sdcard 路径走 HITL。和顶层 Files 模块共用底层；这个 tab 是当前设备视角的精简版。",
-    },
-  } as const;
-  const t = lang === "zh" ? zh[kind] : en[kind];
-
-  return (
-    <div className="mock-card">
-      <div className="section-head">
-        <h1 style={{ fontSize: 22 }}>{t.title}</h1>
-        <span className="status-pill status-pill--plan">
-          {lang === "zh" ? "待实现" : "Planned"}
-        </span>
-      </div>
-      <p className="section-sub" style={{ marginBottom: 0 }}>
-        {t.sub}
-      </p>
-    </div>
   );
 }
