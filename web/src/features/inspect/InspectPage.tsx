@@ -12,10 +12,18 @@ import { useState } from "react";
 import { SubNav } from "../../components/SubNav";
 import { useApp } from "../../stores/app";
 import { ChartsTab } from "./ChartsTab";
+import { LogcatTab } from "./LogcatTab";
 import { SystemInfoTab } from "./SystemInfoTab";
 import { UartTab } from "./UartTab";
 
-type TabKey = "system" | "charts" | "uart" | "screenshot" | "ui-dump" | "files";
+type TabKey =
+  | "system"
+  | "charts"
+  | "uart"
+  | "logcat"
+  | "screenshot"
+  | "ui-dump"
+  | "files";
 
 export function InspectPage() {
   const lang = useApp((s) => s.lang);
@@ -34,6 +42,10 @@ export function InspectPage() {
     {
       key: "uart" as TabKey,
       label: lang === "zh" ? "UART 抓取" : "UART",
+    },
+    {
+      key: "logcat" as TabKey,
+      label: lang === "zh" ? "Logcat 实时" : "Logcat",
     },
     {
       key: "screenshot" as TabKey,
@@ -76,6 +88,7 @@ export function InspectPage() {
       {tab === "system" ? <SystemInfoTab /> : null}
       {tab === "charts" ? <ChartsTab /> : null}
       {tab === "uart" ? <UartTab /> : null}
+      {tab === "logcat" ? <LogcatTab /> : null}
       {tab === "screenshot" ? <PendingTab kind="screenshot" /> : null}
       {tab === "ui-dump" ? <PendingTab kind="ui-dump" /> : null}
       {tab === "files" ? <PendingTab kind="files" /> : null}

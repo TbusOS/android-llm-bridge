@@ -28,6 +28,7 @@ from alb.api.meta_route import router as meta_router
 from alb.api.sessions_route import router as sessions_router
 from alb.api.terminal_route import router as terminal_router
 from alb.api.tools_route import router as tools_router
+from alb.api.logcat_stream_route import router as logcat_stream_router
 from alb.api.uart_route import router as uart_router
 from alb.api.uart_stream_route import router as uart_stream_router
 from alb.api.ui_static import mount_ui
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(tools_router)
     app.include_router(uart_router)
     app.include_router(uart_stream_router)
+    app.include_router(logcat_stream_router)
     app.include_router(meta_router)
 
     # Best-effort mount of the React UI at /app. Missing bundle =

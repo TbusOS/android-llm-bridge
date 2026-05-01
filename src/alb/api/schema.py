@@ -176,6 +176,23 @@ WS_ENDPOINTS: list[WSSpec] = [
              "description": "Terminal; carries reason / error"},
         ],
     },
+    {
+        "path": "/logcat/stream",
+        "description": "Live adb logcat byte stream (PR-D). Sibling of "
+                       "/uart/stream — same protocol, default transport.",
+        "messages": [
+            {"type": "<client-first>",   "direction": "C→S",
+             "description": "Optional {device, filter, tags}"},
+            {"type": "ready",            "direction": "S→C",
+             "description": "{device, transport, filter}"},
+            {"type": "<binary>",         "direction": "S→C",
+             "description": "Raw logcat bytes (line-delimited)"},
+            {"type": "control",          "direction": "C→S",
+             "description": "{type: 'close'}"},
+            {"type": "closed",           "direction": "S→C",
+             "description": "Terminal; carries reason / error"},
+        ],
+    },
 ]
 
 
