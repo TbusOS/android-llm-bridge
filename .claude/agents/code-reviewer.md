@@ -53,9 +53,14 @@ tools: Read, Grep, Bash
 ### 来自 L-019 (sentinel 反模式) — capability 检测必走 class-attr 而非 dict/hasattr
 - diff 命中 `hasattr(.*transport|hasattr(.*backend` → 看 `decisions.md` ADR-024 / ADR-033 seed 是否已为该模块拍板 N=2 升 ABC，未拍 + 已 N=2 → **MID** finding 提议立 ADR
 
+### 来自 L-030 (NaN 穿过 max/min/clamp) — 数值钳位代码必查 NaN 守护
+- diff 命中 `max\([^)]*min\(|min\([^)]*max\(|np\.clip\(|\.clamp\(` → 必查上游有无 `if .* != .*:` (NaN check 唯一可移植写法) 或 `math.isnan(` / `np.isnan(` 显式守护
+- 上游来源是 user-supplied float（`float\(.*get\(|float\(.*body\(|float\(.*request\.|float\(.*receive_json\(` 等 HTTP/WS/JSON 入参）+ 无 NaN check → **HIGH** finding（NaN 写入业务字段，下游 `asyncio.sleep(nan)` / `range(int(nan))` 静默崩）
+- 例外：内部计算产生（已知非 NaN 上游）可放过，但建议加 assert / 注释说明
+
 执行流程：
 1. `git diff <range>` 拿改动
-2. 按以上 6 条 grep 跑一遍
+2. 按以上 7 条 grep 跑一遍
 3. 发现命中 → 立刻报 finding（不用等"5 维评审"框架）
 4. 5 维评审继续，但 grep 命中先于 5 维输出
 
