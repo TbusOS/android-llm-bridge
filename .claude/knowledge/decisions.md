@@ -769,6 +769,11 @@ write_unsupported（误报到客户端）。和 DEBT-017 / ADR-024 已修过的
 **何时拍板**：HybridTransport 实现 bidirectional UART / 或第 2 个 capability
 detection 用 hasattr 出现时（任一触发 spec 出炉）。
 
+**升正式时方法名固化**（arch-reviewer 2026-05-02 补）：升 ABC class-attr
+时，方法名同步标准化为 `open_session/close_session`（避免下个 transport
+起名 `acquire_session/release_session` 等再制造 hasattr 多名混乱）。
+capability slot + method 命名约定一并立。
+
 **关联**：L-019 (sentinel 反模式 · dict reachable=False 是 hasattr 同
 形态) · ADR-024 (LLMBackend has_health_probe class-attr capability 已落)
 · DEBT-017 close (sentinel 反模式实例)
