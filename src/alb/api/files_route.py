@@ -135,9 +135,10 @@ def _is_sensitive_remote(remote: str) -> bool:
 
 # ─── ls -la parser ───────────────────────────────────────────────────
 def _parse_ls_line(line: str) -> dict[str, Any] | None:
-    """Parse one `ls -la --time-style=long-iso` line.
+    """Parse one `ls -la` line.
 
-    Format (toybox / coreutils both):
+    Format (Android toybox default + GNU coreutils both produce
+    YYYY-MM-DD HH:MM by default for non-recent files):
         drwxr-xr-x  2 root root    4096 2026-04-30 12:34 dirname
         -rw-r--r--  1 root root  123456 2026-04-30 12:34 file with spaces
         lrwxrwxrwx  1 root root      11 2026-04-30 12:34 link -> /target
@@ -199,7 +200,9 @@ async def device_files(
         return {"ok": False, "serial": serial, "path": path,
                 "entries": [], "error": f"{type(exc).__name__}: {exc}"}
 
-    cmd = f"ls -la --time-style=long-iso {shlex.quote(path)}"
+    # Plain `ls -la` — Android toybox doesn't accept --time-style; default
+    # output is already YYYY-MM-DD HH:MM which the parser handles.
+    cmd = f"ls -la {shlex.quote(path)}"
     r = await t.shell(cmd, timeout=30)
     if not r.ok:
         return {
