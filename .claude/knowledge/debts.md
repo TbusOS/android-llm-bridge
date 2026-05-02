@@ -585,6 +585,32 @@
   schema.py 加 write_dropped S→C 帧文档 · +1 regression 测试
 - **来源**：security-audit 2026-05-02 finding LOW 4
 
+## DEBT-028 · 4-agent 联合 audit 找到 9 HIGH —— **CLOSED 2026-05-02**
+
+- **severity**：critical（本来该在 PR-H/C.c/E.v2 ship 时被发现的）
+- **背景**：用户提"agent 团队该用上 + 审查者要真查出问题 + 越用越聪明"，
+  并行派 4 reviewer agent (architecture / code / ui-fluency / functional)
+  扫今日 21 commits。共 9 HIGH + 多 MID/LOW
+- **关闭**：2 commit
+  - `b33c1c4` backend 5 fix：terminal_guard audit log 用 effective_session
+    + _SHELL_METACHARS 加 \n\r + files_route Pull/Push timeout 300s +
+    _FILE_OP_LOCKS per-serial lock + metrics_route _send_loop 不吞异常 +
+    outer 发 server_error closed 帧
+  - `53e984d` frontend 4 fix：HitlConfirmModal cancelRef autoFocus +
+    capture-phase ESC + Enter→Cancel + tabIndex=-1 + InspectPage Suspense
+    fallback minHeight:480 + WRITE pill 红底白字 + UART helper text 替
+    title + ShellTab WS 断 modal 自动关
+- **效果**：HITL session forensic 留痕一致 / Pull/Push 无穷挂死消除 /
+  并发 push 撞 adb 消除 / Charts WS server crash 前端能看到原因 / modal
+  键盘 a11y 通过基线 / Suspense 切 tab 不再 480px CLS / WRITE 警示
+  视觉对比度过 WCAG AA / Shell 断后用户不会点 silent no-op
+- **DEBT-NEW-A** (arch-reviewer 提的 HitlConfirmModal a11y focus trap)
+  作为 HIGH 2/3 一并修，不再单独立条
+- **来源**：4 agent 输出 `.claude/reports/{perf,functional,security}-audit-*.md`
+  + arch/ui-fluency/code-reviewer 走 agent 直接输出
+- **关联**：L-027 / L-028 / L-029 / ADR-033 method 名固化补 / DEBT-NEW-A
+  并入修
+
 ## DEBT-027 · UART/PTY → xterm.js OSC 注入面文档化 —— **CLOSED 2026-05-02**
 
 - **severity**：low（受信源前提下 · 当前 xterm 默认 config 已安全）
