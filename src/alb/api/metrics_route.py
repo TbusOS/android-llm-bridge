@@ -83,6 +83,19 @@ async def metrics_stream(ws: WebSocket) -> None:
                 t.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await t
+            # functional audit HIGH 9: if a task raised (not normal disconnect),
+            # surface it as a `closed` JSON frame so the frontend can show a
+            # reconnect prompt instead of falling silently to `ended`.
+            for t in done:
+                exc = t.exception() if not t.cancelled() else None
+                if exc and not isinstance(exc, WebSocketDisconnect):
+                    with contextlib.suppress(Exception):
+                        await ws.send_json({
+                            "type": "closed",
+                            "reason": "server_error",
+                            "error": f"{type(exc).__name__}: {exc}",
+                        })
+                    break
         finally:
             with contextlib.suppress(Exception):
                 await ws.close()
@@ -121,14 +134,16 @@ async def _recv_loop(ws: WebSocket, streamer: MetricsStreamer) -> None:
 
 
 async def _send_loop(ws: WebSocket, queue: asyncio.Queue[MetricSample]) -> None:
-    try:
-        while True:
+    # Outer try lets the exception propagate to the wait() above —
+    # outer wrapper turns it into a `closed reason=server_error` frame
+    # (functional audit HIGH 9). Don't swallow generic Exception here;
+    # that's how the original silent-`ended` bug existed.
+    while True:
+        try:
             sample = await queue.get()
             await ws.send_json({"type": "sample", "data": sample.to_dict()})
-    except WebSocketDisconnect:
-        return
-    except Exception:
-        return
+        except WebSocketDisconnect:
+            return
 
 
 def _payload_default() -> dict[str, Any]:
