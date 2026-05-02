@@ -575,30 +575,27 @@
 - **关联**：L-025 (sweep refetchIntervalInBackground 规则) · L-020 (N=3
   抽象时机) · DEBT-024 (6 hook 漏 gate · 已修)
 
-## DEBT-026 · UART /uart/stream write 无 size cap （security MID 4 候选）
+## DEBT-026 · UART /uart/stream write 无 size cap —— **CLOSED 2026-05-02**
 
 - **severity**：low（DoS 面 · 误操作放大）
-- **症状**：`POST WS /uart/stream?write=true` 客户端 sendBytes 一次性
-  灌 10 MB 直进 link.writer.write，无 size cap 也无 backpressure。
-  恶意 / 失误前端可灌爆 UART writer 缓冲，或注入 ESC[2J 类清屏混淆
-  device 历史日志
-- **当前状态**：未关 · v1 信任前端自我约束（UartLiveStream 是
-  xterm.onData 单字符模式，正常每帧 < 10 字节），但接口面无强制
-- **建议**：`_recv_loop` 加 `if len(data) > 64*1024: continue` 单帧
-  cap + audit log "uart_write_oversize_dropped"
+- **关闭**：commit `004962b`。`uart_stream_route.py` 加
+  `_MAX_WRITE_FRAME_BYTES = 64 * 1024` · `_recv_loop` 收 binary frame
+  时 `if len(data) > cap` 直接 drop + 发 `{type:"write_dropped",
+  reason:"frame_too_large", max_bytes, got_bytes}` 通知前端不撕 WS ·
+  schema.py 加 write_dropped S→C 帧文档 · +1 regression 测试
 - **来源**：security-audit 2026-05-02 finding LOW 4
 
-## DEBT-027 · UART/PTY → xterm.js OSC 注入面文档化（security LOW 5 候选）
+## DEBT-027 · UART/PTY → xterm.js OSC 注入面文档化 —— **CLOSED 2026-05-02**
 
 - **severity**：low（受信源前提下 · 当前 xterm 默认 config 已安全）
-- **症状**：device UART 输出 `\x1b]52;c;<base64>\x07` (OSC 52) 可写
-  浏览器剪贴板（xterm 默认禁用，allowProposedApi 时启用）；OSC 0/2 可
-  改终端窗口标题；超长 CSI 可冻结渲染
-- **当前状态**：未关 · UartLiveStream / ShellTab 用 Terminal({ ... })
-  默认配置（未启用 OSC 52 / allowProposedApi），运行时 OSC 注入面安全
-- **建议**：在 UartLiveStream + ShellTab 加注释说明依赖 xterm 默认
-  OSC handler 安全集合，明示 "不要给 Terminal 构造启用 allowProposedApi
-  / OSC 52"，code-reviewer 加 grep 规则防回归
+- **关闭**：commit `004962b`。UartLiveStream + ShellTab 在 `new
+  Terminal({...})` 上方加 SECURITY 注释块：
+  - 禁 `allowProposedApi: true`（启用 OSC 52 clipboard write =
+    UART/PTY 输出可写浏览器剪贴板）
+  - 禁 `linkHandler` 自动跳转外部 URL
+  - 当前默认 config 是审过的安全集合
+- 代码无运行时变化（默认就安全），加注释防回归 · code-reviewer 后续
+  grep `allowProposedApi|linkHandler` 出现即标
 - **来源**：security-audit 2026-05-02 finding LOW 5
 
 ---
