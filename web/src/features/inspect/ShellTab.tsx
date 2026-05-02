@@ -1,25 +1,42 @@
 /**
- * adb shell PTY terminal tab (PR-E).
+ * adb shell PTY terminal tab (PR-E + v2 HITL modal).
  *
  * Bidirectional xterm.js: stdin from xterm.onData → ws.send, stdout
  * from ws bytes → term.write. Supports server-side resize via
  * sendResize() bound to the FitAddon's resize event.
+ *
+ * v2 (2026-05-02): hitl_request frames open the shared
+ * <HitlConfirmModal>. Approve once / approve for session / deny
+ * routes through respondHitl. Replaces v1 silent auto-deny.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CircleStop, Eraser, Play } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
+import { HitlConfirmModal } from "../../components/HitlConfirmModal";
 import { useApp } from "../../stores/app";
-import { useTerminalSession } from "./useTerminalSession";
+import { type HitlRequest, useTerminalSession } from "./useTerminalSession";
 
 export function ShellTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const session = useTerminalSession();
-  const { state, error, exitCode, connect, disconnect, sendBytes, sendResize, onBytes } = session;
+  const {
+    state,
+    error,
+    exitCode,
+    connect,
+    disconnect,
+    sendBytes,
+    sendResize,
+    onBytes,
+    onHitl,
+    respondHitl,
+  } = session;
+  const [pendingHitl, setPendingHitl] = useState<HitlRequest | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -84,6 +101,20 @@ export function ShellTab() {
       term.write(new Uint8Array(chunk));
     });
   }, [onBytes]);
+
+  // Wire HITL prompts → modal. We keep at most one in flight; if the
+  // server fires multiple back-to-back (rare — terminal_guard pauses
+  // until response) the second overwrites the first only after the
+  // first is responded to (handler clears state before opening the
+  // next).
+  useEffect(() => {
+    return onHitl((req) => setPendingHitl(req));
+  }, [onHitl]);
+
+  const closeHitl = (approve: boolean, allowSession: boolean) => {
+    respondHitl(approve, allowSession);
+    setPendingHitl(null);
+  };
 
   // After session becomes ready, push current rows/cols once so the
   // server PTY matches the visible window.
@@ -161,6 +192,34 @@ export function ShellTab() {
       <div className="uart-tab__body uart-tab__body--single">
         <div ref={containerRef} className="uart-tab__xterm" />
       </div>
+
+      <HitlConfirmModal
+        open={pendingHitl !== null}
+        title={lang === "zh" ? "命令需要审批" : "Command needs your approval"}
+        description={
+          lang === "zh"
+            ? "服务端 HITL 守卫拦下了一条危险命令。批准一次只放本次，整个会话则后续同型命令直通。"
+            : "Server-side HITL guard blocked a dangerous command. Approve once for this run; approve for session lets matching commands through for the rest of this shell."
+        }
+        details={
+          pendingHitl
+            ? {
+                command: <code>{pendingHitl.command}</code>,
+                rule: pendingHitl.rule,
+                reason: pendingHitl.reason,
+              }
+            : undefined
+        }
+        cancelLabel={lang === "zh" ? "拒绝" : "Deny"}
+        approveLabel={lang === "zh" ? "本次批准" : "Approve once"}
+        approveSessionLabel={
+          lang === "zh" ? "本会话批准" : "Approve for session"
+        }
+        approveDanger
+        onCancel={() => closeHitl(false, false)}
+        onApprove={() => closeHitl(true, false)}
+        onApproveSession={() => closeHitl(true, true)}
+      />
     </div>
   );
 }
