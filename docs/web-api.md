@@ -119,13 +119,21 @@ Registered LLM backends.
 ```json
 {
   "backends": [
-    {"name":"ollama","status":"beta","runs_on_cpu":true,
+    {"name":"ollama","status":"beta","host_compute_type":"cpu",
      "supports_tool_calls":true,"requires":["ollama daemon"],
      "description":"..."},
     ...
   ]
 }
 ```
+
+`host_compute_type` (ADR-027, formal 2026-05-02) is one of:
+- `"cpu"` — alb-host runs the inference locally on CPU (Ollama, embedded llama.cpp)
+- `"gpu"` — alb-host requires a local GPU
+- `"remote"` — alb-host only sends HTTP; model runs elsewhere (openai-compat, anthropic)
+
+This field replaces the old `runs_on_cpu: bool` which lied for HTTP-only
+backends. UI may render as a 3-state badge.
 
 ### GET /playground/backends/{backend}/models
 
