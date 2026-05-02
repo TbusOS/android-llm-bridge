@@ -193,6 +193,9 @@ WS_ENDPOINTS: list[WSSpec] = [
                             "write=true was set in client-first frame)"},
             {"type": "control",          "direction": "C→S",
              "description": "{type: 'close'} — client-initiated shutdown"},
+            {"type": "write_dropped",    "direction": "S→C",
+             "description": "{reason, max_bytes, got_bytes} — bidirectional "
+                            "write frame > 64 KB cap, dropped silently"},
             {"type": "closed",           "direction": "S→C",
              "description": "Terminal; carries reason / error"},
         ],

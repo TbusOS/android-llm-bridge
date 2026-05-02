@@ -36,6 +36,15 @@ export function UartLiveStream({ device }: Props) {
   const enc = useRef(new TextEncoder());
 
   // Mount xterm once.
+  // SECURITY (DEBT-027 / security audit 2026-05-02 LOW 5):
+  // device UART bytes are forwarded raw into term.write(). xterm.js
+  // interprets ANSI/OSC sequences. We DELIBERATELY use only the
+  // default xterm options below — do NOT add `allowProposedApi: true`
+  // or enable OSC 52 / OSC 4-104 handlers. With defaults, the only
+  // OSC operations that fire are window-title (OSC 0/2, harmless)
+  // and color queries (read-only). OSC 52 (clipboard write) is gated
+  // behind allowProposedApi and stays off; turning it on would let a
+  // hostile UART source silently rewrite the user's clipboard.
   useEffect(() => {
     if (!containerRef.current) return;
     const term = new Terminal({
