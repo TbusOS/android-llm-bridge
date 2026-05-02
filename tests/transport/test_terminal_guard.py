@@ -193,6 +193,49 @@ async def test_guard_allow_session_persists_for_same_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_guard_allow_session_refuses_metachar_commands() -> None:
+    """Security audit 2026-05-02 finding HIGH 1: approving `eval $X`
+    for the session would let the user later mutate $X to bypass the
+    deny list. respond_hitl must REFUSE to add metachar lines to
+    `_session_allowed` (still approve once, just not for session)."""
+    from alb.transport.terminal_guard import (
+        DangerRule,
+        TerminalGuard,
+        _has_shell_metachars,
+    )
+    import re
+
+    # Custom rule that catches `eval` since default DANGEROUS_PATTERNS
+    # doesn't have one, but the metachar refusal is rule-independent.
+    custom = (
+        DangerRule(
+            name="eval-block",
+            pattern=re.compile(r"^\s*eval\b"),
+            reason="eval expansion bypasses pattern matching",
+        ),
+    )
+    shell = _FakeShell()
+    g = TerminalGuard(shell, rules=custom)  # type: ignore[arg-type]
+
+    await g.feed(b"eval $X\n")
+    assert g.has_pending
+    await g.respond_hitl(approve=True, allow_session=True)
+
+    # Even though caller asked for allow_session, the metachar guard
+    # refuses to promote — second instance must re-trigger HITL.
+    await g.feed(b"eval $X\n")
+    assert g.has_pending
+    # Sanity: the metachar detector itself.
+    assert _has_shell_metachars("eval $X")
+    assert _has_shell_metachars("rm -rf `pwd`")
+    assert _has_shell_metachars("foo; bar")
+    assert _has_shell_metachars("foo | bar")
+    assert _has_shell_metachars("rm -rf /(...)")
+    assert not _has_shell_metachars("rm -rf /data/foo")
+    assert not _has_shell_metachars("setprop debug.x 1")
+
+
+@pytest.mark.asyncio
 async def test_guard_backspace_edits_buffer() -> None:
     shell = _FakeShell()
     echos: list[bytes] = []

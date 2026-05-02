@@ -276,14 +276,24 @@ async def workspace_files(
     truncated = False
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         try:
-            stat = child.stat()
+            # lstat (not stat) so symlinks pointing OUT of workspace
+            # don't leak target file size / mtime to the client.
+            # security audit 2026-05-02 finding MID 3.
+            stat = child.lstat()
         except OSError:
             continue
+        # Only follow symlinks for is_dir / is_file determination if
+        # they resolve inside workspace_root — otherwise treat the
+        # symlink itself as the entry (won't be opened anyway since
+        # workspace_download has its own resolve+relative_to gate).
+        is_link = child.is_symlink()
+        is_dir = (not is_link) and child.is_dir()
+        is_file = (not is_link) and child.is_file()
         entries.append({
             "name": child.name,
-            "is_dir": child.is_dir(),
-            "is_link": child.is_symlink(),
-            "size": stat.st_size if child.is_file() else 0,
+            "is_dir": is_dir,
+            "is_link": is_link,
+            "size": stat.st_size if is_file else 0,
             "mtime_epoch": stat.st_mtime,
         })
         if len(entries) >= _MAX_ENTRIES:

