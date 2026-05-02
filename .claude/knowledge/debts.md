@@ -644,4 +644,43 @@
 
 ---
 
+## DEBT-029 · functional audit MID 收头 4 项 —— **CLOSED 2026-05-02**
+
+- **severity**：mid（无 user-visible weirdness，但用户感知边角缺口 +
+  极端输入下沉默/慢）
+- **背景**：2026-05-02 functional-audit 报告了 8 MID + 5 LOW，HIGH 9 项
+  早班 ship 修完后晚班再起一轮收头。挑 4 项独立 / 低风险 / 用户感知强
+  的先做，剩 4 MID + 5 LOW 进 backlog 不强求一次清完
+- **关闭**：commit `dbf5dca`（fix: functional MID 收头 4 项 #17 part 77/N）
+  - **MID-1 logcat invalid filter** — `_validate_filter_spec` 校验
+    `<TAG>:<LEVEL>` 格式，LEVEL ∈ V D I W E F S；坏 spec 直接发
+    `closed/bad_filter` 关帧，不再静默"看似成功 logcat 启不起来"。
+    前端 useLogcatStream 把 `bad_filter` 也归入 error 显错
+  - **MID-2 UART stream_error stale bytes** — error/ended 状态加 "Clear
+    & reconnect" 按钮，先 xterm.clear() 再重连，避免残留字节被误读为
+    新输出。普通 Clear 按钮保留
+  - **MID-7 metrics set_interval pathological values** — setter 显式
+    reject NaN（**触发 L-030** · NaN 穿过 max/min 等价不钳位）；
+    control_ack 加 `clamped: true` + `requested_s` 让前端可知"你的值
+    被钳到 [0.1, 60]"。inf / -inf / 1e9 / 'not-a-number' 全测覆盖
+  - **MID-3 workspace iterdir** — files_route /workspace/files 改用
+    `os.scandir`，DirEntry 缓存 is_dir/is_symlink 元信息；先排序 +
+    截断到 _MAX_ENTRIES 再 stat 保留项。50k 文件目录省 48k stat()
+    调用（每个 stat 是 syscall，省下来非常显著）
+- **测试**：780 pass（767→+13: 8 logcat + 3 metrics + 2 files）/ typecheck 0 /
+  sensitive 0 / build 5s / 主 bundle 110 KB gzip 持平
+- **效果**：4 个边角隐患修完 — 用户拼错 logcat filter 立刻看到原因 /
+  UART 错恢复一键 / metrics 病态值有反馈 / workspace 大目录响应快
+- **未关 MID**（4 项进 backlog）：
+  - MID-4 `/files/download` no Range header → 多 GB 断点续传
+  - MID-5 PTY exit rationale → su denied / 立即退出场景缺信息
+  - MID-6 Files tab Pull/Push 无 Cancel 无 progress
+  - MID-8 三个 WS 缺 heartbeat → 代理 idle-killed 看似 hang
+- **未关 LOW**（5 项进 backlog · 见 functional audit 报告）
+- **来源**：`.claude/reports/functional-audit-2026-05-02.md` MID 1/2/3/7
+- **关联**：L-030（NaN 钳位反模式 · 同 commit 触发）/ DEBT-028（早班
+  HIGH 9 关 · 本条是同 audit 的 MID 收头）
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）

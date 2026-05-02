@@ -1125,4 +1125,76 @@ ui-fluency-auditor 当天发现）
 
 ---
 
+## L-030 · NaN 穿过 max/min/clamp · 数值钳位代码必须显式 reject NaN
+
+**Date**: 2026-05-02（functional audit MID-7 metrics set_interval 触发 ·
+fix `dbf5dca`）
+
+**规则**：任何"输入数值钳到合法区间"的代码（典型 `max(LO, min(HI, x))`
+模式），必须**先显式 NaN check 再钳位**，不能假设 max/min 会把 NaN
+"压回区间"。NaN 在 IEEE 754 比较中和任何值比都是 False，Python `max` /
+`min` 内置遇 NaN 直接返回 NaN（不抛错），结果是 NaN 写入业务字段，
+后续除法 / sleep / 比较全部传染。
+
+**Why**：
+
+- 2026-05-02 functional-auditor 报"metrics set_interval 接受 negative /
+  1e9 等病态值"。我以为 `_interval_s = max(0.1, min(60.0, float(value)))`
+  已经够安全。读 audit 后顺手测了下：
+  - `max(0.1, min(60.0, float("nan")))` 返回 `nan`（不报错）
+  - 写入 `self._interval_s = nan` 后下一帧 `await asyncio.sleep(nan)`
+    立刻抛 `ValueError: sleep length must be non-negative`，整个
+    streamer 死循环
+  - inf / -inf 反而是安全的（min/max 能正确钳位）
+- IEEE 754 NaN 性质：`nan != nan` is True；`nan < x` / `nan > x` 都是
+  False；Python `max(a, b)` 遇 NaN 实现是"返回第二个参数"或"返回 NaN"
+  视实现细节定，**永远不安全**
+- 同形态坑：`numpy.clip(nan, lo, hi)` 也返回 NaN（设计如此 · 所以 numpy
+  专门有 `nan_to_num`）；不少业务代码以为 clip 安全实际不安全
+
+**How to apply**：
+
+写"输入合法区间钳位"代码时，标准三件套：
+
+```python
+def setter(self, value):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return  # garbage 不动旧值
+    if v != v:  # NaN check（NaN 不等于自己是 IEEE 754 唯一可移植判法）
+        return
+    self._field = max(LO, min(HI, v))
+```
+
+或用 `math.isnan(v)`（语义更清晰，但 import math 多一行）。
+
+**触发条件**：
+
+- 写 `max(LO, min(HI, ...))` / `clip()` / `clamp()` / numpy `np.clip`
+- 输入来源是用户 JSON / WS message / API param（任何允许 float 入参的
+  edge）
+- setter 写入后续被 `asyncio.sleep` / `time.sleep` / `range(int(x))` /
+  `Decimal(x)` 等"NaN 不友好"消费者用
+
+**反面教材**：
+
+- 2026-05-02 metrics_route `set_interval` 接 `value_s: float("nan")` →
+  `_interval_s = nan` → 下一帧 sleep 抛 ValueError，streamer 静默崩溃
+  （恰好被 DEBT-028 早班修的"server_error 关帧"逻辑兜住，但本来该一
+  开始就拒）
+
+**应用到 agents**：
+
+- code-reviewer grep checklist 加：
+  `grep -rnE 'max\([^)]*min\(|np\.clip\(|\.clamp\(' src/` 命中 → 检查
+  上游有没有 `if v != v: return` / `math.isnan(v)` 守护
+- 如果上游是 user-supplied float（HTTP body / WS frame / param），
+  必须报 finding "NaN 钳位漏 NaN check"
+
+**关联**：L-024 (单测用 GNU coreutils mental model · 本条是"用'数学常识'
+mental model 写代码漏 IEEE 754 corner case" · 同形态盲区)
+
+---
+
 （新教训按此格式追加）
