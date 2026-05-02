@@ -718,4 +718,52 @@ vite proxy 漏 /devices /sessions /tools /audit 4 endpoint）
 
 ---
 
+## L-023 · 路径前缀 HITL 写在 endpoint 层是合理 v1（不是技术债）
+
+**Date**: 2026-05-01（PR-H ship · `00cc532`）
+
+**规则**：当跨层抽象（如 PermissionEngine）的接口面**还不够通用**时，把
+domain-specific 规则（如 "filesync.push 命中 /system 要 HITL"）**先写在
+最近的调用方**（endpoint / capability），同时在 ADR seed 里登记下沉时机
+（依赖哪一层先扩 spec）。**不是技术债，是分层等待**。
+
+**Why**：
+- PR-H 写 push HITL 时考虑了两条路：
+  - (a) `files_route._is_sensitive_remote(remote)` + `force` flag（v1 选）
+  - (b) 扩 `infra.permissions.default_check`，让 endpoint 走
+    `transport.check_permissions("filesync.push", ...)`，跟 shell HITL
+    完全同形态
+- (b) 看似"更架构正"，但 M1 engine 的 `default_check` 现在只接 `cmd`
+  字符串，要扩 spec（加 action 维度 + 多类型 input_data + multi-layer
+  config）才能放进去
+- 如果 PR-H 为了走 (b) 顺手扩 engine，spec 就被 1 个调用方"拍歪"了，
+  下次 PR-X 加 SSH 写入 HITL 又得改一次接口
+- 等 M2 engine 扩展 spec 到位（独立设计 + 多 sample），再让 PR-H 下沉，
+  接口不被局部需求绑架
+
+**How to apply**：
+- 决策时显式判断：跨层接口面是否已支持你的需求？没有 → 写本地 + 登 ADR
+  seed 标"待 X 层扩展后下沉"
+- ADR seed 里写清楚：何时下沉（依赖哪个 spec）、下沉后端点 / capability
+  改成什么样
+- 不要把 v1 的 "endpoint 层 inline" 当债务记，记成 ADR + "等待时机"
+  （DEBT 是"必须修"，ADR seed 是"看时机"）
+
+**触发条件**：
+- 新 PR 引入 domain-specific 规则
+- 现有抽象层接口面不够通用（要扩 spec）
+- 下沉的 follow-up 依赖另一个 milestone
+
+**反面 vs 正面**：
+- 反面：PR-H 顺手扩 PermissionEngine spec → engine 接口被 1 个调用方
+  拍歪，后续 SSH/audio/sensor HITL 又得改 spec
+- 正面（PR-H 实际选）：endpoint 层写 HITL + ADR-031 seed 标"M2 engine
+  扩 spec 后下沉" → engine spec 由 M2 独立设计阶段统一拍
+
+**关联**：ADR-031 seed (filesync HITL 下沉路径) · ADR-013
+(PermissionEngine 设计) · L-019 (sentinel 反模式 · 也是"接口被局部需求
+绑架"的反面)
+
+---
+
 （新教训按此格式追加）

@@ -643,6 +643,48 @@ progress stream 等候选）。
 **关联**：L-020 (N=3 才抽 base class) · ADR-024 (ABC 第 1 个非首例
 消费者 = 免费 stress test) · DEBT-022 PR-C.b/D/E
 
+**N=4 落地复核 2026-05-01**：PR-F (`useMetricsStream`) 落地后评估为
+"协议差异化（JSON sample + history snapshot + control_ack）共有逻辑反少"，
+不抽 base hook，等 N=5。详见 `.claude/knowledge/debts.md` PR-F 关闭段。
+
+**N=5 落地复核 2026-05-01**：PR-H (`useFileBrowser`) 落地为 useQuery+useMutation
+组合，**不是 stream hook**，对 ADR-030 不构成新数据点。stream hook 方向 N=5
+仍未出现，seed 维持。下一次评估等 PR-C.c (双向 UART 输入) 或 PR-G v2
+(streaming framebuffer) 出现。
+
+---
+
+## ADR-031 (seed) · filesync HITL 写在 endpoint 层 vs PermissionEngine
+
+**Status**: seed（PR-H 落地观察 · M2 PermissionEngine 加 filesync 规则后再拍）
+**Date**: 2026-05-01
+**Context**: PR-H push endpoint 命中 sensitive 路径前缀（/system /vendor
+/data /dev /proc /sys /persist /oem /boot /recovery /metadata，
+/data/local/tmp 例外）需要 HITL 二次确认。M1 `infra.permissions.default_check`
+现在只识 shell `cmd` 字符串，不接 filesync action。两条路：
+
+- **(a) endpoint 层 inline HITL**（PR-H 选）：`files_route.device_push`
+  自己判 `_is_sensitive_remote(remote)` + `force` flag，命中返回
+  `requires_confirm=true`。缺点：HITL 规则散落 in routing；优点：M1
+  engine 不动，0 接口面变更
+- **(b) 下沉到 PermissionEngine**：扩展 `default_check` 接 `filesync.push`
+  action，从 `input_data["remote"]` 读路径前缀；endpoint 直接走
+  `transport.check_permissions("filesync.push", ...)`。缺点：要扩 engine
+  + 加配置层（user 能改名单）；优点：和 shell HITL 同进同退，policy 集中
+- **(c) endpoint 层简版 + 标记 follow-up**：（当前 PR-H）
+
+**Decision**：选 (c) 为 v1。等 M2 PermissionEngine 加 filesync.push /
+filesync.pull action 类型 + multi-layer config（defaults < profile <
+session）时下沉。届时 endpoint 改成纯转发：`r = await transport.
+check_permissions("filesync.push", {"remote": ...})` 命中 `behavior=ask`
+就返回 `requires_confirm`，跟 shell HITL 完全同形态。
+
+**何时拍板**：M2 PermissionEngine 扩展 spec 出炉时（与 ADR-013 / 权限
+engine M2 路线绑定）。届时这条 seed 升正式 + 改 endpoint。
+
+**关联**：DEBT-022 PR-H · ADR-013（PermissionEngine 设计 ·
+M1→M2 路线）· `infra/permissions.py` default_check
+
 ---
 
 （后续 ADR 在主对话决策时按此格式追加）
