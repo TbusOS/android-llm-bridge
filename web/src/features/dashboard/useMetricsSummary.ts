@@ -14,7 +14,7 @@
  * The two numbers will legitimately differ; UI must label both. See
  * `.claude/knowledge/review-feedback.md` (F.6 arch review #4).
  */
-import { useQuery } from "@tanstack/react-query";
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 
 import {
   fetchMetricsSummary,
@@ -25,12 +25,10 @@ const REFETCH_MS = 30_000;
 const DEFAULT_WINDOW_S = 300;
 
 export function useMetricsSummary(windowSeconds = DEFAULT_WINDOW_S) {
-  const q = useQuery<MetricsSummaryResponse>({
+  const q = useDashboardQuery<MetricsSummaryResponse>({
     queryKey: ["metrics-summary", windowSeconds],
     queryFn: ({ signal }) => fetchMetricsSummary(windowSeconds, signal),
-    staleTime: REFETCH_MS,
-    refetchInterval: REFETCH_MS,
-    refetchIntervalInBackground: false,
+    refetchMs: REFETCH_MS,
   });
   const tps = q.data?.tps ?? null;
   return {

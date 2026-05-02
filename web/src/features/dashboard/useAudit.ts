@@ -10,7 +10,7 @@
  * embedding it. Backend `summary` may contain raw shell command
  * lines / model output — never trustable.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 
 import { fetchAudit, type AuditEvent } from "../../lib/api";
 import type { TimelineEventData } from "./types";
@@ -82,12 +82,10 @@ export interface AuditViewModel {
 }
 
 export function useAudit(minutes = 30, limit = 200): AuditViewModel {
-  const q = useQuery({
+  const q = useDashboardQuery({
     queryKey: ["audit", minutes, limit],
     queryFn: ({ signal }) => fetchAudit(minutes, limit, signal),
-    staleTime: REFETCH_MS,
-    refetchInterval: REFETCH_MS,
-    refetchIntervalInBackground: false,
+    refetchMs: REFETCH_MS,
   });
   return {
     events: q.data?.events.map(mapAuditToTimeline) ?? [],

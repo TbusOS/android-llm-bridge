@@ -11,7 +11,7 @@
  * from a parent that doesn't yet know which serial to query.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 
 import { fetchDeviceDetails, type ApiDeviceDetails } from "../../lib/api";
 import type { DeviceDetailsSummary } from "./types";
@@ -41,11 +41,10 @@ function projectSummary(api: ApiDeviceDetails): DeviceDetailsSummary {
 }
 
 export function useDeviceDetails(serial: string | null | undefined) {
-  return useQuery({
+  return useDashboardQuery({
     queryKey: ["device-details", serial],
     enabled: !!serial,
-    refetchInterval: REFETCH_MS,
-    refetchIntervalInBackground: false,
+    refetchMs: REFETCH_MS,
     queryFn: async ({ signal }) => {
       if (!serial) throw new Error("missing serial");
       const r = await fetchDeviceDetails(serial, signal);

@@ -7,8 +7,7 @@
  * pure means the (eventual) tests only need to exercise `mapToRecent`,
  * not the HTTP layer.
  */
-import { useQuery } from "@tanstack/react-query";
-
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 import { fetchSessions, type SessionSummary } from "../../lib/api";
 import type { RecentSessionData } from "./types";
 
@@ -51,12 +50,10 @@ export function mapToRecent(
 }
 
 export function useRecentSessions(limit = 100) {
-  const q = useQuery({
+  const q = useDashboardQuery({
     queryKey: ["sessions", limit],
     queryFn: ({ signal }) => fetchSessions(limit, signal),
-    staleTime: REFETCH_MS,
-    refetchInterval: REFETCH_MS,
-    refetchIntervalInBackground: false,
+    refetchMs: REFETCH_MS,
   });
   const now = Date.now();
   return {
