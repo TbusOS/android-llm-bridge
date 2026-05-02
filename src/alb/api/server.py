@@ -109,6 +109,18 @@ def main() -> None:
 
     host = os.environ.get("ALB_API_HOST", "0.0.0.0")
     port = int(os.environ.get("ALB_API_PORT", "8765"))
+    if host == "0.0.0.0":
+        # Security audit 2026-05-02 finding MID 2: alb-api binds all
+        # interfaces by default + has no auth. Anyone with network
+        # reachability can call POST /devices/{s}/files/push, write
+        # to UART, etc. Default kept (loud-deprecating later via
+        # ADR-034 seed) but a startup banner now flags the risk.
+        print(
+            "[alb-api] WARNING: bound 0.0.0.0 with no auth — file push,"
+            " adb shell, UART write endpoints reachable from the LAN."
+            " For local-only dev set: ALB_API_HOST=127.0.0.1",
+            file=sys.stderr,
+        )
     uvicorn.run("alb.api.server:app", host=host, port=port, reload=False)
 
 
