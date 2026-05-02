@@ -32,7 +32,9 @@ def cmd_backends(ctx: typer.Context) -> None:
             {
                 "name": b.name, "status": b.status,
                 "supports_tool_calls": b.supports_tool_calls,
-                "runs_on_cpu": b.runs_on_cpu, "requires": list(b.requires),
+                # ADR-027: replaces `runs_on_cpu: bool` with three-state.
+                "host_compute_type": b.host_compute_type,
+                "requires": list(b.requires),
                 "description": b.description,
             }
             for b in BACKENDS
@@ -42,13 +44,13 @@ def cmd_backends(ctx: typer.Context) -> None:
     table = Table(title="alb playground backends")
     table.add_column("name")
     table.add_column("status")
-    table.add_column("CPU?")
+    table.add_column("host")  # cpu / gpu / remote
     table.add_column("tools?")
     table.add_column("description")
     for b in BACKENDS:
         table.add_row(
             b.name, b.status,
-            "✓" if b.runs_on_cpu else "-",
+            b.host_compute_type,
             "✓" if b.supports_tool_calls else "-",
             b.description[:80],
         )

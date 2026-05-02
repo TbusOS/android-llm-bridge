@@ -475,7 +475,16 @@ export async function fetchMetricsSummary(
 export interface ApiBackend {
   name: string;
   status: "beta" | "planned" | string;
-  runs_on_cpu: boolean;
+  /**
+   * ADR-027 (formal 2026-05-02): host-side compute requirement.
+   *   "cpu"    — alb-host runs the inference locally on CPU
+   *   "gpu"    — alb-host requires a local GPU
+   *   "remote" — alb-host only sends HTTP; model runs elsewhere
+   * Replaces the old `runs_on_cpu: boolean` whose name lied for
+   * HTTP-only backends (was true for openai-compat though the model
+   * ran on the upstream server). UI may render as a 3-state badge.
+   */
+  host_compute_type: "cpu" | "gpu" | "remote" | string;
   supports_tool_calls: boolean;
   requires: string[];
   description: string;

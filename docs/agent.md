@@ -133,7 +133,10 @@ class LLMBackend(ABC):
     model: str = ""
     supports_tool_calls: bool = False
     supports_streaming: bool = False
-    runs_on_cpu: bool = False
+    # ADR-027 (formal 2026-05-02): "cpu" | "gpu" | "remote".
+    # Replaces the old `runs_on_cpu: bool` whose name lied for
+    # HTTP-only backends. Mirrors `BackendSpec.host_compute_type`.
+    host_compute_type: str = "cpu"
 
     @abstractmethod
     async def chat(

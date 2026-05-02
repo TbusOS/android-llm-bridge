@@ -139,7 +139,9 @@ async def list_backends() -> dict[str, Any]:
         out.append({
             "name": spec.name,
             "status": spec.status,
-            "runs_on_cpu": spec.runs_on_cpu,
+            # ADR-027: 'cpu' / 'gpu' / 'remote' — replaces the old
+            # `runs_on_cpu: bool` whose name lied for HTTP-only backends.
+            "host_compute_type": spec.host_compute_type,
             "supports_tool_calls": spec.supports_tool_calls,
             "requires": list(spec.requires),
             "description": spec.description,

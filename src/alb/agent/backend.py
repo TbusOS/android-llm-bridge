@@ -190,7 +190,12 @@ class LLMBackend(ABC):
     model: str = ""  # concrete model id, e.g. "qwen2.5:3b", "claude-opus-4-6"
     supports_tool_calls: bool = False
     supports_streaming: bool = False
-    runs_on_cpu: bool = False  # True for llama.cpp / Ollama CPU builds
+    # ADR-027 (formal): host compute requirement — "cpu" / "gpu" / "remote".
+    # Mirrors BackendSpec.host_compute_type. Concrete backends override.
+    # The legacy `runs_on_cpu: bool` was removed in M3 step 2 because its
+    # name lied for HTTP-only backends (was True for openai-compat though
+    # the model ran on the upstream server).
+    host_compute_type: str = "cpu"
     # Whether the concrete backend wires up a real `health()` probe
     # against its daemon. Callers (e.g. the playground health
     # endpoint) MUST gate on this before calling `health()` — calling

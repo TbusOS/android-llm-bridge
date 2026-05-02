@@ -77,7 +77,7 @@ class OllamaBackend(LLMBackend):
     name = "ollama"
     supports_tool_calls = True
     supports_streaming = True
-    runs_on_cpu = True
+    host_compute_type = "cpu"  # local Ollama daemon on alb-host
     has_health_probe = True
 
     def __init__(

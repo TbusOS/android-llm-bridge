@@ -47,7 +47,18 @@ class BackendSpec:
 
     name: str
     impl_path: str
-    runs_on_cpu: bool                  # True means no GPU required
+    # ADR-027 (formal 2026-05-02): host-side compute requirement, not
+    # "where the model runs". Three states:
+    #   "cpu"    — alb-host does the inference locally on CPU (Ollama
+    #              CPU build, llama-cpp on CPU, embedded GGUF)
+    #   "gpu"    — alb-host requires a local GPU (llama-cpp on CUDA,
+    #              future MLX/Metal-only backends)
+    #   "remote" — alb-host only sends HTTP; inference happens elsewhere
+    #              (OpenAI-compat / Anthropic / future Bedrock)
+    # Replaces the old `runs_on_cpu: bool` whose name lied for remote
+    # backends (was True for openai-compat even though the model ran on
+    # the upstream server). Frontend renders as a 3-state badge.
+    host_compute_type: str
     supports_tool_calls: bool
     status: Status
     requires: list[str] = field(default_factory=list)
@@ -209,7 +220,7 @@ BACKENDS: list[BackendSpec] = [
     BackendSpec(
         name="ollama",
         impl_path="alb.agent.backends.ollama.OllamaBackend",
-        runs_on_cpu=True,
+        host_compute_type="cpu",  # alb-host runs Ollama daemon locally
         supports_tool_calls=True,
         status="beta",
         requires=["ollama daemon (HTTP)", "a pulled model (e.g. qwen2.5:3b)"],
@@ -218,7 +229,10 @@ BACKENDS: list[BackendSpec] = [
     BackendSpec(
         name="openai-compat",
         impl_path="alb.agent.backends.openai_compat.OpenAICompatBackend",
-        runs_on_cpu=True,
+        # alb-host only sends HTTP; the model runs on whatever the
+        # configured base_url points to (vLLM cluster, LM Studio on
+        # the dev's laptop, llamafile, etc.).
+        host_compute_type="remote",
         supports_tool_calls=True,
         # Implementation is shipped (M3 step 1, 2026-04-30), but
         # status stays 'planned' on purpose: the default base_url
@@ -235,7 +249,10 @@ BACKENDS: list[BackendSpec] = [
     BackendSpec(
         name="llama-cpp",
         impl_path="alb.agent.backends.llama_cpp.LlamaCppBackend",
-        runs_on_cpu=True,
+        # Default 'cpu' for the embedded build; a future GPU-compiled
+        # variant would register a separate "llama-cpp-cuda" entry
+        # with host_compute_type="gpu".
+        host_compute_type="cpu",
         supports_tool_calls=True,
         status="planned",
         requires=["llama-cpp-python", "a local GGUF model file"],
@@ -244,11 +261,12 @@ BACKENDS: list[BackendSpec] = [
     BackendSpec(
         name="anthropic",
         impl_path="alb.agent.backends.anthropic.AnthropicBackend",
-        runs_on_cpu=False,
+        # Cloud SaaS — alb-host is just an HTTP client.
+        host_compute_type="remote",
         supports_tool_calls=True,
         status="planned",
-        requires=["anthropic SDK", "ANTHROPIC_API_KEY"],
-        description="Claude API — for users who want a larger model.",
+        requires=["ANTHROPIC_API_KEY"],
+        description="Claude API — Anthropic-hosted Claude models.",
     ),
 ]
 

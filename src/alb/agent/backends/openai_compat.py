@@ -82,7 +82,9 @@ class OpenAICompatBackend(LLMBackend):
     name = "openai-compat"
     supports_tool_calls = True
     supports_streaming = True
-    runs_on_cpu = True
+    # alb-host only sends HTTP — model lives wherever base_url points
+    # (vLLM cluster, LM Studio on dev's laptop, llamafile, etc.).
+    host_compute_type = "remote"
     has_health_probe = True
 
     def __init__(
