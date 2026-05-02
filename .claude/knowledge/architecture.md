@@ -157,12 +157,19 @@ ChatRequest ──┐
 ## 当前里程碑状态
 
 - M1: ✓ 全完
-- M2: agent 层 ✓ ship；agent step 4+ 排期中（OpenAICompatBackend / Web Tier 1
-  收尾）
+- M2: agent 层 ✓ ship；Web Tier 1 ✓ ship
+- M3: step 1 ✓ OpenAICompatBackend (2026-04-30, commit `344fb47`)
+       · step 2 ✓ AnthropicBackend (2026-05-02, commits 81~84)
+       · step 3 LlamaCpp **deferred** —— 4 footgun（sync→async 桥 / 50MB
+         binary wheel / GGUF 测试 / 同 CPU 类抽象验证弱）；用户可改用
+         openai-compat backend 接 llama.cpp 自带的 /v1 server
 - C 档（audit 重构）：✓ ship（5 commits, HEAD a03cbab）
 - B 档（后端 GET 端点）：✓ ship（3 commits）
 - D 档（Dashboard 真数据）：✓ ship（4 commits）
-- F 档（tps_sample + KPI 全真）：📋 排期中
+- F 档（tps_sample + KPI 全真）：✓ ship
+- G 档：✓ ship
+- DEBT-022 batch 9/9 ship · 4-agent audit 9 HIGH 全修 · functional MID 4
+  收头 · L-030 v2 修订 · ADR-027 升正
 
 详见 `~/.claude/projects/<project>/memory/project_status.md` 或本目录
 `decisions.md`。
