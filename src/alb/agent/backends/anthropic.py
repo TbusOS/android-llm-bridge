@@ -161,12 +161,232 @@ class AnthropicBackend(LLMBackend):
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
-        # Streaming impl lands in commit 83 — keep the abstract async
-        # generator signature so call sites can already wire it.
-        raise NotImplementedError(
-            "AnthropicBackend.stream() lands in M3 step 2 follow-up commit"
+        """Stream chat response as Anthropic event-typed SSE.
+
+        Anthropic SSE shape:
+            event: message_start
+            data: {"type":"message_start", "message":{...usage,...}}
+
+            event: content_block_start
+            data: {"type":"content_block_start", "index":N,
+                   "content_block":{"type":"text"|"tool_use", ...}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta", "index":N,
+                   "delta":{"type":"text_delta","text":"..."} |
+                          {"type":"input_json_delta","partial_json":"..."}}
+
+            event: content_block_stop
+            data: {"type":"content_block_stop", "index":N}
+
+            event: message_delta
+            data: {"type":"message_delta",
+                   "delta":{"stop_reason":"...","stop_sequence":null},
+                   "usage":{"output_tokens":N}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+        We rely only on the `type` field inside each `data:` payload —
+        the `event:` line is redundant. Per-index state tracks each
+        content_block: text_delta accumulates into a single content
+        string; input_json_delta accumulates partial JSON strings per
+        block, then `json.loads` at content_block_stop materialises a
+        ToolCall.
+
+        Anthropic's `usage.output_tokens` is cumulative (final value at
+        message_delta), not delta. We still emit `tokens:1` per text
+        delta to drive the metric sampler — same convention as
+        OpenAICompat where servers don't surface per-chunk token counts.
+        """
+        self._require_model()
+        self._require_api_key()
+        body = self._build_body(
+            messages, tools, temperature, max_tokens, kwargs, stream=True
         )
-        yield {}  # pragma: no cover — async generator marker
+
+        # Per-index content-block state.
+        #   text blocks: {"type":"text", "text": str}
+        #   tool blocks: {"type":"tool_use", "id":..., "name":..., "json":""}
+        blocks: dict[int, dict[str, Any]] = {}
+        content_parts: list[str] = []
+        finish_reason: FinishReason = "stop"
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        model_reply = self.model
+
+        url = f"{self.base_url}/v1/messages"
+        try:
+            client = self._get_client()
+            async with client.stream(
+                "POST", url, json=body, headers=self._headers()
+            ) as r:
+                if r.status_code == 401:
+                    raise BackendError(
+                        "BACKEND_UNAUTHORIZED",
+                        "anthropic stream returned 401 (bad API key)",
+                        suggestion="verify ANTHROPIC_API_KEY",
+                    )
+                if r.status_code == 429:
+                    raise BackendError(
+                        "BACKEND_RATE_LIMITED",
+                        "anthropic stream returned 429 (rate limit)",
+                        suggestion="wait + retry, or use a different tier",
+                    )
+                if r.status_code >= 400:
+                    text = (await r.aread()).decode(
+                        "utf-8", errors="replace"
+                    )[:500]
+                    raise BackendError(
+                        "BACKEND_HTTP_ERROR",
+                        f"anthropic stream returned {r.status_code}: {text}",
+                        suggestion="check model name + request body shape",
+                    )
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if not payload:
+                        continue
+                    try:
+                        evt = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    etype = evt.get("type")
+
+                    if etype == "message_start":
+                        msg = evt.get("message") or {}
+                        if msg.get("model"):
+                            model_reply = msg["model"]
+                        u = msg.get("usage") or {}
+                        # input_tokens is final at message_start.
+                        usage["input_tokens"] = int(u.get("input_tokens", 0) or 0)
+                        # message_start usage carries the seed
+                        # output_tokens (often 1); kept here so a
+                        # stream that ends before message_delta still
+                        # has a non-zero output count.
+                        usage["output_tokens"] = int(
+                            u.get("output_tokens", 0) or 0
+                        )
+                    elif etype == "content_block_start":
+                        idx = int(evt.get("index", 0))
+                        cb = evt.get("content_block") or {}
+                        ct = cb.get("type")
+                        if ct == "text":
+                            blocks[idx] = {"type": "text", "text": ""}
+                        elif ct == "tool_use":
+                            blocks[idx] = {
+                                "type": "tool_use",
+                                "id": str(cb.get("id", "")),
+                                "name": str(cb.get("name", "")),
+                                "json": "",
+                            }
+                    elif etype == "content_block_delta":
+                        idx = int(evt.get("index", 0))
+                        delta = evt.get("delta") or {}
+                        dt = delta.get("type")
+                        block = blocks.get(idx)
+                        if block is None:
+                            # delta without prior start — ignore defensively
+                            continue
+                        if dt == "text_delta":
+                            piece = delta.get("text", "") or ""
+                            block["text"] += piece
+                            content_parts.append(piece)
+                            if piece:
+                                yield {
+                                    "type": "token",
+                                    "delta": piece,
+                                    "tokens": 1,
+                                }
+                        elif dt == "input_json_delta":
+                            block["json"] += delta.get("partial_json", "") or ""
+                    elif etype == "content_block_stop":
+                        # Materialise a tool_use block's accumulated
+                        # partial JSON. Text blocks need no action —
+                        # they were appended live to content_parts.
+                        idx = int(evt.get("index", 0))
+                        block = blocks.get(idx)
+                        if block and block.get("type") == "tool_use":
+                            try:
+                                parsed = json.loads(block.get("json") or "{}")
+                            except json.JSONDecodeError:
+                                parsed = {"__raw__": block.get("json", "")}
+                            block["input"] = (
+                                parsed if isinstance(parsed, dict)
+                                else {"__raw__": parsed}
+                            )
+                    elif etype == "message_delta":
+                        delta = evt.get("delta") or {}
+                        sr = delta.get("stop_reason")
+                        if sr:
+                            finish_reason = _stop_reason_to_finish(sr)
+                        u = evt.get("usage") or {}
+                        # output_tokens here is CUMULATIVE final, not delta.
+                        if "output_tokens" in u:
+                            usage["output_tokens"] = int(
+                                u.get("output_tokens", 0) or 0
+                            )
+                    elif etype == "message_stop":
+                        # Terminal event; loop will exit when SSE
+                        # connection closes. Nothing to capture here —
+                        # everything we need came on message_delta.
+                        pass
+                    # error-typed events (per Anthropic SSE spec) bubble
+                    # via HTTP status codes already handled above; if a
+                    # mid-stream `event: error` shows up we'd see it as
+                    # a JSON payload with type:"error" that we ignore
+                    # (no test fixture for it yet — flagged as gap).
+        except BackendError:
+            raise
+        except httpx.ConnectError as e:
+            raise BackendError(
+                "BACKEND_UNREACHABLE",
+                f"anthropic API not reachable at {self.base_url}: {e}",
+                suggestion="check network / proxy",
+            ) from e
+        except httpx.TimeoutException as e:
+            raise BackendError(
+                "BACKEND_TIMEOUT",
+                f"anthropic stream timed out after {self.timeout}s: {e}",
+                suggestion="raise timeout or pick a smaller model",
+            ) from e
+        except httpx.HTTPError as e:
+            raise BackendError(
+                "BACKEND_HTTP_ERROR",
+                f"anthropic stream interrupted: {e}",
+                suggestion="check upstream status",
+            ) from e
+
+        tool_calls: list[ToolCall] = []
+        for idx in sorted(blocks.keys()):
+            block = blocks[idx]
+            if block.get("type") == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        arguments=block.get("input") or {},
+                    )
+                )
+
+        if tool_calls and finish_reason == "stop":
+            # Defensive: if we collected tool_use blocks but missed
+            # message_delta's stop_reason, classify as tool_calls.
+            finish_reason = "tool_calls"
+
+        usage["total_tokens"] = (
+            usage["input_tokens"] + usage["output_tokens"]
+        )
+
+        yield {
+            "type": "done",
+            "content": "".join(content_parts),
+            "tool_calls": [tc.to_dict() for tc in tool_calls],
+            "finish_reason": finish_reason,
+            "usage": usage,
+            "model": model_reply,
+            "thinking": "",
+        }
 
     async def health(self) -> HealthResult:
         """Hit GET /v1/models to verify connectivity + key + model presence.
