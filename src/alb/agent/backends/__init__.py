@@ -13,9 +13,10 @@ Registered backends (check `alb.infra.registry.BACKENDS` for the canonical
 list + status):
 
     ollama          — local HTTP (recommended for CPU-only)          (M2 beta)
-    openai-compat   — any OpenAI-compatible /v1/chat/completions     (M2 beta)
-    llama-cpp       — embedded llama.cpp                             (M3 planned)
-    anthropic       — Claude API                                      (M3 planned)
+    openai-compat   — any OpenAI-compatible /v1/chat/completions     (M3 step 1)
+    anthropic       — Claude API                                      (M3 step 2 beta)
+    llama-cpp       — embedded llama.cpp                              (deferred ·
+                      use openai-compat with --base-url to llama.cpp server)
 """
 
 from __future__ import annotations
@@ -96,11 +97,35 @@ def _construct(name: str, **kwargs: Any) -> LLMBackend:
         from alb.agent.backends.openai_compat import OpenAICompatBackend
 
         return OpenAICompatBackend(**kwargs)
-    if name == "llama-cpp":
-        raise ValueError("llama-cpp backend not yet implemented (M3)")
     if name == "anthropic":
-        raise ValueError("anthropic backend not yet implemented (M3)")
+        from alb.agent.backends.anthropic import AnthropicBackend
+
+        # Probe-path constructions (no kwargs) honour ALB_ANTHROPIC_URL /
+        # ALB_ANTHROPIC_MODEL / ALB_ANTHROPIC_KEY (with the standard
+        # ANTHROPIC_API_KEY as fallback). Same precedence as Ollama:
+        #   caller kwargs > env > library default.
+        # Secret never enters logs/cache surfaces — kwargs flow directly
+        # into the backend constructor and live there until aclose().
+        env_base = os.environ.get("ALB_ANTHROPIC_URL")
+        env_model = os.environ.get("ALB_ANTHROPIC_MODEL")
+        env_key = (
+            os.environ.get("ALB_ANTHROPIC_KEY")
+            or os.environ.get("ANTHROPIC_API_KEY")
+        )
+        if env_base and "base_url" not in kwargs:
+            kwargs["base_url"] = env_base
+        if env_model and "model" not in kwargs:
+            kwargs["model"] = env_model
+        if env_key and "api_key" not in kwargs:
+            kwargs["api_key"] = env_key
+        return AnthropicBackend(**kwargs)
+    if name == "llama-cpp":
+        raise ValueError(
+            "llama-cpp backend not yet implemented "
+            "(deferred: use openai-compat with --base-url "
+            "http://localhost:8080/v1 to talk to llama.cpp's built-in server)"
+        )
     raise ValueError(
         f"unknown backend: {name!r}; "
-        "known: ollama | openai-compat | llama-cpp | anthropic"
+        "known: ollama | openai-compat | anthropic | llama-cpp(planned)"
     )

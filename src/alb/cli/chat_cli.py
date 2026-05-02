@@ -80,6 +80,22 @@ def chat(
         envvar=["ALB_OPENAI_COMPAT_KEY", "OPENAI_API_KEY"],
         help="Bearer token for openai-compat backends; omit for self-hosted servers.",
     ),
+    anthropic_key: str | None = typer.Option(
+        None,
+        "--anthropic-key",
+        envvar=["ALB_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"],
+        help=(
+            "Anthropic API key (sk-ant-...). Read from ANTHROPIC_API_KEY env "
+            "by default — never paste the key on the command line if shell "
+            "history is enabled."
+        ),
+    ),
+    anthropic_url: str | None = typer.Option(
+        None,
+        "--anthropic-url",
+        envvar="ALB_ANTHROPIC_URL",
+        help="Anthropic API base URL; default https://api.anthropic.com.",
+    ),
     fast: bool = typer.Option(
         False,
         "--fast",
@@ -115,6 +131,11 @@ def chat(
             backend_kwargs["api_key"] = api_key
     if ollama_url and backend == "ollama":
         backend_kwargs["base_url"] = ollama_url
+    if backend == "anthropic":
+        if anthropic_url:
+            backend_kwargs["base_url"] = anthropic_url
+        if anthropic_key:
+            backend_kwargs["api_key"] = anthropic_key
 
     try:
         llm = get_backend(backend, **backend_kwargs)

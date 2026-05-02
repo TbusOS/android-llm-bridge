@@ -119,11 +119,14 @@ def test_health_unknown_backend(client) -> None:
 def test_health_planned_backend(client) -> None:
     """`status="planned"` backends short-circuit before construction —
     no daemon ping, just a clear 'not implemented' signal so the UI
-    can grey out the card without surfacing an error toast."""
-    r = client.get("/playground/backends/anthropic/health")
+    can grey out the card without surfacing an error toast.
+
+    Uses `llama-cpp` (still status=planned · 嵌入式 deferred) since
+    `anthropic` got flipped to `beta` in M3 step 2 (commit 84)."""
+    r = client.get("/playground/backends/llama-cpp/health")
     assert r.status_code == 200
     body = r.json()
-    assert body["name"] == "anthropic"
+    assert body["name"] == "llama-cpp"
     assert body["reachable"] is False
     assert body["reason"] == "not_implemented"
     assert body["latency_ms"] is None
