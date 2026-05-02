@@ -504,6 +504,14 @@
 - **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
   "现在能显示 uart 打印的内容在 web 上吗" + "uart 调试 adb 调试 web 全部
   开发完全" → PR-A/C.a/C.b/D/E/B/G/F/H 全 ship · DEBT-022 batch ✅
+- **PR-C.c 关闭 2026-05-02**：commit `cef3d1f`。原候选"双向 UART 输入"
+  ship 完。serial.py 加 `open_session/close_session` 公开 API（共享物理
+  UART link，避免两次 _open EBUSY/single-client 拒）· uart_stream_route
+  支持 `write:true` 首帧升级 · UartLiveStream 加 [Allow input] checkbox
+  + WRITE 警示 pill + xterm.onData → ws.send_bytes（仅 writeEnabled 挂订阅）
+  · +3 测试（共 8 个 uart_stream 测试）· 真机部分 smoke OK（协商 +
+  read pump + close），write→物理 UART 端到端验证留待板子在 u-boot
+  prompt 或启用 sysrq 时再做（当前 Android 无 console getty 不响应）
 
 ---
 
