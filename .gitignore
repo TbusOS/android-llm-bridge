@@ -131,8 +131,14 @@ docs/reference/
 # - agents/commands/knowledge/reports 是团队工程方法论的一部分，必须入仓
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
-.claude/reports/screenshots/
-.claude/reports/web-check/
+# Use **/ prefix so the rules apply at any depth — running
+# scripts/web_check.mjs from web/ creates web/.claude/reports/web-check/
+# that the bare `.claude/reports/...` pattern would NOT match (gitignore
+# rules without leading slash still anchor to repo root for directory
+# components). 2026-05-02 audit revealed device serials / SoC names in
+# those screenshots; making the rule depth-agnostic prevents the leak.
+**/.claude/reports/screenshots/
+**/.claude/reports/web-check/
 # Personal operating guides kept out of the open-source repo
 adb-via-ssh-tunnel-guide*.md
 # Anything in a user's home directory tree
