@@ -660,9 +660,13 @@
     & reconnect" 按钮，先 xterm.clear() 再重连，避免残留字节被误读为
     新输出。普通 Clear 按钮保留
   - **MID-7 metrics set_interval pathological values** — setter 显式
-    reject NaN（**触发 L-030** · NaN 穿过 max/min 等价不钳位）；
-    control_ack 加 `clamped: true` + `requested_s` 让前端可知"你的值
-    被钳到 [0.1, 60]"。inf / -inf / 1e9 / 'not-a-number' 全测覆盖
+    reject NaN（**触发 L-030**）；control_ack 加 `clamped: true` +
+    `requested_s` 让前端可知"你的值被钳到 [0.1, 60]"。inf / -inf /
+    1e9 / 'not-a-number' 全测覆盖。**注**：同日 retroactive grep 实测
+    发现 Python `max(LO, min(HI, nan))` 在这个特定顺序下实际返回 HI（不
+    传染 NaN），所以 NaN reject 不是"修 bug"而是"防御性补强"（避免反向
+    顺序重构 / 跨语言移植被坑）；UX `clamped` flag 才是真改进。L-030 v2
+    已修订规则按语言+顺序分级
   - **MID-3 workspace iterdir** — files_route /workspace/files 改用
     `os.scandir`，DirEntry 缓存 is_dir/is_symlink 元信息；先排序 +
     截断到 _MAX_ENTRIES 再 stat 保留项。50k 文件目录省 48k stat()
@@ -680,6 +684,42 @@
 - **来源**：`.claude/reports/functional-audit-2026-05-02.md` MID 1/2/3/7
 - **关联**：L-030（NaN 钳位反模式 · 同 commit 触发）/ DEBT-028（早班
   HIGH 9 关 · 本条是同 audit 的 MID 收头）
+
+---
+
+## DEBT-030 · useLiveSession scaleSparkPoints 无 isFinite filter · L-030 retroactive grep 唯一真发现
+
+- **severity**：low（依赖后端 reducer 不发 NaN 的隐性契约 · 当前后端
+  实际不会发，但 contract 没显式守护）
+- **位置**：`web/src/features/dashboard/useLiveSession.ts:175-181`
+  ```ts
+  function scaleSparkPoints(samples: number[]): number[] {
+    if (samples.length === 0) return [];
+    const peak = Math.max(SPARK_MIN_CEILING, ...samples);
+    return samples.map((rate) => {
+      const norm = peak > 0 ? rate / peak : 0;
+      return Math.max(0, Math.min(SPARK_HEIGHT, SPARK_HEIGHT * (1 - norm)));
+    });
+  }
+  ```
+- **风险**：`samples` 来自 WS 帧 reducer，若任何一项是 NaN：
+  - `Math.max(SPARK_MIN_CEILING, ...NaN)` = NaN（JS Math 真传染）
+  - `peak = NaN` → `rate / peak` = NaN → `1 - NaN` = NaN
+  - 最后 `Math.max(0, Math.min(SPARK_HEIGHT, NaN))` = NaN
+  - SVG `<polyline points="x,NaN x,NaN ...">` 不渲染 / 报错
+- **修法**（一行 filter）：
+  ```ts
+  const finiteSamples = samples.filter(Number.isFinite);
+  if (finiteSamples.length === 0) return [];
+  const peak = Math.max(SPARK_MIN_CEILING, ...finiteSamples);
+  ```
+- **来源**：2026-05-02 L-030 retroactive grep 全仓扫 7 命中中唯一
+  真问题（其他 6 个 SAFE：5 个 Python 顺序安全 / 1 个 JS 上游
+  `Number() || DEFAULT` 兜底）
+- **是否计划修**：低优先 · 现在没爆（reducer 不发 NaN）；防御性补强
+  时一并 ship。**不阻塞下一票**
+- **关联**：L-030 (NaN 钳位语言 + 顺序分级 · 本条是 retroactive 唯一
+  真发现) / DEBT-029 (同日早班 metrics NaN reject 是同形态防御)
 
 ---
 

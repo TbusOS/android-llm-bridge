@@ -53,10 +53,20 @@ tools: Read, Grep, Bash
 ### 来自 L-019 (sentinel 反模式) — capability 检测必走 class-attr 而非 dict/hasattr
 - diff 命中 `hasattr(.*transport|hasattr(.*backend` → 看 `decisions.md` ADR-024 / ADR-033 seed 是否已为该模块拍板 N=2 升 ABC，未拍 + 已 N=2 → **MID** finding 提议立 ADR
 
-### 来自 L-030 (NaN 穿过 max/min/clamp) — 数值钳位代码必查 NaN 守护
-- diff 命中 `max\([^)]*min\(|min\([^)]*max\(|np\.clip\(|\.clamp\(` → 必查上游有无 `if .* != .*:` (NaN check 唯一可移植写法) 或 `math.isnan(` / `np.isnan(` 显式守护
-- 上游来源是 user-supplied float（`float\(.*get\(|float\(.*body\(|float\(.*request\.|float\(.*receive_json\(` 等 HTTP/WS/JSON 入参）+ 无 NaN check → **HIGH** finding（NaN 写入业务字段，下游 `asyncio.sleep(nan)` / `range(int(nan))` 静默崩）
-- 例外：内部计算产生（已知非 NaN 上游）可放过，但建议加 assert / 注释说明
+### 来自 L-030 (NaN 钳位行为按"语言 + 顺序"分级) — 数值钳位代码必查 NaN 守护
+**先看语言再分级 · 不要一刀切 HIGH**（v1 教训：早写时一刀切误伤 Python 标准顺序的安全代码）：
+
+- **HIGH** — JS / numpy / pandas / torch 钳位（任何顺序都传染 NaN）：
+  - 命中 `Math\.max\(.*Math\.min\(|Math\.min\(.*Math\.max\(` 在 `.ts|.tsx|.js|.jsx` → 上游链路无 `Number\.isFinite\(` / `isNaN\(` 守护 + user input 来源 = **HIGH**
+  - 命中 `np\.clip\(|\.clamp\(` 在 `.py` → 无 `np\.isnan\(` / `math\.isnan\(` 守护 + user input 来源 = **HIGH**
+
+- **MID** — Python 反向顺序（变量在第一位，顺序敏感）：
+  - 命中 `min\([a-z_][^,]*,\s*\d` (e.g. `min(x, 60)`) 或 `max\([a-z_][^,]*,\s*\d` (e.g. `max(x, 0)`) → 顺序敏感，NaN 会传染。建议改成标准 `max(LO, min(HI, x))` 顺序或加 NaN check = **MID**
+
+- **LOW / 放过** — Python 标准顺序 `max(LO, min(HI, x))`：
+  - 命中 `max\(\s*[\d\-\.]+\s*,\s*min\(` 在 `.py` → Python 这个顺序实际安全（实测 `max(0.1, min(60.0, nan))` = 60.0）。如上游有 `int()` / `try/except` / pydantic 校验兜底，不算 finding。**仅当用户明确要求"防御性极强"才提议加显式 NaN check**
+
+实测真值表见 `lessons.md` L-030（不要凭记忆判，必要时跑 `uv run python -c "..."` 实测验证）。
 
 执行流程：
 1. `git diff <range>` 拿改动
