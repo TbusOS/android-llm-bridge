@@ -475,12 +475,309 @@ async def test_health_http_error_returns_unreachable() -> None:
     assert h.error  # carries the httpx.HTTPStatusError repr
 
 
-# ─── stream() — placeholder until commit 83 ─────────────────────────
+# ─── stream() ───────────────────────────────────────────────────────
+
+
+def _anthropic_sse(events: list[dict[str, Any]]) -> bytes:
+    """Build Anthropic-style SSE payload.
+
+    Each event becomes the canonical pair:
+        event: <type>\\ndata: <json>\\n\\n
+    Our parser only reads the `data:` line + the inner `type` field,
+    so the `event:` prefix is cosmetic but kept for fidelity.
+    """
+    out = []
+    for ev in events:
+        etype = ev.get("type", "")
+        out.append(f"event: {etype}\ndata: {json.dumps(ev)}\n\n")
+    return "".join(out).encode("utf-8")
 
 
 @pytest.mark.asyncio
-async def test_stream_raises_until_implemented() -> None:
-    b = AnthropicBackend(api_key="k")
-    with pytest.raises(NotImplementedError):
+async def test_stream_text_deltas_and_done() -> None:
+    """Plain text stream → 3 token events + 1 done event with cumulative usage."""
+
+    payload = _anthropic_sse([
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "role": "assistant",
+                "model": "claude-haiku-4-5-20251001",
+                "content": [],
+                "stop_reason": None,
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+            },
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Hello"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": " there"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "!"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": {"output_tokens": 8},
+        },
+        {"type": "message_stop"},
+    ])
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=payload,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    b = AnthropicBackend(api_key="k", transport=_mock(handler))
+    events = [
+        ev async for ev in b.stream([Message(role="user", content="hi")])
+    ]
+
+    tokens = [e for e in events if e["type"] == "token"]
+    assert [t["delta"] for t in tokens] == ["Hello", " there", "!"]
+    assert all(t["tokens"] == 1 for t in tokens)
+
+    done = [e for e in events if e["type"] == "done"]
+    assert len(done) == 1
+    assert done[0]["content"] == "Hello there!"
+    assert done[0]["finish_reason"] == "stop"
+    # usage: input_tokens 10 (from message_start) + output_tokens 8
+    # (cumulative final from message_delta, NOT per-token sum)
+    assert done[0]["usage"] == {
+        "input_tokens": 10,
+        "output_tokens": 8,
+        "total_tokens": 18,
+    }
+    assert done[0]["tool_calls"] == []
+    assert done[0]["model"] == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
+async def test_stream_accumulates_tool_call_partial_json() -> None:
+    """tool_use block: input arrives as input_json_delta partial strings;
+    json.loads at content_block_stop materialises the ToolCall."""
+
+    payload = _anthropic_sse([
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_2", "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [], "stop_reason": None,
+                "usage": {"input_tokens": 25, "output_tokens": 1},
+            },
+        },
+        # First, a brief intro text block.
+        {
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "Looking up..."},
+        },
+        {"type": "content_block_stop", "index": 0},
+        # Then a tool_use block at index 1.
+        {
+            "type": "content_block_start", "index": 1,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_xyz", "name": "get_weather",
+                "input": {},  # empty placeholder; actual built from deltas
+            },
+        },
+        # input_json_delta arrives in 3 fragments — must concat then parse.
+        {
+            "type": "content_block_delta", "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": '{"ci'},
+        },
+        {
+            "type": "content_block_delta", "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": 'ty":"To'},
+        },
+        {
+            "type": "content_block_delta", "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": 'kyo"}'},
+        },
+        {"type": "content_block_stop", "index": 1},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+            "usage": {"output_tokens": 22},
+        },
+        {"type": "message_stop"},
+    ])
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=payload,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    b = AnthropicBackend(
+        model="claude-sonnet-4-6", api_key="k", transport=_mock(handler),
+    )
+    events = [
+        ev async for ev in b.stream([Message(role="user", content="x")])
+    ]
+
+    tokens = [e for e in events if e["type"] == "token"]
+    # Only the text block emits tokens — tool_use accumulates silently.
+    assert [t["delta"] for t in tokens] == ["Looking up..."]
+
+    done = [e for e in events if e["type"] == "done"]
+    assert len(done) == 1
+    assert done[0]["content"] == "Looking up..."
+    assert done[0]["finish_reason"] == "tool_calls"
+    assert len(done[0]["tool_calls"]) == 1
+    tc = done[0]["tool_calls"][0]
+    assert tc["id"] == "toolu_xyz"
+    assert tc["name"] == "get_weather"
+    assert tc["arguments"] == {"city": "Tokyo"}
+
+
+@pytest.mark.asyncio
+async def test_stream_malformed_partial_json_falls_back_to_raw() -> None:
+    """Defensive: if Anthropic sends junk JSON in input_json_delta
+    (it shouldn't, but the parser must not crash the agent loop),
+    we wrap the raw string under {"__raw__":...}."""
+
+    payload = _anthropic_sse([
+        {
+            "type": "message_start",
+            "message": {
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 1, "output_tokens": 0},
+            },
+        },
+        {
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "tool_use", "id": "t1", "name": "f"},
+        },
+        {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": "not-json"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use"},
+            "usage": {"output_tokens": 1},
+        },
+        {"type": "message_stop"},
+    ])
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=payload,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    b = AnthropicBackend(api_key="k", transport=_mock(handler))
+    events = [
+        ev async for ev in b.stream([Message(role="user", content="x")])
+    ]
+    done = [e for e in events if e["type"] == "done"][0]
+    assert done["tool_calls"][0]["arguments"] == {"__raw__": "not-json"}
+
+
+@pytest.mark.asyncio
+async def test_stream_max_tokens_finish_reason() -> None:
+    payload = _anthropic_sse([
+        {
+            "type": "message_start",
+            "message": {
+                "model": "claude-haiku-4-5-20251001",
+                "usage": {"input_tokens": 5, "output_tokens": 1},
+            },
+        },
+        {
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "truncated"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "max_tokens"},
+            "usage": {"output_tokens": 100},
+        },
+        {"type": "message_stop"},
+    ])
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=payload,
+                              headers={"content-type": "text/event-stream"})
+
+    b = AnthropicBackend(api_key="k", transport=_mock(handler))
+    events = [
+        ev async for ev in b.stream([Message(role="user", content="x")])
+    ]
+    done = [e for e in events if e["type"] == "done"][0]
+    assert done["finish_reason"] == "length"
+    assert done["usage"]["output_tokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_401_wrapped() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, content=b'{"error":"auth"}')
+
+    b = AnthropicBackend(api_key="bad", transport=_mock(handler))
+    with pytest.raises(BackendError) as exc:
         async for _ in b.stream([Message(role="user", content="x")]):
             pass
+    assert exc.value.code == "BACKEND_UNAUTHORIZED"
+
+
+@pytest.mark.asyncio
+async def test_stream_429_wrapped() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, content=b'{"error":"rate"}')
+
+    b = AnthropicBackend(api_key="k", transport=_mock(handler))
+    with pytest.raises(BackendError) as exc:
+        async for _ in b.stream([Message(role="user", content="x")]):
+            pass
+    assert exc.value.code == "BACKEND_RATE_LIMITED"
+
+
+@pytest.mark.asyncio
+async def test_stream_5xx_wrapped() -> None:
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, content=b"upstream down")
+
+    b = AnthropicBackend(api_key="k", transport=_mock(handler))
+    with pytest.raises(BackendError) as exc:
+        async for _ in b.stream([Message(role="user", content="x")]):
+            pass
+    assert exc.value.code == "BACKEND_HTTP_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_stream_no_api_key_raises_misconfigured() -> None:
+    b = AnthropicBackend(api_key=None)
+    with pytest.raises(BackendError) as exc:
+        async for _ in b.stream([Message(role="user", content="x")]):
+            pass
+    assert exc.value.code == "BACKEND_MISCONFIGURED"
