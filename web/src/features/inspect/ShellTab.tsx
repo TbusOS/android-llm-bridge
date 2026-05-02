@@ -42,6 +42,13 @@ export function ShellTab() {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
 
+  // SECURITY (DEBT-027 / security audit 2026-05-02 LOW 5):
+  // adb shell stdout flows raw into term.write() — same OSC injection
+  // surface as UartLiveStream. Keep xterm options on defaults only.
+  // Do NOT add `allowProposedApi: true` (enables OSC 52 clipboard
+  // write) or expose `linkHandler` that opens external URLs without
+  // a confirmation prompt. See L-027 for the broader HITL/OSC threat
+  // model.
   useEffect(() => {
     if (!containerRef.current) return;
     const term = new Terminal({

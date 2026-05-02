@@ -326,6 +326,49 @@ def test_writer_oserror_yields_single_write_error_close(
             assert "OSError" in close.get("error", "")
 
 
+def test_oversized_write_frame_dropped_not_closed(
+    monkeypatch, tmp_path
+) -> None:
+    """DEBT-026 / security LOW 4 — bidirectional write frame > 64 KB
+    must be dropped + reported via {type:'write_dropped'}, NOT close
+    the WS. A single bad paste shouldn't tear the session down."""
+    monkeypatch.chdir(tmp_path)
+    t = _FakeBidirectionalTransport(chunks=[b"out\n"] * 50)
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    app = create_app()
+    huge = b"A" * (64 * 1024 + 1)  # one byte over cap
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"write": True})
+            ready = ws.receive_json()
+            assert ready["write"] is True
+            ws.receive_bytes()  # drain one chunk so timing is deterministic
+            ws.send_bytes(huge)
+            # Drain in-flight binary, then expect a write_dropped (not
+            # closed) frame.
+            dropped = None
+            for _ in range(80):
+                msg = ws.receive()
+                if "text" in msg and msg["text"]:
+                    obj = json.loads(msg["text"])
+                    if obj.get("type") == "write_dropped":
+                        dropped = obj
+                        break
+                    if obj.get("type") == "closed":
+                        break
+            assert dropped is not None, "expected write_dropped frame"
+            assert dropped["reason"] == "frame_too_large"
+            assert dropped["got_bytes"] == 64 * 1024 + 1
+            # Session must still be alive — send a small frame & it goes through.
+            ws.send_bytes(b"ok")
+            # Close cleanly.
+            ws.send_json({"type": "close"})
+    assert b"ok" in t.last_link.writer.written
+    assert not any(buf == huge for buf in t.last_link.writer.written)
+
+
 def test_reader_oserror_yields_single_stream_error_close(
     monkeypatch, tmp_path
 ) -> None:

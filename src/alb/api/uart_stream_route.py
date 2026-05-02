@@ -60,6 +60,14 @@ from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
 
+# Per-frame cap on bidirectional client→UART writes.
+# Real keystrokes are 1-8 bytes; large pastes split into reasonable
+# frames by xterm. A single 64KB frame is ~430 ms of full-duplex 1.5
+# Mbaud serial — anything larger is likely a misuse (DoS / paste of
+# entire log file) and worth audit-logging + dropping.
+# (DEBT-026 / security audit 2026-05-02 LOW 4)
+_MAX_WRITE_FRAME_BYTES = 64 * 1024
+
 
 @dataclass
 class _CloseState:
@@ -265,6 +273,18 @@ async def _recv_loop(
             # Binary frame — UART input from client (PR-C.c).
             data = msg.get("bytes")
             if data and link is not None:
+                if len(data) > _MAX_WRITE_FRAME_BYTES:
+                    # DEBT-026: drop oversized frame, surface back to
+                    # client so they can split. Don't close the WS — a
+                    # single bad frame shouldn't tear the session down.
+                    with contextlib.suppress(Exception):
+                        await ws.send_json({
+                            "type": "write_dropped",
+                            "reason": "frame_too_large",
+                            "max_bytes": _MAX_WRITE_FRAME_BYTES,
+                            "got_bytes": len(data),
+                        })
+                    continue
                 try:
                     link.writer.write(data)
                     await link.writer.drain()
