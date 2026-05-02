@@ -732,4 +732,47 @@ finding MID #5 · L-020 (N=3 才抽抽象 · keepAlive 抽象 N=1 不上)
 
 ---
 
+## ADR-033 (seed) · transport capability 用 ABC class-attr 标，不 hasattr 检测
+
+**Status**: seed（PR-C.c review 5/02 提出，N=2 transport 出现时升正式）
+**Date**: 2026-05-02
+**Context**: PR-C.c bidirectional UART 加 `SerialTransport.open_session()`
+公开 API。`uart_stream_route._run_bidirectional` 用 `hasattr(transport,
+"open_session")` 检测能力 —— 是 duck-typing 检测。
+
+**问题**：未来 SSHTransport / HybridTransport 给一个 `open_session` 占位
+返回 `NotImplementedError` → `hasattr` 通过 → init_failed 而非
+write_unsupported（误报到客户端）。和 DEBT-017 / ADR-024 已修过的
+"LLMBackend dict-sentinel reachable=False" 反模式同形态（L-019 sentinel
+反模式）。
+
+**3 备选**：
+- (a) **保 hasattr**：v1 简单，只支持 SerialTransport 真实需求，1
+  consumer 不构成 spec 设计动力
+- (b) **加 class-attr 显式 capability**：`Transport.supports_bidirectional_uart:
+  bool = False`，SerialTransport 重写 True，路由用
+  `getattr(type(transport), "supports_bidirectional_uart", False)`。和
+  ADR-024 LLMBackend `class_attr: has_health_probe` 同 pattern
+- (c) **细化 ABC**：把 open_session 提到 Transport ABC 上 + 抛
+  NotImplementedError 默认实现。但污染 ABC 表面 — 不是所有 transport
+  都该有"双向 UART"概念
+
+**Decision**：**v1 选 (a) 保 hasattr，等 N=2 transport 出现时升 (b)**。
+理由：
+- 当前 N=1 (SerialTransport)，扩 ABC 等于"为还没存在的需求设计接口"，
+  违反 L-020 (N=3 才抽抽象，本场景 N≥2 即可考虑)
+- (b) 升正式时 SerialTransport 改 1 行 + Transport ABC 加 1 默认 attr +
+  路由改 getattr 即可，cost 低
+- 何时升：第 2 个 transport（最可能是 HybridTransport）想接 bidirectional
+  UART 时
+
+**何时拍板**：HybridTransport 实现 bidirectional UART / 或第 2 个 capability
+detection 用 hasattr 出现时（任一触发 spec 出炉）。
+
+**关联**：L-019 (sentinel 反模式 · dict reachable=False 是 hasattr 同
+形态) · ADR-024 (LLMBackend has_health_probe class-attr capability 已落)
+· DEBT-017 close (sentinel 反模式实例)
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）
