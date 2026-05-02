@@ -30,6 +30,7 @@ export function useMetricsSummary(windowSeconds = DEFAULT_WINDOW_S) {
     queryFn: ({ signal }) => fetchMetricsSummary(windowSeconds, signal),
     staleTime: REFETCH_MS,
     refetchInterval: REFETCH_MS,
+    refetchIntervalInBackground: false,
   });
   const tps = q.data?.tps ?? null;
   return {

@@ -56,6 +56,7 @@ export function useRecentSessions(limit = 100) {
     queryFn: ({ signal }) => fetchSessions(limit, signal),
     staleTime: REFETCH_MS,
     refetchInterval: REFETCH_MS,
+    refetchIntervalInBackground: false,
   });
   const now = Date.now();
   return {

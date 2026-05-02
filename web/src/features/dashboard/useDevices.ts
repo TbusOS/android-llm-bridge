@@ -83,6 +83,7 @@ export function useDevices(): DevicesViewModel {
     queryFn: ({ signal }) => fetchDevices(signal),
     staleTime: REFETCH_MS,
     refetchInterval: REFETCH_MS,
+    refetchIntervalInBackground: false,
   });
   const data = q.data;
   return {

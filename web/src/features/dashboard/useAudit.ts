@@ -87,6 +87,7 @@ export function useAudit(minutes = 30, limit = 200): AuditViewModel {
     queryFn: ({ signal }) => fetchAudit(minutes, limit, signal),
     staleTime: REFETCH_MS,
     refetchInterval: REFETCH_MS,
+    refetchIntervalInBackground: false,
   });
   return {
     events: q.data?.events.map(mapAuditToTimeline) ?? [],
