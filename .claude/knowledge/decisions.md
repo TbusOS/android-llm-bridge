@@ -477,44 +477,60 @@ override 用 flag，长尾走 config）。即 `--ollama-url` / `--openai-url`
 
 ---
 
-## ADR-027 (seed) · BackendSpec.runs_on_cpu 语义改名 / 拆分
+## ADR-027 · BackendSpec.runs_on_cpu → host_compute_type 三态
 
-**Status**: seed（M3 step 3 Anthropic 落地时拍板）
-**Date**: 2026-04-30
-**Context**: 当前 `BackendSpec.runs_on_cpu` 语义模糊：
+**Status**: ✅ accepted 2026-05-02（M3 step 2 commit `332d743`）
+**Date**: 2026-04-30 seed → 2026-05-02 升正式
+**Context**: 原 `BackendSpec.runs_on_cpu: bool` 语义模糊：
 - OllamaBackend `runs_on_cpu=True` —— 字面对（本机 CPU 推理）
 - OpenAICompatBackend `runs_on_cpu=True` —— 字面**错**（上游可能 8×H100
   GPU server，alb-host 只发 HTTP）
-- 未来 AnthropicBackend `runs_on_cpu=False` —— 字面**也错**（alb-host
-  根本不跑模型，是 SaaS API）
+- AnthropicBackend `runs_on_cpu=False` —— 字面**也错**（alb-host 根本
+  不跑模型，是 SaaS API）
 
-字段当前实际语义 = "alb-host 端的 CPU/GPU 需求 = CPU 即可"。三个
-backend 都满足这个，但字面读起来"runs on cpu" 让用户误解为"模型在
-CPU 跑"。
+字段实际语义 = "alb-host 端的 CPU/GPU 需求"，但字面"runs on cpu" 误导
+用户以为是"模型在 CPU 跑"。
 
-**Decision**：暂不改（破坏性 + 当前 N=2 还能忍），M3 step 3 Anthropic
-落地时一并改名。
+**Decision**：选 **(b) `host_compute_type: 'cpu' | 'gpu' | 'remote'`** 三态
+enum。M3 step 2 Anthropic 落地时一并改（早一步落，比 seed 提的"M3 step
+3 Anthropic"更早，因为 step 2/3 顺序在 ship 前调换 —— LlamaCpp 嵌入式
+有 4 个 footgun deferred，Anthropic 提到 step 2）。
 
-**改名候选**：
+**3 备选回顾 + 拒方理由**：
 
-- (a) **`host_gpu_required: bool`**（语义反向）—— Ollama: False, OpenAI-
-  compat: False, Anthropic: False, LlamaCpp(GPU 编译): True。**优势**：
-  名字直接说"alb-host 这边需不需要 GPU"，不混淆"模型是否在 CPU 跑"
-- (b) **拆成 `host_compute_type: 'cpu' | 'gpu' | 'remote'`**（三态）——
-  Ollama/LlamaCpp: 'cpu'，OpenAI-compat: 'remote'，Anthropic: 'remote'，
-  未来本地 GPU 推理 backend: 'gpu'。**优势**：表达更准；**劣势**：
-  序列化 / 前端 enum 处理要改
-- (c) **拆成两个字段** `host_cpu_only: bool` + `inference_remote: bool`
-  —— **劣势**：两个布尔表达三态，组合能出 4 个但只用 3 个。
+- ❌ (a) `host_gpu_required: bool`（反向布尔）—— 拒：仍只能表达 2 态，
+  "remote" 概念表达不出（Anthropic / OpenAI-compat 用 False 还是 True？
+  False 显然不准）。
+- ✅ (b) `host_compute_type: 'cpu' | 'gpu' | 'remote'` 三态 —— 选这个。
+  序列化 / 前端 enum 改动可控（实际只 1 个 TS interface + 1 个 surface
+  方法），表达精确。
+- ❌ (c) 拆 `host_cpu_only: bool` + `inference_remote: bool` —— 拒：
+  两个布尔表达三态，4 组合用 3 个有歧义状态空间。
 
-**推荐方向**：(b) `host_compute_type` 三态 enum。前端 `LlmBackendCards`
-显示 "CPU"/"GPU"/"远程"，比"runs on cpu: true"清晰。
+**ship 实际清单**（commit `332d743` cross-cut 9 文件 · 纯 rename）：
 
-**何时拍板**：M3 step 3 AnthropicBackend PR 必含本 ADR 决策 + 一并把
-`runs_on_cpu` 改名（registry + frontend manifest type + dashboard 渲
-染同步）。
+- `BackendSpec.host_compute_type: str` 替换 `runs_on_cpu: bool`
+- 4 实例 reclassify：ollama=cpu / openai-compat=remote / llama-cpp=cpu /
+  anthropic=remote
+- `LLMBackend` ABC 类属性同步改名（默认 `"cpu"`）
+- `OllamaBackend` / `OpenAICompatBackend` 改 `host_compute_type`
+- `playground_route` 响应字段改 + `playground_cli` 表头从 "CPU?" 改 "host"
+- `web/src/lib/api.ts` `ApiBackend` interface 改三态 union type
+- `docs/agent.md` + `docs/web-api.md` 同步说明
 
-**关联**：M3 step 1 arch-reviewer #6 / architecture.md 字段语义条目
+**API 破坏性变更**（pre-1.0 + 仅 dashboard 展示用，无外部消费者）：
+GET /playground/backends 响应 `runs_on_cpu` 字段消失，新增
+`host_compute_type`。
+
+**未做的事 / 遗留**：
+- 前端 `LlmBackendCards` 当前不渲染 host_compute_type（仅 status 标签）。
+  以后如果加"按 host type 过滤"功能，三态 enum 已就位
+- ADR-026（CLI flag 还是 config 文件）仍 seed —— 等 LlamaCpp / 第 4
+  backend 落地再拍。本步只新增 anthropic 2 个 flag (`--anthropic-key` /
+  `--anthropic-url`)，N×flag 模式未到拐点
+
+**关联**：M3 step 1 arch-reviewer #6 / architecture.md 字段语义条目 ·
+  ADR-016 (LLMBackend ABC 设计原则) · M3 step 2 commit `332d743`
 
 ---
 
@@ -818,6 +834,57 @@ write 类 endpoint 实质增多：
 **关联**：security-audit `.claude/reports/security-audit-2026-05-02.md`
 finding MID 2 · L-027 (HITL bypass 已修，0.0.0.0 暴露面是放大该问题
 的运维维度)
+
+---
+
+## ADR-035 · LlamaCpp 嵌入式 backend deferred · 改 step 顺序 step 2/3 互换
+
+**Status**: ✅ accepted 2026-05-02（M3 ship 决策）
+**Date**: 2026-05-02
+**Context**: M3 原计划：step 1 OpenAICompat → step 2 LlamaCpp 嵌入式 →
+step 3 Anthropic。step 1 已 ship（commit `344fb47`，2026-04-30）。
+step 2 LlamaCpp 嵌入式调研后发现 4 个真实工程 footgun，不应当下做。
+
+**4 footgun 评估**：
+
+1. **sync/async 桥接复杂度**：`llama-cpp-python` 是 sync 库（C++ binding）。
+   alb 全 async。chat 可用 `asyncio.to_thread()` 一调；但 streaming 需要
+   thread + asyncio.Queue 双向桥接，每个 token 跨线程推送，正确性 / 取消
+   / 异常传播都是非平凡工程
+2. **依赖体积**：50+ MB binary wheel · pip 装失败要本机编译（要 C++
+   toolchain · macOS / Linux 各架构 wheel 矩阵庞大）
+3. **测试不可行**：单测需 GGUF 文件（最小也是几百 MB）；只能 importorskip
+   skip 大部分逻辑，CI 几乎无覆盖
+4. **抽象验证强度低**：LlamaCpp 跟 Ollama 都是 CPU 推理同形态
+   （`host_compute_type="cpu"`）。M3 真正要回答的设计问题是 ABC 能不能
+   容纳"完全异构"的 backend —— Anthropic（云 SaaS · 计费 / API key /
+   速率限制 / 协议差异 / cache_control）是更强的 ABC 验证
+
+**Decision**：M3 step 2/3 顺序互换，先 ship Anthropic（commits 81~84），
+LlamaCpp 嵌入式 deferred。registry 保留 `llama-cpp` 条目 status="planned"
+作占位。
+
+**用户替代方案**：用 `openai-compat` backend 接 llama.cpp 自带的 OpenAI
+兼容 server：
+```bash
+# 一端：起 llama.cpp 内置 server
+python3 -m llama_cpp.server --model path.gguf --port 8080
+
+# 另一端：alb 用 openai-compat 接它
+alb chat --backend openai-compat --openai-url http://localhost:8080/v1 \
+         --model default
+```
+零额外代码，已经 work。
+
+**何时重新评估**：
+- 用户明确报告"必须嵌入式 / 不能起 daemon"的真实场景（移动 alb-host 单
+  进程发布等）
+- llama-cpp-python 出现纯 async API（项目层修了 sync 桥接 footgun）
+- 有"alb-host 必须 GPU 推理"的 backend 需求（届时 LlamaCpp on CUDA 是
+  自然选择，host_compute_type="gpu" 字段已就位）
+
+**关联**：ADR-016 (LLMBackend ABC) · ADR-027 (host_compute_type 三态) ·
+M3 step 2 commits 81~84 (Anthropic 实际 ship)
 
 ---
 
