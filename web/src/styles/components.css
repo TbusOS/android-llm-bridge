@@ -2483,7 +2483,11 @@ html[lang^="zh"] h3 {
   background: #f7e3e3;
 }
 
-.files-tab__modal {
+/* PR-E.v2 · shared HITL confirm modal (lifted from PR-H FilesTab inline
+ * modal · used by ShellTab and FilesTab now).  N=2 consumers exercise
+ * the same shape; if N≥3 ever lands additional API surface (focus trap,
+ * portal, animation) consider react-aria-modal. */
+.hitl-modal {
   position: fixed;
   inset: 0;
   background: rgba(20, 18, 14, 0.45);
@@ -2493,37 +2497,72 @@ html[lang^="zh"] h3 {
   z-index: 200;
 }
 
-.files-tab__modal-card {
+.hitl-modal__card {
   background: white;
   border-radius: var(--radius-md);
   border: 1px solid var(--anth-border);
   padding: var(--space-3) var(--space-4, 24px);
-  max-width: 520px;
+  max-width: 540px;
   width: 100%;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
 }
 
-.files-tab__modal-card h3 {
+.hitl-modal__card h3 {
   font-family: var(--font-heading);
   margin: 0 0 var(--space-2);
 }
 
-.files-tab__modal-kv {
+.hitl-modal__card p {
+  margin: 0 0 var(--space-2);
+  color: var(--anth-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.hitl-modal__kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 4px var(--space-2);
-  margin: var(--space-2) 0;
+  gap: 6px var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.files-tab__modal-kv dt {
-  color: var(--anth-text-secondary);
+.hitl-modal__kv-row {
+  display: contents;
 }
 
-.files-tab__modal-actions {
+.hitl-modal__kv dt {
+  color: var(--anth-text-secondary);
+  white-space: nowrap;
+}
+
+.hitl-modal__kv dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.hitl-modal__actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-3);
+}
+
+/* Danger variant of .btn — used for HITL approve when the action is
+ * destructive (rm /system, push to bootloader). Shares the .btn base
+ * sizing/typography so it slots into existing button rows. */
+.btn--danger {
+  background: var(--anth-red, #b94545);
+  color: white;
+  border: 1px solid #a23a3a;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #a23a3a;
+}
+
+.btn--danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }

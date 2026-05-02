@@ -17,8 +17,11 @@
  *   C → S {type:'hitl_response', approve, allow_session}
  *   S → C {type:'closed', exit_code, error?}
  *
- * v1 ignores HITL prompts — they get logged to console.warn until the
- * UI layer for "command needs your approval" lands.
+ * PR-E.v2: HITL prompts surface via `onHitl` subscribers — the UI
+ * (ShellTab) opens a modal and replies via `respondHitl`. Default
+ * fallback is auto-deny (preserves v1 behaviour for tests / consumers
+ * that never wire onHitl). The hook auto-denies only if NO subscriber
+ * is registered when a request arrives, so the shell never hangs.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +41,14 @@ export interface TerminalConnectArgs {
   readOnly?: boolean;
 }
 
+export interface HitlRequest {
+  command: string;
+  rule: string;
+  reason: string;
+  /** Whatever else the server includes — surfaced verbatim to the modal. */
+  raw: Record<string, unknown>;
+}
+
 export interface TerminalSessionApi {
   state: TerminalSessionState;
   error: string | null;
@@ -47,11 +58,17 @@ export interface TerminalSessionApi {
   sendBytes: (data: Uint8Array | string) => void;
   sendResize: (rows: number, cols: number) => void;
   onBytes: (cb: (chunk: ArrayBuffer) => void) => () => void;
+  /** Subscribe to HITL prompts. Returns unsubscribe. If NO subscriber
+   * is registered when one arrives the hook auto-denies (no hang). */
+  onHitl: (cb: (req: HitlRequest) => void) => () => void;
+  /** Reply to the most recent HITL request. */
+  respondHitl: (approve: boolean, allowSession: boolean) => void;
 }
 
 export function useTerminalSession(): TerminalSessionApi {
   const wsRef = useRef<WebSocket | null>(null);
   const subsRef = useRef<Set<(chunk: ArrayBuffer) => void>>(new Set());
+  const hitlSubsRef = useRef<Set<(req: HitlRequest) => void>>(new Set());
   const [state, setState] = useState<TerminalSessionState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -126,19 +143,36 @@ export function useTerminalSession(): TerminalSessionApi {
                 setState("ended");
               }
             } else if (msg.type === "hitl_request") {
-              // PR-E v1: log + auto-deny so the shell doesn't hang on
-              // an unanswered prompt. UI layer comes in PR-E v2.
-              console.warn("HITL prompt (auto-denied in v1):", msg);
-              try {
-                ws.send(
-                  JSON.stringify({
-                    type: "hitl_response",
-                    approve: false,
-                    allow_session: false,
-                  }),
-                );
-              } catch {
-                // ignore
+              const subs = hitlSubsRef.current;
+              if (subs.size > 0) {
+                // PR-E.v2: hand the request to subscribers (ShellTab
+                // opens the modal). Modal is responsible for calling
+                // respondHitl — we don't auto-deny here, otherwise
+                // a subscriber that takes a beat to render would race
+                // the auto-deny and the modal would surface a stale
+                // request the server already answered.
+                const req: HitlRequest = {
+                  command: String(msg.command ?? ""),
+                  rule: String(msg.rule ?? ""),
+                  reason: String(msg.reason ?? ""),
+                  raw: msg,
+                };
+                subs.forEach((cb) => cb(req));
+              } else {
+                // No subscriber — fall back to v1 auto-deny so a
+                // headless / test consumer never hangs the shell.
+                console.warn("HITL prompt (no subscriber, auto-denied):", msg);
+                try {
+                  ws.send(
+                    JSON.stringify({
+                      type: "hitl_response",
+                      approve: false,
+                      allow_session: false,
+                    }),
+                  );
+                } catch {
+                  // ignore
+                }
               }
             }
           } catch {
@@ -199,6 +233,32 @@ export function useTerminalSession(): TerminalSessionApi {
     };
   }, []);
 
+  const onHitl = useCallback((cb: (req: HitlRequest) => void) => {
+    hitlSubsRef.current.add(cb);
+    return () => {
+      hitlSubsRef.current.delete(cb);
+    };
+  }, []);
+
+  const respondHitl = useCallback(
+    (approve: boolean, allowSession: boolean) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "hitl_response",
+            approve,
+            allow_session: allowSession,
+          }),
+        );
+      } catch {
+        // ignore
+      }
+    },
+    [],
+  );
+
   useEffect(() => () => cleanup(), [cleanup]);
 
   return {
@@ -210,5 +270,7 @@ export function useTerminalSession(): TerminalSessionApi {
     sendBytes,
     sendResize,
     onBytes,
+    onHitl,
+    respondHitl,
   };
 }

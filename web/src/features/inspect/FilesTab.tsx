@@ -20,6 +20,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+import { HitlConfirmModal } from "../../components/HitlConfirmModal";
 import { useApp } from "../../stores/app";
 import {
   type DeviceFileEntry,
@@ -285,60 +286,36 @@ export function FilesTab() {
         ) : null}
       </div>
 
-      {pendingPush ? (
-        <div
-          className="files-tab__modal"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setPendingPush(null);
-          }}
-        >
-          <div className="files-tab__modal-card">
-            <h3>
-              {lang === "zh"
-                ? "敏感路径写入确认"
-                : "Sensitive path push confirmation"}
-            </h3>
-            <p>
-              {lang === "zh"
-                ? "目标路径属于系统敏感前缀，覆写可能影响系统稳定性甚至导致设备无法启动。继续？"
-                : "The target path is in a sensitive system prefix. Overwriting may destabilise the device or prevent boot. Continue?"}
-            </p>
-            <dl className="files-tab__modal-kv">
-              <dt>local</dt>
-              <dd>
-                <code>{pendingPush.local}</code>
-              </dd>
-              <dt>remote</dt>
-              <dd>
-                <code>{pendingPush.remote}</code>
-              </dd>
-              <dt>reason</dt>
-              <dd>{pendingPush.error}</dd>
-            </dl>
-            <div className="files-tab__modal-actions">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setPendingPush(null)}
-              >
-                {lang === "zh" ? "取消" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={confirmPush}
-                disabled={pushMutation.isPending}
-              >
-                {lang === "zh"
-                  ? "确认覆写（force）"
-                  : "Confirm push (force)"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <HitlConfirmModal
+        open={pendingPush !== null}
+        title={
+          lang === "zh"
+            ? "敏感路径写入确认"
+            : "Sensitive path push confirmation"
+        }
+        description={
+          lang === "zh"
+            ? "目标路径属于系统敏感前缀，覆写可能影响系统稳定性甚至导致设备无法启动。继续？"
+            : "The target path is in a sensitive system prefix. Overwriting may destabilise the device or prevent boot. Continue?"
+        }
+        details={
+          pendingPush
+            ? {
+                local: <code>{pendingPush.local}</code>,
+                remote: <code>{pendingPush.remote}</code>,
+                reason: pendingPush.error,
+              }
+            : undefined
+        }
+        cancelLabel={lang === "zh" ? "取消" : "Cancel"}
+        approveLabel={
+          lang === "zh" ? "确认覆写（force）" : "Confirm push (force)"
+        }
+        approveDanger
+        pending={pushMutation.isPending}
+        onCancel={() => setPendingPush(null)}
+        onApprove={confirmPush}
+      />
     </div>
   );
 }
