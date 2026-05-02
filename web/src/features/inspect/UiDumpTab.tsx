@@ -7,7 +7,7 @@
  * each clickable region).
  */
 
-import { useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { ScanSearch } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 
@@ -46,12 +46,22 @@ export function UiDumpTab() {
   }
 
   const dump = last?.ui_dump;
-  const nodes = dump?.root ? flattenNodes(dump.root, 0) : [];
-  const visibleNodes = filter
-    ? nodes.filter((n) =>
-        nodeMatch(n.node, filter.toLowerCase()),
-      )
-    : nodes;
+  // Cache the flattened tree so the keystroke path doesn't re-walk a
+  // 2000-node tree on every input character. flattenNodes is pure
+  // over `dump.root`, so memo by reference identity.
+  const nodes = useMemo(
+    () => (dump?.root ? flattenNodes(dump.root, 0) : []),
+    [dump?.root],
+  );
+  // Deferred filter: input updates are eager (typing stays snappy),
+  // the actual list filter runs at lower priority — React 18 will
+  // skip intermediate frames if the user is still typing.
+  const deferredFilter = useDeferredValue(filter);
+  const visibleNodes = useMemo(() => {
+    if (!deferredFilter) return nodes;
+    const q = deferredFilter.toLowerCase();
+    return nodes.filter((n) => nodeMatch(n.node, q));
+  }, [nodes, deferredFilter]);
 
   return (
     <div className="uidump-tab">

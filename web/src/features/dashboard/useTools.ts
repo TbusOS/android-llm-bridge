@@ -20,6 +20,7 @@ export function useTools() {
     queryFn: ({ signal }) => fetchTools(signal),
     staleTime: REFETCH_MS,
     refetchInterval: REFETCH_MS,
+    refetchIntervalInBackground: false,
   });
   return {
     count: q.data?.count ?? 0,

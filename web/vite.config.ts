@@ -62,6 +62,13 @@ export default defineConfig({
         entryFileNames: "assets/[name]-[hash].js",
         chunkFileNames: "assets/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash][extname]",
+        // Split xterm into its own chunk so the dashboard / chat /
+        // playground entries don't pay the ~80 KB gzip cost just to
+        // exist. Loaded on demand when InspectPage opens UART /
+        // Logcat / Shell tabs (PR-H follow-up perf-audit 2026-05-02).
+        manualChunks: {
+          xterm: ["@xterm/xterm", "@xterm/addon-fit"],
+        },
       },
     },
   },

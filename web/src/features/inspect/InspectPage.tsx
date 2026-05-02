@@ -8,17 +8,37 @@
  * Dump / Files ship with deep links, they should each become nested
  * routes under /inspect/...
  */
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { SubNav } from "../../components/SubNav";
 import { useApp } from "../../stores/app";
-import { ChartsTab } from "./ChartsTab";
-import { FilesTab } from "./FilesTab";
-import { LogcatTab } from "./LogcatTab";
-import { ScreenshotTab } from "./ScreenshotTab";
-import { ShellTab } from "./ShellTab";
-import { SystemInfoTab } from "./SystemInfoTab";
-import { UartTab } from "./UartTab";
-import { UiDumpTab } from "./UiDumpTab";
+
+// Lazy-load each tab so the heavy ones (UART/Shell pull xterm.js =
+// ~80 KB gzip, Charts pulls Sparkline + chart styles) only land when
+// the user opens that tab. Keeps first-paint of /inspect lean.
+const SystemInfoTab = lazy(() =>
+  import("./SystemInfoTab").then((m) => ({ default: m.SystemInfoTab })),
+);
+const ChartsTab = lazy(() =>
+  import("./ChartsTab").then((m) => ({ default: m.ChartsTab })),
+);
+const UartTab = lazy(() =>
+  import("./UartTab").then((m) => ({ default: m.UartTab })),
+);
+const LogcatTab = lazy(() =>
+  import("./LogcatTab").then((m) => ({ default: m.LogcatTab })),
+);
+const ShellTab = lazy(() =>
+  import("./ShellTab").then((m) => ({ default: m.ShellTab })),
+);
+const ScreenshotTab = lazy(() =>
+  import("./ScreenshotTab").then((m) => ({ default: m.ScreenshotTab })),
+);
+const UiDumpTab = lazy(() =>
+  import("./UiDumpTab").then((m) => ({ default: m.UiDumpTab })),
+);
+const FilesTab = lazy(() =>
+  import("./FilesTab").then((m) => ({ default: m.FilesTab })),
+);
 
 type TabKey =
   | "system"
@@ -94,14 +114,16 @@ export function InspectPage() {
         ariaLabel={lang === "zh" ? "Inspect 子模块" : "Inspect sub-nav"}
       />
 
-      {tab === "system" ? <SystemInfoTab /> : null}
-      {tab === "charts" ? <ChartsTab /> : null}
-      {tab === "uart" ? <UartTab /> : null}
-      {tab === "logcat" ? <LogcatTab /> : null}
-      {tab === "shell" ? <ShellTab /> : null}
-      {tab === "screenshot" ? <ScreenshotTab /> : null}
-      {tab === "ui-dump" ? <UiDumpTab /> : null}
-      {tab === "files" ? <FilesTab /> : null}
+      <Suspense fallback={<div className="mock-card">loading…</div>}>
+        {tab === "system" ? <SystemInfoTab /> : null}
+        {tab === "charts" ? <ChartsTab /> : null}
+        {tab === "uart" ? <UartTab /> : null}
+        {tab === "logcat" ? <LogcatTab /> : null}
+        {tab === "shell" ? <ShellTab /> : null}
+        {tab === "screenshot" ? <ScreenshotTab /> : null}
+        {tab === "ui-dump" ? <UiDumpTab /> : null}
+        {tab === "files" ? <FilesTab /> : null}
+      </Suspense>
     </section>
   );
 }

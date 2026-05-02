@@ -45,6 +45,7 @@ export function useDeviceDetails(serial: string | null | undefined) {
     queryKey: ["device-details", serial],
     enabled: !!serial,
     refetchInterval: REFETCH_MS,
+    refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => {
       if (!serial) throw new Error("missing serial");
       const r = await fetchDeviceDetails(serial, signal);
