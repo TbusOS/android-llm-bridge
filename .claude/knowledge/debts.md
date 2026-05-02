@@ -477,14 +477,23 @@
   sysrq）· v1 read-only 留出的 follow-up
 - **PR-E.v2 候选**：HITL approve / deny modal UI（v1 auto-deny，遇到
   rm -rf 这种命令直接静默拒绝不友好）· 多 shell session tab strip
-- **PR-H 候选**：文件浏览器（adb pull/push UI · workspace ls + 远端
-  /sdcard ls + 双向传输 + HITL gates 非 /sdcard 写入）· batch 最后一个
+- **PR-H 关闭 2026-05-01**：commit `00cc532`。alb-api 加 5 endpoint
+  files_route.py（GET /devices/{s}/files ls 解析 / GET /workspace/files
+  本地 ls / POST .../files/pull / POST .../files/push / GET
+  /workspace/files/download/{path} FileResponse 流式）· HITL 命中
+  /system /vendor /data /dev /proc /sys /persist /oem /boot /recovery
+  /metadata 返回 requires_confirm=true，前端 modal 二次确认后 force=true
+  重提（/data/local/tmp 例外）· frontend FilesTab 双栏 + useFileBrowser
+  hook（query+mutation 共用 invalidate）· +22 tests · DEBT-022 batch
+  9/9 完成 · inspect 8 tabs 全数接真数据
 - **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板，PR-B 二 endpoint 模式
   完成) · PR-C.a/b/D/E/F 同 stream pattern · ADR-030 seed (stream hook
-  base 抽象，N=5 时再评估)
+  base 抽象，N=5 时再评估) · ADR-031 seed (filesync HITL 在 endpoint 层
+  vs PermissionEngine · M1 engine 只识 shell cmd，PR-H 路径前缀 HITL 写
+  endpoint，待 engine 加 filesync 规则后下沉)
 - **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
   "现在能显示 uart 打印的内容在 web 上吗" + "uart 调试 adb 调试 web 全部
-  开发完全" → PR-A/C.a/C.b/D/E/B/G/F 全 ship · 仅 PR-H 文件浏览器待
+  开发完全" → PR-A/C.a/C.b/D/E/B/G/F/H 全 ship · DEBT-022 batch ✅
 
 ---
 
