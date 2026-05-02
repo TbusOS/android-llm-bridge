@@ -95,7 +95,8 @@ export function useLogcatStream(): LogcatStreamApi {
               if (
                 msg.reason === "init_failed" ||
                 msg.reason === "stream_error" ||
-                msg.reason === "unsupported_source"
+                msg.reason === "unsupported_source" ||
+                msg.reason === "bad_filter"
               ) {
                 setState("error");
                 setError(msg.error || msg.reason);

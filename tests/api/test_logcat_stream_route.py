@@ -149,3 +149,75 @@ def test_stream_endpoint_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [w["path"] for w in body["ws"]]
     assert "/logcat/stream" in paths
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "*:Q",  # bad level
+        "MyApp",  # missing :level
+        "MyApp:VV",  # bad level
+        "MyApp:V *:bad",  # one good one bad
+        "tag with space:V",  # tag has space → splits into bad tokens
+        "$evil:V",  # disallowed shell metachar in tag
+    ],
+)
+def test_bad_filter_spec_rejected_with_close_frame(monkeypatch, tmp_path, spec) -> None:
+    """Server must validate filter spec and reject before spawning logcat."""
+    built = {"called": False}
+
+    def _build(**_):
+        built["called"] = True
+        return _FakeAdbStreamTransport()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("alb.api.logcat_stream_route.build_transport", _build)
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/logcat/stream") as ws:
+            ws.send_json({"filter": spec})
+            msg = ws.receive_json()
+            assert msg["type"] == "closed"
+            assert msg["reason"] == "bad_filter"
+            assert "expected" in msg["error"].lower()
+    assert built["called"] is False
+
+
+def test_good_filter_specs_pass(monkeypatch, tmp_path) -> None:
+    """Valid filter specs must reach the transport."""
+    captured_kwargs: dict = {}
+
+    def _build(**_):
+        return _FakeAdbStreamTransport(last_kwargs=captured_kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("alb.api.logcat_stream_route.build_transport", _build)
+    app = create_app()
+    with TestClient(app) as c:
+        # Multi-token, mixed case, dotted tag, asterisk.
+        with c.websocket_connect("/logcat/stream") as ws:
+            ws.send_json({"filter": "MyApp.Net:v Other-Tag:I *:S"})
+            ws.receive_json()
+            for _ in range(3):
+                ws.receive_bytes()
+    assert captured_kwargs.get("filter") == "MyApp.Net:v Other-Tag:I *:S"
+
+
+def test_empty_filter_passes(monkeypatch, tmp_path) -> None:
+    captured_kwargs: dict = {}
+
+    def _build(**_):
+        return _FakeAdbStreamTransport(last_kwargs=captured_kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("alb.api.logcat_stream_route.build_transport", _build)
+    app = create_app()
+    with TestClient(app) as c:
+        # Whitespace-only filter is treated as no filter.
+        with c.websocket_connect("/logcat/stream") as ws:
+            ws.send_json({"filter": "   "})
+            ws.receive_json()
+            for _ in range(3):
+                ws.receive_bytes()
+    # Empty string falls through truthy check → not forwarded as kwarg.
+    assert "filter" not in captured_kwargs

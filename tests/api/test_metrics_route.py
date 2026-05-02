@@ -115,5 +115,48 @@ def test_metrics_ws_set_interval(client) -> None:
             m = ws.receive_json()
             if m.get("type") == "control_ack" and m.get("action") == "set_interval":
                 assert m["interval_s"] == 0.25
+                # In-band value, no clamp flag.
+                assert "clamped" not in m
+                return
+        raise AssertionError("never received set_interval ack")
+
+
+def test_metrics_ws_set_interval_clamped_flag(client) -> None:
+    """Pathological values must be clamped AND advertise `clamped=true`
+    so the UI can show a "value adjusted" warning (MID-7)."""
+    with client.websocket_connect("/metrics/stream") as ws:
+        ws.send_json({})
+        ws.receive_json()  # history
+        ws.send_json({
+            "type": "control",
+            "action": "set_interval",
+            "value_s": 1e9,  # absurd
+        })
+        for _ in range(50):
+            m = ws.receive_json()
+            if m.get("type") == "control_ack" and m.get("action") == "set_interval":
+                assert m["interval_s"] == 60.0
+                assert m.get("clamped") is True
+                assert m.get("requested_s") == 1e9
+                return
+        raise AssertionError("never received set_interval ack")
+
+
+def test_metrics_ws_set_interval_nan_no_change(client) -> None:
+    """NaN input must leave the interval untouched and ack reflects truth."""
+    with client.websocket_connect("/metrics/stream") as ws:
+        ws.send_json({})
+        ws.receive_json()  # history
+        ws.send_json({
+            "type": "control",
+            "action": "set_interval",
+            "value_s": float("nan"),
+        })
+        for _ in range(50):
+            m = ws.receive_json()
+            if m.get("type") == "control_ack" and m.get("action") == "set_interval":
+                # Nothing changed; clamped flag NOT set since requested is NaN.
+                assert m["interval_s"] > 0
+                assert "clamped" not in m
                 return
         raise AssertionError("never received set_interval ack")

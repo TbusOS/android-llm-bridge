@@ -382,6 +382,20 @@ def test_streamer_interval_clamp() -> None:
     assert s.interval_s == 60.0
 
 
+def test_streamer_interval_rejects_nan_and_garbage() -> None:
+    """NaN propagates through max/min so the setter must reject it."""
+    s = MetricsStreamer(AsyncMock(), interval_s=1.0)
+    s.interval_s = 0.5
+    s.interval_s = float("nan")
+    assert s.interval_s == 0.5  # unchanged
+    s.interval_s = float("inf")  # clamps to 60
+    assert s.interval_s == 60.0
+    s.interval_s = float("-inf")  # clamps to 0.1
+    assert s.interval_s == 0.1
+    s.interval_s = "not-a-number"  # type: ignore[assignment]  # ValueError → no-op
+    assert s.interval_s == 0.1
+
+
 @pytest.mark.asyncio
 async def test_get_streamer_shares_instance_per_device() -> None:
     t = _mk_transport([_combined_stdout()])

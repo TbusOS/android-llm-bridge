@@ -36,6 +36,7 @@ filesync rules (tracked under the broader permissions backlog).
 from __future__ import annotations
 
 import asyncio
+import os
 import posixpath
 import shlex
 from pathlib import Path
@@ -295,23 +296,53 @@ async def workspace_files(
         return {"ok": False, "path": path, "entries": [],
                 "error": "path is not a directory"}
 
-    entries: list[dict[str, Any]] = []
+    # MID-3: use os.scandir so 50k-file directories don't pay 50k
+    # extra stat() calls before truncation — DirEntry caches is_dir /
+    # is_symlink from the readdir() syscall, so we sort + slice on
+    # cheap metadata and only lstat the entries we keep.
     truncated = False
-    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+    try:
+        with os.scandir(target) as it:
+            scanned = list(it)
+    except OSError as exc:
+        return {"ok": False, "path": path, "entries": [],
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    def _sort_key(e: os.DirEntry[str]) -> tuple[bool, str]:
+        try:
+            is_dir = e.is_dir(follow_symlinks=False)
+        except OSError:
+            is_dir = False
+        return (not is_dir, e.name.lower())
+
+    scanned.sort(key=_sort_key)
+    if len(scanned) > _MAX_ENTRIES:
+        truncated = True
+        scanned = scanned[:_MAX_ENTRIES]
+
+    entries: list[dict[str, Any]] = []
+    for child in scanned:
         try:
             # lstat (not stat) so symlinks pointing OUT of workspace
             # don't leak target file size / mtime to the client.
             # security audit 2026-05-02 finding MID 3.
-            stat = child.lstat()
+            stat = child.stat(follow_symlinks=False)
         except OSError:
             continue
         # Only follow symlinks for is_dir / is_file determination if
         # they resolve inside workspace_root — otherwise treat the
         # symlink itself as the entry (won't be opened anyway since
         # workspace_download has its own resolve+relative_to gate).
-        is_link = child.is_symlink()
-        is_dir = (not is_link) and child.is_dir()
-        is_file = (not is_link) and child.is_file()
+        try:
+            is_link = child.is_symlink()
+        except OSError:
+            is_link = False
+        try:
+            is_dir = (not is_link) and child.is_dir()
+            is_file = (not is_link) and child.is_file()
+        except OSError:
+            is_dir = False
+            is_file = False
         entries.append({
             "name": child.name,
             "is_dir": is_dir,
@@ -319,9 +350,6 @@ async def workspace_files(
             "size": stat.st_size if is_file else 0,
             "mtime_epoch": stat.st_mtime,
         })
-        if len(entries) >= _MAX_ENTRIES:
-            truncated = True
-            break
 
     root = workspace_root().resolve()
     rel_to_root = str(target.relative_to(root)) if target != root else ""
