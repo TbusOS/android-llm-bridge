@@ -69,3 +69,14 @@ Legend: OK complete / PART partial / GAP missing.
 Notes:
 - Reviewed today's HEAD `5709037`. No tests run; static analysis only.
 - Already-known by other audits: focus trap, a11y, CLS, loading-empty-error tri-state, code-reviewer 5-axis (resource leaks, error propagation, concurrency, test coverage, API stability), security audit MID 3 (lstat) — explicitly excluded above.
+
+## Closure status (updated 2026-05-02)
+
+- **HIGH**: 4/5 closed in `b33c1c4` + `53e984d` (early shift). #3 (metrics queue) was an auditor misread — `metrics.py:241` already caps the per-subscriber queue at `maxsize=20` with drop-oldest semantics; no fix needed.
+- **MID**: 4/8 closed in `dbf5dca` (late shift):
+  - MID-1 logcat invalid filter → `_validate_filter_spec` + `bad_filter` close-frame
+  - MID-2 UART stale bytes → "Clear & reconnect" button (error/ended state)
+  - MID-7 metrics set_interval → NaN reject + `clamped`/`requested_s` ack (triggered L-030)
+  - MID-3 workspace iterdir → `os.scandir` + sort/truncate-then-stat
+- **MID remaining (4)** → backlog: MID-4 Range header / MID-5 PTY exit rationale / MID-6 Pull/Push cancel+progress / MID-8 WS heartbeat
+- **LOW (5)** → backlog (deferred — no user-visible weirdness)
