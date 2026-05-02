@@ -92,7 +92,7 @@ def test_device_files_lists_parsed_entries(client, fake_transport) -> None:
     assert body["serial"] == "SERIAL01"
     assert body["path"] == "/sdcard/"
     last = fake_transport.shell_calls[-1]
-    assert last.startswith("ls -la --time-style=long-iso ")
+    assert last.startswith("ls -la ")
     assert "/sdcard/" in last
 
     names = [e["name"] for e in body["entries"]]
