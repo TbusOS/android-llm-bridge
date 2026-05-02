@@ -1125,36 +1125,50 @@ ui-fluency-auditor 当天发现）
 
 ---
 
-## L-030 · NaN 穿过 max/min/clamp · 数值钳位代码必须显式 reject NaN
+## L-030 · NaN 钳位行为按"语言 + 顺序"分级 · explicit NaN check 是唯一跨语言可移植安全写法
 
-**Date**: 2026-05-02（functional audit MID-7 metrics set_interval 触发 ·
-fix `dbf5dca`）
+**Date**: 2026-05-02（functional audit MID-7 metrics 触发 + 同日 grep
+全仓扫触发 self-correction 修订）
 
-**规则**：任何"输入数值钳到合法区间"的代码（典型 `max(LO, min(HI, x))`
-模式），必须**先显式 NaN check 再钳位**，不能假设 max/min 会把 NaN
-"压回区间"。NaN 在 IEEE 754 比较中和任何值比都是 False，Python `max` /
-`min` 内置遇 NaN 直接返回 NaN（不抛错），结果是 NaN 写入业务字段，
-后续除法 / sleep / 比较全部传染。
+**修订史**：
+- v1（同日早写）：错误地宣称"max/min 永远不安全 NaN 会传染"。把 Python
+  `max(LO, min(HI, x))` 也归入 HIGH，是技术事实错误
+- v2（同日 retroactive grep audit 后修订）：实测发现 Python 这个特定
+  顺序实际安全。规则按语言 + 顺序重新分级（本条）
 
-**Why**：
+**实测真值表**（IEEE 754 NaN，Python 3.11 / Node.js 22 / numpy 1.26）：
 
-- 2026-05-02 functional-auditor 报"metrics set_interval 接受 negative /
-  1e9 等病态值"。我以为 `_interval_s = max(0.1, min(60.0, float(value)))`
-  已经够安全。读 audit 后顺手测了下：
-  - `max(0.1, min(60.0, float("nan")))` 返回 `nan`（不报错）
-  - 写入 `self._interval_s = nan` 后下一帧 `await asyncio.sleep(nan)`
-    立刻抛 `ValueError: sleep length must be non-negative`，整个
-    streamer 死循环
-  - inf / -inf 反而是安全的（min/max 能正确钳位）
-- IEEE 754 NaN 性质：`nan != nan` is True；`nan < x` / `nan > x` 都是
-  False；Python `max(a, b)` 遇 NaN 实现是"返回第二个参数"或"返回 NaN"
-  视实现细节定，**永远不安全**
-- 同形态坑：`numpy.clip(nan, lo, hi)` 也返回 NaN（设计如此 · 所以 numpy
-  专门有 `nan_to_num`）；不少业务代码以为 clip 安全实际不安全
+| 写法 | 入参 NaN 时返回 | 安全 |
+|---|---|---|
+| Python `max(LO, min(HI, nan))` | `HI`（clamps） | ✅ |
+| Python `min(nan, HI)` | `nan`（传染） | ❌ |
+| Python `min(HI, nan)` | `HI` | ✅ |
+| Python `max(nan, LO)` | `nan` | ❌ |
+| Python `max(LO, nan)` | `LO` | ✅ |
+| JS `Math.max(LO, Math.min(HI, NaN))` | `NaN`（传染） | ❌ |
+| JS `Math.min/max` 任意顺序 | `NaN` | ❌ |
+| `numpy.clip(nan, lo, hi)` | `nan`（传染 · 设计如此） | ❌ |
+| `pandas.clip` / `Tensor.clamp` | `nan` | ❌ |
+| `int(float("nan"))` | `ValueError` 抛 | ✅（隐式守护） |
 
-**How to apply**：
+**根因**：Python 内置 `min(a, b)` 实现是 `a if a < b else b`。NaN 比较
+全 False，所以 `a < b` 是 False 时返回 `b`。JS `Math.min/max` 设计上
+显式传染 NaN（C 标准 fmin/fmax 反而 quiet-NaN，但 Math.min 不是）。
+顺序敏感性是 Python 实现细节，**不应依赖**。
 
-写"输入合法区间钳位"代码时，标准三件套：
+**规则**：
+
+- **强 (HIGH)**：JS `Math.max/min` / `numpy.clip` / pandas/torch clamp
+  路径上接 user-supplied float 且无 `Number.isFinite` / `np.isnan`
+  守护 → 必报 NaN 传染风险
+- **中 (MID)**：Python `min(x, HI)` 或 `max(x, LO)` 把变量放第一位 →
+  顺序敏感，建议加守护或改成 `max(LO, min(HI, x))` 标准顺序
+- **弱 (LOW / 可放过)**：Python `max(LO, min(HI, x))` 标准顺序 + 上游
+  有 `int()` / try-except / `|| DEFAULT` 兜底 → 实际安全，但**仍建议
+  加 explicit NaN check 提高跨语言可读性**（避免读者误以为不安全 ·
+  避免后续重构改顺序时静默引入 bug）
+
+**How to apply**（统一推荐写法 · 最强可移植）：
 
 ```python
 def setter(self, value):
@@ -1162,38 +1176,50 @@ def setter(self, value):
         v = float(value)
     except (TypeError, ValueError):
         return  # garbage 不动旧值
-    if v != v:  # NaN check（NaN 不等于自己是 IEEE 754 唯一可移植判法）
+    if v != v:  # NaN check（IEEE 754 唯一可移植判法）
         return
     self._field = max(LO, min(HI, v))
 ```
 
-或用 `math.isnan(v)`（语义更清晰，但 import math 多一行）。
+```typescript
+function clamp(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;  // NaN / Inf / -Inf 全挡
+  return Math.max(lo, Math.min(hi, v));
+}
+```
 
 **触发条件**：
 
-- 写 `max(LO, min(HI, ...))` / `clip()` / `clamp()` / numpy `np.clip`
-- 输入来源是用户 JSON / WS message / API param（任何允许 float 入参的
-  edge）
-- setter 写入后续被 `asyncio.sleep` / `time.sleep` / `range(int(x))` /
-  `Decimal(x)` 等"NaN 不友好"消费者用
+- 输入来源是 user-supplied float（HTTP body / WS frame / param /
+  React input + 无 `|| DEFAULT` 兜底）
+- 写 `np.clip` / pandas clamp / torch clamp（任何顺序都传染）
+- 写 JS `Math.max/min` 钳位（任何顺序都传染）
+- setter 写入后续被 `asyncio.sleep` / `time.sleep` / `Decimal(x)` /
+  绘图坐标 / SVG d-path 等"NaN 不友好"消费者用
 
 **反面教材**：
 
-- 2026-05-02 metrics_route `set_interval` 接 `value_s: float("nan")` →
-  `_interval_s = nan` → 下一帧 sleep 抛 ValueError，streamer 静默崩溃
-  （恰好被 DEBT-028 早班修的"server_error 关帧"逻辑兜住，但本来该一
-  开始就拒）
+- 2026-05-02 早班自己写 L-030 v1 时**没实测**就泛化"NaN 穿过
+  max/min"。同日下午 grep 全仓扫拿"playground.py HIGH retroactive"，
+  实测后才发现 Python `max(LO, min(HI, x))` 在这个顺序下**实际安全**。
+  虚警一次。教训：**写 lesson 前必须实测**，不能用"应该如此"的推演
+  当事实
+- 真存在风险的是 useLiveSession.ts:180 `Math.max(0, Math.min(SPARK_HEIGHT,
+  SPARK_HEIGHT * (1 - norm)))` —— JS Math 真传染 + samples 来自 WS 帧
+  无 isFinite filter（DEBT-030 跟踪）
 
-**应用到 agents**：
+**应用到 agents**（按语言 + 顺序分级 · 见 code-reviewer.md L-030 grep）：
 
-- code-reviewer grep checklist 加：
-  `grep -rnE 'max\([^)]*min\(|np\.clip\(|\.clamp\(' src/` 命中 → 检查
-  上游有没有 `if v != v: return` / `math.isnan(v)` 守护
-- 如果上游是 user-supplied float（HTTP body / WS frame / param），
-  必须报 finding "NaN 钳位漏 NaN check"
+- 命中 `Math\.max\(.*Math\.min\(|Math\.min\(.*Math\.max\(` 在 .ts/.tsx
+  → user input 链路无 Number.isFinite 守护 = **HIGH**
+- 命中 `np\.clip\(|\.clamp\(` 在 .py → 无 np.isnan 守护 = **HIGH**
+- 命中 Python `max\([^)]*min\(` → 标准顺序 + 上游隐式守护 = LOW
+  （建议加显式 NaN check，但不阻塞 ship）
+- 命中 Python `min\([a-z_][^)]*,` 变量在第一位 → MID（顺序敏感）
 
 **关联**：L-024 (单测用 GNU coreutils mental model · 本条是"用'数学常识'
-mental model 写代码漏 IEEE 754 corner case" · 同形态盲区)
+mental model 写代码漏 IEEE 754 corner case + 漏跨语言行为差异" · 同
+形态盲区) · 全局 CLAUDE.md "代码事实禁止 hedge / 写前必须实测"
 
 ---
 
