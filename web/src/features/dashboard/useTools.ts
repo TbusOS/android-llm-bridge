@@ -8,19 +8,16 @@
  *
  * Closes DEBT-003 (KpiStrip MCP tools value previously hard-coded "21").
  */
-import { useQuery } from "@tanstack/react-query";
-
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 import { fetchTools, type ToolsResponse } from "../../lib/api";
 
 const REFETCH_MS = 60_000;
 
 export function useTools() {
-  const q = useQuery<ToolsResponse>({
+  const q = useDashboardQuery<ToolsResponse>({
     queryKey: ["tools"],
     queryFn: ({ signal }) => fetchTools(signal),
-    staleTime: REFETCH_MS,
-    refetchInterval: REFETCH_MS,
-    refetchIntervalInBackground: false,
+    refetchMs: REFETCH_MS,
   });
   return {
     count: q.data?.count ?? 0,

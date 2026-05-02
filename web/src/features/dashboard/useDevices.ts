@@ -6,7 +6,7 @@
  * understands. CPU / temp series are intentionally empty here — those
  * come from the `/metrics/stream` WS in a later step.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 
 import { fetchDevices, type ApiDevice, type DevicesResponse } from "../../lib/api";
 import type { DeviceCardData, DeviceStatus, Transport } from "./types";
@@ -78,12 +78,10 @@ export interface DevicesViewModel {
 }
 
 export function useDevices(): DevicesViewModel {
-  const q = useQuery<DevicesResponse>({
+  const q = useDashboardQuery<DevicesResponse>({
     queryKey: ["devices"],
     queryFn: ({ signal }) => fetchDevices(signal),
-    staleTime: REFETCH_MS,
-    refetchInterval: REFETCH_MS,
-    refetchIntervalInBackground: false,
+    refetchMs: REFETCH_MS,
   });
   const data = q.data;
   return {

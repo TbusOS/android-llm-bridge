@@ -34,7 +34,9 @@
  *
  * Closes DEBT-002 (was MOCK_BACKENDS) + DEBT-017 (runtime health gap).
  */
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
+
+import { useDashboardQuery } from "../../lib/dashboardQuery";
 
 import {
   fetchBackendHealth,
@@ -118,13 +120,10 @@ export interface UseBackendsResult {
 }
 
 export function useBackends(): UseBackendsResult {
-  const manifestQuery = useQuery<BackendsResponse>({
+  const manifestQuery = useDashboardQuery<BackendsResponse>({
     queryKey: ["backends"],
     queryFn: ({ signal }) => fetchBackends(signal),
-    staleTime: MANIFEST_REFETCH_MS,
-    refetchInterval: MANIFEST_REFETCH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: false,
+    refetchMs: MANIFEST_REFETCH_MS,
   });
   const apiBackends = manifestQuery.data?.backends ?? [];
 
