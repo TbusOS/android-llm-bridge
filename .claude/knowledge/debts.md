@@ -486,6 +486,16 @@
   重提（/data/local/tmp 例外）· frontend FilesTab 双栏 + useFileBrowser
   hook（query+mutation 共用 invalidate）· +22 tests · DEBT-022 batch
   9/9 完成 · inspect 8 tabs 全数接真数据
+- **PR-H follow-up 2026-05-02**（code-review + perf-audit 修）：
+  - `bd49156` toybox 兼容（去 `--time-style=long-iso` flag）
+  - `f64a10c` 安全 + UX：HITL `..` bypass 修（`_is_safe_remote_path` 拒
+    `..` + `_is_sensitive_remote` `posixpath.normpath`）/ FilesTab path
+    input `useDebouncedValue(300ms)` 防 adb shell 雪崩 / sort-before-truncate /
+    transport 字段补全 / +5 regression test = 27 总计
+  - `0c74b2c` perf：lazy-load 8 inspect tabs + `manualChunks` 拆 xterm /
+    6 dashboard hook 加 `refetchIntervalInBackground:false` / UiDumpTab
+    `useMemo`+`useDeferredValue`。主 bundle 722 KB → 346 KB raw（gzip
+    206 KB → 110 KB，**-46% 首屏**）· vite >500KB warning 消失
 - **关联 ADR**：ADR-028 / ADR-029 (PR-A 落地拍板，PR-B 二 endpoint 模式
   完成) · PR-C.a/b/D/E/F 同 stream pattern · ADR-030 seed (stream hook
   base 抽象，N=5 时再评估) · ADR-031 seed (filesync HITL 在 endpoint 层
@@ -494,6 +504,43 @@
 - **来源**：2026-04-30 user UX 反馈（device 信息）+ 2026-05-01 user 追加
   "现在能显示 uart 打印的内容在 web 上吗" + "uart 调试 adb 调试 web 全部
   开发完全" → PR-A/C.a/C.b/D/E/B/G/F/H 全 ship · DEBT-022 batch ✅
+
+---
+
+## DEBT-023 · xterm.js 全量入主 bundle —— **CLOSED 2026-05-02**
+
+- **severity**：mid（性能 · 主 bundle 首屏 +80 KB gzip 浪费 · 非热路径
+  所有用户必须下载 xterm 才能看 dashboard / chat）
+- **症状**：`docs/app/assets/index-_hlwuQOg.js` 722 KB raw / 206 KB gzip，
+  vite 警告 "chunks > 500 KB"。perf-audit 反查发现 `BufferLine×34` /
+  `Viewport×18` / `RenderService` 等 xterm 全量符号入主 entry chunk，
+  仅 ShellTab + UartLiveStream 用
+- **关闭**：commit `0c74b2c` (perf-audit HIGH #1)。改：
+  - `web/vite.config.ts` `rollupOptions.output.manualChunks: {xterm:
+    ["@xterm/xterm","@xterm/addon-fit"]}`
+  - `web/src/features/inspect/InspectPage.tsx` 8 tabs 全 `React.lazy`
+    + `<Suspense>` fallback "loading…"
+- **效果**：主 bundle 722 KB → **346 KB raw / 110 KB gzip**（-46% 首屏）·
+  xterm 独立 chunk 334 KB / 84 KB gzip 按需加载 · vite warning 消失 ·
+  各 tab 独立 4-9 KB lazy chunk
+- **来源**：performance-auditor 报告 2026-05-02 finding HIGH #1
+- **关联**：ADR-032 (8 tab unmount/remount 不做 keepAlive)
+
+## DEBT-024 · 6 dashboard hook 漏 `refetchIntervalInBackground:false` —— **CLOSED 2026-05-02**
+
+- **severity**：mid（性能 · 浏览器 tab 切走时仍 30s polling，每分钟 12
+  无效 HTTP 请求 + DEBT-008 events.jsonl 全量扫被放大）
+- **症状**：6 hook (`useSessions`/`useTools`/`useMetricsSummary`/
+  `useAudit`/`useDeviceDetails`/`useDevices`) 全部缺 `refetchIntervalInBackground:false`，
+  只有 `useBackends`（M2 ship 时写）有。新 hook 按"copy useSessions
+  pattern"思路写，bug 等比例传染
+- **关闭**：commit `0c74b2c` (perf-audit HIGH #2)。6 hook 全加 flag，
+  对齐 useBackends pattern
+- **效果**：隐藏窗口 zero-value polling 累计 ~720 req/h 浪费 → 0 ·
+  events.jsonl 全量扫频率减半
+- **来源**：performance-auditor 报告 2026-05-02 finding HIGH #2
+- **关联**：L-025 (新 useQuery hook 必须 sweep refetchIntervalInBackground /
+  refetchOnWindowFocus 两 flag) · DEBT-008 (events.jsonl 全量扫已知)
 
 ---
 
