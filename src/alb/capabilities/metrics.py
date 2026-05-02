@@ -205,7 +205,15 @@ class MetricsStreamer:
     def interval_s(self, value: float) -> None:
         # Clamp to a reasonable [0.1s, 60s] band — protects the device
         # from a runaway client and stops zombie clients from hogging.
-        self._interval_s = max(0.1, min(60.0, float(value)))
+        # NaN propagates through max/min unchanged, so reject it explicitly
+        # and fall back to the current interval.
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        if v != v:  # NaN check
+            return
+        self._interval_s = max(0.1, min(60.0, v))
 
     @property
     def paused(self) -> bool:

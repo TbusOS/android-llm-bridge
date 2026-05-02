@@ -182,6 +182,53 @@ def test_workspace_files_404_when_missing(client) -> None:
     assert "does not exist" in body["error"]
 
 
+def test_workspace_files_truncates_large_directory(
+    client, workspace, monkeypatch
+) -> None:
+    """50k-file dirs should slice on cheap DirEntry sort and not pay
+    50k stat() calls (MID-3). We patch _MAX_ENTRIES to 5 and create 50
+    files; truncated must be True and entries length must be 5."""
+    import alb.api.files_route as mod
+
+    monkeypatch.setattr(mod, "_MAX_ENTRIES", 5)
+    big = workspace / "big"
+    big.mkdir()
+    for i in range(50):
+        (big / f"f{i:03d}.txt").write_text("x")
+
+    body = client.get("/workspace/files", params={"path": "big"}).json()
+    assert body["ok"] is True
+    assert body["truncated"] is True
+    assert len(body["entries"]) == 5
+    # Sort guarantees first 5 names alphabetical.
+    names = [e["name"] for e in body["entries"]]
+    assert names == sorted(names)
+
+
+def test_workspace_files_dirs_first_within_truncation(
+    client, workspace, monkeypatch
+) -> None:
+    """Mixed dirs + files: dirs must come before files so a 50k-file
+    dir doesn't hide its subdirs past the cutoff."""
+    import alb.api.files_route as mod
+
+    monkeypatch.setattr(mod, "_MAX_ENTRIES", 5)
+    mixed = workspace / "mixed"
+    mixed.mkdir()
+    # 50 files + 3 dirs, dirs alphabetically late
+    for i in range(50):
+        (mixed / f"file{i:03d}.txt").write_text("x")
+    for n in ("zzz_dir1", "zzz_dir2", "zzz_dir3"):
+        (mixed / n).mkdir()
+
+    body = client.get("/workspace/files", params={"path": "mixed"}).json()
+    assert body["ok"] is True
+    assert body["truncated"] is True
+    # All 3 dirs must survive the cap; they sort first regardless of name.
+    is_dir = [e["is_dir"] for e in body["entries"]]
+    assert is_dir.count(True) == 3
+
+
 # ─── POST /devices/{serial}/files/pull ──────────────────────────────
 def test_pull_default_local_lands_in_workspace(client, fake_transport, workspace) -> None:
     body = client.post(

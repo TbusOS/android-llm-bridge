@@ -114,19 +114,33 @@ async def _recv_loop(ws: WebSocket, streamer: MetricsStreamer) -> None:
                 streamer.pause()
             elif action == "resume":
                 streamer.resume()
-            elif action == "set_interval":
+            requested: float | None = None
+            if action == "set_interval":
                 try:
-                    streamer.interval_s = float(msg.get("value_s", 1.0))
+                    requested = float(msg.get("value_s", 1.0))
                 except (TypeError, ValueError):
-                    pass
-            else:
+                    requested = None
+                if requested is not None and requested == requested:  # not NaN
+                    streamer.interval_s = requested
+            elif action not in ("pause", "resume"):
                 continue
-            await ws.send_json({
+            ack: dict[str, Any] = {
                 "type": "control_ack",
                 "action": action,
                 "interval_s": streamer.interval_s,
                 "paused": streamer.paused,
-            })
+            }
+            # MID-7: surface clamp so the UI can warn users that pathological
+            # interval values (negative, NaN, 1e9) were silently corrected.
+            if (
+                action == "set_interval"
+                and requested is not None
+                and requested == requested  # not NaN
+                and abs(requested - streamer.interval_s) > 1e-9
+            ):
+                ack["clamped"] = True
+                ack["requested_s"] = requested
+            await ws.send_json(ack)
     except WebSocketDisconnect:
         return
     except Exception:

@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -39,6 +40,34 @@ from alb.api.schema import API_VERSION
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
+
+_FILTER_TOKEN = re.compile(r"^[A-Za-z0-9_.*-]+:[VDIWEFSvdiwefs]$")
+
+
+def _validate_filter_spec(spec: str | None) -> str | None:
+    """Return error message if logcat filter spec is invalid, None if OK.
+
+    Accepts None / empty / whitespace-only as valid (no filter).
+    Each whitespace-separated token must be `<TAG>:<LEVEL>` where TAG is
+    alphanumeric / underscore / dash / dot / asterisk, and LEVEL is one
+    of V D I W E F S (case-insensitive).
+    """
+    if spec is None:
+        return None
+    s = spec.strip()
+    if not s:
+        return None
+    bad: list[str] = []
+    for tok in s.split():
+        if not _FILTER_TOKEN.match(tok):
+            bad.append(tok)
+    if bad:
+        sample = ", ".join(repr(t) for t in bad[:3])
+        return (
+            f"invalid filter token(s): {sample}; "
+            "expected '<TAG>:<LEVEL>' where LEVEL ∈ V D I W E F S"
+        )
+    return None
 
 
 @router.websocket("/logcat/stream")
@@ -55,6 +84,25 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
     # mirrors alb_logcat MCP tool ergonomics.
     if not filter_spec and isinstance(tags, list) and tags:
         filter_spec = " ".join([f"{t}:V" for t in tags] + ["*:S"])
+
+    spec_err = _validate_filter_spec(filter_spec)
+    if spec_err is not None:
+        await ws.send_json(
+            {
+                "type": "closed",
+                "reason": "bad_filter",
+                "error": spec_err,
+            }
+        )
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
+    # Normalize whitespace-only / empty to None so downstream "no filter"
+    # path is taken consistently.
+    if filter_spec is not None and not filter_spec.strip():
+        filter_spec = None
+    elif isinstance(filter_spec, str):
+        filter_spec = filter_spec.strip()
 
     try:
         transport = build_transport(device_serial=device)

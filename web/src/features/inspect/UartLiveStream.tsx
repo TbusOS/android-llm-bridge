@@ -114,6 +114,13 @@ export function UartLiveStream({ device }: Props) {
 
   const onConnect = () => connect(device, { write: writeMode });
   const onClear = () => termRef.current?.clear();
+  // Recover from `error` / `ended` cleanly — wipe stale bytes from
+  // xterm before reopening the WS so the user doesn't conflate fresh
+  // output with the pre-error log line that triggered the failure.
+  const onClearAndReconnect = () => {
+    termRef.current?.clear();
+    connect(device, { write: writeMode });
+  };
 
   const stateLabel: Record<typeof state, string> = {
     idle: lang === "zh" ? "未连接" : "idle",
@@ -154,6 +161,22 @@ export function UartLiveStream({ device }: Props) {
           <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
           {lang === "zh" ? "清屏" : "Clear"}
         </button>
+        {(state === "error" || state === "ended") && (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={onClearAndReconnect}
+            disabled={!device}
+            title={
+              lang === "zh"
+                ? "清屏并重连，避免残留字节误读"
+                : "wipe stale bytes and reopen the stream"
+            }
+          >
+            <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            {lang === "zh" ? "清屏并重连" : "Clear & reconnect"}
+          </button>
+        )}
         <label className="uart-tab__write-toggle">
           <input
             type="checkbox"
