@@ -114,7 +114,19 @@ export function InspectPage() {
         ariaLabel={lang === "zh" ? "Inspect 子模块" : "Inspect sub-nav"}
       />
 
-      <Suspense fallback={<div className="mock-card">loading…</div>}>
+      {/*
+        L-028: Suspense fallback minHeight must roughly match the
+        lazy children's actual rendered height (FilesTab/UartTab
+        have min-height: 480-540px). Without this, first-time tab
+        switch would CLS by ~480px.
+      */}
+      <Suspense
+        fallback={
+          <div className="mock-card" style={{ minHeight: 480 }}>
+            loading…
+          </div>
+        }
+      >
         {tab === "system" ? <SystemInfoTab /> : null}
         {tab === "charts" ? <ChartsTab /> : null}
         {tab === "uart" ? <UartTab /> : null}

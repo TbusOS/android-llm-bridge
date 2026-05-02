@@ -2164,6 +2164,25 @@ html[lang^="zh"] h3 {
   user-select: none;
 }
 
+/* WRITE pill 单独高对比红 — connected + writeEnabled 时显示。
+ * 旧实现复用 --warn 是 orange-on-cream 对比度 ~2.6:1 远低于 WCAG AA，
+ * 而误键能锁板 — 必须扎眼（ui-fluency 2026-05-02 MID 5）。 */
+.uart-tab__state--write-on {
+  background: var(--anth-red, #b94545);
+  color: white;
+  border-color: #a23a3a;
+  font-weight: 600;
+}
+
+/* L-029 helper text: title 在移动端 / 键盘 focus 不显示，
+ * 警告类提示必须始终可见（ui-fluency 2026-05-02 MID 6）。 */
+.uart-tab__write-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--anth-text-tertiary);
+  margin-left: 4px;
+}
+
 .uart-tab__write-toggle input[type="checkbox"] {
   margin: 0;
   cursor: pointer;
