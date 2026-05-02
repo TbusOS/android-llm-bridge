@@ -115,12 +115,12 @@ src/alb/agent/
 ├── backend.py         # LLMBackend ABC + Message / ToolCall / ToolSpec / ChatResponse / BackendError
 ├── loop.py            # AgentLoop (tool-calling 循环) + DEFAULT_SYSTEM_PROMPT
 ├── session.py         # ChatSession (JSONL 持久化到 workspace/sessions/)
-└── backends/          # M2/M3 逐个实现，M1 为空
+└── backends/          # M2/M3 逐个实现
     ├── __init__.py
-    ├── ollama.py          (M2)
-    ├── openai_compat.py   (M2)
-    ├── llama_cpp.py       (M3)
-    └── anthropic.py       (M3)
+    ├── ollama.py          (M2 beta · 本机 Ollama daemon)
+    ├── openai_compat.py   (M3 step 1 · 任何 OpenAI 兼容 /v1)
+    ├── anthropic.py       (M3 step 2 beta · Claude API)
+    └── llama_cpp.py       (deferred · 直接用 openai-compat 接 llama.cpp 自带 server)
 ```
 
 ### 3.1 `backend.py` —— LLMBackend ABC

@@ -264,7 +264,11 @@ BACKENDS: list[BackendSpec] = [
         # Cloud SaaS — alb-host is just an HTTP client.
         host_compute_type="remote",
         supports_tool_calls=True,
-        status="planned",
+        # M3 step 2 ship 2026-05-02. Backend is implemented and tested
+        # (see tests/agent/test_anthropic.py — 34 cases). Users still
+        # need to set ANTHROPIC_API_KEY; the dashboard reflects "no
+        # key configured" as a clear unreachable state, not silent red.
+        status="beta",
         requires=["ANTHROPIC_API_KEY"],
         description="Claude API — Anthropic-hosted Claude models.",
     ),
