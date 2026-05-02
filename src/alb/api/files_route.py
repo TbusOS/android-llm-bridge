@@ -35,6 +35,7 @@ filesync rules (tracked under the broader permissions backlog).
 
 from __future__ import annotations
 
+import posixpath
 import shlex
 from pathlib import Path
 from typing import Any
@@ -84,12 +85,19 @@ def _is_safe_remote_path(p: str) -> bool:
     shlex.quote handles the actual shell escaping when we build the
     `ls` command, but a few patterns are nonsense for a path browser
     and we'd rather 400 than execute them.
+
+    Also rejects any `..` segment — adb resolves it on-device and a
+    permitted prefix like `/data/local/tmp/../system/lib/foo.so`
+    would otherwise bypass the `_is_sensitive_remote` HITL gate.
     """
     if not p or not p.startswith("/"):
         return False
     if "\x00" in p or "\n" in p or "\r" in p:
         return False
     if len(p) > 4096:
+        return False
+    # Reject any `..` segment — defense in depth against HITL bypass.
+    if any(seg == ".." for seg in p.split("/")):
         return False
     return True
 
@@ -122,8 +130,12 @@ def _is_sensitive_remote(remote: str) -> bool:
     /data/local/tmp/foo → False (scratch is fine)
     /data/anything-else → True
     /sdcard/...         → False
+
+    `..` segments are normalized first so a permitted prefix like
+    /data/local/tmp/../system can't bypass the HITL gate. Belt + suspenders
+    with `_is_safe_remote_path` which already rejects `..` outright.
     """
-    norm = remote.rstrip("/") or "/"
+    norm = posixpath.normpath(remote.rstrip("/") or "/")
     for ex in _SENSITIVE_REMOTE_EXEMPTIONS:
         if norm == ex or norm.startswith(ex + "/"):
             return False
@@ -191,14 +203,15 @@ async def device_files(
 ) -> dict[str, Any]:
     """List a device directory. Always 200 with `ok=false` on errors."""
     if not _is_safe_remote_path(path):
-        return {"ok": False, "serial": serial, "path": path,
-                "entries": [], "error": "invalid path"}
+        return {"ok": False, "serial": serial, "transport": None,
+                "path": path, "entries": [], "error": "invalid path"}
 
     try:
         t = build_transport(device_serial=serial)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "serial": serial, "path": path,
-                "entries": [], "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": False, "serial": serial, "transport": None,
+                "path": path, "entries": [],
+                "error": f"{type(exc).__name__}: {exc}"}
 
     # Plain `ls -la` — Android toybox doesn't accept --time-style; default
     # output is already YYYY-MM-DD HH:MM which the parser handles.
@@ -208,14 +221,18 @@ async def device_files(
         return {
             "ok": False,
             "serial": serial,
+            "transport": type(t).__name__,
             "path": path,
             "entries": [],
             "error": (r.stderr or "ls failed").strip(),
             "exit_code": r.exit_code,
         }
 
+    # Collect everything, sort, then cap. Sorting before cap keeps
+    # directories first regardless of toybox's inode-order output —
+    # otherwise a 2000+ entry dir could ship with all dirs hidden
+    # past the cutoff.
     entries: list[dict[str, Any]] = []
-    truncated = False
     for raw in r.stdout.splitlines():
         e = _parse_ls_line(raw)
         if e is None:
@@ -223,14 +240,15 @@ async def device_files(
         if e["name"] in (".", ".."):
             continue
         entries.append(e)
-        if len(entries) >= _MAX_ENTRIES:
-            truncated = True
-            break
 
     entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+    truncated = len(entries) > _MAX_ENTRIES
+    if truncated:
+        entries = entries[:_MAX_ENTRIES]
     return {
         "ok": True,
         "serial": serial,
+        "transport": type(t).__name__,
         "path": path,
         "entries": entries,
         "truncated": truncated,
@@ -291,7 +309,8 @@ async def device_pull(
     """Pull a device path → workspace. `local` defaults under pulls/."""
     remote = body.get("remote")
     if not isinstance(remote, str) or not _is_safe_remote_path(remote):
-        return {"ok": False, "serial": serial, "error": "invalid 'remote' path"}
+        return {"ok": False, "serial": serial, "transport": None,
+                "error": "invalid 'remote' path"}
 
     local_rel = body.get("local")
     local_abs: Path | None = None
@@ -299,13 +318,14 @@ async def device_pull(
         try:
             local_abs = _resolve_workspace_path(local_rel)
         except HTTPException as exc:
-            return {"ok": False, "serial": serial, "error": exc.detail}
+            return {"ok": False, "serial": serial, "transport": None,
+                    "error": exc.detail}
         local_abs.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         t = build_transport(device_serial=serial)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "serial": serial,
+        return {"ok": False, "serial": serial, "transport": None,
                 "error": f"{type(exc).__name__}: {exc}"}
 
     r = await filesync_pull(t, remote, local_abs, device=serial)
@@ -313,6 +333,7 @@ async def device_pull(
         return {
             "ok": False,
             "serial": serial,
+            "transport": type(t).__name__,
             "remote": remote,
             "error": r.error.message if r.error else "pull failed",
         }
@@ -326,6 +347,7 @@ async def device_pull(
     return {
         "ok": True,
         "serial": serial,
+        "transport": type(t).__name__,
         "remote": remote,
         "local": str(pulled) if pulled else None,
         "local_workspace_rel": pulled_rel,
@@ -344,22 +366,26 @@ async def device_push(
     force = bool(body.get("force"))
 
     if not isinstance(local_rel, str) or not local_rel.strip():
-        return {"ok": False, "serial": serial, "error": "missing 'local'"}
+        return {"ok": False, "serial": serial, "transport": None,
+                "error": "missing 'local'"}
     if not isinstance(remote, str) or not _is_safe_remote_path(remote):
-        return {"ok": False, "serial": serial, "error": "invalid 'remote' path"}
+        return {"ok": False, "serial": serial, "transport": None,
+                "error": "invalid 'remote' path"}
 
     try:
         local_abs = _resolve_workspace_path(local_rel)
     except HTTPException as exc:
-        return {"ok": False, "serial": serial, "error": exc.detail}
+        return {"ok": False, "serial": serial, "transport": None,
+                "error": exc.detail}
     if not local_abs.exists():
-        return {"ok": False, "serial": serial,
+        return {"ok": False, "serial": serial, "transport": None,
                 "error": f"local does not exist: {local_rel}"}
 
     if _is_sensitive_remote(remote) and not force:
         return {
             "ok": False,
             "serial": serial,
+            "transport": None,
             "remote": remote,
             "requires_confirm": True,
             "error": (
@@ -371,7 +397,7 @@ async def device_push(
     try:
         t = build_transport(device_serial=serial)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "serial": serial,
+        return {"ok": False, "serial": serial, "transport": None,
                 "error": f"{type(exc).__name__}: {exc}"}
 
     r = await filesync_push(t, local_abs, remote, verify=False)
@@ -379,6 +405,7 @@ async def device_push(
         return {
             "ok": False,
             "serial": serial,
+            "transport": type(t).__name__,
             "local": str(local_abs),
             "remote": remote,
             "error": r.error.message if r.error else "push failed",
@@ -387,6 +414,7 @@ async def device_push(
     return {
         "ok": True,
         "serial": serial,
+        "transport": type(t).__name__,
         "local": str(local_abs),
         "remote": remote,
         "bytes_transferred": r.data.bytes_transferred if r.data else 0,

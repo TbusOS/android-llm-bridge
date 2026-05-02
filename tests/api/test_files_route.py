@@ -329,6 +329,99 @@ def test_workspace_download_rejects_traversal(client) -> None:
     assert r.status_code in (400, 404)
 
 
+# ─── Regression tests added 2026-05-02 (PR-H code review) ──────────
+def test_push_rejects_dotdot_traversal_bypass(client, workspace) -> None:
+    """`/data/local/tmp/../system/lib/foo.so` would slip past the
+    HITL exemption gate (matches /data/local/tmp prefix) and adb
+    resolves `..` on-device → writes to /system. Must be rejected
+    by `_is_safe_remote_path` outright."""
+    src = workspace / "uploads/x"
+    src.parent.mkdir(parents=True)
+    src.write_text("x")
+    body = client.post(
+        "/devices/SERIAL01/files/push",
+        json={
+            "local": "uploads/x",
+            "remote": "/data/local/tmp/../system/lib/foo.so",
+        },
+    ).json()
+    assert body["ok"] is False
+    assert "invalid" in body["error"]
+    assert "requires_confirm" not in body  # never reached HITL gate
+
+
+def test_is_sensitive_remote_normalizes_dotdot() -> None:
+    """Defense in depth — if `..` ever slips past the safety gate
+    (e.g. via a future refactor), normpath inside _is_sensitive_remote
+    still classifies the resolved path correctly."""
+    from alb.api.files_route import _is_sensitive_remote
+
+    assert _is_sensitive_remote("/data/local/tmp/../system/lib/foo") is True
+    assert _is_sensitive_remote("/sdcard/../system") is True
+    assert _is_sensitive_remote("/data/local/tmp/foo") is False
+    assert _is_sensitive_remote("/sdcard/Download") is False
+
+
+def test_device_files_truncates_after_sort(client, fake_transport) -> None:
+    """Sort happens before truncate — directories should always be
+    visible even when entry count exceeds _MAX_ENTRIES."""
+    from alb.api.files_route import _MAX_ENTRIES
+
+    # 1 dir + (_MAX_ENTRIES + 5) files; toybox typically returns inode
+    # order so the dir lands somewhere arbitrary. Sort-before-cap must
+    # surface it.
+    lines = ["total 9999"]
+    lines.append(
+        "drwxr-xr-x  2 root root 4096 2026-05-01 00:00 zzz_dir_at_end"
+    )
+    for i in range(_MAX_ENTRIES + 5):
+        lines.append(
+            f"-rw-r--r-- 1 root root {i:>10} 2026-05-01 00:00 file{i:05d}.bin"
+        )
+    fake_transport.shell_response = ShellResult(
+        ok=True, stdout="\n".join(lines), stderr=""
+    )
+
+    body = client.get(
+        "/devices/SERIAL01/files", params={"path": "/big"}
+    ).json()
+    assert body["ok"] is True
+    assert body["truncated"] is True
+    assert len(body["entries"]) == _MAX_ENTRIES
+    # Dir was at toybox inode position 1 but should sort to position 0
+    # AND survive the cap (regression for PR-H code-review MID #3).
+    assert body["entries"][0]["name"] == "zzz_dir_at_end"
+    assert body["entries"][0]["is_dir"] is True
+
+
+def test_push_empty_file(client, fake_transport, workspace) -> None:
+    """0-byte push is a real Android workflow (touch sentinels) —
+    bytes_transferred=0 must not be confused with failure."""
+    src = workspace / "uploads/empty.flag"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"")
+    body = client.post(
+        "/devices/SERIAL01/files/push",
+        json={"local": "uploads/empty.flag", "remote": "/sdcard/sentinel"},
+    ).json()
+    assert body["ok"] is True
+    assert body["bytes_transferred"] == 0
+
+
+def test_endpoints_carry_transport_field(client, fake_transport) -> None:
+    """All 3 device-scoped endpoints surface `transport` so the UI can
+    render hybrid-target indicators consistently with /devices/* endpoints."""
+    fake_transport.shell_response = ShellResult(
+        ok=True,
+        stdout="-rw-r--r-- 1 root root 1 2026-05-01 00:00 a\n",
+        stderr="",
+    )
+    ls_body = client.get(
+        "/devices/SERIAL01/files", params={"path": "/sdcard/"}
+    ).json()
+    assert ls_body["transport"] == "_FakeAdbTransport"
+
+
 # ─── Schema discovery ───────────────────────────────────────────────
 def test_files_endpoints_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
