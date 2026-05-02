@@ -1016,4 +1016,113 @@ endpoint vs PermissionEngine · 同 modal pattern 下沉路径)
 
 ---
 
+## L-028 · React.lazy + Suspense fallback 高度必须显式匹配 lazy 子组件最小高度
+
+**Date**: 2026-05-02（PR-E.v2 + DEBT-022 perf-fix `0c74b2c` lazy load 落地后被 ui-fluency-auditor 发现）
+
+**规则**：用 `<Suspense fallback={...}>` 包裹 `React.lazy()` 子组件时，
+fallback 元素**必须**显式设置 `min-height` 至少匹配子组件实际渲染最小
+高度（≤ 100px 差异内）。否则首次 chunk 加载时 fallback 60-80px →
+真组件 480-540px 跳变，**首屏必 CLS**。
+
+**Why**：
+- 2026-05-02 DEBT-022 perf-fix 把 inspect 8 tab 全 React.lazy 化，
+  Suspense fallback `<div className="mock-card">loading…</div>` 高度
+  = padding(48px) + 1 line ≈ 60-80px
+- 真 tab 内容（FilesTab/UartTab/UiDumpTab）`min-height: 480-540px`
+- 用户首次切 tab → fallback 60px → 真 tab 540px → ~480px 跳变
+- subsequent 切 tab（chunk 已 cache）≈ 10ms 闪过，肉眼不一定看到，但
+  4-9 KB chunk 在弱网 / 真夸国节点 100-300ms fallback 可见 = 肉眼能
+  看到页面跳
+
+**How to apply**：
+- `<Suspense fallback={X}>` 的 X 必须满足以下之一：
+  - inline style `{minHeight: <匹配子组件高度>}`
+  - 专用 skeleton class 自带 `min-height`
+  - 或直接复用子组件的容器 className 做 placeholder（推荐 — 高度自动
+    一致）
+- 文件落地：`web/src/features/inspect/InspectPage.tsx` 这种 lazy 集中
+  注册的地方，fallback 应该集中在 1 个位置 + 用最大 lazy 子组件的
+  min-height
+- code-reviewer / ui-fluency-auditor 加 grep 规则：
+  `grep -rn 'Suspense fallback={' web/src/` → 看每处 fallback 元素是否
+  有 `minHeight` 设置 / 自带 `min-height` className
+
+**触发条件**：
+- 加新 React.lazy + Suspense
+- 改 lazy 子组件的高度 / padding
+- 加新 tab / route 走 lazy load
+
+**反面教材**：
+- 2026-05-02 DEBT-022 perf-fix `0c74b2c` lazy 化 8 tab 时 fallback 写
+  成 `<div className="mock-card">loading…</div>` 没 minHeight，首次切
+  tab CLS 480px。当天 ui-fluency 复审才发现
+
+**应用到 agents**：
+- ui-fluency-auditor checklist 加："Suspense fallback 必查 minHeight"
+- code-reviewer 加同样 grep 规则（防回归）
+
+**关联**：L-022 (设计良好的错误态是双刃剑 · 同源——视觉上"loading 字看
+着没问题"掩盖布局跳变) · DEBT-022 perf-fix (PR-F lazy load 落地时引入
+本问题)
+
+---
+
+## L-029 · 共享 modal 组件 N=2 起必有 a11y 三件套基线（focus / Enter+ESC / 危险按钮顺序）
+
+**Date**: 2026-05-02（PR-E.v2 HitlConfirmModal 抽提 N=2 后被
+ui-fluency-auditor 当天发现）
+
+**规则**：`web/src/components/` 下含 `role="dialog"` 的共享 modal 组件
+被 ≥ 2 处 import 时，**必须**满足：
+1. **初始 focus**：组件 `useEffect` 在 open=true 时 `cardRef.current?.focus()`
+   （容器加 `tabIndex={-1}`），不能停在背景按钮
+2. **Enter + ESC 键**：ESC 关闭（非危险默认）+ Enter 绑定**非破坏性**
+   按钮（避免误触发 destructive action）
+3. **危险按钮顺序**：approveDanger=true 时，destructive 按钮在最右
+  （离手指最远），Cancel 在最左 + autoFocus（"危险动作离手指最远"
+   惯例）
+
+不能等 N=3 引 react-aria-modal 才补 a11y 基线 —— N=2 抽组件时就要立。
+
+**Why**：
+- 2026-05-02 PR-E.v2 commit `14fa208` 抽 HitlConfirmModal（ShellTab +
+  FilesTab N=2 共享）
+- 当天 ui-fluency-auditor 三 HIGH 全在这组件：
+  - 无 focus trap + 无初始 focus 设置（用户从背景 Tab 出 modal）
+  - DOM 顺序 Cancel → Approve session → Approve once，红色 danger 在
+    最右但 Tab 第二下落"Approve session"（更危险但视觉权重低）
+  - 无 Enter 绑定，键盘按 Enter 体感"modal 没反应"
+- L-020 "N=3 才抽 base class" 是讲**抽象时机**，但 modal 组件 N=2
+  抽出时**a11y 基线已经欠下**，等 N=3 引专用库已经晚 —— 抽组件那一刻
+  就该一次性把 a11y 起手三件套写对
+
+**How to apply**：
+- ui-fluency-auditor / code-reviewer 加 grep：
+  `grep -rn 'role="dialog"' web/src/components/` 命中 + import 处 ≥ 2
+  → 必查三件套是否齐全
+- 模板：modal 组件 props 必含 `autoFocusOn?: 'cancel' | 'approve'`
+  （approveDanger=true 默认 cancel） + 内部 `useEffect` 在 open 时
+  focus 对应 ref + 加全局 onKeyDown for Enter
+
+**触发条件**：
+- `web/src/components/` 加新 `role="dialog"` 组件
+- 已有 modal 组件被第 2 个调用方 import
+- modal 加 destructive action（rm/push 系统区/reboot 等）
+
+**反面教材**：
+- 2026-05-02 commit `14fa208` HitlConfirmModal N=2 抽提，当天 a11y 三
+  HIGH 暴露，紧 follow-up 修
+
+**应用到 agents**：
+- ui-fluency-auditor checklist 含"shared modal a11y 三件套"
+- code-reviewer 看 `web/src/components/` 加新含 dialog 的组件 → 触发
+  ui-fluency-auditor 深审
+
+**关联**：L-020 (N=3 抽 base 时机 · 本条是"抽组件 N=2 时 a11y 基线
+也要同步落"补充) · L-027 (HITL allow_session metachar bypass · 同源
+"危险 action UI 必须有防误触安全余量")
+
+---
+
 （新教训按此格式追加）

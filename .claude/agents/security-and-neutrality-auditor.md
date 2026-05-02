@@ -19,6 +19,43 @@ tools: Read, Grep, Bash
 3. `.claude/knowledge/decisions.md` —— 是否有"为什么用 dangerouslySetInnerHTML"等 ADR
 4. `.claude/knowledge/review-feedback.md` —— 过往被驳回的安全建议
 
+## 自动 grep checklist · 来自历史 lesson · 每次必跑
+
+每条都是过去真实暴露的安全 bug，看到 diff 就跑：
+
+### 来自 L-027 (HITL allow_session metachar bypass)
+- diff 命中 `_session_allowed.add\|allow_session\|session.*allowed` →
+  必查 add 前是否 reject shell metachar（`$/\`/;/|/&/>/<` 等 + `\n\r`）
+- 没 reject 即 **HIGH** finding（攻击：approve `eval $X` 后变更 `$X` 内容
+  绕开 deny-list）
+- audit log 必同步反映拒绝结果（不能 audit 写 `session=True` 但实际未加入 set）
+
+### `gitignore` depth-agnostic（2026-05-02 web/.claude/ 漏 ignore 教训）
+- diff 命中 `.gitignore` 加 `.claude/` 类规则 → 必查是否 `**/` 前缀
+  （否则只匹配仓库根 `.claude/`，子目录 `web/.claude/` / `nested/.claude/`
+  漏 ignore，敏感截图会泄露）
+- 同步跑：`git check-ignore -v <典型嵌套路径>` 验
+
+### `0.0.0.0` 默认 bind 风险（ADR-034 seed）
+- diff 命中 `host\s*=\s*os\.environ\.get\(["']ALB_API_HOST["']\s*,\s*["']0\.0\.0\.0["']` →
+  **MID** finding（任意 LAN 调用 file push / UART write / shell endpoint，
+  无 auth），必给启动 warning 或加 token gate
+- 已加 warning 但未改默认 = 可接受（ADR-034 seed 选 v1 保 0.0.0.0）
+
+### symlink 元数据泄露
+- diff 命中 `Path.iterdir\|os.scandir\|os.listdir` 后接 `\.stat()` 不是
+  `\.lstat()` → **MID** finding（symlink 跟随到 workspace 外可泄露 size/mtime）
+
+### secret / token 字面量出现在源码
+- diff 命中 `ghp_[A-Za-z0-9]{30,}\|sk-[A-Za-z0-9]{20,}\|aws_secret_access_key\|api_key\s*=` →
+  **HIGH** finding，立刻拒
+- 跑 `git log -p -S 'ghp_'` 防回归
+
+### check_sensitive_words.sh 默认 + --all
+- 默认模式扫 staged，必跑 exit 0
+- `--all` 模式扫所有 tracked，命中是否在 `lessons.md` 历史豁免清单
+  （如已知 `scripts/f8_screenshots.mjs` 是历史存量）— 不在豁免则 **HIGH**
+
 ## 评审维度
 
 ### 1. 项目级中立性（CLAUDE.md ABSOLUTE 禁用词）

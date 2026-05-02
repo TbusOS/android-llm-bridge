@@ -26,6 +26,39 @@ tools: Read, Grep, Bash
 
 如果文件不存在或为空 → 跳过该项继续。
 
+## 自动 grep checklist · 来自历史 lesson · 每次评审必跑
+
+每条都是过去真实 ship bug 浓缩成的可执行 grep。**不需主对话提，看到 diff 就跑**：
+
+### 来自 L-022 (vite proxy stale) — 加新 alb-api endpoint 必同步 vite proxy
+- diff 命中 `app.include_router(` 或 `@router.(get|post|websocket)(` 出现新路径前缀 → 必 `Read web/vite.config.ts` 验 proxy 段已包该前缀（prefix match 即可）
+- 命中且 vite.config.ts 没改 → **HIGH** finding
+
+### 来自 L-024 (toybox vs GNU coreutils) — 新 transport.shell() 调用必查 flag 兼容
+- diff 命中 `transport.shell(` 或 `t.shell(` 或 `self.shell(` → grep 命令字符串里有 `--time-style|--color|--block-size|--human-readable|--quoting-style|-Z|--no-run-if-empty` 这些 GNU-only flag → **HIGH** finding（Android toybox 不接受）
+- 也查 `--help` 类参数命令是否有 toybox 兼容性测试或 fixture 来源注释
+
+### 来自 L-025 (useQuery hook bg gate) — 新 polling hook 必走 wrapper
+- diff 命中 `useQuery.*refetchInterval` 直接调 → **HIGH** finding（"应该用 useDashboardQuery wrapper"）
+- 例外：`useQueries`（multi）+ dynamic refetchInterval 函数式可手写但必须显式 `refetchIntervalInBackground:false` + `refetchOnWindowFocus:false`，缺即标 finding
+
+### 来自 L-026 (WS 多 task close-frame race) — WebSocket endpoint 加并发 task 必查 close 帧唯一性
+- diff 命中新 WS endpoint 或新 `asyncio.create_task` 在 WS handler 里 → grep 内部 task 函数体里 `ws.send_json.*closed` 出现次数 > 1 → **HIGH** finding（参考 `terminal_route.py:139` outer-finally pattern）
+- close 帧应只在 outer finally 发 1 条；inner task 错误路径写 `_CloseState` dataclass 让 outer 决定 reason
+
+### 来自 L-027 (HITL allow_session metachar bypass) — session-cache key 必查 metachar 安全
+- diff 命中 `_session_allowed.add\|allow_session\|session.*allowed.*add` → 必查 add 前是否检查 shell metachar (`$/\`/;/\|/&/>/<` 等)
+- 没查 = **HIGH** finding（攻击：approve `eval $X` 后变更 `$X` 内容绕过 deny-list）
+
+### 来自 L-019 (sentinel 反模式) — capability 检测必走 class-attr 而非 dict/hasattr
+- diff 命中 `hasattr(.*transport|hasattr(.*backend` → 看 `decisions.md` ADR-024 / ADR-033 seed 是否已为该模块拍板 N=2 升 ABC，未拍 + 已 N=2 → **MID** finding 提议立 ADR
+
+执行流程：
+1. `git diff <range>` 拿改动
+2. 按以上 6 条 grep 跑一遍
+3. 发现命中 → 立刻报 finding（不用等"5 维评审"框架）
+4. 5 维评审继续，但 grep 命中先于 5 维输出
+
 ## 评审范围（5 维 · 每维至多 2 条）
 
 ### 1. 资源生命周期

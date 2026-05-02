@@ -25,6 +25,38 @@ visual-audit-runner）也**不**做基线对照（那是 mockup-baseline-checker
 3. `.claude/knowledge/review-feedback.md` — 过往被驳回的建议
 4. 评审对象（被改的 React 文件 / 被改的 component）
 
+## 自动 grep checklist · 来自历史 lesson · 每次必跑
+
+每条都是过去真实暴露的 UX/a11y bug，看到 diff 就跑：
+
+### 来自 L-028 (Suspense fallback 高度) — `React.lazy` + `Suspense` 组合必查 fallback minHeight
+- diff 命中 `<Suspense fallback={` → 看 fallback 元素是否有 `style={{minHeight:` 或 className 自带 min-height
+- lazy 子组件最小高度（grep `min-height:.*px` in 对应 css）和 fallback 高度差 > 100px → **HIGH** finding "首次切换必 CLS"
+- 修法：fallback 加 `style={{minHeight: <匹配子组件高度>}}` 或专用 skeleton class
+
+### 来自 L-029 (shared modal a11y baseline) — 共享 modal 组件 N=2 起必有 a11y 三件套
+- 新增 component 在 `web/src/components/` 含 `role="dialog"` + 被 ≥ 2 处 import 时，必查：
+  1. **初始 focus**：组件 useEffect 是否在 open=true 时 `cardRef.current?.focus()`（容器需 `tabIndex={-1}`）
+  2. **Enter / ESC 键**：是否 ESC 关闭 + 是否给 Enter 绑定**非危险**默认行为（避免误确认）
+  3. **危险按钮顺序**：approveDanger=true 时，destructive 按钮应在最右（离手指最远），Cancel 应优先 Tab focus
+- 缺任一 → **HIGH** finding。理由：N=2 是抽象时机但**也是 a11y 基线时机**，不能等 N=3 引 react-aria-modal
+
+### dashboard hook 三态完整性
+- 命中新 `useQuery` / `useDashboardQuery` 调用 → 检查消费方组件是否对 `isLoading`/`isError`/`data?.length === 0` 都有显式分支
+- error 文案只输出 `String(error)` 或 raw stderr → **MID** finding（应给修复路径，不是只说"出错了"）
+- empty 文案只 "无数据" / "no items" → **MID**（应可操作"创建一个"/"去 X 试试"）
+
+### 输入 debounce 期间的视觉反馈
+- 命中 `useDebouncedValue\|setTimeout.*300\|setTimeout.*500` 喂给 `useQuery({queryKey: [..., debounced` → 检查 input 旁是否有 spinner/转场样式提示"正在追赶"
+- 缺 → **MID** finding（用户输完到 fetch 间 300ms 视觉静默 = 不流畅）
+
+### 警告类 pill 视觉对比度
+- 命中含 "WRITE" / "DANGER" / "WARN" 文案的 span/pill → 必查 className 不是普通 `--warn` 修饰，应有专用 `--danger` 红底白字
+- 文案 < 12px + warn 色背景 + warn 色文字 → **MID** finding（WCAG AA 4.5:1 对比度违反）
+
+### tooltip vs 始终可见 helper
+- 命中 `<label title="..."` 含警告 / 风险说明 → **MID** finding "title 移动端 + 键盘 focus 都看不到，警告应改 helper text"
+
 ## 评审维度
 
 ### 1. 交互延迟
