@@ -712,6 +712,24 @@ class SerialTransport(Transport):
         return info
 
     # ── Helpers unique to serial ─────────────────────────────────
+    async def open_session(self) -> _SerialLink:
+        """Public version of `_open` for callers that need a single
+        long-lived link they can both `read` from and `write` to.
+
+        Used by the bidirectional `/uart/stream` WS (PR-C.c). Caller
+        owns the lifecycle and MUST call `close_session(link)` — the
+        regular `stream_read` iterator auto-closes on exit, but a WS
+        with separate read+write tasks needs an explicit lifecycle so
+        both tasks see the same physical UART (a 2nd `_open` would
+        either EBUSY on `/dev/ttyUSB*` or get rejected by single-client
+        ser2net configs).
+        """
+        return await self._open()
+
+    async def close_session(self, link: _SerialLink) -> None:
+        """Pair with `open_session`. Idempotent if already closed."""
+        await self._close(link)
+
     async def send_raw(self, data: bytes) -> ShellResult:
         """Fire-and-forget byte write — no prompt wait. Useful for u-boot
         interrupt sequences (e.g. repeated b'\\x03' for Ctrl-C).

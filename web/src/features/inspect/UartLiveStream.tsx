@@ -9,8 +9,8 @@
  * users both eventless replay and live observation modes.
  */
 
-import { useEffect, useRef } from "react";
-import { CircleStop, Eraser, Play } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CircleStop, Eraser, Keyboard, Play } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -24,11 +24,16 @@ interface Props {
 
 export function UartLiveStream({ device }: Props) {
   const lang = useApp((s) => s.lang);
-  const { state, error, connect, disconnect, onBytes } = useUartStream();
+  const { state, error, writeEnabled, connect, disconnect, onBytes, sendBytes } =
+    useUartStream();
+  // Toggle remembered across connect/disconnect — defaults OFF since
+  // wrong byte at the wrong time can hang u-boot or sync to disk.
+  const [writeMode, setWriteMode] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const enc = useRef(new TextEncoder());
 
   // Mount xterm once.
   useEffect(() => {
@@ -86,7 +91,19 @@ export function UartLiveStream({ device }: Props) {
     });
   }, [onBytes]);
 
-  const onConnect = () => connect(device);
+  // Wire xterm keystrokes → WS write (bidirectional mode only).
+  // Subscribe ONLY when write actually negotiated, so read-only
+  // sessions don't accidentally fire sendBytes() no-ops on every key.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !writeEnabled) return;
+    const sub = term.onData((data: string) => {
+      sendBytes(enc.current.encode(data));
+    });
+    return () => sub.dispose();
+  }, [writeEnabled, sendBytes]);
+
+  const onConnect = () => connect(device, { write: writeMode });
   const onClear = () => termRef.current?.clear();
 
   const stateLabel: Record<typeof state, string> = {
@@ -128,7 +145,26 @@ export function UartLiveStream({ device }: Props) {
           <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
           {lang === "zh" ? "清屏" : "Clear"}
         </button>
+        <label className="uart-tab__write-toggle" title={
+          lang === "zh"
+            ? "勾选后下次连接将允许键盘打字到 UART（u-boot 中断 / sysrq）。误键可能锁板。"
+            : "When checked, the next Connect opens UART in write mode (Ctrl-C u-boot / sysrq). A wrong byte at the wrong time can lock the board."
+        }>
+          <input
+            type="checkbox"
+            checked={writeMode}
+            onChange={(e) => setWriteMode(e.target.checked)}
+            disabled={state === "ready" || state === "connecting"}
+          />
+          <Keyboard size={12} style={{ verticalAlign: "-2px", marginLeft: 4 }} />{" "}
+          {lang === "zh" ? "允许键盘输入" : "Allow input"}
+        </label>
         <span className={stateClass[state]}>● {stateLabel[state]}</span>
+        {writeEnabled && (
+          <span className="uart-tab__state uart-tab__state--warn">
+            {lang === "zh" ? "可写入" : "WRITE"}
+          </span>
+        )}
         {error && (
           <span className="uart-tab__last uart-tab__last--err">{error}</span>
         )}
