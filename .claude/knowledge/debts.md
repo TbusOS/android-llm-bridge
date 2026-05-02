@@ -526,6 +526,12 @@
   auto-deny 保兼容）· ShellTab 接 modal 替换 v1 silent auto-deny ·
   FilesTab refactor 用共享 modal · CSS 加 .hitl-modal__* + .btn--danger
   variant · 主 bundle 110 KB 持平（chunk 自然合并）
+- **PR-E.v2 follow-up 2026-05-02**：commit `75a07d7`。security-audit
+  发现 PR-E.v2 引入的 HITL bypass：approve "eval \$X" for session 后用
+  户/agent 改 \$X 内容 → 再敲同字面命中 _session_allowed 直通绕开
+  deny-list。修：terminal_guard 加 _has_shell_metachars 检查，allow_session
+  路径前命中 metachar 拒绝晋升（仍 approve 一次）+ audit 留痕 + 1
+  regression test。L-027 入库
 
 ---
 
@@ -547,6 +553,55 @@
   各 tab 独立 4-9 KB lazy chunk
 - **来源**：performance-auditor 报告 2026-05-02 finding HIGH #1
 - **关联**：ADR-032 (8 tab unmount/remount 不做 keepAlive)
+
+## DEBT-025 · useDashboardQuery wrapper 缺，每个 polled hook 重复 4 flag —— **CLOSED 2026-05-02**
+
+- **severity**：mid（结构性 quality · L-025 lesson 写完仍是"code-reviewer
+  检查"，没结构性预防）
+- **症状**：N=7 hook 每个都手填 staleTime / refetchInterval /
+  refetchIntervalInBackground:false / refetchOnWindowFocus:false ·
+  M2 ship 时 useBackends 写对了 pattern，PR-A 加 useDeviceDetails 漏
+  了 2 个 flag · 5 天后才被 perf-audit 发现
+- **关闭**：commit `ee68887`。新 web/src/lib/dashboardQuery.ts ·
+  DashboardQueryOptions interface refetchMs 必填 · useDashboardQuery
+  内置 bg gate · 7 hook (Sessions/Tools/MetricsSummary/Audit/Devices/
+  DeviceDetails/Backends.manifest) 全 refactor 用 wrapper · useBackends.
+  healthQueries 留 useQueries（dynamic refetchInterval 按 error state
+  不适合 wrapper API）
+- **效果**：未来加 polled hook 用 useDashboardQuery 自动有 bg gate 无法忘 ·
+  L-025 enforcement 从"人查"升级到"接口约束"
+- **来源**：L-025 (新 hook 必须 sweep bg gate) · perf-audit 2026-05-02
+  HIGH #2 fix 后 L-020 N=3 阈值 N=7 早过载
+- **关联**：L-025 (sweep refetchIntervalInBackground 规则) · L-020 (N=3
+  抽象时机) · DEBT-024 (6 hook 漏 gate · 已修)
+
+## DEBT-026 · UART /uart/stream write 无 size cap （security MID 4 候选）
+
+- **severity**：low（DoS 面 · 误操作放大）
+- **症状**：`POST WS /uart/stream?write=true` 客户端 sendBytes 一次性
+  灌 10 MB 直进 link.writer.write，无 size cap 也无 backpressure。
+  恶意 / 失误前端可灌爆 UART writer 缓冲，或注入 ESC[2J 类清屏混淆
+  device 历史日志
+- **当前状态**：未关 · v1 信任前端自我约束（UartLiveStream 是
+  xterm.onData 单字符模式，正常每帧 < 10 字节），但接口面无强制
+- **建议**：`_recv_loop` 加 `if len(data) > 64*1024: continue` 单帧
+  cap + audit log "uart_write_oversize_dropped"
+- **来源**：security-audit 2026-05-02 finding LOW 4
+
+## DEBT-027 · UART/PTY → xterm.js OSC 注入面文档化（security LOW 5 候选）
+
+- **severity**：low（受信源前提下 · 当前 xterm 默认 config 已安全）
+- **症状**：device UART 输出 `\x1b]52;c;<base64>\x07` (OSC 52) 可写
+  浏览器剪贴板（xterm 默认禁用，allowProposedApi 时启用）；OSC 0/2 可
+  改终端窗口标题；超长 CSI 可冻结渲染
+- **当前状态**：未关 · UartLiveStream / ShellTab 用 Terminal({ ... })
+  默认配置（未启用 OSC 52 / allowProposedApi），运行时 OSC 注入面安全
+- **建议**：在 UartLiveStream + ShellTab 加注释说明依赖 xterm 默认
+  OSC handler 安全集合，明示 "不要给 Terminal 构造启用 allowProposedApi
+  / OSC 52"，code-reviewer 加 grep 规则防回归
+- **来源**：security-audit 2026-05-02 finding LOW 5
+
+---
 
 ## DEBT-024 · 6 dashboard hook 漏 `refetchIntervalInBackground:false` —— **CLOSED 2026-05-02**
 

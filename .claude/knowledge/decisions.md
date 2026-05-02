@@ -775,4 +775,45 @@ detection 用 hasattr 出现时（任一触发 spec 出炉）。
 
 ---
 
+## ADR-034 (seed) · alb-api 默认 bind 127.0.0.1，0.0.0.0 须显式开启
+
+**Status**: seed（security-audit 5/02 提出 · 等下 milestone 切默认）
+**Date**: 2026-05-02
+**Context**: `src/alb/api/server.py:110` 默认 `ALB_API_HOST="0.0.0.0"` —
+绑所有网卡。今日 PR-H + PR-C.c + PR-E.v2 ship 后，alb-api 暴露的
+write 类 endpoint 实质增多：
+
+- `POST /devices/{s}/files/push` (sensitive 路径 HITL，但 /sdcard 直通)
+- `POST /devices/{s}/files/pull` (任意设备路径 → workspace)
+- `WS /uart/stream?write=true` (字节直写 UART · 可中断 u-boot · 可注 sysrq)
+- `WS /terminal/ws` (adb shell + HITL · approve once / session)
+- `POST /devices/{s}/screenshot` / `ui-dump` / `system` 信息泄露
+
+无 auth。任意 LAN 内可达者全功能调用。security-audit `MID 2`。
+
+**3 备选**：
+- (a) **保 0.0.0.0 默认 + 加启动警告**（v1 当前选）：commit `75a07d7`
+  已加 `[alb-api] WARNING: bound 0.0.0.0 with no auth ...`，不破坏现
+  有部署
+- (b) **改默认到 127.0.0.1 + LAN 暴露走 `ALB_API_HOST=0.0.0.0`**：安
+  全默认（principle of least privilege），但破坏 dev/CI 部署 — 用户
+  从公开 GitHub Pages → 内网 alb-api 走 95 ssh tunnel + alb-api 在 95
+  侧 0.0.0.0 监听 + windows 这边 ssh -L 转发，需要额外 docs 提示
+- (c) **加 token auth 默认 + 0.0.0.0 仍开**：M3 step 3 候选，复杂度高，
+  当前 milestone 不做
+
+**Decision**：v1 选 (a) · 下个 milestone 切 (b)。
+
+**何时拍板**：
+- M3 step 3 / 或 alb-api 开始外网部署（GitHub Pages 直连 host 而不是
+  dev 隧道）时，必须 (b) 至少 + 文档化 `ALB_API_HOST=0.0.0.0` 启动
+  required for LAN
+- 或 security-auditor 后续 audit 发现 MID 2 仍 outstanding 时升正式
+
+**关联**：security-audit `.claude/reports/security-audit-2026-05-02.md`
+finding MID 2 · L-027 (HITL bypass 已修，0.0.0.0 暴露面是放大该问题
+的运维维度)
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）
