@@ -687,4 +687,49 @@ M1→M2 路线）· `infra/permissions.py` default_check
 
 ---
 
+## ADR-032 · Inspect 8 tabs 走 unmount/remount，不做 keepAlive
+
+**Status**: accepted（perf-audit 2026-05-02 显式 trade-off）
+**Date**: 2026-05-02
+**Context**: PR-A/B/C.a/C.b/D/E/F/G/H ship 后 inspect 页 8 tab 全部接
+真数据。`InspectPage.tsx` 采用 `tab === "X" ? <XTab /> : null` 的
+unmount/remount 模式：
+
+- 切走 tab → 完全 unmount，hook 走 cleanup（WS 关 / fetch abort / xterm
+  dispose）
+- 切回 tab → 重新 mount，hook init（new WebSocket / new useQuery /
+  new Terminal()）
+
+代价：切 tab 一次 ≈ 50-200 ms blocking + WS 重连 ~50 ms。3 个 stream
+hook（uart/logcat/shell）尤其重，xterm.js 实例化 + WS handshake +
+history replay 串行。
+
+**Decision**：**保持 unmount/remount，不做 keepAlive**。
+
+**3 备选**：
+- (a) 当前 unmount/remount —— 简单，无背景占用，切 tab 慢 100 ms 量级
+- (b) keepAlive（隐藏 tab 仍挂载）—— 切 tab 0 ms，但隐藏 tab 持续
+  占 WS 带宽 + xterm 仍渲染（用户切走时 UART 仍 byte 流入 = 静默浪费）
+- (c) 选择性 keepAlive（只 stream tabs 保活） —— 切 tab 50 ms，但代码
+  +200 行（双层 mount state），且与 React 18 Suspense lazy load 冲突
+
+**为什么选 (a)**：
+- 用户行为模式：debug 时长时间锁定一个 tab，切 tab 频率 < 1/min
+- 100 ms 切换延迟在能接受边界（< 200 ms = "snappy" 心理阈值）
+- (b)(c) 的隐藏 tab 资源占用是**累计**问题：开 4 tab 一晚，UART byte
+  通道一直吃 USB serial 带宽 + xterm 一直 render，远比"切 tab 慢 100 ms"
+  代价大
+- 4 个 stream hook cleanup 已验证 OK（`useEffect(() => () => cleanup(), [])`），
+  unmount 路径无泄漏，技术债 0
+
+**何时反悔**：
+- 用户报告"切 tab 卡" → 触 ui-fluency-auditor 实测延迟，> 250 ms 再考虑 (c)
+- React 19 出新 keepAlive 原语（Activity 组件）成熟时，可零成本上 (b)
+  for stream tabs
+
+**关联**：perf-audit `.claude/reports/perf-audit-debt022-2026-05-02.md`
+finding MID #5 · L-020 (N=3 才抽抽象 · keepAlive 抽象 N=1 不上)
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）
