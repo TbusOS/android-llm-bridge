@@ -512,6 +512,20 @@
   · +3 测试（共 8 个 uart_stream 测试）· 真机部分 smoke OK（协商 +
   read pump + close），write→物理 UART 端到端验证留待板子在 u-boot
   prompt 或启用 sysrq 时再做（当前 Android 无 console getty 不响应）
+- **PR-C.c follow-up 2026-05-02**：commit `8a98dfd`。code-review 4 finding
+  修：HIGH 1 close-frame race（pump/recv 各发 closed → 加 _CloseState
+  shared，outer finally 唯一发，参考 terminal_route 同 pattern）/ MID 2
+  close_session docstring 改 "best-effort idempotent" 与实际 swallow
+  行为对齐 / MID 3 删 `except (CancelledError, WebSocketDisconnect):
+  raise` dead code / MID 4 +2 OSError 路径 regression 测试（10 测试）。
+  LOW 5 capability ABC vs hasattr 留 ADR-033 seed
+- **PR-E.v2 关闭 2026-05-02**：commit `14fa208`。原候选"PR-E.v2 HITL
+  approve/deny modal" ship 完。抽 web/src/components/HitlConfirmModal.tsx
+  共享组件（N=2：ShellTab + FilesTab，L-020 抽象时机正好）·
+  useTerminalSession 加 onHitl 订阅 + respondHitl 方法（无订阅 fallback
+  auto-deny 保兼容）· ShellTab 接 modal 替换 v1 silent auto-deny ·
+  FilesTab refactor 用共享 modal · CSS 加 .hitl-modal__* + .btn--danger
+  variant · 主 bundle 110 KB 持平（chunk 自然合并）
 
 ---
 
