@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -58,6 +59,16 @@ from alb.api.schema import API_VERSION
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
+
+
+@dataclass
+class _CloseState:
+    """Shared between pump + recv tasks so they DON'T each send their
+    own close frame (HIGH 1 from PR-C.c review 2026-05-02). The outer
+    finally reads this and sends exactly one close frame."""
+
+    reason: str = "ended"
+    error: str | None = None
 
 
 @router.websocket("/uart/stream")
@@ -151,8 +162,9 @@ async def _run_bidirectional(ws: WebSocket, transport: Any) -> None:
             await ws.close()
         return
 
-    pump_task = asyncio.create_task(_pump_link_to_ws(ws, link))
-    recv_task = asyncio.create_task(_recv_loop(ws, link=link))
+    cs = _CloseState()
+    pump_task = asyncio.create_task(_pump_link_to_ws(ws, link, cs))
+    recv_task = asyncio.create_task(_recv_loop(ws, link=link, close_state=cs))
     try:
         _, pending = await asyncio.wait(
             {pump_task, recv_task},
@@ -165,8 +177,13 @@ async def _run_bidirectional(ws: WebSocket, transport: Any) -> None:
     finally:
         with contextlib.suppress(Exception):
             await transport.close_session(link)
+        # Single close frame, populated from whichever task finished
+        # first (or 'ended' if both finished cleanly).
+        payload: dict[str, Any] = {"type": "closed", "reason": cs.reason}
+        if cs.error:
+            payload["error"] = cs.error
         with contextlib.suppress(Exception):
-            await ws.send_json({"type": "closed", "reason": "ended"})
+            await ws.send_json(payload)
         with contextlib.suppress(Exception):
             await ws.close()
 
@@ -199,32 +216,37 @@ async def _pump_uart_to_ws(ws: WebSocket, transport: Any) -> None:
             )
 
 
-async def _pump_link_to_ws(ws: WebSocket, link: Any) -> None:
+async def _pump_link_to_ws(
+    ws: WebSocket, link: Any, close_state: _CloseState,
+) -> None:
     """Bidirectional PR-C.c path — read directly off the shared link's
     StreamReader so the same physical UART can also be written to from
-    `_recv_loop`. Stops on read EOF / disconnect / send error."""
-    try:
-        while True:
-            try:
-                chunk = await link.reader.read(4096)
-            except (ConnectionResetError, OSError) as e:
-                with contextlib.suppress(Exception):
-                    await ws.send_json({
-                        "type": "closed", "reason": "stream_error",
-                        "error": f"{type(e).__name__}: {e}",
-                    })
-                return
-            if not chunk:
-                return  # EOF — UART closed at the other end
-            try:
-                await ws.send_bytes(chunk)
-            except (WebSocketDisconnect, RuntimeError):
-                return
-    except (asyncio.CancelledError, WebSocketDisconnect):
-        raise
+    `_recv_loop`. Stops on read EOF / disconnect / send error.
+
+    On error sets `close_state.{reason,error}` and returns — outer
+    finally is the only place that emits a close frame (avoids the
+    double-frame race fixed in PR-C.c review HIGH 1)."""
+    while True:
+        try:
+            chunk = await link.reader.read(4096)
+        except (ConnectionResetError, OSError) as e:
+            close_state.reason = "stream_error"
+            close_state.error = f"{type(e).__name__}: {e}"
+            return
+        if not chunk:
+            return  # EOF — UART closed at the other end
+        try:
+            await ws.send_bytes(chunk)
+        except (WebSocketDisconnect, RuntimeError):
+            return
 
 
-async def _recv_loop(ws: WebSocket, *, link: Any | None = None) -> None:
+async def _recv_loop(
+    ws: WebSocket,
+    *,
+    link: Any | None = None,
+    close_state: _CloseState | None = None,
+) -> None:
     """Watch for client-initiated control / data frames.
 
     Honoured frames:
@@ -232,7 +254,9 @@ async def _recv_loop(ws: WebSocket, *, link: Any | None = None) -> None:
         <binary>          → if `link` provided (bidirectional mode),
                             forward to link.writer.write + drain.
                             Silently dropped in read-only mode.
-    """
+
+    `close_state` (bidirectional only) is updated on writer error so
+    the outer finally can surface a single coherent close frame."""
     try:
         while True:
             msg = await ws.receive()
@@ -245,11 +269,9 @@ async def _recv_loop(ws: WebSocket, *, link: Any | None = None) -> None:
                     link.writer.write(data)
                     await link.writer.drain()
                 except (ConnectionResetError, OSError) as e:
-                    with contextlib.suppress(Exception):
-                        await ws.send_json({
-                            "type": "closed", "reason": "write_error",
-                            "error": f"{type(e).__name__}: {e}",
-                        })
+                    if close_state is not None:
+                        close_state.reason = "write_error"
+                        close_state.error = f"{type(e).__name__}: {e}"
                     return
                 continue
             text = msg.get("text")

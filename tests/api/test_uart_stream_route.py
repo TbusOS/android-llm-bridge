@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -258,3 +259,106 @@ def test_bidirectional_refused_when_transport_lacks_open_session(monkeypatch, tm
             msg = ws.receive_json()
             assert msg["type"] == "closed"
             assert msg["reason"] == "write_unsupported"
+
+
+# ─── PR-C.c follow-up · close-frame race + writer/reader error path ─
+class _RaisingWriter(_FakeWriter):
+    def write(self, data: bytes) -> None:
+        super().write(data)
+        raise OSError("EBADF")
+
+
+class _RaisingReader(_FakeReader):
+    def __init__(self, chunks: list[bytes]) -> None:
+        super().__init__(chunks)
+        self._raised = False
+
+    async def read(self, n: int) -> bytes:
+        if self._queue:
+            return self._queue.pop(0)
+        if not self._raised:
+            self._raised = True
+            raise OSError("ENXIO")
+        await self._block.wait()
+        return b""
+
+
+def test_writer_oserror_yields_single_write_error_close(
+    monkeypatch, tmp_path
+) -> None:
+    """When link.writer raises OSError, exactly ONE close frame should
+    be sent with reason='write_error' (no double-send race · HIGH 1
+    from PR-C.c review)."""
+    monkeypatch.chdir(tmp_path)
+    t = _FakeBidirectionalTransport(chunks=[b"out\n"] * 20)
+
+    async def _open() -> _FakeLink:  # noqa: ANN001
+        link = _FakeLink([b"out\n"] * 20)
+        link.writer = _RaisingWriter()
+        t.last_link = link
+        return link
+
+    t.open_session = _open  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"write": True})
+            ready = ws.receive_json()
+            assert ready["write"] is True
+            # Drain a few binary frames before triggering write error.
+            for _ in range(2):
+                ws.receive_bytes()
+            ws.send_bytes(b"will-fail")
+            # Server must close with write_error — and only ONE close
+            # frame (not 2 from race). Drain any in-flight binary
+            # chunks the pump emitted before being cancelled.
+            close = None
+            for _ in range(100):
+                msg = ws.receive()
+                if "text" in msg and msg["text"]:
+                    close = json.loads(msg["text"])
+                    break
+            assert close is not None and close["type"] == "closed"
+            assert close["reason"] == "write_error"
+            assert "OSError" in close.get("error", "")
+
+
+def test_reader_oserror_yields_single_stream_error_close(
+    monkeypatch, tmp_path
+) -> None:
+    """When link.reader raises OSError mid-read, exactly ONE close
+    frame should be sent with reason='stream_error'."""
+    monkeypatch.chdir(tmp_path)
+    t = _FakeBidirectionalTransport()
+
+    async def _open() -> _FakeLink:  # noqa: ANN001
+        link = _FakeLink([])
+        link.reader = _RaisingReader([b"first\n"])
+        t.last_link = link
+        return link
+
+    t.open_session = _open  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"write": True})
+            ready = ws.receive_json()
+            assert ready["write"] is True
+            # First chunk arrives, then read raises OSError next call.
+            ws.receive_bytes()
+            # Drain any in-flight chunks before close.
+            close = None
+            for _ in range(100):
+                msg = ws.receive()
+                if "text" in msg and msg["text"]:
+                    close = json.loads(msg["text"])
+                    break
+            assert close is not None and close["type"] == "closed"
+            assert close["reason"] == "stream_error"
+            assert "OSError" in close.get("error", "")

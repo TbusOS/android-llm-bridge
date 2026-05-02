@@ -727,7 +727,11 @@ class SerialTransport(Transport):
         return await self._open()
 
     async def close_session(self, link: _SerialLink) -> None:
-        """Pair with `open_session`. Idempotent if already closed."""
+        """Pair with `open_session`. Best-effort idempotent — `_close`
+        catches all exceptions including OSError on already-closed
+        StreamWriter, so calling close_session multiple times is safe
+        but not transactional. Don't rely on the second call having
+        any visible effect."""
         await self._close(link)
 
     async def send_raw(self, data: bytes) -> ShellResult:
