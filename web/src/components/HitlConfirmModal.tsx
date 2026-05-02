@@ -16,7 +16,7 @@
  * a11y wiring (role=dialog, ESC, click-outside) are identical.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 
 export interface HitlConfirmModalProps {
@@ -44,19 +44,36 @@ export interface HitlConfirmModalProps {
 }
 
 export function HitlConfirmModal(p: HitlConfirmModalProps) {
-  // ESC closes (cancel). Focus management is browser-default — full
-  // a11y trap can land in v3 if the modal usage grows; for 2 callers
-  // it's not yet worth importing react-aria-modal.
+  // L-029 a11y 三件套：
+  //   1. 初始 focus 落 Cancel 按钮（approveDanger 时；非 danger 也是
+  //      安全默认）—— 用户从背景按 Tab 不会落到危险按钮
+  //   2. ESC 关闭 + Enter = 默认 Cancel（避免误触发 destructive action）
+  //   3. 危险按钮顺序: Cancel | Approve session | Approve once（最右）—
+  //      destructive 离手指最远
+  // 用 capture-phase document listener + stopImmediatePropagation 防
+  // 多 modal 实例并发挂载 race（code-review 2026-05-02 MID 4）
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!p.open) return;
+    // 初始 focus
+    cancelRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         p.onCancel();
+      } else if (e.key === "Enter") {
+        // Enter = Cancel（非危险默认），不等于 Approve
+        const tag = (e.target as HTMLElement | null)?.tagName;
+        // 让 button 自带 click on Enter 优先（焦点在 button 上时浏览器
+        // 自动触发 click），仅当焦点不在任何 button 上时兜底走 Cancel
+        if (tag !== "BUTTON") {
+          e.stopImmediatePropagation();
+          p.onCancel();
+        }
       }
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true); // capture
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [p.open, p.onCancel]);
 
   if (!p.open) return null;
@@ -71,7 +88,7 @@ export function HitlConfirmModal(p: HitlConfirmModalProps) {
         if (e.target === e.currentTarget) p.onCancel();
       }}
     >
-      <div className="hitl-modal__card">
+      <div className="hitl-modal__card" tabIndex={-1}>
         <h3 id="hitl-modal-title">{p.title}</h3>
         <p>{p.description}</p>
         {p.details && Object.keys(p.details).length > 0 ? (
@@ -85,7 +102,12 @@ export function HitlConfirmModal(p: HitlConfirmModalProps) {
           </dl>
         ) : null}
         <div className="hitl-modal__actions">
-          <button type="button" className="btn" onClick={p.onCancel}>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="btn"
+            onClick={p.onCancel}
+          >
             {p.cancelLabel ?? "Cancel"}
           </button>
           {p.onApproveSession ? (
@@ -98,6 +120,7 @@ export function HitlConfirmModal(p: HitlConfirmModalProps) {
               {p.approveSessionLabel ?? "Approve for session"}
             </button>
           ) : null}
+          {/* approve(once) 排最右：destructive action 离手指最远 */}
           <button
             type="button"
             className={

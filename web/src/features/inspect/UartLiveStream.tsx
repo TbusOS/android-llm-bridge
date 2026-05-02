@@ -154,11 +154,7 @@ export function UartLiveStream({ device }: Props) {
           <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
           {lang === "zh" ? "清屏" : "Clear"}
         </button>
-        <label className="uart-tab__write-toggle" title={
-          lang === "zh"
-            ? "勾选后下次连接将允许键盘打字到 UART（u-boot 中断 / sysrq）。误键可能锁板。"
-            : "When checked, the next Connect opens UART in write mode (Ctrl-C u-boot / sysrq). A wrong byte at the wrong time can lock the board."
-        }>
+        <label className="uart-tab__write-toggle">
           <input
             type="checkbox"
             checked={writeMode}
@@ -167,10 +163,13 @@ export function UartLiveStream({ device }: Props) {
           />
           <Keyboard size={12} style={{ verticalAlign: "-2px", marginLeft: 4 }} />{" "}
           {lang === "zh" ? "允许键盘输入" : "Allow input"}
+          <span className="uart-tab__write-hint">
+            {lang === "zh" ? "误键可能锁板" : "wrong byte can lock board"}
+          </span>
         </label>
         <span className={stateClass[state]}>● {stateLabel[state]}</span>
         {writeEnabled && (
-          <span className="uart-tab__state uart-tab__state--warn">
+          <span className="uart-tab__state uart-tab__state--write-on">
             {lang === "zh" ? "可写入" : "WRITE"}
           </span>
         )}

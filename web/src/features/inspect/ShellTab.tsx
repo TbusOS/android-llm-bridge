@@ -118,6 +118,14 @@ export function ShellTab() {
     return onHitl((req) => setPendingHitl(req));
   }, [onHitl]);
 
+  // functional audit HIGH 8: WS dies while HITL modal is open ⇒ Approve
+  // becomes a silent no-op (respondHitl bails when readyState != OPEN).
+  // Clear the pending HITL on disconnect so user sees the session ended
+  // pill instead of a frozen modal — they can re-Connect and re-issue.
+  useEffect(() => {
+    if (state !== "ready" && pendingHitl) setPendingHitl(null);
+  }, [state, pendingHitl]);
+
   const closeHitl = (approve: boolean, allowSession: boolean) => {
     respondHitl(approve, allowSession);
     setPendingHitl(null);
