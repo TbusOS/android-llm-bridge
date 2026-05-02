@@ -35,6 +35,7 @@ filesync rules (tracked under the broader permissions backlog).
 
 from __future__ import annotations
 
+import asyncio
 import posixpath
 import shlex
 from pathlib import Path
@@ -49,6 +50,28 @@ from alb.infra.workspace import iso_timestamp, workspace_root
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
+
+# Per-serial mutex for push/pull. Without this, two browser tabs racing
+# `POST /files/push` for the same device collide on adb (functional
+# audit 2026-05-02 HIGH 6). Held only for the duration of the transfer
+# — different serials run in parallel as expected.
+_FILE_OP_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _serial_lock(serial: str) -> asyncio.Lock:
+    lock = _FILE_OP_LOCKS.get(serial)
+    if lock is None:
+        lock = asyncio.Lock()
+        _FILE_OP_LOCKS[serial] = lock
+    return lock
+
+
+# Outer timeout for filesync push/pull. USB drop mid-transfer otherwise
+# hangs the FastAPI worker indefinitely + blocks subsequent same-serial
+# requests via the per-serial lock above (functional audit HIGH 5).
+# 5 minutes covers a 1 GB pull at ~3 MB/s (USB 2.0 floor) — anything
+# slower probably IS a stall worth aborting.
+_FILE_OP_TIMEOUT_S = 300
 
 # Paths that require an explicit user confirm before a push lands —
 # these are the prefixes where a wrong byte can soft-brick a board or
@@ -338,7 +361,19 @@ async def device_pull(
         return {"ok": False, "serial": serial, "transport": None,
                 "error": f"{type(exc).__name__}: {exc}"}
 
-    r = await filesync_pull(t, remote, local_abs, device=serial)
+    # Per-serial lock + outer timeout (functional audit HIGH 5+6).
+    try:
+        async with _serial_lock(serial):
+            r = await asyncio.wait_for(
+                filesync_pull(t, remote, local_abs, device=serial),
+                timeout=_FILE_OP_TIMEOUT_S,
+            )
+    except asyncio.TimeoutError:
+        return {
+            "ok": False, "serial": serial, "transport": type(t).__name__,
+            "remote": remote,
+            "error": f"pull timeout after {_FILE_OP_TIMEOUT_S}s — USB drop?",
+        }
     if not r.ok:
         return {
             "ok": False,
@@ -410,7 +445,19 @@ async def device_push(
         return {"ok": False, "serial": serial, "transport": None,
                 "error": f"{type(exc).__name__}: {exc}"}
 
-    r = await filesync_push(t, local_abs, remote, verify=False)
+    # Per-serial lock + outer timeout (functional audit HIGH 5+6).
+    try:
+        async with _serial_lock(serial):
+            r = await asyncio.wait_for(
+                filesync_push(t, local_abs, remote, verify=False),
+                timeout=_FILE_OP_TIMEOUT_S,
+            )
+    except asyncio.TimeoutError:
+        return {
+            "ok": False, "serial": serial, "transport": type(t).__name__,
+            "local": str(local_abs), "remote": remote,
+            "error": f"push timeout after {_FILE_OP_TIMEOUT_S}s — USB drop?",
+        }
     if not r.ok:
         return {
             "ok": False,

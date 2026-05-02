@@ -101,7 +101,7 @@ READ_ONLY_ALLOWLIST: tuple[Pattern[str], ...] = tuple(
 # a variable / glob into one). If any appear in a line, refuse to
 # add the line to `_session_allowed` — the next time the user types
 # the same line text, the expanded value may be entirely different.
-_SHELL_METACHARS = re.compile(r"[\$\`\;\|\&\>\<\(\)\{\}\*\?\[\]\\]")
+_SHELL_METACHARS = re.compile(r"[$`;|&><(){}*?\[\]\\\n\r]")
 
 
 def _has_shell_metachars(line: str) -> bool:
@@ -299,23 +299,25 @@ class TerminalGuard:
         if line is None:
             return
         if approve:
-            if allow_session:
-                # Security: refuse session-wide approval when the
-                # command contains shell metacharacters that could
-                # later expand to a different command. Approving
-                # `eval $X` once and then mutating $X would otherwise
-                # bypass the deny-list (security audit 2026-05-02
-                # finding HIGH 1 / L-027). The user can still approve
-                # once for this exact line; just not for the session.
-                if _has_shell_metachars(line):
-                    await self._audit(
-                        "hitl_approve_session_refused",
-                        {"line": line, "reason": "shell_metachars"},
-                    )
-                    # Fall through to approve-once: line still runs.
-                else:
-                    self._session_allowed.add(line.strip())
-            await self._audit("hitl_approve", {"line": line, "session": allow_session})
+            # Compute effective session approval — refuse session-wide
+            # approval when the command contains shell metacharacters
+            # that could later expand to a different command. Approving
+            # `eval $X` once and then mutating $X would otherwise bypass
+            # the deny-list (security audit 2026-05-02 HIGH 1 / L-027).
+            # The user can still approve once; just not for the session.
+            effective_session = allow_session and not _has_shell_metachars(line)
+            if allow_session and not effective_session:
+                await self._audit(
+                    "hitl_approve_session_refused",
+                    {"line": line, "reason": "shell_metachars"},
+                )
+            elif effective_session:
+                self._session_allowed.add(line.strip())
+            # Audit log records the *effective* session decision, not what
+            # the client asked for — otherwise forensic / SIEM would see
+            # session=True even when we silently refused (code-review
+            # 2026-05-02 HIGH 1).
+            await self._audit("hitl_approve", {"line": line, "session": effective_session})
             await self.shell.write(line.encode("utf-8", errors="replace") + b"\n")
         else:
             await self._audit("hitl_deny", {"line": line})

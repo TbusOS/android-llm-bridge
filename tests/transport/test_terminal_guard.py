@@ -231,6 +231,11 @@ async def test_guard_allow_session_refuses_metachar_commands() -> None:
     assert _has_shell_metachars("foo; bar")
     assert _has_shell_metachars("foo | bar")
     assert _has_shell_metachars("rm -rf /(...)")
+    # Defense-in-depth (code-review 2026-05-02 MID 2): newlines slipping
+    # through `feed()` line-splitter would let `cmd1\ncmd2` get added as
+    # one session key — verify the metachar detector now rejects them.
+    assert _has_shell_metachars("cmd1\ncmd2")
+    assert _has_shell_metachars("cmd1\rcmd2")
     assert not _has_shell_metachars("rm -rf /data/foo")
     assert not _has_shell_metachars("setprop debug.x 1")
 
