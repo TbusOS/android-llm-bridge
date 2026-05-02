@@ -1,7 +1,8 @@
-"""Tests for WS /uart/stream (DEBT-022 PR-C.b)."""
+"""Tests for WS /uart/stream (DEBT-022 PR-C.b/c)."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -139,3 +140,121 @@ def test_stream_endpoint_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [w["path"] for w in body["ws"]]
     assert "/uart/stream" in paths
+
+
+# ─── PR-C.c bidirectional mode regressions ─────────────────────────
+class _FakeReader:
+    """Minimal asyncio.StreamReader stand-in for bidirectional tests.
+
+    After the chunk queue is drained we await indefinitely (real UART
+    blocks waiting for new bytes; if we returned b"" here, _pump
+    would exit early and miss the recv_loop's writes that haven't
+    arrived yet)."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._queue = list(chunks)
+        self._block = asyncio.Event()  # never set — read() blocks forever
+
+    async def read(self, n: int) -> bytes:
+        if self._queue:
+            return self._queue.pop(0)
+        await self._block.wait()
+        return b""
+
+
+class _FakeWriter:
+    """Captures bytes written for assertion."""
+
+    def __init__(self) -> None:
+        self.written: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+
+class _FakeLink:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.reader = _FakeReader(chunks)
+        self.writer = _FakeWriter()
+
+
+class _FakeBidirectionalTransport(_FakeSerialStreamTransport):
+    """Adds open_session / close_session so /uart/stream switches into
+    PR-C.c bidirectional path. write capture is exposed via .last_link."""
+
+    def __init__(self, chunks: list[bytes] | None = None) -> None:
+        super().__init__(chunks=chunks)
+        self.last_link: _FakeLink | None = None
+        self.closed_links: list[_FakeLink] = []
+
+    async def open_session(self) -> _FakeLink:
+        self.last_link = _FakeLink(list(self.chunks))
+        return self.last_link
+
+    async def close_session(self, link: _FakeLink) -> None:
+        self.closed_links.append(link)
+
+
+def test_bidirectional_write_false_uses_read_only_path(monkeypatch, tmp_path) -> None:
+    """Default {write:false} keeps PR-C.b read-only path — open_session
+    must NOT be invoked."""
+    monkeypatch.chdir(tmp_path)
+    t = _FakeBidirectionalTransport()
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"device": "X", "write": False})
+            ready = ws.receive_json()
+            assert ready["write"] is False
+            for _ in range(3):
+                ws.receive_bytes()
+            ws.receive_json()  # closed
+    assert t.last_link is None  # open_session never called
+
+
+def test_bidirectional_writes_client_bytes_to_uart(monkeypatch, tmp_path) -> None:
+    """When write=true, client binary frames are forwarded to
+    link.writer.write — exercises the new PR-C.c path end to end."""
+    monkeypatch.chdir(tmp_path)
+    # Lots of chunks so server doesn't close before we send.
+    t = _FakeBidirectionalTransport(chunks=[b"out\n"] * 50)
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"device": "X", "write": True})
+            ready = ws.receive_json()
+            assert ready["write"] is True
+            ws.send_bytes(b"\x03")  # Ctrl-C — typical u-boot interrupt
+            ws.send_bytes(b"reset\n")
+            ws.send_json({"type": "close"})
+    assert t.last_link is not None
+    assert b"\x03" in t.last_link.writer.written
+    assert b"reset\n" in t.last_link.writer.written
+    # close_session ran after client close.
+    assert t.last_link in t.closed_links
+
+
+def test_bidirectional_refused_when_transport_lacks_open_session(monkeypatch, tmp_path) -> None:
+    """write=true against a transport without open_session must
+    refuse with reason='write_unsupported' rather than crashing."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport",
+        lambda **kw: _FakeSerialStreamTransport(),  # no open_session
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"device": "X", "write": True})
+            msg = ws.receive_json()
+            assert msg["type"] == "closed"
+            assert msg["reason"] == "write_unsupported"

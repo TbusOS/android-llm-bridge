@@ -177,15 +177,20 @@ WS_ENDPOINTS: list[WSSpec] = [
     },
     {
         "path": "/uart/stream",
-        "description": "Live UART byte stream (PR-C.b). Read-only in v1; "
-                       "binary frames carry raw UART bytes for xterm.js.",
+        "description": "Live UART byte stream (PR-C.b/c). Read-only by "
+                       "default; client-first {write:true} opens "
+                       "bidirectional mode so xterm.js can poke "
+                       "u-boot / sysrq / fastboot prompts.",
         "messages": [
             {"type": "<client-first>",   "direction": "C→S",
-             "description": "Optional {device}"},
+             "description": "Optional {device, write:false|true}"},
             {"type": "ready",            "direction": "S→C",
-             "description": "{device, transport} — stream is open"},
+             "description": "{device, transport, write} — stream is open"},
             {"type": "<binary>",         "direction": "S→C",
              "description": "Raw UART bytes (verbatim, ANSI preserved)"},
+            {"type": "<binary>",         "direction": "C→S",
+             "description": "Raw bytes to write to UART (only when "
+                            "write=true was set in client-first frame)"},
             {"type": "control",          "direction": "C→S",
              "description": "{type: 'close'} — client-initiated shutdown"},
             {"type": "closed",           "direction": "S→C",
