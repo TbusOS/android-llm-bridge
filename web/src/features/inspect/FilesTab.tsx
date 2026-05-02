@@ -11,7 +11,7 @@
  * resubmits with `force: true` after the user OKs it.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -54,8 +54,12 @@ export function FilesTab() {
     error: string;
   } | null>(null);
 
-  const deviceQ = useDeviceFiles(device, devicePath);
-  const workspaceQ = useWorkspaceFiles(workspacePath);
+  // Debounce path-input → fetch trigger so 14-char path edits don't
+  // fan out to 14 adb `ls -la` calls (code-review HIGH 2 / 2026-05-02).
+  const debouncedDevicePath = useDebouncedValue(devicePath, 300);
+  const debouncedWorkspacePath = useDebouncedValue(workspacePath, 300);
+  const deviceQ = useDeviceFiles(device, debouncedDevicePath);
+  const workspaceQ = useWorkspaceFiles(debouncedWorkspacePath);
   const { pullMutation, pushMutation } = useFileTransfers();
 
   if (!device) {
@@ -464,4 +468,18 @@ function formatSize(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+/**
+ * Trail-edge debounce — `value` echoes back after `delayMs` of no
+ * changes. Used to keep input snappy while throttling expensive
+ * downstream effects (TanStack queryKey churn → ls -la storm).
+ */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
 }
