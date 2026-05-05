@@ -1221,6 +1221,27 @@ function clamp(v: number, lo: number, hi: number): number {
 mental model 写代码漏 IEEE 754 corner case + 漏跨语言行为差异" · 同
 形态盲区) · 全局 CLAUDE.md "代码事实禁止 hedge / 写前必须实测"
 
+**v3 addendum（2026-05-05 · audit 虚警同形态收窄）**：
+
+retroactive grep audit 找到的 finding 不应直接评 HIGH/MID。**static-only
+audit 触发 finding 必须先 TestClient / 真跑一遍验证**再决定严重度。
+
+- 同日 functional audit MID-4 "Range header 不支持" → 实测 Starlette
+  FileResponse 已原生支持（206/416/Accept-Ranges/Content-Range 全套）。
+  Audit 是 static 看代码没看到显式 Range 处理就报 GAP，没意识到框架
+  已经处理。15% 的 audit finding 是这种虚警（functional audit 13 个 finding 中 2 个虚警 = HIGH 3 metrics queue + MID-4 Range）
+- 处理方式：不修代码，加 regression 测试锁定行为（防止未来 framework
+  降级 / refactor 静默退化），audit 报告标注 retroactive corrections
+
+**应用到 agents**（functional-auditor / security-auditor）：
+
+- 找到看似 GAP / 缺失 / 未验证的 endpoint behavior → 触发"先用 TestClient
+  跑一下"步骤再下严重度。framework / library 提供的隐式能力（Starlette
+  Range / FastAPI auto-OpenAPI / Pydantic v2 strict 等）必须实测验证
+  本 endpoint 是否启用，不能仅凭 grep 不到关键字就判 GAP
+- audit 报告里建议加"verification method"标注：`[static]` / `[runtime]` /
+  `[real device]` 三档，让读者知道 finding 的可信度
+
 ---
 
 （新教训按此格式追加）

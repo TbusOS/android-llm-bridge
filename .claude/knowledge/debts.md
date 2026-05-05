@@ -675,8 +675,8 @@
   sensitive 0 / build 5s / 主 bundle 110 KB gzip 持平
 - **效果**：4 个边角隐患修完 — 用户拼错 logcat filter 立刻看到原因 /
   UART 错恢复一键 / metrics 病态值有反馈 / workspace 大目录响应快
-- **未关 MID**（4 项进 backlog）：
-  - MID-4 `/files/download` no Range header → 多 GB 断点续传
+- **未关 MID**（3 项进 backlog · MID-4 retroactive 实测确认是 audit 虚警 ·
+  Starlette FileResponse 已原生支持 Range · 加 regression 测试锁定行为）：
   - MID-5 PTY exit rationale → su denied / 立即退出场景缺信息
   - MID-6 Files tab Pull/Push 无 Cancel 无 progress
   - MID-8 三个 WS 缺 heartbeat → 代理 idle-killed 看似 hang

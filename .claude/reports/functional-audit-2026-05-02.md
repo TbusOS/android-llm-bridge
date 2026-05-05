@@ -78,5 +78,25 @@ Notes:
   - MID-2 UART stale bytes → "Clear & reconnect" button (error/ended state)
   - MID-7 metrics set_interval → NaN reject + `clamped`/`requested_s` ack (triggered L-030)
   - MID-3 workspace iterdir → `os.scandir` + sort/truncate-then-stat
-- **MID remaining (4)** → backlog: MID-4 Range header / MID-5 PTY exit rationale / MID-6 Pull/Push cancel+progress / MID-8 WS heartbeat
+- **MID remaining (3)** → backlog: MID-5 PTY exit rationale / MID-6 Pull/Push cancel+progress / MID-8 WS heartbeat
 - **LOW (5)** → backlog (deferred — no user-visible weirdness)
+
+### Retroactive corrections (added 2026-05-05)
+
+- **MID-4 Range header** — **VIRTUAL finding**. Starlette FileResponse 1.0
+  already supports Range natively (Accept-Ranges, 206 Partial Content,
+  Content-Range, 416 Range Not Satisfiable, If-Range). Verified 2026-05-05
+  with TestClient: `Range: bytes=100-199` → 206 + correct slice; out-of-bounds
+  → 416 + `bytes */<size>`. No fix shipped; instead added 5 regression
+  tests in `tests/api/test_files_route.py` (commit pending) so future
+  Starlette downgrade or response refactor can't silently kill resumable
+  downloads. Same pattern as L-030 v1: audit claim made without
+  verification, retroactive verify finds it's wrong, response is to
+  lock in correct behavior with tests.
+- **HIGH 3 metrics queue** — also misread (per HIGH closure status above).
+  Same pattern.
+
+Audit reliability lesson: 2 virtual findings out of 13 (≈15%). For future
+audits, prefer "verify with TestClient before raising" over "static
+inspection only". Added to L-030 v2 as "retroactive grep / static-only
+audit findings should be re-verified before triage to HIGH/MID".

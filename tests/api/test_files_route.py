@@ -376,6 +376,93 @@ def test_workspace_download_rejects_traversal(client) -> None:
     assert r.status_code in (400, 404)
 
 
+# ─── Range request regression (functional audit 2026-05-02 MID-4) ───
+# Audit claimed "no Range header support — multi-GB downloads can't
+# resume". 2026-05-05 retroactive verify: Starlette FileResponse 1.0
+# already handles Range natively (Accept-Ranges / 206 Partial Content /
+# 416 Range Not Satisfiable / If-Range). MID-4 was a virtual finding.
+# These tests lock the behavior in so future Starlette downgrade /
+# response refactor doesn't silently kill resumable downloads.
+
+
+def test_workspace_download_advertises_accept_ranges(client, workspace) -> None:
+    """200 response must carry `Accept-Ranges: bytes` so browsers /
+    download managers know they can resume."""
+    f = workspace / "ranges" / "small.bin"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"X" * 100)
+
+    r = client.get("/workspace/files/download/ranges/small.bin")
+    assert r.status_code == 200
+    assert r.headers.get("accept-ranges") == "bytes"
+    assert r.headers.get("content-length") == "100"
+
+
+def test_workspace_download_partial_range_returns_206(client, workspace) -> None:
+    """`Range: bytes=START-END` must return 206 Partial Content with
+    only the requested slice + Content-Range header."""
+    f = workspace / "ranges" / "thousand.bin"
+    f.parent.mkdir(parents=True)
+    payload = bytes(range(256)) * 4  # 1024 bytes, deterministic
+    assert len(payload) == 1024
+    f.write_bytes(payload)
+
+    r = client.get(
+        "/workspace/files/download/ranges/thousand.bin",
+        headers={"Range": "bytes=100-199"},
+    )
+    assert r.status_code == 206
+    assert r.headers.get("content-range") == "bytes 100-199/1024"
+    assert r.headers.get("content-length") == "100"
+    assert r.content == payload[100:200]
+
+
+def test_workspace_download_open_ended_range(client, workspace) -> None:
+    """`bytes=START-` (open-ended) reads from START to EOF."""
+    f = workspace / "ranges" / "open.bin"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"abcdefghij")
+
+    r = client.get(
+        "/workspace/files/download/ranges/open.bin",
+        headers={"Range": "bytes=5-"},
+    )
+    assert r.status_code == 206
+    assert r.content == b"fghij"
+    assert r.headers.get("content-range") == "bytes 5-9/10"
+
+
+def test_workspace_download_suffix_range(client, workspace) -> None:
+    """`bytes=-N` reads the LAST N bytes."""
+    f = workspace / "ranges" / "tail.bin"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"abcdefghij")
+
+    r = client.get(
+        "/workspace/files/download/ranges/tail.bin",
+        headers={"Range": "bytes=-3"},
+    )
+    assert r.status_code == 206
+    assert r.content == b"hij"
+
+
+def test_workspace_download_unsatisfiable_range_returns_416(
+    client, workspace,
+) -> None:
+    """Range past EOF must 416 with `Content-Range: bytes */<size>`
+    so clients can recover by re-requesting full or trimmed range."""
+    f = workspace / "ranges" / "small.bin"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"X" * 100)
+
+    r = client.get(
+        "/workspace/files/download/ranges/small.bin",
+        headers={"Range": "bytes=500-1000"},
+    )
+    assert r.status_code == 416
+    assert r.headers.get("content-range") == "bytes */100"
+
+
 # ─── Regression tests added 2026-05-02 (PR-H code review) ──────────
 def test_push_rejects_dotdot_traversal_bypass(client, workspace) -> None:
     """`/data/local/tmp/../system/lib/foo.so` would slip past the
