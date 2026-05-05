@@ -1226,21 +1226,37 @@ mental model 写代码漏 IEEE 754 corner case + 漏跨语言行为差异" · �
 retroactive grep audit 找到的 finding 不应直接评 HIGH/MID。**static-only
 audit 触发 finding 必须先 TestClient / 真跑一遍验证**再决定严重度。
 
-- 同日 functional audit MID-4 "Range header 不支持" → 实测 Starlette
-  FileResponse 已原生支持（206/416/Accept-Ranges/Content-Range 全套）。
-  Audit 是 static 看代码没看到显式 Range 处理就报 GAP，没意识到框架
-  已经处理。15% 的 audit finding 是这种虚警（functional audit 13 个 finding 中 2 个虚警 = HIGH 3 metrics queue + MID-4 Range）
-- 处理方式：不修代码，加 regression 测试锁定行为（防止未来 framework
-  降级 / refactor 静默退化），audit 报告标注 retroactive corrections
+**累计虚警率（2026-05-05 update · 4/13 = 31%）**：functional audit
+2026-05-02 共 13 个 finding（5 HIGH + 8 MID），retroactive 验证后 4
+个虚警：
+- HIGH 3 "metrics queue 无界" — 实测已 cap maxsize=20 + drop-oldest
+- MID-4 "Range header 不支持" — Starlette FileResponse 1.0 原生支持
+- MID-5 "PTY exit 无 rationale" — stdout 实时 send_bytes 给 xterm，
+  close-frame 带 exit_code，rationale 走输出不走 JSON
+- MID-8 "WS 无 heartbeat" — uvicorn 默认 ws_ping_interval=20s 已开
+
+共同失败模式：**"我 grep 文件没看到 X 关键字，所以判 GAP"**。framework /
+library / runtime 提供的隐式能力（Starlette Range / uvicorn ws_ping /
+async generator drain semantics 等）grep 不到，但运行时行为正确。
+
+**处理方式 vs 真 GAP**：
+- 真 GAP（如 MID-1/2/3/7、MID-6 / 早班 9 HIGH 中真的 8 个）→ 修代码
+- 虚警（4 个）→ 不修，加 regression 测试**锁定隐式行为**（防止未来
+  framework 降级 / refactor 静默退化掉这个能力），audit 报告标注
+  retroactive corrections + reason
 
 **应用到 agents**（functional-auditor / security-auditor）：
 
 - 找到看似 GAP / 缺失 / 未验证的 endpoint behavior → 触发"先用 TestClient
   跑一下"步骤再下严重度。framework / library 提供的隐式能力（Starlette
-  Range / FastAPI auto-OpenAPI / Pydantic v2 strict 等）必须实测验证
-  本 endpoint 是否启用，不能仅凭 grep 不到关键字就判 GAP
-- audit 报告里建议加"verification method"标注：`[static]` / `[runtime]` /
-  `[real device]` 三档，让读者知道 finding 的可信度
+  Range / FastAPI auto-OpenAPI / Pydantic v2 strict / uvicorn ws_ping /
+  asyncio EOF semantics 等）必须实测验证本 endpoint 是否启用，不能
+  仅凭 grep 不到关键字就判 GAP
+- audit 报告 finding 必含 "verification method" 标注：`[static]` /
+  `[runtime]` / `[real device]` 三档，让读者知道 finding 的可信度。
+  static-only finding 默认严重度上限 LOW（升级到 MID/HIGH 前必须
+  re-verify with runtime）
+- 虚警率超 20% 时，触发 audit-method 复盘 — 当前 31% 已超阈值
 
 ---
 

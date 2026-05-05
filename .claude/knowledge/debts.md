@@ -675,11 +675,19 @@
   sensitive 0 / build 5s / 主 bundle 110 KB gzip 持平
 - **效果**：4 个边角隐患修完 — 用户拼错 logcat filter 立刻看到原因 /
   UART 错恢复一键 / metrics 病态值有反馈 / workspace 大目录响应快
-- **未关 MID**（3 项进 backlog · MID-4 retroactive 实测确认是 audit 虚警 ·
-  Starlette FileResponse 已原生支持 Range · 加 regression 测试锁定行为）：
-  - MID-5 PTY exit rationale → su denied / 立即退出场景缺信息
-  - MID-6 Files tab Pull/Push 无 Cancel 无 progress
-  - MID-8 三个 WS 缺 heartbeat → 代理 idle-killed 看似 hang
+- **未关 MID**（1 项 · 经 retroactive 实测剩 MID-6 是真 GAP；
+  MID-4/5/8 都是 audit 虚警 · 加 regression 锁行为）：
+  - MID-6 Files tab Pull/Push 无 Cancel 无 progress（真 GAP · 但工作量
+    大，需要 task 队列 + cancellation token + progress endpoint + 前端
+    进度条；下次专门 batch）
+
+  retroactive corrections（2026-05-05）：
+  - MID-4 Range：Starlette FileResponse 1.0 原生支持 Range（206/416/
+    Accept-Ranges/Content-Range），regression 锁在 test_files_route.py（commit `ead4e90`）
+  - MID-5 PTY exit：stdout bytes 实时 send_bytes，close-frame 带 exit_code，
+    rationale 走 xterm 不在 JSON。regression 锁在 test_terminal_route.py
+  - MID-8 WS heartbeat：uvicorn 默认 ws_ping_interval=20s / ws_ping_timeout=20s
+    已开，alb-api 不 override。regression 锁在 test_meta_route.py
 - **未关 LOW**（5 项进 backlog · 见 functional audit 报告）
 - **来源**：`.claude/reports/functional-audit-2026-05-02.md` MID 1/2/3/7
 - **关联**：L-030（NaN 钳位反模式 · 同 commit 触发）/ DEBT-028（早班

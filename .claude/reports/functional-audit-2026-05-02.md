@@ -78,25 +78,40 @@ Notes:
   - MID-2 UART stale bytes → "Clear & reconnect" button (error/ended state)
   - MID-7 metrics set_interval → NaN reject + `clamped`/`requested_s` ack (triggered L-030)
   - MID-3 workspace iterdir → `os.scandir` + sort/truncate-then-stat
-- **MID remaining (3)** → backlog: MID-5 PTY exit rationale / MID-6 Pull/Push cancel+progress / MID-8 WS heartbeat
+- **MID remaining (1)** → backlog: MID-6 Pull/Push cancel+progress
+  (only one with real engineering work left after retroactive verify)
 - **LOW (5)** → backlog (deferred — no user-visible weirdness)
 
 ### Retroactive corrections (added 2026-05-05)
 
 - **MID-4 Range header** — **VIRTUAL finding**. Starlette FileResponse 1.0
   already supports Range natively (Accept-Ranges, 206 Partial Content,
-  Content-Range, 416 Range Not Satisfiable, If-Range). Verified 2026-05-05
-  with TestClient: `Range: bytes=100-199` → 206 + correct slice; out-of-bounds
+  Content-Range, 416 Range Not Satisfiable, If-Range). Verified with
+  TestClient: `Range: bytes=100-199` → 206 + correct slice; out-of-bounds
   → 416 + `bytes */<size>`. No fix shipped; instead added 5 regression
-  tests in `tests/api/test_files_route.py` (commit pending) so future
+  tests in `tests/api/test_files_route.py` (commit `ead4e90`) so future
   Starlette downgrade or response refactor can't silently kill resumable
-  downloads. Same pattern as L-030 v1: audit claim made without
-  verification, retroactive verify finds it's wrong, response is to
-  lock in correct behavior with tests.
-- **HIGH 3 metrics queue** — also misread (per HIGH closure status above).
-  Same pattern.
+  downloads.
+- **MID-5 PTY exit rationale** — **VIRTUAL finding**. PTY stdout bytes ARE
+  forwarded live to client via `ws.send_bytes` (terminal_route.py
+  `_send_loop`); the close-frame carries `exit_code`. The "rationale"
+  lives in xterm output, not duplicated in close-frame JSON — that's
+  by design (live shell output, not deferred). Verified by spawning
+  `sh -c "printf 'Permission denied\n' 1>&2; exit 7"` over /terminal/ws
+  and asserting bytes arrive before the close-frame. Regression test
+  in `tests/api/test_terminal_route.py`.
+- **MID-8 WS heartbeat** — **VIRTUAL finding**. uvicorn defaults
+  `ws_ping_interval=20.0` and `ws_ping_timeout=20.0` (RFC 6455 control
+  ping/pong), and alb-api never overrides them. So every WS has a
+  20s protocol-level heartbeat — well below typical proxy idle-kill
+  thresholds. Regression test in `tests/api/test_meta_route.py` locks
+  the contract: `main()` must not override `ws_ping_*`, and the
+  uvicorn 20s default must persist across upgrades.
+- **HIGH 3 metrics queue** — also misread (queue already cap'd at
+  maxsize=20 with drop-oldest at metrics.py:241).
 
-Audit reliability lesson: 2 virtual findings out of 13 (≈15%). For future
-audits, prefer "verify with TestClient before raising" over "static
-inspection only". Added to L-030 v2 as "retroactive grep / static-only
-audit findings should be re-verified before triage to HIGH/MID".
+Audit reliability lesson: **4 virtual findings out of 13 (≈31%)**. Pattern:
+when a finding is based on "I grep'd the file and didn't see X", the
+finding is unreliable until verified with TestClient or a runtime probe.
+Added to L-030 v3 as "static-only audit findings must be re-verified
+before triage to HIGH/MID".

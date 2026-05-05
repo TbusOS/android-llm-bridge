@@ -295,3 +295,96 @@ def test_terminal_deny_publishes_to_event_bus(client, tmp_path) -> None:
     # both are valid signals that the guard fired.
     assert terminal_events, f"no terminal events in {events!r}"
     assert any("rm -rf" in e["summary"] for e in terminal_events)
+
+
+# ─── MID-5 retroactive verification (functional audit 2026-05-02) ───
+# Audit claim: "Shell PTY spawn that succeeds but shell exits
+# immediately (e.g. su denied) → terminal silently shows exit_code 1,
+# no rationale string from stdout buffer."
+# 2026-05-05 retroactive verify: stdout bytes ARE forwarded to the
+# client via ws.send_bytes BEFORE the close-frame is sent, because
+# _send_loop drains the master fd until EOF (which only happens after
+# the shell process exits AND its stdout buffer has been drained).
+# The user sees the rationale in xterm AND gets exit_code in the
+# close-frame. The audit's "no rationale" phrasing was misleading —
+# the rationale just lives in xterm output, not duplicated in JSON.
+# These tests lock the order in (bytes then close-frame, exit code
+# preserved).
+
+
+class _ExitOneTransport(_PtyFakeTransport):
+    """PTY runs `sh -c 'echo "Permission denied" 1>&2; exit 7'` —
+    shell writes to stderr (PTY merges into stdout) then exits with
+    code 7. Models the "su denied" scenario from the audit."""
+
+    async def interactive_shell(self, *, rows: int = 24, cols: int = 80):
+        return await open_pty_subprocess(
+            "sh", "-c",
+            "printf 'Permission denied\\n' 1>&2; exit 7",
+            rows=rows, cols=cols,
+        )
+
+
+@pytest.fixture
+def exit_one_client(monkeypatch, tmp_path):
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    from alb.infra.event_bus import reset_bus
+    reset_bus()
+    monkeypatch.setattr(
+        "alb.api.terminal_route.build_transport",
+        lambda **kwargs: _ExitOneTransport(),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        yield c
+
+
+def test_pty_immediate_exit_forwards_stdout_then_close_with_exit_code(
+    exit_one_client,
+) -> None:
+    """When PTY spawns OK but exits immediately:
+    1. stdout bytes (the rationale) reach the client via send_bytes
+    2. The close-frame carries the non-zero exit_code
+    3. Order is bytes → close-frame (so xterm renders before close)."""
+    import json as _json
+
+    saw_bytes = b""
+    closed_msg = None
+
+    with exit_one_client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "rows": 24, "cols": 80})
+        ws.receive_json()  # ready
+
+        # Drain frames until we see the close-frame. ws.receive() blocks
+        # until the server sends a frame or closes the socket; on
+        # WebSocketDisconnect we exit the loop. The shell exits
+        # ~immediately so this drains in O(ms).
+        for _ in range(60):
+            try:
+                msg = ws.receive()
+            except Exception:
+                break
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("type") == "websocket.disconnect":
+                break
+            data = msg.get("bytes")
+            if data:
+                saw_bytes += data
+                continue
+            text = msg.get("text")
+            if text:
+                obj = _json.loads(text)
+                if obj.get("type") == "closed":
+                    closed_msg = obj
+                    break
+
+    assert closed_msg is not None, "never received closed frame"
+    assert closed_msg.get("exit_code") == 7, closed_msg
+    # The rationale bytes must have arrived (audit's "silently shows
+    # exit_code 1, no rationale" was a misread — rationale comes via
+    # stdout, just not in the close-frame JSON).
+    assert b"Permission denied" in saw_bytes, (
+        f"expected stderr bytes in stream, got {saw_bytes!r}"
+    )

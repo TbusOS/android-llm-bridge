@@ -79,3 +79,62 @@ def test_schema_lists_consistent_constants() -> None:
     # module-level constants.
     assert any(e["path"] == "/health" for e in REST_ENDPOINTS)
     assert any(w["path"] == "/chat/ws" for w in WS_ENDPOINTS)
+
+
+# ─── MID-8 retroactive verification (functional audit 2026-05-02) ───
+# Audit claim: "WS endpoints lack heartbeat — proxy idle-killed
+# connections appear hung to user with no ping/pong feedback."
+# 2026-05-05 retroactive verify: uvicorn defaults `ws_ping_interval=
+# 20.0` and `ws_ping_timeout=20.0` (RFC 6455 control-frame ping/pong),
+# and alb-api never overrides these. So every WS connection has a
+# 20s heartbeat at the protocol layer — well below typical proxy
+# idle-kill thresholds (60-300s). MID-8 was a virtual finding.
+# This test locks in the behavior so a future `main()` refactor
+# can't silently disable heartbeats by overriding ws_ping_*.
+
+
+def test_alb_api_main_does_not_override_uvicorn_ws_ping(monkeypatch) -> None:
+    """alb-api must rely on uvicorn's default 20s ws_ping_interval +
+    ws_ping_timeout. If a future refactor sets `ws_ping_interval=None`
+    or `0` we want to fail loudly here, not in a prod incident."""
+    captured: dict = {}
+
+    def _fake_run(target: str, **kwargs):
+        captured["target"] = target
+        captured["kwargs"] = kwargs
+
+    import uvicorn
+    monkeypatch.setattr(uvicorn, "run", _fake_run)
+    monkeypatch.setenv("ALB_API_HOST", "127.0.0.1")  # silence the 0.0.0.0 banner
+
+    from alb.api.server import main
+    main()
+
+    # If ANY ws_ping_* override appears here, uvicorn's defaults are
+    # being clobbered. Default = 20.0s for both.
+    assert "ws_ping_interval" not in captured["kwargs"], (
+        "main() should leave ws_ping_interval at uvicorn default (20s) — "
+        f"got {captured['kwargs'].get('ws_ping_interval')!r}"
+    )
+    assert "ws_ping_timeout" not in captured["kwargs"], (
+        "main() should leave ws_ping_timeout at uvicorn default (20s) — "
+        f"got {captured['kwargs'].get('ws_ping_timeout')!r}"
+    )
+
+    # Defensive: also verify the real uvicorn Config defaults are still
+    # 20s — if a future uvicorn upgrade flipped these to None, we'd
+    # silently regress. Lock the framework version contract too.
+    sig = uvicorn.Config.__init__.__defaults__ or ()
+    # Unfortunately Config has many positional defaults; use signature
+    # introspection instead:
+    import inspect
+    params = inspect.signature(uvicorn.Config.__init__).parameters
+    assert params["ws_ping_interval"].default == 20.0, (
+        f"uvicorn ws_ping_interval default changed to "
+        f"{params['ws_ping_interval'].default!r}; revisit MID-8 "
+        "verification — alb-api may now need to set the value explicitly."
+    )
+    assert params["ws_ping_timeout"].default == 20.0, (
+        f"uvicorn ws_ping_timeout default changed to "
+        f"{params['ws_ping_timeout'].default!r}; revisit MID-8 verification."
+    )
