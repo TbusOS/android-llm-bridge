@@ -6,11 +6,15 @@ scenario (A, see docs/methods/01-ssh-tunnel-adb.md) works transparently.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
+import re
 import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from alb.infra.permissions import PermissionResult, default_check
@@ -18,7 +22,7 @@ from alb.infra.process import run as proc_run, spawn_stream
 
 if False:  # TYPE_CHECKING shim
     from alb.transport.interactive import InteractiveShell  # noqa: F401
-from alb.transport.base import ShellResult, Transport
+from alb.transport.base import ShellResult, Transport, TransferEvent
 
 
 @dataclass(frozen=True)
@@ -204,6 +208,56 @@ class AdbTransport(Transport):
         local.parent.mkdir(parents=True, exist_ok=True)
         return await self._run(["pull", remote, str(local)], timeout=600)
 
+    async def push_stream(
+        self, local: Path, remote: str
+    ) -> AsyncIterator[TransferEvent]:
+        """Stream push progress · cancel via aclose() on the generator.
+
+        adb push prints `[ N%] /path` lines to stderr in pipe mode and
+        a final summary `1 file pushed. ...` to stdout. We tail both,
+        emit `kind="progress"` for each `[N%]` we see, then a single
+        `kind="done"` after the process exits. spawn_stream's finally
+        guarantees subprocess teardown when the consumer stops iterating.
+
+        MID-6 (functional audit 2026-05-02): users can finally cancel
+        a hung push by closing the WS / aborting the iteration.
+        """
+        if not local.exists():
+            yield TransferEvent(
+                kind="done",
+                ok=False,
+                error=f"local path not found: {local}",
+            )
+            return
+
+        start = perf_counter()
+        args = [*self._base_cmd(), "push", str(local), remote]
+        # Nested async generators: aclose() on the outer doesn't auto-
+        # propagate to the inner. Explicit try/finally + aclose ensures
+        # cancel cleanup runs synchronously when the consumer aborts
+        # iteration, instead of waiting for GC.
+        inner = _stream_transfer(args, env=self._env(), start=start)
+        try:
+            async for event in inner:
+                yield event
+        finally:
+            await inner.aclose()
+
+    async def pull_stream(
+        self, remote: str, local: Path
+    ) -> AsyncIterator[TransferEvent]:
+        """Stream pull progress. Same contract as push_stream."""
+        local.parent.mkdir(parents=True, exist_ok=True)
+
+        start = perf_counter()
+        args = [*self._base_cmd(), "pull", remote, str(local)]
+        inner = _stream_transfer(args, env=self._env(), start=start)
+        try:
+            async for event in inner:
+                yield event
+        finally:
+            await inner.aclose()
+
     async def forward(self, local_port: int, remote_port: int) -> ShellResult:
         return await self._run(
             ["forward", f"tcp:{local_port}", f"tcp:{remote_port}"],
@@ -337,3 +391,135 @@ def _classify_stderr(stderr: str) -> str:
     if "command not found" in low:
         return "ADB_BINARY_NOT_FOUND"
     return "ADB_COMMAND_FAILED"
+
+
+# ── Streaming transfer parser (MID-6) ────────────────────────────────
+
+# Matches adb's progress format: "[ 12%] /sdcard/file" or "[100%] /sdcard/file"
+# Some adb builds emit "[%5d] %s" (right-aligned), others "[%3d%%] %s".
+# Both forms are captured here.
+_ADB_PROGRESS_RE = re.compile(
+    r"\[\s*(?P<pct>\d{1,3})\s*%\s*\]\s+(?P<file>.+?)\s*$"
+)
+# Matches final summary line, e.g. "/path: 1 file pushed. 12.3 MB/s
+# (12345 bytes in 0.123s)" — used to pin bytes_transferred even when
+# the per-file progress lines didn't surface (e.g. small files).
+_ADB_SUMMARY_RE = re.compile(
+    r"\((?P<bytes>\d+) bytes in", re.IGNORECASE
+)
+
+
+async def _stream_transfer(
+    args: list[str],
+    *,
+    env: dict[str, str] | None,
+    start: float,
+) -> AsyncIterator[TransferEvent]:
+    """Spawn adb push/pull and yield TransferEvent updates.
+
+    Wire format observation (Android Platform Tools 30+):
+      - Per-file progress `[ N%] /path` lands on STDERR (not stdout)
+        even when stdout is a pipe — adb intentionally splits them
+        so callers redirecting stdout get a clean final summary.
+      - Final summary `1 file pushed/pulled. ... (NNNN bytes in ...)`
+        lands on STDOUT.
+
+    We tail stderr inline (yield progress as we parse), then drain
+    stdout for the summary, then yield the terminal done event.
+
+    Cancel: when the consumer breaks or aclose()s the generator,
+    the finally block escalates SIGTERM → SIGKILL on the adb
+    subprocess. No leaked processes.
+    """
+    last_bytes = 0
+    last_file: str | None = None
+    last_percent: float | None = None
+    error_lines: list[str] = []
+    final_bytes = 0
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except (FileNotFoundError, NotADirectoryError) as e:
+        yield TransferEvent(
+            kind="done", ok=False,
+            error=f"adb binary missing or not executable: {e}",
+            duration_ms=int((perf_counter() - start) * 1000),
+        )
+        return
+
+    assert proc.stdout is not None and proc.stderr is not None
+
+    async def _drain_stdout() -> None:
+        """Background reader for stdout — captures final summary line."""
+        nonlocal final_bytes
+        try:
+            async for raw in proc.stdout:  # type: ignore[union-attr]
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                m = _ADB_SUMMARY_RE.search(line)
+                if m:
+                    final_bytes = int(m.group("bytes"))
+        except Exception:  # noqa: BLE001 — drain best-effort
+            pass
+
+    stdout_task = asyncio.create_task(_drain_stdout())
+
+    try:
+        # Inline read of stderr — yield progress events as they arrive.
+        async for raw in proc.stderr:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if not line:
+                continue
+            m = _ADB_PROGRESS_RE.search(line)
+            if m:
+                last_percent = float(m.group("pct"))
+                last_file = m.group("file").strip()
+                yield TransferEvent(
+                    kind="progress",
+                    percent=last_percent,
+                    file=last_file,
+                    bytes_transferred=last_bytes,
+                )
+            else:
+                error_lines.append(line)
+
+        # stderr EOF — process is finishing; drain stdout summary.
+        await proc.wait()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stdout_task
+        rc = proc.returncode if proc.returncode is not None else -1
+        ok = rc == 0
+        bytes_xfer = final_bytes if final_bytes else last_bytes
+        yield TransferEvent(
+            kind="done",
+            ok=ok,
+            bytes_transferred=bytes_xfer,
+            percent=100.0 if ok else last_percent,
+            file=last_file,
+            duration_ms=int((perf_counter() - start) * 1000),
+            error=None if ok else (
+                "; ".join(error_lines[-3:])[:500] if error_lines
+                else f"adb exited with code {rc}"
+            ),
+        )
+    finally:
+        # Consumer cancelled mid-iteration → terminate adb so no
+        # zombie push/pull continues in the background. Also covers
+        # the happy path's already-exited proc (no-op).
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    await proc.wait()
+        if not stdout_task.done():
+            stdout_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stdout_task

@@ -35,6 +35,33 @@ class ShellResult:
     error_code: str | None = None  # Matches docs/errors.md
 
 
+@dataclass(frozen=True)
+class TransferEvent:
+    """One progress / completion event from a streaming file transfer.
+
+    Yielded by `Transport.push_stream` / `pull_stream`. Two `kind`s:
+      - "progress": intermediate update; `percent` may be None when the
+        underlying tool doesn't emit progress (modern adb in pipe mode
+        sometimes only prints the final summary). `bytes_transferred` is
+        a best-effort estimate (e.g. local file size for pulls).
+      - "done": terminal event. `ok=True` on success, `ok=False` with
+        `error` populated on failure. `duration_ms` covers the full
+        transfer span.
+
+    Cancel semantics: consumer aborts the iteration (break / aclose /
+    GC) → underlying subprocess is escalate-terminated by `spawn_stream`
+    finally block. No leaked adb processes.
+    """
+
+    kind: str  # "progress" | "done"
+    bytes_transferred: int = 0
+    percent: float | None = None  # 0..100
+    file: str | None = None  # current file in multi-file transfer
+    duration_ms: int = 0
+    ok: bool = True  # only meaningful when kind == "done"
+    error: str | None = None  # only meaningful when kind == "done" and ok=False
+
+
 class Transport(ABC):
     """All concrete transports (adb / ssh / serial / hybrid) implement this ABC.
 
@@ -75,6 +102,36 @@ class Transport(ABC):
     @abstractmethod
     async def pull(self, remote: str, local: Path) -> ShellResult:
         """Pull a remote file/dir to local."""
+
+    async def push_stream(
+        self, local: Path, remote: str
+    ) -> AsyncIterator[TransferEvent]:
+        """Streamed variant of push() — yields TransferEvent updates.
+
+        Default raises NotImplementedError so backends without a real
+        progress/cancel story stay loud. Concrete transports that
+        spawn a subprocess (adb) override and yield progress as the
+        underlying tool emits it. The terminal event must always be
+        kind="done"; consumers can stop iteration at any time and the
+        implementation must terminate the underlying process via the
+        spawn_stream finally semantics.
+        """
+        raise NotImplementedError(
+            f"{self.name} does not support push_stream()"
+        )
+        yield  # pragma: no cover — async generator marker
+
+    async def pull_stream(
+        self, remote: str, local: Path
+    ) -> AsyncIterator[TransferEvent]:
+        """Streamed variant of pull() — yields TransferEvent updates.
+
+        Mirrors push_stream contract; default raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{self.name} does not support pull_stream()"
+        )
+        yield  # pragma: no cover — async generator marker
 
     # ── Port forwarding (optional) ────────────────────────────────
     async def forward(self, local_port: int, remote_port: int) -> ShellResult:
