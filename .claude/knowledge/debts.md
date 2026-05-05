@@ -687,10 +687,14 @@
 
 ---
 
-## DEBT-030 · useLiveSession scaleSparkPoints 无 isFinite filter · L-030 retroactive grep 唯一真发现
+## DEBT-030 · useLiveSession scaleSparkPoints 无 isFinite filter · L-030 retroactive grep 唯一真发现 —— **CLOSED 2026-05-02**
 
 - **severity**：low（依赖后端 reducer 不发 NaN 的隐性契约 · 当前后端
   实际不会发，但 contract 没显式守护）
+- **关闭**：commit pending（M3 step 2 收官后开新 work）。3 行修：
+  `samples.filter(Number.isFinite)` 在算 peak 前先净化，empty 化为 []
+  返回 [];scaleSparkPoints 注释加 L-030 v2 引用解释为啥 JS Math.max
+  不能用 Python 那套"max(LO, min(HI, x)) 顺序安全"假设
 - **位置**：`web/src/features/dashboard/useLiveSession.ts:175-181`
   ```ts
   function scaleSparkPoints(samples: number[]): number[] {

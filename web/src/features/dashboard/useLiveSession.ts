@@ -171,11 +171,21 @@ export function selectActiveSession(
 /** Map raw rate_per_s samples (oldest → newest) to SVG y-coords
  * (0 = top of the spark, SPARK_HEIGHT = bottom).  Ceiling is dynamic so
  * tiny tps values (3 tok/s on a heavy model) still produce a visible
- * profile, but the floor SPARK_MIN_CEILING avoids amplifying pure noise. */
+ * profile, but the floor SPARK_MIN_CEILING avoids amplifying pure noise.
+ *
+ * DEBT-030 (2026-05-02): filter NaN / Infinity defensively. Reducer
+ * upstream is supposed to only emit finite numbers, but JS `Math.max`
+ * propagates NaN unconditionally — a single NaN in `samples` would
+ * make every point NaN, producing `<polyline points="x,NaN ...">`
+ * that React drops or errors on. L-030 v2: explicit `Number.isFinite`
+ * is the only portable safe write — Math.max(LO, Math.min(HI, x)) is
+ * NOT NaN-safe in JS (unlike Python's max/min in the same order).
+ */
 function scaleSparkPoints(samples: number[]): number[] {
-  if (samples.length === 0) return [];
-  const peak = Math.max(SPARK_MIN_CEILING, ...samples);
-  return samples.map((rate) => {
+  const finite = samples.filter(Number.isFinite);
+  if (finite.length === 0) return [];
+  const peak = Math.max(SPARK_MIN_CEILING, ...finite);
+  return finite.map((rate) => {
     const norm = peak > 0 ? rate / peak : 0;
     return Math.max(0, Math.min(SPARK_HEIGHT, SPARK_HEIGHT * (1 - norm)));
   });
