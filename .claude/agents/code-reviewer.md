@@ -68,9 +68,19 @@ tools: Read, Grep, Bash
 
 实测真值表见 `lessons.md` L-030（不要凭记忆判，必要时跑 `uv run python -c "..."` 实测验证）。
 
+### 来自 L-031 (suppress(Exception) 不抓 CancelledError) — finally 清理 cancel 必显式列举
+**Python 3.11+ 行为**：`asyncio.CancelledError` 是 `BaseException` 子类，不是 `Exception`。`with contextlib.suppress(Exception)` 不抓 CancelledError → finally 清理代码漏 cancel 信号 → 上层 testclient/runtime 拿到 CancelledError 看似无关错误。
+
+- diff 命中 `with contextlib\.suppress\(Exception\)` 在 `.py` → 看 `with` 块内 5 行：
+  - 含 `await .*task` / `await .*\.aclose\(\)` / `await asyncio\.wait_for` / `await .*proc\.(wait|kill)` 等 cancel 路径常用 await → **MID** finding
+  - 仅含 `await ws\.send_json` / `await ws\.close` / `await queue\.put` / `await .*\.write` 等纯网络 IO → 放过（CancelledError 在这些路径不常见，且 ws 网络异常已是 Exception）
+- 修法：改 `(asyncio.CancelledError, Exception)` 或单独 `(asyncio.CancelledError,)`（参考 `terminal_route.py:166-168`）
+
+**已知正例**：`src/alb/api/terminal_route.py:166-168` `with contextlib.suppress(asyncio.CancelledError): await t`（已使用专用形式）。可作为修法参考。
+
 执行流程：
 1. `git diff <range>` 拿改动
-2. 按以上 7 条 grep 跑一遍
+2. 按以上 8 条 grep 跑一遍
 3. 发现命中 → 立刻报 finding（不用等"5 维评审"框架）
 4. 5 维评审继续，但 grep 命中先于 5 维输出
 

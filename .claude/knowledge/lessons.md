@@ -1260,4 +1260,100 @@ async generator drain semantics 等）grep 不到，但运行时行为正确。
 
 ---
 
+## L-031 · `contextlib.suppress(Exception)` 不抓 CancelledError · 必显式列举
+
+**Date**: 2026-05-06（MID-6 commit 90 _pump_transfer 调试触发 · fix `7b9afc0`）
+
+**规则**：Python 3.11+ `asyncio.CancelledError` 是 **`BaseException` 子类**，
+不是 `Exception` 子类。任何 `with contextlib.suppress(Exception):` 包住
+**会被 cancel 的 await**（典型 `await task` / `await gen.aclose()` /
+`await asyncio.wait_for(...)`），CancelledError **不会被吞**，会从 `with`
+块漏出，破坏 finally 的"安静清理"语义。
+
+**正解**：显式列举 `(asyncio.CancelledError, Exception)`，或用
+`BaseException`（更宽泛但要小心 KeyboardInterrupt / SystemExit 也吞掉）。
+
+```python
+# ❌ 3.11+ 会漏 CancelledError
+with contextlib.suppress(Exception):
+    await producer_task
+
+# ✅ 三种正解
+with contextlib.suppress(asyncio.CancelledError, Exception):
+    await producer_task
+# 或
+try:
+    await producer_task
+except (asyncio.CancelledError, Exception):
+    pass
+# 或参考 terminal_route.py 已有写法（仅 CancelledError）：
+with contextlib.suppress(asyncio.CancelledError):
+    await pending_task
+```
+
+**Why**：
+
+- Python 3.7 以前 CancelledError 继承 `concurrent.futures.CancelledError`（=
+  Exception 系）。**3.8 改继承 BaseException**，避免被 broad except 误吞。
+  这是有意为之的语言变更（PEP 567 鄄关），但对老代码 / mental-model 不友好
+- 2026-05-06 MID-6 commit 90 调试：4 个 WS 测试失败，traceback 终端是
+  `concurrent.futures._base.CancelledError`，testclient 的 `with __exit__`
+  收到 CancelledError 抛出。耗时排查 1+ 小时定位到 _pump_transfer finally
+  里 `suppress(Exception): await producer_task`（producer 已被 cancel）。
+  用户视角看到的是"测试失败但日志含混"，实际是 cancel 路径漏到上层
+- 同形态在 alb 已有正例：`terminal_route.py:166-168` `with
+  contextlib.suppress(asyncio.CancelledError): await t`。说明 reviewer
+  规则若早立，本次 commit 90 写下时就能被自动抓出，省 1 小时
+
+**How to apply**：
+
+写"finally 清理 cancel 过的 task" 模式时，suppressor 必须包含
+`asyncio.CancelledError`：
+
+```python
+finally:
+    if not task.done():
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+```
+
+**触发条件**：
+
+- finally / except 里 await 之前 `.cancel()` 过的 task
+- finally 里 `await gen.aclose()` 一个 async generator（aclose 内部可能 cancel）
+- `await asyncio.wait_for(..., timeout)` 超时分支后 cleanup
+- 任何 `try: await ...; except (asyncio.TimeoutError,): pass` 之外的 exception 处理
+
+**反面教材**：
+
+- 2026-05-06 commit 90 (`7b9afc0`) `_pump_transfer` finally：
+  ```python
+  if not producer_task.done():
+      producer_task.cancel()
+      with contextlib.suppress(Exception):  # ❌ 漏 CancelledError
+          await producer_task
+  ```
+  4 个 WS 测试失败，traceback 链路 6+ 层。修法：
+  `(asyncio.CancelledError, Exception)`。
+- 现 alb 仓 grep `suppress\(Exception` 在 finally / except 块中的所有
+  位置（commit 91 升级时一并扫一遍 retroactive）
+
+**应用到 agents**：
+
+- code-reviewer agent grep checklist 加规则：
+  - 命中 `with contextlib\.suppress\(Exception\)` →
+    上下文 5 行内有 `await .*\.cancel\(\)|await .*task|await .*\.aclose\(\)|
+    await asyncio\.wait_for` → **MID** finding
+  - 提示用户改成 `(asyncio.CancelledError, Exception)` 或专用
+    `(asyncio.CancelledError,)`
+- 该规则同时帮检 `except Exception:` 后跟同类 await 但漏 CancelledError 的情况
+
+**关联**：L-026 (WS 多 task close-frame race · 同 finally cleanup 区域 ·
+本条补"清理代码本身的 cancel 安全"维度) · L-030 (NaN 钳位 · 同形态
+"语言版本细节让代码看起来对实际错"的 mental-model 盲区) · 全局 CLAUDE.md
+"代码事实禁止 hedge / 写前必须实测"
+
+---
+
 （新教训按此格式追加）
