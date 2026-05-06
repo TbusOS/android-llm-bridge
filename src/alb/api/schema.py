@@ -217,6 +217,42 @@ WS_ENDPOINTS: list[WSSpec] = [
              "description": "Terminal; carries reason / error"},
         ],
     },
+    {
+        "path": "/devices/{serial}/files/push/stream",
+        "description": "Streaming push to device (MID-6). Progress + cancel "
+                       "via {type:'cancel'}; HITL gate on sensitive prefixes.",
+        "messages": [
+            {"type": "<client-first>",   "direction": "C→S",
+             "description": "{local: workspace-rel, remote: device-path, force?}"},
+            {"type": "ready",            "direction": "S→C",
+             "description": "{serial, direction, local, remote}"},
+            {"type": "progress",         "direction": "S→C",
+             "description": "{percent, bytes_transferred, file}"},
+            {"type": "cancel",           "direction": "C→S",
+             "description": "Abort the in-flight push; SIGTERMs adb"},
+            {"type": "closed",           "direction": "S→C",
+             "description": "Terminal; reason in {done, cancelled, "
+                            "init_failed, bad_config, sensitive_path, "
+                            "unsupported_transport, error}"},
+        ],
+    },
+    {
+        "path": "/devices/{serial}/files/pull/stream",
+        "description": "Streaming pull from device (MID-6). Same shape as "
+                       "push/stream; `local` defaults under workspace pulls/.",
+        "messages": [
+            {"type": "<client-first>",   "direction": "C→S",
+             "description": "{remote: device-path, local?: workspace-rel}"},
+            {"type": "ready",            "direction": "S→C",
+             "description": "{serial, direction, local, remote}"},
+            {"type": "progress",         "direction": "S→C",
+             "description": "{percent, bytes_transferred, file}"},
+            {"type": "cancel",           "direction": "C→S",
+             "description": "Abort the in-flight pull; SIGTERMs adb"},
+            {"type": "closed",           "direction": "S→C",
+             "description": "Terminal; reason same as push/stream"},
+        ],
+    },
 ]
 
 

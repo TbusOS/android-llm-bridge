@@ -17,7 +17,13 @@ export default defineConfig({
     proxy: {
       "/health": "http://localhost:8765",
       "/api": "http://localhost:8765",
-      "/devices": "http://localhost:8765",
+      // /devices/{s}/files/push/stream and /pull/stream are WS endpoints
+      // (MID-6, 2026-05-05). ws:true tells vite to proxy the upgrade
+      // handshake too. Plain GET/POST under /devices keep working.
+      "/devices": {
+        target: "http://localhost:8765",
+        ws: true,
+      },
       "/workspace": "http://localhost:8765",
       "/sessions": "http://localhost:8765",
       "/tools": "http://localhost:8765",

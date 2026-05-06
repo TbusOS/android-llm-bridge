@@ -36,19 +36,24 @@ filesync rules (tracked under the broader permissions backlog).
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import os
 import posixpath
 import shlex
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
+from alb.api.schema import API_VERSION
 from alb.capabilities.filesync import pull as filesync_pull
 from alb.capabilities.filesync import push as filesync_push
 from alb.infra.workspace import iso_timestamp, workspace_root
 from alb.mcp.transport_factory import build_transport
+from alb.transport.base import TransferEvent
 
 router = APIRouter()
 
@@ -518,6 +523,341 @@ async def workspace_download(path: str) -> FileResponse:
         filename=target.name,
         media_type="application/octet-stream",
     )
+
+
+# ─── MID-6 streaming push/pull WS endpoints ─────────────────────────
+#
+# Protocol (mirrors /uart/stream / /terminal/ws style):
+#
+#   C → S (first JSON, required, 2.0 s timeout):
+#       push:  {"local": "<workspace-rel>", "remote": "<device-path>",
+#               "force": false}
+#       pull:  {"remote": "<device-path>", "local": "<workspace-rel>?"}
+#
+#   S → C (on accept, ready frame):
+#       {"v": API_VERSION, "type": "ready", "serial": "...",
+#        "direction": "push"|"pull", "local": "...", "remote": "..."}
+#
+#   S → C (during transfer, 0..N frames):
+#       {"type": "progress", "percent": 50.0,
+#        "bytes_transferred": 12345, "file": "/sdcard/foo"}
+#
+#   C → S (any time, optional):
+#       {"type": "cancel"}  → server SIGTERMs adb subprocess; closes
+#       with reason="cancelled"
+#
+#   S → C (terminal, exactly one):
+#       {"type": "closed", "reason": "done"|"cancelled"|
+#                          "init_failed"|"bad_config"|"sensitive_path"|
+#                          "unsupported_transport"|"timeout"|"error",
+#        "ok": bool, "bytes_transferred": int, "duration_ms": int,
+#        "error": "..."}
+#
+# Single close-frame guarantee per L-026: the inner pump never sends
+# the closed frame; it returns / sets `_TransferCloseState.reason`,
+# and the outer finally is the only sender.
+
+_TRANSFER_CONFIG_TIMEOUT_S = 2.0
+
+
+@dataclass
+class _TransferCloseState:
+    """Outer-finally close-frame coordinator for the transfer WS pumps.
+    Same pattern as _CloseState in uart_stream_route.py — keeps L-026
+    "exactly one close frame" invariant when multiple tasks (the pump
+    + the recv loop) can decide the connection should end."""
+
+    reason: str = "done"
+    ok: bool = False
+    bytes_transferred: int = 0
+    duration_ms: int = 0
+    error: str | None = None
+    cancelled: bool = False
+
+
+@router.websocket("/devices/{serial}/files/push/stream")
+async def device_push_stream(ws: WebSocket, serial: str) -> None:
+    """Streaming push with progress + cancel (MID-6)."""
+    await ws.accept()
+    await _run_transfer_stream(ws, serial, direction="push")
+
+
+@router.websocket("/devices/{serial}/files/pull/stream")
+async def device_pull_stream(ws: WebSocket, serial: str) -> None:
+    """Streaming pull with progress + cancel (MID-6)."""
+    await ws.accept()
+    await _run_transfer_stream(ws, serial, direction="pull")
+
+
+async def _run_transfer_stream(
+    ws: WebSocket, serial: str, *, direction: str
+) -> None:
+    """Common WS lifecycle for push and pull streaming.
+
+    Returns nothing; the outer finally is the single source of close
+    frames (L-026). All paths set `cs.reason` + `cs.error` and return;
+    the finally block sends the unified `closed` JSON frame.
+    """
+    cs = _TransferCloseState()
+    try:
+        config = await _read_transfer_config(ws)
+        if not isinstance(config, dict):
+            cs.reason = "bad_config"
+            cs.error = "missing or invalid first message (expected JSON)"
+            return
+
+        # Validate shared fields.
+        remote = config.get("remote")
+        if not isinstance(remote, str) or not _is_safe_remote_path(remote):
+            cs.reason = "bad_config"
+            cs.error = "invalid 'remote' path"
+            return
+
+        local_arg = config.get("local")
+
+        # Resolve local path. push REQUIRES it; pull defaults under
+        # workspace/devices/<serial>/pulls/.
+        local_abs: Path | None = None
+        if direction == "push":
+            if not isinstance(local_arg, str) or not local_arg.strip():
+                cs.reason = "bad_config"
+                cs.error = "missing 'local'"
+                return
+            try:
+                local_abs = _resolve_workspace_path(local_arg)
+            except HTTPException as exc:
+                cs.reason = "bad_config"
+                cs.error = str(exc.detail)
+                return
+            if not local_abs.exists():
+                cs.reason = "bad_config"
+                cs.error = f"local does not exist: {local_arg}"
+                return
+            # HITL gate: sensitive prefixes (mirrors POST endpoint).
+            if _is_sensitive_remote(remote) and not bool(config.get("force")):
+                cs.reason = "sensitive_path"
+                cs.error = (
+                    f"target prefix is sensitive ({remote}); "
+                    "reconnect with force=true after user confirmation"
+                )
+                return
+        else:  # pull
+            if isinstance(local_arg, str) and local_arg.strip():
+                try:
+                    local_abs = _resolve_workspace_path(local_arg)
+                except HTTPException as exc:
+                    cs.reason = "bad_config"
+                    cs.error = str(exc.detail)
+                    return
+                local_abs.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                root = workspace_root().resolve()
+                base = remote.rstrip("/").rsplit("/", 1)[-1] or "pull"
+                local_abs = (
+                    root / "devices" / serial / "pulls"
+                    / f"{base}-{iso_timestamp()}"
+                )
+                local_abs.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build transport + verify it supports streaming.
+        try:
+            t = build_transport(device_serial=serial)
+        except Exception as exc:  # noqa: BLE001
+            cs.reason = "init_failed"
+            cs.error = f"{type(exc).__name__}: {exc}"
+            return
+
+        method = "push_stream" if direction == "push" else "pull_stream"
+        if not hasattr(t, method):
+            cs.reason = "unsupported_transport"
+            cs.error = f"transport {type(t).__name__} has no {method}()"
+            return
+
+        await ws.send_json({
+            "v": API_VERSION,
+            "type": "ready",
+            "serial": serial,
+            "direction": direction,
+            "local": str(local_abs) if local_abs else "",
+            "remote": remote,
+        })
+
+        # Run the streaming transfer + a parallel recv loop that
+        # listens for {type:"cancel"} from the client.
+        async with _serial_lock(serial):
+            await _pump_transfer(
+                ws, t, direction, local_abs, remote, cs,
+            )
+    except WebSocketDisconnect:
+        # Client tab closed mid-transfer — pump will have caught this
+        # via the cancel race and torn down adb. Mark cancelled so the
+        # final closed frame (if reachable) reflects truth, but don't
+        # try to send it on a closed socket.
+        cs.cancelled = True
+        cs.reason = "cancelled"
+        return
+    finally:
+        # Single close-frame on this WS, no matter which path got us here.
+        with contextlib.suppress(Exception):
+            await ws.send_json({
+                "type": "closed",
+                "reason": cs.reason,
+                "ok": cs.ok,
+                "bytes_transferred": cs.bytes_transferred,
+                "duration_ms": cs.duration_ms,
+                "error": cs.error,
+            })
+        with contextlib.suppress(Exception):
+            await ws.close()
+
+
+async def _pump_transfer(
+    ws: WebSocket,
+    transport: Any,
+    direction: str,
+    local_abs: Path | None,
+    remote: str,
+    cs: _TransferCloseState,
+) -> None:
+    """Drive transport.push_stream / pull_stream and forward events.
+
+    Producer/consumer pattern:
+      - producer task tails the streaming generator, pushes
+        ("event", e) tuples onto a queue, finally pushes ("end", None)
+      - recv task listens for client cancel control frame, pushes
+        ("cancel", None) on cancel
+      - main loop reads from queue with await; first kind tells us
+        what to do
+    Cancel → break → outer finally calls inner.aclose() → adb
+    subprocess SIGTERM/SIGKILL via the streaming generator's finally.
+    """
+    if direction == "push":
+        assert local_abs is not None
+        gen = transport.push_stream(local_abs, remote)
+    else:
+        assert local_abs is not None
+        gen = transport.pull_stream(remote, local_abs)
+
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+
+    async def _producer() -> None:
+        try:
+            async for event in gen:
+                await queue.put(("event", event))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — surface as terminal
+            await queue.put(("error", e))
+        finally:
+            await queue.put(("end", None))
+
+    async def _recv() -> None:
+        # Catch broad: starlette/anyio raises EndOfStream (NOT
+        # WebSocketDisconnect) on peer close; we want to treat all
+        # of these as "client gone, stop pumping" without leaking
+        # warnings.
+        try:
+            while True:
+                msg = await ws.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    await queue.put(("cancel", None))
+                    return
+                text = msg.get("text")
+                if not text:
+                    continue
+                try:
+                    obj = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict) and obj.get("type") == "cancel":
+                    cs.cancelled = True
+                    await queue.put(("cancel", None))
+                    return
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            return
+        except Exception:  # noqa: BLE001
+            with contextlib.suppress(Exception):
+                await queue.put(("cancel", None))
+            return
+
+    producer_task = asyncio.create_task(_producer())
+    recv_task = asyncio.create_task(_recv())
+
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "cancel":
+                cs.reason = "cancelled"
+                cs.ok = False
+                cs.error = "cancelled by client"
+                return
+            if kind == "error":
+                cs.reason = "error"
+                cs.error = f"{type(payload).__name__}: {payload}"
+                return
+            if kind == "end":
+                # Producer exhausted without a "done" event — shouldn't
+                # happen with a well-behaved transport, but cover it.
+                if cs.reason == "done" and cs.ok:
+                    return
+                cs.reason = "error"
+                cs.error = cs.error or "transfer ended without a done event"
+                return
+            assert kind == "event"
+            event: TransferEvent = payload
+            if event.kind == "progress":
+                with contextlib.suppress(Exception):
+                    await ws.send_json({
+                        "type": "progress",
+                        "percent": event.percent,
+                        "bytes_transferred": event.bytes_transferred,
+                        "file": event.file,
+                    })
+                continue
+            # event.kind == "done"
+            cs.reason = "done"
+            cs.ok = bool(event.ok)
+            cs.bytes_transferred = int(event.bytes_transferred)
+            cs.duration_ms = int(event.duration_ms)
+            cs.error = event.error
+            # Don't return yet — let the producer reach EOF normally
+            # (next loop iter will get ("end", None)) so the inner
+            # generator's finally runs without aclose racing.
+            # But if it doesn't end soon, that's fine — the outer
+            # finally calls aclose.
+            return
+    finally:
+        # Producer's `async for event in gen` is iterating; cancel
+        # propagates GeneratorExit into gen's current yield — the
+        # inner generator's finally terminates the adb subprocess.
+        if not producer_task.done():
+            producer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await producer_task
+        if not recv_task.done():
+            recv_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await recv_task
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await gen.aclose()
+
+
+async def _read_transfer_config(ws: WebSocket) -> dict[str, Any] | None:
+    """Read the first JSON message; tolerate slow / missing input."""
+    try:
+        first = await asyncio.wait_for(
+            ws.receive(), timeout=_TRANSFER_CONFIG_TIMEOUT_S,
+        )
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        return None
+    text = first.get("text") if isinstance(first, dict) else None
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        return None
 
 
 # Re-export so tests can patch deterministic timestamps if needed.

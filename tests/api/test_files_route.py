@@ -25,6 +25,12 @@ class _FakeAdbTransport(Transport):
         self.push_response: ShellResult = ShellResult(ok=True, duration_ms=42)
         self.pull_calls: list[tuple[str, Path]] = []
         self.pull_response: ShellResult = ShellResult(ok=True, duration_ms=33)
+        # MID-6 streaming: tests inject a list of TransferEvent that
+        # push_stream / pull_stream will yield. Callers also get a
+        # `stream_was_aclose`d flag to assert cancel cleanup.
+        self.stream_events: list[Any] = []
+        self.stream_delay_s: float = 0.0
+        self.stream_was_aclosed: bool = False
 
     async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
         self.shell_calls.append(cmd)
@@ -44,6 +50,29 @@ class _FakeAdbTransport(Transport):
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_bytes(b"pulled bytes\n")
         return self.pull_response
+
+    async def push_stream(self, local: Path, remote: str):  # noqa: ANN201
+        self.push_calls.append((local, remote))
+        try:
+            for ev in self.stream_events:
+                if self.stream_delay_s > 0:
+                    import asyncio as _a
+                    await _a.sleep(self.stream_delay_s)
+                yield ev
+        finally:
+            self.stream_was_aclosed = True
+
+    async def pull_stream(self, remote: str, local: Path):  # noqa: ANN201
+        self.pull_calls.append((remote, local))
+        local.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            for ev in self.stream_events:
+                if self.stream_delay_s > 0:
+                    import asyncio as _a
+                    await _a.sleep(self.stream_delay_s)
+                yield ev
+        finally:
+            self.stream_was_aclosed = True
 
     async def reboot(self, mode: str = "normal") -> ShellResult:
         return ShellResult(ok=True)
@@ -565,3 +594,246 @@ def test_files_endpoints_listed_in_schema(client) -> None:
     assert ("POST", "/devices/{serial}/files/pull") in paths
     assert ("POST", "/devices/{serial}/files/push") in paths
     assert ("GET", "/workspace/files/download/{path}") in paths
+    ws_paths = [w["path"] for w in body["ws"]]
+    assert "/devices/{serial}/files/push/stream" in ws_paths
+    assert "/devices/{serial}/files/pull/stream" in ws_paths
+
+
+# ─── WS /devices/{s}/files/push/stream + pull/stream (MID-6) ────────
+
+
+def _drain_ws(ws, max_frames: int = 50) -> tuple[dict | None, list[dict]]:
+    """Drain frames until a `closed` JSON arrives (or max_frames). Returns
+    (closed_obj, all_progress_frames)."""
+    progress: list[dict] = []
+    closed: dict | None = None
+    for _ in range(max_frames):
+        try:
+            obj = ws.receive_json()
+        except Exception:
+            break
+        t = obj.get("type")
+        if t == "progress":
+            progress.append(obj)
+        elif t == "closed":
+            closed = obj
+            break
+        # Skip "ready" and other frames silently — caller already
+        # received `ready` before calling _drain_ws if needed.
+    return closed, progress
+
+
+def test_push_stream_happy_path(client, fake_transport, workspace) -> None:
+    """3 progress events + done → 3 progress frames + closed{ok:true}."""
+    from alb.transport.base import TransferEvent
+
+    src = workspace / "x.bin"
+    src.write_bytes(b"X" * 100)
+    fake_transport.stream_events = [
+        TransferEvent(kind="progress", percent=0.0, file="/sdcard/x", bytes_transferred=0),
+        TransferEvent(kind="progress", percent=50.0, file="/sdcard/x", bytes_transferred=50),
+        TransferEvent(kind="progress", percent=100.0, file="/sdcard/x", bytes_transferred=100),
+        TransferEvent(
+            kind="done", ok=True, bytes_transferred=100,
+            duration_ms=42, percent=100.0,
+        ),
+    ]
+
+    with client.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+        ws.send_json({"local": "x.bin", "remote": "/sdcard/x"})
+        ready = ws.receive_json()
+        assert ready["type"] == "ready"
+        assert ready["serial"] == "SERIAL01"
+        assert ready["direction"] == "push"
+        closed, prog = _drain_ws(ws)
+
+    assert len(prog) == 3
+    assert [p["percent"] for p in prog] == [0.0, 50.0, 100.0]
+    assert closed is not None
+    assert closed["reason"] == "done"
+    assert closed["ok"] is True
+    assert closed["bytes_transferred"] == 100
+    assert closed["duration_ms"] == 42
+
+
+def test_pull_stream_default_local_lands_in_workspace(
+    client, fake_transport, workspace,
+) -> None:
+    """Pull without `local` defaults to devices/<serial>/pulls/<basename>-<ts>."""
+    from alb.transport.base import TransferEvent
+
+    fake_transport.stream_events = [
+        TransferEvent(kind="done", ok=True, bytes_transferred=10, duration_ms=10),
+    ]
+
+    with client.websocket_connect("/devices/SERIAL01/files/pull/stream") as ws:
+        ws.send_json({"remote": "/sdcard/foo.txt"})
+        ready = ws.receive_json()
+        assert ready["direction"] == "pull"
+        assert "/devices/SERIAL01/pulls/" in ready["local"]
+        closed, _ = _drain_ws(ws)
+
+    assert closed["reason"] == "done"
+    assert closed["ok"] is True
+
+
+def test_push_stream_missing_local_returns_bad_config(client) -> None:
+    with client.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+        ws.send_json({"remote": "/sdcard/x"})  # missing 'local'
+        closed = ws.receive_json()
+        assert closed["type"] == "closed"
+        assert closed["reason"] == "bad_config"
+        assert "local" in (closed["error"] or "").lower()
+
+
+def test_push_stream_invalid_remote_returns_bad_config(client, workspace) -> None:
+    src = workspace / "x.bin"
+    src.write_bytes(b"x")
+    with client.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+        ws.send_json({"local": "x.bin", "remote": "../etc/passwd"})
+        closed = ws.receive_json()
+        assert closed["type"] == "closed"
+        assert closed["reason"] == "bad_config"
+
+
+def test_push_stream_sensitive_path_without_force_blocks(
+    client, fake_transport, workspace,
+) -> None:
+    """/system without force=true → closed{reason:'sensitive_path'}."""
+    src = workspace / "boot.img"
+    src.write_bytes(b"x")
+    with client.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+        ws.send_json({"local": "boot.img", "remote": "/system/boot.img"})
+        closed = ws.receive_json()
+        assert closed["type"] == "closed"
+        assert closed["reason"] == "sensitive_path"
+        assert "force" in (closed["error"] or "")
+    # adb push_stream must NOT have been invoked.
+    assert fake_transport.push_calls == []
+
+
+def test_push_stream_sensitive_path_with_force_proceeds(
+    client, fake_transport, workspace,
+) -> None:
+    from alb.transport.base import TransferEvent
+
+    src = workspace / "boot.img"
+    src.write_bytes(b"x")
+    fake_transport.stream_events = [
+        TransferEvent(kind="done", ok=True, bytes_transferred=1, duration_ms=1),
+    ]
+    with client.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+        ws.send_json({
+            "local": "boot.img",
+            "remote": "/system/boot.img",
+            "force": True,
+        })
+        ready = ws.receive_json()
+        assert ready["type"] == "ready"
+        closed, _ = _drain_ws(ws)
+    assert closed["reason"] == "done"
+    assert closed["ok"] is True
+
+
+def test_push_stream_unsupported_transport_closes(workspace, monkeypatch) -> None:
+    """Transport without push_stream → closed{reason:'unsupported_transport'}."""
+
+    class _NoStreamTransport:
+        async def shell(self, *a, **kw):
+            return ShellResult(ok=True)
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(workspace))
+    monkeypatch.setattr(
+        "alb.api.files_route.build_transport",
+        lambda **kwargs: _NoStreamTransport(),
+    )
+    src = workspace / "x.bin"
+    src.write_bytes(b"x")
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+            ws.send_json({"local": "x.bin", "remote": "/sdcard/x"})
+            closed = ws.receive_json()
+            assert closed["type"] == "closed"
+            assert closed["reason"] == "unsupported_transport"
+
+
+def test_push_stream_init_failed_closes(workspace, monkeypatch) -> None:
+    def _boom(**_):
+        raise RuntimeError("adb server unreachable")
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(workspace))
+    monkeypatch.setattr(
+        "alb.api.files_route.build_transport", _boom,
+    )
+    src = workspace / "x.bin"
+    src.write_bytes(b"x")
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+            ws.send_json({"local": "x.bin", "remote": "/sdcard/x"})
+            closed = ws.receive_json()
+            assert closed["type"] == "closed"
+            assert closed["reason"] == "init_failed"
+            assert "RuntimeError" in (closed["error"] or "")
+
+
+def test_push_stream_cancel_returns_cancelled_reason(
+    client, fake_transport, workspace,
+) -> None:
+    """Client sends {type:'cancel'} after first progress → server
+    closes with reason='cancelled' + ok=false. The inner generator's
+    finally semantics (terminating adb) is verified by
+    test_push_stream_cancel_terminates_subprocess in
+    tests/transport/test_adb_transfer_stream.py — at this layer we
+    only assert the WS protocol contract."""
+    from alb.transport.base import TransferEvent
+
+    src = workspace / "big.bin"
+    src.write_bytes(b"X" * 1000)
+    # Many progress events with a small delay so cancel can interleave.
+    fake_transport.stream_events = [
+        TransferEvent(kind="progress", percent=p, file="/sdcard/big",
+                      bytes_transferred=p * 10)
+        for p in range(0, 100, 5)
+    ] + [
+        TransferEvent(kind="done", ok=True, bytes_transferred=1000, duration_ms=999),
+    ]
+    fake_transport.stream_delay_s = 0.05
+
+    closed = None
+    with client.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+        ws.send_json({"local": "big.bin", "remote": "/sdcard/big"})
+        ws.receive_json()  # ready
+        # Wait for first progress.
+        first = ws.receive_json()
+        assert first["type"] == "progress"
+        # Cancel.
+        ws.send_json({"type": "cancel"})
+        # Drain until closed (or hit exception on closed-WS read).
+        for _ in range(60):
+            try:
+                obj = ws.receive_json()
+            except Exception:
+                break
+            if obj.get("type") == "closed":
+                closed = obj
+                break
+
+    assert closed is not None
+    assert closed["reason"] == "cancelled"
+    assert closed["ok"] is False
+
+
+def test_push_stream_no_first_message_returns_bad_config(workspace, monkeypatch) -> None:
+    """Connect but never send the first JSON → after timeout closes
+    with reason='bad_config'."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(workspace))
+    # No transport patch needed — we close before that path.
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/devices/SERIAL01/files/push/stream") as ws:
+            # Don't send anything; server config-read times out at 2s.
+            closed = ws.receive_json()
+            assert closed["type"] == "closed"
+            assert closed["reason"] == "bad_config"
