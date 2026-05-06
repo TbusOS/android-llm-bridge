@@ -77,6 +77,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "List UART captures (newest first)"},
     {"method": "GET",  "path": "/uart/captures/{name}",
      "description": "Read one UART capture's text content"},
+    {"method": "DELETE", "path": "/uart/captures/{name}",
+     "description": "Delete one UART capture file"},
     {"method": "GET",  "path": "/devices/{serial}/files",
      "description": "List a device directory (ls -la parsed) (PR-H)"},
     {"method": "GET",  "path": "/workspace/files",

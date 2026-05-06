@@ -91,12 +91,17 @@ Notes:
   visibleNodes 空 + filter 非空时区分文案"无匹配 'q'" vs "无 UI"。
   纯前端 UI 改动，无 backend 改动)
 - **LOW 5/5 closed** (Logcat debounced filter auto-reconnect ship
-  2026-05-06, commit (待提)：filter 输入框移除 disabled 限制；600ms
-  debounce 监听 filter 变化，state==='ready' 时自动 disconnect →
-  reconnect 用新 spec；lastAppliedFilter ref 防 state churn
+  2026-05-06, commit `a1dde70`：filter 输入框移除 disabled 限制；
+  600ms debounce 监听 filter 变化，state==='ready' 时自动 disconnect
+  → reconnect 用新 spec；lastAppliedFilter ref 防 state churn
   (ready→connecting→ready) 自循环重连；hint "应用中…" 在 pending 时
   显示。纯前端，~30 行)
-- **LOW 2/5** → backlog (deferred — no user-visible weirdness)
+- **LOW 4/5 closed** (UART per-capture delete ship 2026-05-06,
+  commit (待提)：DELETE /uart/captures/{name} endpoint + 4 测试 +
+  api.ts deleteUartCapture + useDeleteUartCapture hook + 每行
+  hover-only ✕ 按钮。删后 effect 自动跳到现 newest；CSS opacity 0→1
+  on hover/focus 保持 sidebar 视觉安静)
+- **LOW 1/5** → backlog (Files inline preview · 增量功能 · 不阻塞)
 
 ### Retroactive corrections (added 2026-05-05)
 

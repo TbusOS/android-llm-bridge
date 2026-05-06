@@ -239,6 +239,28 @@ export async function triggerUartCapture(
   return (await r.json()) as UartCaptureTriggerResponse;
 }
 
+export async function deleteUartCapture(
+  name: string,
+  device?: string | null,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; name: string }> {
+  const params = new URLSearchParams();
+  if (device) params.set("device", device);
+  const qs = params.toString();
+  const r = await fetch(
+    `/uart/captures/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`,
+    { method: "DELETE", signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `DELETE /uart/captures/${name} returned ${r.status}`,
+      r.status,
+      "UART_CAPTURE_DELETE_FAILED",
+    );
+  }
+  return (await r.json()) as { ok: boolean; name: string };
+}
+
 // ── Device system snapshot (PR-B) ─────────────────────────────────
 
 export interface ApiDeviceSystem {

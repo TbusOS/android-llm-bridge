@@ -1998,6 +1998,7 @@ html[lang^="zh"] h3 {
 }
 
 .uart-tab__list li {
+  position: relative;
   border-bottom: 1px solid var(--anth-border);
 }
 
@@ -2005,7 +2006,7 @@ html[lang^="zh"] h3 {
   display: block;
   width: 100%;
   text-align: left;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 28px var(--space-2) var(--space-3);
   background: none;
   border: 0;
   cursor: pointer;
@@ -2021,6 +2022,44 @@ html[lang^="zh"] h3 {
   background: white;
   border-left: 3px solid var(--anth-orange);
   padding-left: calc(var(--space-3) - 3px);
+}
+
+/* Per-row delete button — overlay top-right; only visible on row
+   hover/focus to keep the sidebar visually quiet. */
+.uart-tab__cap-delete {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--anth-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
+}
+
+.uart-tab__list li:hover .uart-tab__cap-delete,
+.uart-tab__list li:focus-within .uart-tab__cap-delete,
+.uart-tab__cap-delete:focus {
+  opacity: 1;
+}
+
+.uart-tab__cap-delete:hover {
+  color: var(--anth-red, #b94545);
+  background: color-mix(in srgb, var(--anth-red, #b94545) 12%, transparent);
+}
+
+.uart-tab__cap-delete:disabled {
+  opacity: 0.3 !important;
+  cursor: not-allowed;
 }
 
 .uart-tab__cap-name {

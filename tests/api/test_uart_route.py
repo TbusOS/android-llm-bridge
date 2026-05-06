@@ -208,3 +208,41 @@ def test_endpoints_listed_in_schema(client) -> None:
     assert ("POST", "/uart/capture") in paths
     assert ("GET", "/uart/captures") in paths
     assert ("GET", "/uart/captures/{name}") in paths
+    assert ("DELETE", "/uart/captures/{name}") in paths
+
+
+def test_delete_capture_removes_file(client, workspace) -> None:
+    """Happy path: DELETE removes the file from disk + ok=true."""
+    f = workspace / "logs" / "2026-05-01T01-00-00-uart.log"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("sample uart line\n")
+    assert f.exists()
+
+    r = client.delete(f"/uart/captures/{f.name}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["name"] == f.name
+    assert not f.exists()
+
+
+def test_delete_capture_404_when_missing(client) -> None:
+    r = client.delete("/uart/captures/never-existed-uart.log")
+    assert r.status_code == 404
+
+
+def test_delete_capture_rejects_path_traversal(client) -> None:
+    r = client.delete("/uart/captures/..%2Fpasswd-uart.log")
+    assert r.status_code in (400, 404)
+
+
+def test_delete_capture_rejects_non_uart_filename(client, workspace) -> None:
+    """Same shape as read: the gate refuses anything not *-uart.log."""
+    intruder = workspace / "logs" / "secrets.txt"
+    intruder.parent.mkdir(parents=True, exist_ok=True)
+    intruder.write_text("hello")
+
+    r = client.delete("/uart/captures/secrets.txt")
+    assert r.status_code == 400
+    # File must still exist — bad name shouldn't have touched it.
+    assert intruder.exists()

@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 
 import {
+  deleteUartCapture,
   fetchUartCaptures,
   readUartCapture,
   triggerUartCapture,
@@ -55,6 +56,16 @@ export function useTriggerUartCapture(device?: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (duration: number) => triggerUartCapture(duration, device),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: LIST_KEY(device) });
+    },
+  });
+}
+
+export function useDeleteUartCapture(device?: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => deleteUartCapture(name, device),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: LIST_KEY(device) });
     },

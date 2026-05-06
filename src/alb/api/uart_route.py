@@ -157,3 +157,31 @@ async def read_capture(
         "size_bytes": size,
         "text": text,
     }
+
+
+@router.delete("/uart/captures/{name}")
+async def delete_capture(
+    name: str,
+    device: str | None = Query(None),
+) -> dict[str, Any]:
+    """Delete one capture file from disk (functional LOW-4).
+
+    No undo — capture files are write-once log snapshots, the UI
+    triggers this on explicit user action. Returns 404 if the file
+    doesn't exist (idempotent-ish: a second delete is a no-op from
+    the user's perspective, but a strict 404 surfaces drift between
+    the cached list and disk).
+    """
+    if not _is_uart_log_name(name):
+        raise HTTPException(status_code=400, detail="invalid capture name")
+
+    f = _logs_dir(device) / name
+    if not f.exists():
+        raise HTTPException(status_code=404, detail="capture not found")
+
+    try:
+        f.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"ok": True, "name": name}

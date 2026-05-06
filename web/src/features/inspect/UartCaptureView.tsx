@@ -12,10 +12,11 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Play, RefreshCw } from "lucide-react";
+import { Play, RefreshCw, Trash2 } from "lucide-react";
 
 import { useApp } from "../../stores/app";
 import {
+  useDeleteUartCapture,
   useTriggerUartCapture,
   useUartCaptureText,
   useUartCaptures,
@@ -59,7 +60,19 @@ export function UartCaptureView() {
 
   const list = useUartCaptures(device);
   const trigger = useTriggerUartCapture(device);
+  const remove = useDeleteUartCapture(device);
   const text = useUartCaptureText(selected, device);
+
+  // Auto-pick a sibling after delete: if the deleted capture was the
+  // currently-selected one, jump to whichever capture is now newest.
+  // Re-runs when the cached list updates after the DELETE invalidation.
+  useEffect(() => {
+    if (!selected) return;
+    const captures = list.data?.captures ?? [];
+    if (!captures.some((c) => c.name === selected)) {
+      setSelected(captures[0]?.name ?? null);
+    }
+  }, [list.data?.captures, selected]);
 
   // Auto-select newest after a successful capture, or on first load.
   useEffect(() => {
@@ -172,6 +185,20 @@ export function UartCaptureView() {
                   <div className="uart-tab__cap-meta">
                     {formatBytes(c.size_bytes)} · {relativeTime(c.mtime, lang)}
                   </div>
+                </button>
+                <button
+                  type="button"
+                  className="uart-tab__cap-delete"
+                  onClick={() => remove.mutate(c.name)}
+                  disabled={remove.isPending}
+                  aria-label={
+                    lang === "zh"
+                      ? `删除 capture ${c.name}`
+                      : `Delete capture ${c.name}`
+                  }
+                  title={lang === "zh" ? "删除" : "Delete"}
+                >
+                  <Trash2 size={12} />
                 </button>
               </li>
             ))}
