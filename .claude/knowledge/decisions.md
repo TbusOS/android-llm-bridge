@@ -888,4 +888,84 @@ M3 step 2 commits 81~84 (Anthropic 实际 ship)
 
 ---
 
+## ADR-036 · 流式文件传输用 WS 而非 SSE / Job-Model · MID-6 协议形态拍板
+
+**Status**: ✅ accepted 2026-05-06（MID-6 step 1-3 ship · commits 89-92）
+**Date**: 2026-05-06
+**Context**: 2026-05-02 functional audit MID-6 报"Files tab Pull/Push 无
+Cancel 无 progress"。前端 useMutation 走同步 POST，没法在传输中给反馈
+也没法 cancel。多 GB push 卡住时用户只能干瞪眼。3 个协议形态选项：
+
+- (a) **WS per-op** — 新 WS endpoint，配置帧 → progress 流 → done/cancelled。
+  Cancel 走控制帧 + 浏览器关 tab WS 断 = 自动 cancel
+- (b) **Job model** — POST 起 job 返 `{job_id}` · GET /jobs/{id} 轮询 ·
+  DELETE /jobs/{id} 取消
+- (c) **SSE on POST** — POST 直返 SSE event 流，AbortController 关连接
+
+**Decision**：选 **(a) WS per-op**，2026-05-06 commits 89-92 ship。
+
+**理由**：
+
+1. **Infrastructure 复用**：项目已有 4 WS endpoint（uart/stream / terminal/ws /
+   logcat/stream / metrics/stream），WS lifecycle 模式成熟（_CloseState
+   outer-finally 单 close-frame · L-026），新加 2 endpoint 复用现有形态
+2. **Cancel 语义最干净**：浏览器关 tab → WS 断 → recv_loop catch → 通过
+   queue 通知 pump → cancel adb subprocess。**同 1 套 cancel 路径处理
+   两种 cancel 来源**（显式控制帧 + 隐式 disconnect）。Job model 需要单
+   独 DELETE endpoint + job lifecycle，多一倍状态空间
+3. **单 endpoint 无状态**：每个 WS 是独立连接，结束即 GC。Job model 需
+   server-side job registry（cleanup / TTL / lookup），多一层架构债
+4. **进度推送即时**：WS 是 push 模型，server 解析 adb stdout 即可 send。
+   Job model 是 pull，client 轮询有延迟 + 无效请求
+
+**拒方理由**：
+
+- ❌ (b) Job model：2 额外 endpoint + job 状态机 + cleanup TTL + lookup 索引。
+  对 alb 这种 single-user dev tool 复杂度溢出。Job model 价值在多 client /
+  跨 session 场景（task 提交完关浏览器，下次连回拿结果），alb 用户在线全程
+- ❌ (c) SSE：cancel 不可靠（依赖 server 检测 client gone），AbortController
+  在 fetch 上的 cancel 是 client-side 关连接，server 进程是否真停取决于
+  其框架。WS 控制帧是显式 in-band 信号，更可靠
+
+**Protocol 落地**（commits 89-92）：
+
+```
+C → S  config first-frame  {local?, remote, force?}
+S → C  ready               {direction, local, remote}
+S → C  progress * N        {percent, bytes_transferred, file}
+C → S  cancel control      {type:"cancel"}
+S → C  closed (terminal)   {reason, ok, bytes_transferred,
+                            duration_ms, error?}
+```
+
+**附带架构收获**（commit 90 调试触发）：
+
+- L-031 立项：Python 3.11+ `asyncio.CancelledError` 是 BaseException 子类，
+  `contextlib.suppress(Exception)` 不抓。finally 清理 cancel 过的 task →
+  CancelledError 漏出 → testclient 报"看似无关"错误
+- 嵌套 async generator (push_stream → _stream_transfer) outer aclose 不
+  自动传染 inner，标准模式：`inner = gen(); try: async for x in inner:
+  yield x; finally: await inner.aclose()`（这个不立 lesson · 已包含在
+  L-031 反面教材内）
+
+**未做的事 / 遗留**：
+
+- 真机 e2e 验证（M3 step 4 · 用户 ad-hoc 操作 · 待）
+- 进度反馈精度：adb 在 pipe mode 不一定输出 [N%] 行（modern adb 35.x 输出，
+  老版可能不输出）。退化模式：useFileTransferStream 显示不确定动画（30%
+  宽度 + 1.4s slide），用户仍看到"在动"
+- POST `/files/pull` + `/files/push` 旧端点保留（backend 仍可用，前端不再
+  调用），下个清理 batch 再删
+
+**Effect 测试**: 841 pass（5/02 780 → +61：MID 收头 + Anthropic + retroactive
+regression）/ typecheck 0 / sensitive 0 / 主 bundle 110 KB gzip 持平 ·
+FilesTab chunk +1.01 KB gzip（hook + 进度 UI 全在 lazy chunk）
+
+**关联**：DEBT-029 (audit MID 8/8 关) · L-026 (WS 多 task close-frame race ·
+本 ADR 应用) · L-031 (suppress + 嵌套 generator · 本 ADR 实施触发) ·
+ADR-024 (LLMBackend ABC capability · 同形态用 class-attr 暴露能力) ·
+functional-audit-2026-05-02.md MID-6
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）

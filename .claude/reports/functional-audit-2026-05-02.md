@@ -78,8 +78,9 @@ Notes:
   - MID-2 UART stale bytes → "Clear & reconnect" button (error/ended state)
   - MID-7 metrics set_interval → NaN reject + `clamped`/`requested_s` ack (triggered L-030)
   - MID-3 workspace iterdir → `os.scandir` + sort/truncate-then-stat
-- **MID remaining (1)** → backlog: MID-6 Pull/Push cancel+progress
-  (only one with real engineering work left after retroactive verify)
+- **MID 8/8 closed** (MID-6 ship 2026-05-06 in 4-commit batch:
+  `ec79795` transport · `7b9afc0` WS · `6afe3be` L-031 lesson ·
+  `01fe778` frontend integration). Audit MID matrix fully closed.
 - **LOW (5)** → backlog (deferred — no user-visible weirdness)
 
 ### Retroactive corrections (added 2026-05-05)

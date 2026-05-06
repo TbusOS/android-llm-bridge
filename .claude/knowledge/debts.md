@@ -644,7 +644,7 @@
 
 ---
 
-## DEBT-029 · functional audit MID 收头 4 项 —— **CLOSED 2026-05-02**
+## DEBT-029 · functional audit MID 收头 8 项 —— **CLOSED 2026-05-06**（含 MID-6 4-commit batch）
 
 - **severity**：mid（无 user-visible weirdness，但用户感知边角缺口 +
   极端输入下沉默/慢）
@@ -675,23 +675,34 @@
   sensitive 0 / build 5s / 主 bundle 110 KB gzip 持平
 - **效果**：4 个边角隐患修完 — 用户拼错 logcat filter 立刻看到原因 /
   UART 错恢复一键 / metrics 病态值有反馈 / workspace 大目录响应快
-- **未关 MID**（1 项 · 经 retroactive 实测剩 MID-6 是真 GAP；
-  MID-4/5/8 都是 audit 虚警 · 加 regression 锁行为）：
-  - MID-6 Files tab Pull/Push 无 Cancel 无 progress（真 GAP · 但工作量
-    大，需要 task 队列 + cancellation token + progress endpoint + 前端
-    进度条；下次专门 batch）
-
-  retroactive corrections（2026-05-05）：
-  - MID-4 Range：Starlette FileResponse 1.0 原生支持 Range（206/416/
-    Accept-Ranges/Content-Range），regression 锁在 test_files_route.py（commit `ead4e90`）
-  - MID-5 PTY exit：stdout bytes 实时 send_bytes，close-frame 带 exit_code，
-    rationale 走 xterm 不在 JSON。regression 锁在 test_terminal_route.py
-  - MID-8 WS heartbeat：uvicorn 默认 ws_ping_interval=20s / ws_ping_timeout=20s
-    已开，alb-api 不 override。regression 锁在 test_meta_route.py
+- **MID 全数关闭**（**CLOSED 2026-05-06** · MID-6 真 GAP 修完 · 其余 retroactive 锁定）：
+  - **MID-6 Files Pull/Push 无 Cancel 无 progress**（4-commit batch 89-92 ship）：
+    - commit 89 `ec79795`: AdbTransport push_stream/pull_stream + 10 测试 ·
+      解析 adb stderr `[N%]` 进度行 + stdout 末尾 `(NNNN bytes)` summary ·
+      cancel via aclose() + spawn_stream finally SIGTERM/SIGKILL adb · 触发
+      L-031（嵌套 async generator outer aclose 不传染 inner，需显式 inner.aclose）
+    - commit 90 `7b9afc0`: WS endpoints `/devices/{s}/files/push/stream` +
+      `/pull/stream` + 10 测试 · L-026 单 close-frame outer-finally · L-022
+      vite proxy `/devices` ws:true 同步 · 触发 L-031（suppress(Exception)
+      不抓 CancelledError 在 3.11+）
+    - commit 91 `6afe3be`: L-031 lesson + code-reviewer grep checklist
+      升级（reviewer "越用越聪明" 第 8 条 grep）
+    - commit 92 `01fe778`: 前端 useFileTransferStream hook + FilesTab 集成
+      进度条 + Cancel 按钮 · 删旧 useFileTransfers HTTP mutations · CSS
+      确定/不确定双模式动画
+  - retroactive corrections（2026-05-05）：
+    - MID-4 Range：Starlette FileResponse 1.0 原生支持 Range（206/416/
+      Accept-Ranges/Content-Range），regression 锁在 test_files_route.py（commit `ead4e90`）
+    - MID-5 PTY exit：stdout bytes 实时 send_bytes，close-frame 带 exit_code，
+      rationale 走 xterm 不在 JSON。regression 锁在 test_terminal_route.py
+    - MID-8 WS heartbeat：uvicorn 默认 ws_ping_interval=20s / ws_ping_timeout=20s
+      已开，alb-api 不 override。regression 锁在 test_meta_route.py
+- **测试 841 pass**（5/02 780 → +61：MID 收头 + retroactive regression + Anthropic）
 - **未关 LOW**（5 项进 backlog · 见 functional audit 报告）
-- **来源**：`.claude/reports/functional-audit-2026-05-02.md` MID 1/2/3/7
-- **关联**：L-030（NaN 钳位反模式 · 同 commit 触发）/ DEBT-028（早班
-  HIGH 9 关 · 本条是同 audit 的 MID 收头）
+- **来源**：`.claude/reports/functional-audit-2026-05-02.md` MID 1-8
+- **关联**：L-030（NaN 钳位反模式 · 同 commit 触发）/ L-031（suppress 不抓
+  CancelledError + 嵌套 async generator aclose 不传染 · MID-6 触发）/
+  DEBT-028（早班 HIGH 9 关 · 本条是同 audit 的 MID 收头）
 
 ---
 
