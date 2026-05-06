@@ -2,27 +2,18 @@
  * File browser pair-of-trees hook (PR-H).
  *
  * Wraps two `useQuery`s — one for the device path, one for the
- * workspace path — and exposes mutations for pull / push.
- *
- * Listings are cached briefly (10s) so toggling between tabs doesn't
- * re-run `ls` every time, but mutations invalidate both sides so the
- * UI always reflects the latest state after a transfer.
+ * workspace path. Pull/push transfers moved to
+ * `useFileTransferStream` (MID-6, 2026-05-06) — that hook talks to
+ * the streaming WS endpoints with progress + cancel. Callers
+ * invalidate the query keys this module exposes after a successful
+ * transfer to refresh the panes.
  */
 
-import { useCallback } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import {
-  type PullResponse,
-  type PushResponse,
   listDeviceFiles,
   listWorkspaceFiles,
-  pullDeviceFile,
-  pushDeviceFile,
 } from "../../lib/api";
 
 const STALE_MS = 10_000;
@@ -51,51 +42,4 @@ export function useWorkspaceFiles(path: string) {
     refetchOnWindowFocus: false,
     queryFn: ({ signal }) => listWorkspaceFiles(path, signal),
   });
-}
-
-export interface PullArgs {
-  serial: string;
-  remote: string;
-  /** Workspace-relative; if omitted, server lands under pulls/. */
-  local?: string;
-}
-
-export interface PushArgs {
-  serial: string;
-  local: string;
-  remote: string;
-  force?: boolean;
-}
-
-/** Mutations bundled in one hook so callers get the same query-cache
- * invalidation behaviour for both pull and push. */
-export function useFileTransfers() {
-  const qc = useQueryClient();
-
-  const invalidate = useCallback(
-    (serial: string) => {
-      qc.invalidateQueries({ queryKey: ["device-files", serial] });
-      qc.invalidateQueries({ queryKey: ["workspace-files"] });
-    },
-    [qc],
-  );
-
-  const pullMutation = useMutation<PullResponse, Error, PullArgs>({
-    mutationFn: ({ serial, remote, local }) =>
-      pullDeviceFile(serial, remote, local),
-    onSuccess: (_data, vars) => invalidate(vars.serial),
-  });
-
-  const pushMutation = useMutation<PushResponse, Error, PushArgs>({
-    mutationFn: ({ serial, local, remote, force }) =>
-      pushDeviceFile(serial, local, remote, { force }),
-    onSuccess: (data, vars) => {
-      // Confirm-required responses don't actually transfer — skip
-      // invalidation so the UI doesn't refetch over a no-op.
-      if (data.requires_confirm) return;
-      invalidate(vars.serial);
-    },
-  });
-
-  return { pullMutation, pushMutation };
 }

@@ -18,6 +18,7 @@ import {
   Download,
   FolderUp,
   RefreshCw,
+  X,
 } from "lucide-react";
 
 import { HitlConfirmModal } from "../../components/HitlConfirmModal";
@@ -27,11 +28,9 @@ import {
   type WorkspaceFileEntry,
   workspaceDownloadUrl,
 } from "../../lib/api";
-import {
-  useDeviceFiles,
-  useFileTransfers,
-  useWorkspaceFiles,
-} from "./useFileBrowser";
+import { useDeviceFiles, useWorkspaceFiles } from "./useFileBrowser";
+import { useFileTransferStream } from "./useFileTransferStream";
+import { useQueryClient } from "@tanstack/react-query";
 
 const DEFAULT_DEVICE_PATH = "/sdcard/";
 const DEFAULT_WS_PREFIX = "devices";
@@ -61,7 +60,35 @@ export function FilesTab() {
   const debouncedWorkspacePath = useDebouncedValue(workspacePath, 300);
   const deviceQ = useDeviceFiles(device, debouncedDevicePath);
   const workspaceQ = useWorkspaceFiles(debouncedWorkspacePath);
-  const { pullMutation, pushMutation } = useFileTransfers();
+  // MID-6: streaming push/pull with progress + cancel (replaces old
+  // useFileTransfers HTTP mutations).
+  const xfer = useFileTransferStream();
+  const qc = useQueryClient();
+  const xferRunning = xfer.state === "connecting" || xfer.state === "running";
+
+  // After a successful transfer, refresh both panes so freshly pushed /
+  // pulled files appear without a manual reload.
+  useEffect(() => {
+    if (xfer.state === "done" && xfer.result?.ok) {
+      const serial = device || "";
+      qc.invalidateQueries({ queryKey: ["device-files", serial] });
+      qc.invalidateQueries({ queryKey: ["workspace-files"] });
+    }
+  }, [xfer.state, xfer.result, device, qc]);
+
+  // Server returned `sensitive_path` → pop the HITL modal asking for
+  // explicit force confirmation. Caller retries via xfer.start with
+  // force=true on confirm.
+  useEffect(() => {
+    if (xfer.state === "needs_confirm" && xfer.result) {
+      setPendingPush({
+        serial: xfer.result.direction === "push" ? device || "" : "",
+        local: xfer.result.local,
+        remote: xfer.result.remote,
+        error: xfer.error || xfer.result.error || "sensitive path",
+      });
+    }
+  }, [xfer.state, xfer.result, xfer.error, device]);
 
   if (!device) {
     return (
@@ -98,7 +125,7 @@ export function FilesTab() {
     if (!selectedDevice || selectedDevice.is_dir) return;
     const remote = joinPath(devicePath, selectedDevice.name);
     const local = `${workspacePath || `${DEFAULT_WS_PREFIX}/${device}/pulls`}/${selectedDevice.name}`;
-    pullMutation.mutate({ serial: device, remote, local });
+    xfer.start({ serial: device, direction: "pull", remote, local });
   };
 
   const onPush = (force = false) => {
@@ -107,33 +134,19 @@ export function FilesTab() {
       ? `${workspacePath}/${selectedWorkspace.name}`
       : selectedWorkspace.name;
     const remote = joinPath(devicePath, selectedWorkspace.name);
-    pushMutation.mutate(
-      { serial: device, local, remote, force },
-      {
-        onSuccess: (data) => {
-          if (data.requires_confirm) {
-            setPendingPush({
-              serial: device,
-              local,
-              remote,
-              error: data.error || "sensitive path",
-            });
-          } else {
-            setPendingPush(null);
-          }
-        },
-      },
-    );
+    xfer.start({ serial: device, direction: "push", local, remote, force });
   };
 
   const confirmPush = () => {
     if (!pendingPush) return;
-    pushMutation.mutate(
-      { ...pendingPush, force: true },
-      {
-        onSuccess: () => setPendingPush(null),
-      },
-    );
+    xfer.start({
+      serial: pendingPush.serial || device,
+      direction: "push",
+      local: pendingPush.local,
+      remote: pendingPush.remote,
+      force: true,
+    });
+    setPendingPush(null);
   };
 
   return (
@@ -179,12 +192,12 @@ export function FilesTab() {
             type="button"
             className="btn btn--primary"
             disabled={
-              !selectedDevice || selectedDevice.is_dir || pullMutation.isPending
+              !selectedDevice || selectedDevice.is_dir || xferRunning
             }
             onClick={onPull}
           >
             <ArrowDownToLine size={12} style={{ verticalAlign: "-2px" }} />{" "}
-            {pullMutation.isPending
+            {xferRunning && xfer.result?.direction !== "push"
               ? lang === "zh" ? "拉取中…" : "Pulling…"
               : lang === "zh" ? "拉到工作区" : "Pull"}
           </button>
@@ -234,12 +247,12 @@ export function FilesTab() {
             disabled={
               !selectedWorkspace ||
               selectedWorkspace.is_dir ||
-              pushMutation.isPending
+              xferRunning
             }
             onClick={() => onPush(false)}
           >
             <ArrowUpFromLine size={12} style={{ verticalAlign: "-2px" }} />{" "}
-            {pushMutation.isPending
+            {xferRunning && xfer.result?.direction !== "pull"
               ? lang === "zh" ? "推送中…" : "Pushing…"
               : lang === "zh" ? "推到设备" : "Push"}
           </button>
@@ -261,27 +274,66 @@ export function FilesTab() {
       </div>
 
       <div className="files-tab__status">
-        {pullMutation.data?.ok ? (
+        {xferRunning ? (
+          <div className="files-tab__progress" role="status" aria-live="polite">
+            <div className="files-tab__progress-bar">
+              <div
+                className="files-tab__progress-fill"
+                style={{
+                  width:
+                    xfer.progress?.percent != null
+                      ? `${Math.max(0, Math.min(100, xfer.progress.percent))}%`
+                      : undefined,
+                }}
+                data-indeterminate={xfer.progress?.percent == null || undefined}
+              />
+            </div>
+            <span className="files-tab__progress-meta">
+              {xfer.progress?.percent != null
+                ? `${Math.round(xfer.progress.percent)}%`
+                : (lang === "zh" ? "传输中…" : "transferring…")}
+              {xfer.progress?.bytes_transferred
+                ? ` · ${formatSize(xfer.progress.bytes_transferred)}`
+                : ""}
+            </span>
+            <button
+              type="button"
+              className="btn btn--small"
+              onClick={xfer.cancel}
+              title={lang === "zh" ? "取消传输" : "Cancel transfer"}
+            >
+              <X size={11} style={{ verticalAlign: "-2px" }} />{" "}
+              {lang === "zh" ? "取消" : "Cancel"}
+            </button>
+          </div>
+        ) : null}
+
+        {!xferRunning && xfer.result && xfer.state === "done" ? (
           <span className="files-tab__msg files-tab__msg--ok">
-            {lang === "zh" ? "拉取成功 · " : "Pulled · "}
-            {pullMutation.data.local}
-          </span>
-        ) : pullMutation.data?.error ? (
-          <span className="files-tab__msg files-tab__msg--err">
-            {lang === "zh" ? "拉取失败 · " : "Pull failed · "}
-            {pullMutation.data.error}
+            {xfer.result.direction === "pull"
+              ? lang === "zh" ? "拉取成功 · " : "Pulled · "
+              : lang === "zh" ? "推送成功 · " : "Pushed · "}
+            {xfer.result.direction === "pull"
+              ? xfer.result.local
+              : xfer.result.remote}
+            {xfer.result.bytes_transferred
+              ? ` (${formatSize(xfer.result.bytes_transferred)})`
+              : ""}
           </span>
         ) : null}
-        {pushMutation.data?.ok ? (
-          <span className="files-tab__msg files-tab__msg--ok">
-            {lang === "zh" ? "推送成功 · " : "Pushed · "}
-            {pushMutation.data.remote} (
-            {formatSize(pushMutation.data.bytes_transferred ?? 0)})
+
+        {!xferRunning && xfer.state === "cancelled" ? (
+          <span className="files-tab__msg">
+            {lang === "zh" ? "已取消" : "Cancelled"}
           </span>
-        ) : pushMutation.data?.error && !pushMutation.data.requires_confirm ? (
+        ) : null}
+
+        {!xferRunning && xfer.state === "error" && xfer.error ? (
           <span className="files-tab__msg files-tab__msg--err">
-            {lang === "zh" ? "推送失败 · " : "Push failed · "}
-            {pushMutation.data.error}
+            {xfer.result?.direction === "pull"
+              ? lang === "zh" ? "拉取失败 · " : "Pull failed · "
+              : lang === "zh" ? "推送失败 · " : "Push failed · "}
+            {xfer.error}
           </span>
         ) : null}
       </div>
@@ -312,7 +364,7 @@ export function FilesTab() {
           lang === "zh" ? "确认覆写（force）" : "Confirm push (force)"
         }
         approveDanger
-        pending={pushMutation.isPending}
+        pending={xferRunning && xfer.result?.direction !== "pull"}
         onCancel={() => setPendingPush(null)}
         onApprove={confirmPush}
       />

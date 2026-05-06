@@ -2502,6 +2502,53 @@ html[lang^="zh"] h3 {
   background: #f7e3e3;
 }
 
+/* MID-6: live transfer progress (push/pull WS streaming).
+ * Shown in place of the static success/error message while a transfer
+ * is in flight. Single-line layout: [bar][meta][cancel-btn]. The bar
+ * collapses gracefully on narrow viewports (it grows to fill, the
+ * meta + button stay fixed-size). */
+.files-tab__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--anth-fg-muted);
+}
+
+.files-tab__progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--anth-border);
+  overflow: hidden;
+  position: relative;
+}
+
+.files-tab__progress-fill {
+  height: 100%;
+  background: var(--anth-accent, #d97757);
+  transition: width 120ms ease-out;
+}
+
+/* Indeterminate state — server hasn't surfaced a percent yet (very
+ * small files, or adb running in pipe mode without progress lines).
+ * A 30% wide ribbon slides across to signal "active". */
+.files-tab__progress-fill[data-indeterminate] {
+  width: 30%;
+  animation: files-tab__progress-slide 1.4s linear infinite;
+}
+
+@keyframes files-tab__progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.files-tab__progress-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* PR-E.v2 · shared HITL confirm modal (lifted from PR-H FilesTab inline
  * modal · used by ShellTab and FilesTab now).  N=2 consumers exercise
  * the same shape; if N≥3 ever lands additional API surface (focus trap,
