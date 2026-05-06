@@ -314,6 +314,43 @@ export async function captureScreenshot(
   return (await r.json()) as ScreenshotResponse;
 }
 
+export interface ScreenshotEntry {
+  name: string;
+  size_bytes: number;
+  mtime: number;
+  width: number | null;
+  height: number | null;
+}
+
+export interface ScreenshotsListResponse {
+  ok: boolean;
+  serial: string;
+  screenshots: ScreenshotEntry[];
+}
+
+export async function fetchScreenshots(
+  serial: string,
+  signal?: AbortSignal,
+): Promise<ScreenshotsListResponse> {
+  const r = await fetch(`/devices/${encodeURIComponent(serial)}/screenshots`, {
+    signal,
+  });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /devices/${serial}/screenshots returned ${r.status}`,
+      r.status,
+      "SCREENSHOTS_LIST_FAILED",
+    );
+  }
+  return (await r.json()) as ScreenshotsListResponse;
+}
+
+/** Build the URL for `<img src>` to load one stored screenshot's PNG bytes
+ *  via the backend (no base64 inflation, browser caches naturally). */
+export function screenshotImageUrl(serial: string, name: string): string {
+  return `/devices/${encodeURIComponent(serial)}/screenshots/${encodeURIComponent(name)}`;
+}
+
 export interface UiNode {
   index: number;
   class: string;

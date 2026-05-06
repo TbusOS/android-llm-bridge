@@ -30,6 +30,7 @@ from alb.api.sessions_route import router as sessions_router
 from alb.api.terminal_route import router as terminal_router
 from alb.api.tools_route import router as tools_router
 from alb.api.logcat_stream_route import router as logcat_stream_router
+from alb.api.screenshots_route import router as screenshots_router
 from alb.api.uart_route import router as uart_router
 from alb.api.uart_stream_route import router as uart_stream_router
 from alb.api.ui_static import mount_ui
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(metrics_summary_router)
     app.include_router(playground_router)
+    app.include_router(screenshots_router)
     app.include_router(sessions_router)
     app.include_router(terminal_router)
     app.include_router(tools_router)

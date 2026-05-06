@@ -1,32 +1,93 @@
 /**
- * Inspect → Screenshot — capture device framebuffer + display inline (PR-G).
+ * Inspect → Screenshot — capture device framebuffer + browse history
+ * (functional LOW-1).
  *
- * v1: single button + last shot. Multi-shot history left for v2 (could
- * mirror the UART captures pattern with a sidebar of past shots).
+ * v2 layout (mirrors UartCaptureView):
+ *   - Top bar: Capture button + Download + last-shot meta.
+ *   - Left sidebar: history list (newest first), driven by
+ *     GET /devices/{serial}/screenshots.
+ *   - Right viewer: <img> for the selected shot.
+ *
+ * Sidebar reuses `.uart-tab__list` / `.uart-tab__body` BEM block
+ * (`.uart-tab__cap-name`, `.is-active`, etc.) — N=2 use of the capture-
+ * sidebar visual is below the L-020 N=3 abstract-base threshold, so we
+ * keep the existing class names instead of inventing a `.capture-list`
+ * BEM block. Any third sidebar tab (logcat history, etc.) triggers the
+ * extraction.
+ *
+ * Image fetching:
+ *   - Right after a fresh capture, render the inline base64 from the
+ *     POST response (avoids the second-round GET roundtrip).
+ *   - On selection of a historical entry, switch to `<img src=...>`
+ *     pointing at GET /devices/{serial}/screenshots/{name} so the
+ *     browser handles caching and lazy-load naturally.
  */
 
-import { useState } from "react";
-import { Camera, Download } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { Camera, Download, RefreshCw } from "lucide-react";
 
 import { useApp } from "../../stores/app";
 import {
-  captureScreenshot,
+  screenshotImageUrl,
   type ScreenshotResponse,
 } from "../../lib/api";
+import { SectionPlaceholder } from "../dashboard/SectionPlaceholder";
+import { useScreenshots, useTriggerScreenshot } from "./useScreenshots";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function relativeTime(mtimeSec: number, lang: "zh" | "en"): string {
+  const diffSec = Math.max(0, Date.now() / 1000 - mtimeSec);
+  if (diffSec < 60) {
+    return lang === "zh"
+      ? `${Math.floor(diffSec)} 秒前`
+      : `${Math.floor(diffSec)}s ago`;
+  }
+  if (diffSec < 3600) {
+    return lang === "zh"
+      ? `${Math.floor(diffSec / 60)} 分钟前`
+      : `${Math.floor(diffSec / 60)}m ago`;
+  }
+  if (diffSec < 86400) {
+    return lang === "zh"
+      ? `${Math.floor(diffSec / 3600)} 小时前`
+      : `${Math.floor(diffSec / 3600)}h ago`;
+  }
+  return lang === "zh"
+    ? `${Math.floor(diffSec / 86400)} 天前`
+    : `${Math.floor(diffSec / 86400)}d ago`;
+}
 
 export function ScreenshotTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
+  // selected: name of the shot currently shown. null means "show the
+  // freshly-captured one (last)" if it exists, else empty viewer.
+  const [selected, setSelected] = useState<string | null>(null);
+  // last: the most recent capture's POST response, kept around so the
+  // viewer can render its base64 inline without waiting for a 2nd GET.
   const [last, setLast] = useState<ScreenshotResponse | null>(null);
 
-  const m = useMutation({
-    mutationFn: () => {
-      if (!device) throw new Error("no device");
-      return captureScreenshot(device);
-    },
-    onSuccess: (data) => setLast(data),
+  const list = useScreenshots(device);
+  const trigger = useTriggerScreenshot(device, (data) => {
+    setLast(data);
+    if (data?.screenshot?.filename) {
+      setSelected(data.screenshot.filename);
+    }
   });
+
+  // First-mount auto-select: if user opens the tab and there's already
+  // history, show the newest. Skip if user already picked something.
+  useEffect(() => {
+    const newest = list.data?.screenshots?.[0];
+    if (!selected && newest) {
+      setSelected(newest.name);
+    }
+  }, [list.data, selected]);
 
   if (!device) {
     return (
@@ -41,8 +102,24 @@ export function ScreenshotTab() {
     );
   }
 
-  const shot = last?.screenshot;
-  const dataUrl = shot ? `data:image/png;base64,${shot.png_base64}` : null;
+  // Pick the right image source. Prefer the inline base64 from the
+  // mutation when its filename matches `selected` — saves one HTTP
+  // round-trip right after a fresh capture. Fall back to the URL form
+  // for historical entries.
+  let imgSrc: string | null = null;
+  let imgAlt = "device screenshot";
+  if (selected) {
+    if (last?.screenshot?.filename === selected && last.screenshot.png_base64) {
+      imgSrc = `data:image/png;base64,${last.screenshot.png_base64}`;
+    } else if (device) {
+      imgSrc = screenshotImageUrl(device, selected);
+    }
+    imgAlt = `screenshot ${selected}`;
+  }
+
+  const downloadHref = imgSrc;
+  const downloadName = selected ?? "screenshot.png";
+  const captureFailed = trigger.data?.ok === false ? trigger.data.error : null;
 
   return (
     <div className="screenshot-tab">
@@ -50,44 +127,91 @@ export function ScreenshotTab() {
         <button
           type="button"
           className="btn btn--primary"
-          onClick={() => m.mutate()}
-          disabled={m.isPending}
+          onClick={() => trigger.mutate()}
+          disabled={trigger.isPending}
         >
           <Camera size={12} style={{ verticalAlign: "-2px" }} />{" "}
-          {m.isPending
+          {trigger.isPending
             ? lang === "zh" ? "抓取中…" : "Capturing…"
             : lang === "zh" ? "抓屏" : "Capture"}
         </button>
-        {shot && dataUrl && (
-          <a className="btn" href={dataUrl} download={shot.filename}>
+        {imgSrc && downloadHref && (
+          <a className="btn" href={downloadHref} download={downloadName}>
             <Download size={12} style={{ verticalAlign: "-2px" }} />{" "}
             {lang === "zh" ? "下载 PNG" : "Download"}
           </a>
         )}
-        {shot && (
-          <span className="uart-tab__last">
-            {shot.width}×{shot.height} · {(shot.size_bytes / 1024).toFixed(0)} KB · {shot.filename}
+        <button
+          type="button"
+          className="btn"
+          onClick={() => list.refetch()}
+          aria-label={lang === "zh" ? "刷新历史列表" : "Refresh history"}
+        >
+          <RefreshCw size={12} style={{ verticalAlign: "-2px" }} />
+        </button>
+        {captureFailed && (
+          <span className="uart-tab__last uart-tab__last--err">
+            {captureFailed}
           </span>
-        )}
-        {last?.ok === false && (
-          <span className="uart-tab__last uart-tab__last--err">{last.error}</span>
         )}
       </div>
 
-      <div className="screenshot-tab__viewer">
-        {dataUrl ? (
-          <img
-            src={dataUrl}
-            alt="device screenshot"
-            className="screenshot-tab__img"
-          />
-        ) : (
-          <div className="uart-tab__empty">
-            {lang === "zh"
-              ? "点上方「抓屏」按钮"
-              : "Press Capture above"}
+      <div className="uart-tab__body">
+        <aside className="uart-tab__list">
+          <div className="uart-tab__list-head">
+            {lang === "zh" ? "历史 截图" : "Screenshots"}
+            {list.data?.screenshots && (
+              <span className="uart-tab__count">
+                {list.data.screenshots.length}
+              </span>
+            )}
           </div>
-        )}
+          {list.isLoading && (
+            <div className="uart-tab__empty">
+              {lang === "zh" ? "加载中…" : "Loading…"}
+            </div>
+          )}
+          {list.isError && (
+            <div className="uart-tab__empty uart-tab__empty--err">
+              {lang === "zh" ? "无法获取列表" : "Couldn't load list"}
+            </div>
+          )}
+          {list.data?.screenshots && list.data.screenshots.length === 0 && (
+            <div className="uart-tab__empty">
+              {lang === "zh"
+                ? "还没有截图 · 点击上方「抓屏」"
+                : "No screenshots yet — press Capture above"}
+            </div>
+          )}
+          <ul>
+            {list.data?.screenshots?.map((s) => (
+              <li
+                key={s.name}
+                className={selected === s.name ? "is-active" : undefined}
+              >
+                <button type="button" onClick={() => setSelected(s.name)}>
+                  <div className="uart-tab__cap-name">{s.name}</div>
+                  <div className="uart-tab__cap-meta">
+                    {s.width && s.height ? `${s.width}×${s.height} · ` : ""}
+                    {formatBytes(s.size_bytes)} · {relativeTime(s.mtime, lang)}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+
+        <main className="screenshot-tab__viewer">
+          {imgSrc ? (
+            <img src={imgSrc} alt={imgAlt} className="screenshot-tab__img" />
+          ) : (
+            <SectionPlaceholder styleKey="be-card" kind="empty">
+              {lang === "zh"
+                ? "点上方「抓屏」，或从左侧选历史"
+                : "Press Capture above, or pick one from the left"}
+            </SectionPlaceholder>
+          )}
+        </main>
       </div>
     </div>
   );
