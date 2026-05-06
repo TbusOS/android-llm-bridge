@@ -2,12 +2,18 @@
  * Live logcat stream viewer (PR-D).
  *
  * Mirror of <UartLiveStream> but for adb logcat. Adds a filter input
- * (typed `*:E` / `Tag:V *:S` / etc) so users can scope the stream
- * before connecting. Filter is read at Connect time; changing it after
- * Connect requires Disconnect → Connect (no live re-filter in v1).
+ * (typed `*:E` / `Tag:V *:S` / etc) so users can scope the stream.
+ *
+ * v2 (functional LOW-5): debounced auto-reconnect on filter edit.
+ * Changing filter while live no longer requires Disconnect → Connect;
+ * 600 ms after the last keystroke the hook reconnects with the new
+ * filter spec. `lastAppliedFilter` ref guards against the state-churn
+ * self-loop that an `[filter, state]` effect would otherwise cause
+ * (state ready→connecting→ready re-triggers the effect; we skip when
+ * the filter hasn't actually changed since the last applied value).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleStop, Eraser, Play } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -16,11 +22,17 @@ import "@xterm/xterm/css/xterm.css";
 import { useApp } from "../../stores/app";
 import { useLogcatStream } from "./useLogcatStream";
 
+const FILTER_DEBOUNCE_MS = 600;
+
 export function LogcatTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const [filter, setFilter] = useState("");
   const { state, error, connect, disconnect, onBytes } = useLogcatStream();
+  // Tracks the filter spec the current live stream was started with.
+  // Used to skip reconnect when the effect re-runs purely because of
+  // state churn (ready→connecting→ready) without a real edit.
+  const lastAppliedFilter = useRef<string>("");
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -77,9 +89,28 @@ export function LogcatTab() {
     });
   }, [onBytes]);
 
-  const onConnect = () =>
-    connect({ device, filter: filter.trim() || null });
+  const onConnect = useCallback(() => {
+    const f = filter.trim();
+    lastAppliedFilter.current = f;
+    connect({ device, filter: f || null });
+  }, [connect, device, filter]);
   const onClear = () => termRef.current?.clear();
+
+  // Debounced auto-reconnect: when the user edits filter while a stream
+  // is already live, wait FILTER_DEBOUNCE_MS for typing to settle then
+  // reconnect with the new spec. Only when state==='ready' — not in
+  // idle/connecting/error/ended (avoids reconnect loops + lets users
+  // recover from errors manually).
+  useEffect(() => {
+    if (state !== "ready") return;
+    const trimmed = filter.trim();
+    if (trimmed === lastAppliedFilter.current) return;
+    const t = window.setTimeout(() => {
+      lastAppliedFilter.current = trimmed;
+      connect({ device, filter: trimmed || null });
+    }, FILTER_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [filter, state, device, connect]);
 
   const stateLabel: Record<typeof state, string> = {
     idle: lang === "zh" ? "未连接" : "idle",
@@ -109,10 +140,14 @@ export function LogcatTab() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="*:E  /  MyTag:V *:S"
-            disabled={isLive}
             style={{ width: 200 }}
           />
         </label>
+        {state === "ready" && filter.trim() !== lastAppliedFilter.current && (
+          <span className="uart-tab__last">
+            {lang === "zh" ? "应用中…" : "applying…"}
+          </span>
+        )}
         {!isLive ? (
           <button
             type="button"
