@@ -82,10 +82,15 @@ Notes:
   `ec79795` transport · `7b9afc0` WS · `6afe3be` L-031 lesson ·
   `01fe778` frontend integration). Audit MID matrix fully closed.
 - **LOW 1/5 closed** (Screenshot history sidebar ship 2026-05-06,
-  commit (待提)：新增 GET /devices/{serial}/screenshots(+/{name}) +
+  commit `05bbdae`：新增 GET /devices/{serial}/screenshots(+/{name}) +
   ScreenshotTab 重写为 sidebar+viewer 模式，复用 UART capture 视觉
   N=2，未抽 .capture-list base block —— 等 N=3 触发 L-020 阈值)
-- **LOW 4/5** → backlog (deferred — no user-visible weirdness)
+- **LOW 2/5 closed** (UI Dump filter "M of N" counter + clear button
+  ship 2026-05-06, commit (待提)：counter 在 filter 非空时显示
+  `{visible} / {total} 匹配`；filter 输入框右侧 X 按钮一键清空；
+  visibleNodes 空 + filter 非空时区分文案"无匹配 'q'" vs "无 UI"。
+  纯前端 UI 改动，无 backend 改动)
+- **LOW 3/5** → backlog (deferred — no user-visible weirdness)
 
 ### Retroactive corrections (added 2026-05-05)
 

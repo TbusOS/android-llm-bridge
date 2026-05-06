@@ -2262,6 +2262,41 @@ html[lang^="zh"] h3 {
   margin-top: var(--space-3);
 }
 
+/* filter input + clear button as one inline group, so the ✕ sits at
+   the right edge of the input without extra layout shift. */
+.uidump-tab__filter {
+  position: relative;
+  display: inline-block;
+}
+
+.uidump-tab__filter input {
+  width: 240px;
+  padding: 4px 28px 4px 8px;
+  font-size: 12px;
+  font-family: var(--font-body);
+  border: 1px solid var(--anth-border);
+  border-radius: var(--radius-sm);
+}
+
+.uidump-tab__filter-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--anth-text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.uidump-tab__filter-clear:hover {
+  color: var(--anth-text);
+}
+
 .uidump-tab__list {
   background: var(--anth-cream);
   border: 1px solid var(--anth-border);

@@ -8,7 +8,7 @@
  */
 
 import { useDeferredValue, useMemo, useState } from "react";
-import { ScanSearch } from "lucide-react";
+import { ScanSearch, X } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 
 import { useApp } from "../../stores/app";
@@ -77,13 +77,31 @@ export function UiDumpTab() {
             ? lang === "zh" ? "抓取中…" : "Dumping…"
             : lang === "zh" ? "抓 UI" : "Dump"}
         </button>
-        <input
-          type="text"
-          placeholder={lang === "zh" ? "过滤 class / id / 文本" : "filter class / id / text"}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          style={{ width: 240, padding: "4px 8px", fontSize: 12 }}
-        />
+        <div className="uidump-tab__filter">
+          <input
+            type="text"
+            placeholder={lang === "zh" ? "过滤 class / id / 文本" : "filter class / id / text"}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          {filter && (
+            <button
+              type="button"
+              className="uidump-tab__filter-clear"
+              onClick={() => setFilter("")}
+              aria-label={lang === "zh" ? "清空过滤" : "Clear filter"}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {filter && nodes.length > 0 && (
+          <span className="uart-tab__last">
+            {lang === "zh"
+              ? `${visibleNodes.length} / ${nodes.length} 匹配`
+              : `${visibleNodes.length} of ${nodes.length} matches`}
+          </span>
+        )}
         {dump && (
           <span className="uart-tab__last">
             {dump.node_count} nodes · {dump.top_activity || "?"}
@@ -98,6 +116,13 @@ export function UiDumpTab() {
         {nodes.length === 0 && (
           <div className="uart-tab__empty">
             {lang === "zh" ? "点上方「抓 UI」按钮" : "Press Dump above"}
+          </div>
+        )}
+        {nodes.length > 0 && visibleNodes.length === 0 && filter && (
+          <div className="uart-tab__empty">
+            {lang === "zh"
+              ? `没有节点匹配 "${filter}"`
+              : `No nodes match "${filter}"`}
           </div>
         )}
         {visibleNodes.map(({ node, depth }, i) => (
