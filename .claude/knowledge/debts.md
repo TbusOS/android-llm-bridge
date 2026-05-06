@@ -330,7 +330,7 @@
 
 ---
 
-## DEBT-018 · DashboardPage section placeholder loading/error 重复
+## DEBT-018 · DashboardPage section placeholder loading/error 重复 —— **CLOSED 2026-05-06**
 
 - **severity**：mid（结构债，本身不影响功能；DashboardPage 已 380+ 行，
   每加一个 hook 段涨 ~30 行 boilerplate）
@@ -340,13 +340,49 @@
   placeholder 实例
 - **位置**：`web/src/features/dashboard/DashboardPage.tsx`（loading /
   error inline 在 4 段各写一份）
-- **是否计划修**：是
-- **还债 sketch**：抽 `<SectionPlaceholder kind="loading"|"error"|"empty">`
-  组件，沿用已加的 `.be-card--empty` BEM class，DashboardPage 每段从
-  ~30 行降到 1 行
-- **还债条件**：dashboard 加第 5 个 hook 段时（M3 上 OpenAI-compat
-  + 第二个真 backend 后，可能需要 backend-by-backend metrics 段）
+- **关闭**：commit (待提)。抽 `<SectionPlaceholder
+  styleKey={"dev-strip"|"be-card"|"sess-card"} kind={"loading"|"error"|
+  "empty"}>` 组件落到 `web/src/features/dashboard/SectionPlaceholder.tsx`
+  ，DashboardPage 4 段（devices 4 分支 + backends 2 分支 + sessions 3
+  分支 + timeline 3 分支 = 12 个 inline div）全数迁移。CLASS_MAP 内化
+  3 套 BEM family（`dev-strip-state` dashed / `be-card--empty` solid /
+  `sess-card--state` 继承）输出 class 完全照搬现有 BEM，**视觉零变化**
+  。typecheck 0 / build 3.62s / 主 bundle 110.27 KB gzip 持平 / 841
+  pytest pass。
+- **设计决策**：DEBT-018 sketch 原写"沿用 .be-card--empty"，落地时改为
+  "三 BEM family 共存 + CLASS_MAP 单一 mount 点"。原因：mockup
+  baseline 仅定义 `.be-card--empty`（solid），React 自加 `.dev-strip-state`
+  （dashed） 和 `.sess-card--state`（继承父）属于已偏离 baseline 的
+  分支；统一到任一一种都需改 mockup baseline + 三道闸视觉验证，超出
+  DEBT-018 抽组件范围。**视觉统一另登 follow-up**（见 DEBT-031 草稿）
+- **行数**：DashboardPage diff +25/-24（净 +1） + SectionPlaceholder
+  +70 = 净增 71 行；不是 boilerplate 减量胜利，是 **类型化 + 单一
+  mount 点** 胜利（styleKey/kind 是 union type，BEM 拼错编译期挡掉；
+  未来视觉统一只改 CLASS_MAP 一处）
 - **来源**：DEBT-017 arch reviewer 发现 #4，主对话登记不阻塞合入
+
+---
+
+## DEBT-031 · Dashboard 3 套 placeholder BEM family 视觉不统一（follow-up of DEBT-018）
+
+- **severity**：low（视觉一致性，不影响功能；不阻塞 ship）
+- **引入**：D 档（`.dev-strip-state` 加入）+ DEBT-017（`.be-card--empty`
+  入档） + sessions 段（`.sess-card--state` 继承父）
+- **暴露**：2026-05-06 落 DEBT-018 抽 SectionPlaceholder 时，CLASS_MAP
+  必须保留 3 套 BEM family，因为 mockup baseline `.be-card--empty`
+  是 solid border + 默认 align，React 自加的 `.dev-strip-state` 是
+  dashed border + center align，视觉风格不同
+- **位置**：`web/src/styles/components.css:788-801`（dev-strip-state）
+  + `:1093-1104`（be-card--empty）+ `:1130-1140`（sess-card--state）
+  + `docs/webui-preview-v2.html:557-565`（mockup baseline）
+- **是否计划修**：可（视觉统一 → DX 整洁；mockup baseline 改 + 三闸
+  验证）
+- **还债 sketch**：mockup 加 `.section-placeholder` + `--err / --loading
+  / --empty` 三 modifier，3 段都迁移；CLASS_MAP 缩到 1 entry；删 3 套
+  旧 class
+- **还债条件**：下次涉及 dashboard 视觉刷或 design system 整理时
+- **风险**：dashed vs solid border 选哪个 baseline 需 design 决策；
+  改 baseline 需走三道闸（verify.py / visual-audit.mjs / screenshot.mjs）
 
 ---
 

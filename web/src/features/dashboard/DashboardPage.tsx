@@ -23,6 +23,7 @@ import { LiveSessionCard } from "./LiveSessionCard";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
+import { SectionPlaceholder } from "./SectionPlaceholder";
 import { useAuditStream } from "./useAuditStream";
 import { useBackends } from "./useBackends";
 import { useDevices } from "./useDevices";
@@ -94,27 +95,27 @@ export function DashboardPage() {
         </span>
       </div>
       {devices.isLoading ? (
-        <div className="dev-strip-state">
+        <SectionPlaceholder styleKey="dev-strip" kind="loading">
           {lang === "zh" ? "加载设备中…" : "Loading devices…"}
-        </div>
+        </SectionPlaceholder>
       ) : devices.isError ? (
-        <div className="dev-strip-state dev-strip-state--err">
+        <SectionPlaceholder styleKey="dev-strip" kind="error">
           {lang === "zh"
             ? "无法获取设备列表（GET /devices 失败）"
             : "Couldn't load devices (GET /devices failed)"}
-        </div>
+        </SectionPlaceholder>
       ) : devices.backendError ? (
-        <div className="dev-strip-state dev-strip-state--err">
+        <SectionPlaceholder styleKey="dev-strip" kind="error">
           {lang === "zh"
             ? `传输层不可用 · ${devices.backendError}`
             : `Transport unavailable · ${devices.backendError}`}
-        </div>
+        </SectionPlaceholder>
       ) : devices.devices.length === 0 ? (
-        <div className="dev-strip-state">
+        <SectionPlaceholder styleKey="dev-strip" kind="empty">
           {lang === "zh"
             ? `当前 transport：${devices.transportName ?? "—"} · 无设备`
             : `Active transport: ${devices.transportName ?? "—"} · no devices`}
-        </div>
+        </SectionPlaceholder>
       ) : (
         <DeviceStripCompact devices={devices.devices} onSelect={setDevice} />
       )}
@@ -127,15 +128,15 @@ export function DashboardPage() {
             <span className="meta">{backendMeta(backends, lang)}</span>
           </div>
           {backends.isError ? (
-            <div className="be-card--empty">
+            <SectionPlaceholder styleKey="be-card" kind="error">
               {lang === "zh"
                 ? "无法获取后端列表，检查 alb-api 是否在运行"
                 : "Could not fetch backends — is alb-api running?"}
-            </div>
+            </SectionPlaceholder>
           ) : backends.isLoading ? (
-            <div className="be-card--empty">
+            <SectionPlaceholder styleKey="be-card" kind="loading">
               {lang === "zh" ? "加载中…" : "Loading…"}
-            </div>
+            </SectionPlaceholder>
           ) : (
             <LlmBackendCards
               backends={backends.backends}
@@ -154,21 +155,21 @@ export function DashboardPage() {
             </span>
           </div>
           {recent.isLoading ? (
-            <div className="sess-card sess-card--state">
+            <SectionPlaceholder styleKey="sess-card" kind="loading">
               {lang === "zh" ? "加载中…" : "Loading…"}
-            </div>
+            </SectionPlaceholder>
           ) : recent.isError ? (
-            <div className="sess-card sess-card--state sess-card--err">
+            <SectionPlaceholder styleKey="sess-card" kind="error">
               {lang === "zh"
                 ? "无法获取会话列表（GET /sessions 失败）"
                 : "Couldn't load sessions (GET /sessions failed)"}
-            </div>
+            </SectionPlaceholder>
           ) : recent.sessions.length === 0 ? (
-            <div className="sess-card sess-card--state">
+            <SectionPlaceholder styleKey="sess-card" kind="empty">
               {lang === "zh"
                 ? "尚无会话 · 进入 Chat 开一段试试"
                 : "No sessions yet · open Chat to start one"}
-            </div>
+            </SectionPlaceholder>
           ) : (
             <RecentSessions sessions={recent.sessions.slice(0, 5)} />
           )}
@@ -194,21 +195,21 @@ export function DashboardPage() {
         </span>
       </div>
       {audit.status === "connecting" ? (
-        <div className="dev-strip-state">
+        <SectionPlaceholder styleKey="dev-strip" kind="loading">
           {lang === "zh" ? "连接事件流…" : "Connecting to event stream…"}
-        </div>
+        </SectionPlaceholder>
       ) : audit.status === "error" || audit.status === "closed" ? (
-        <div className="dev-strip-state dev-strip-state--err">
+        <SectionPlaceholder styleKey="dev-strip" kind="error">
           {lang === "zh"
             ? "事件流断开 · 自动重连中…"
             : "Event stream disconnected · reconnecting…"}
-        </div>
+        </SectionPlaceholder>
       ) : audit.events.length === 0 ? (
-        <div className="dev-strip-state">
+        <SectionPlaceholder styleKey="dev-strip" kind="empty">
           {lang === "zh"
             ? "近 30 分钟没有事件 · 跑个 chat 或 terminal 试试"
             : "No events in the last 30 minutes · run a chat or terminal"}
-        </div>
+        </SectionPlaceholder>
       ) : (
         <ActivityTimeline events={audit.events} />
       )}
