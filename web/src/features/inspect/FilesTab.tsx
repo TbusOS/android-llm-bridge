@@ -521,6 +521,7 @@ function FilePane(p: FilePaneProps) {
                   onDoubleClick={() => {
                     if (e.is_dir) p.onActivate(e.name);
                   }}
+                  aria-current={p.activeName === e.name ? "true" : undefined}
                 >
                   <span className="files-tab__entry-name">
                     {e.is_dir ? "📁 " : e.is_link ? "🔗 " : "· "}

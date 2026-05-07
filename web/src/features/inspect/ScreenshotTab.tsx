@@ -189,7 +189,11 @@ export function ScreenshotTab() {
                 key={s.name}
                 className={selected === s.name ? "is-active" : undefined}
               >
-                <button type="button" onClick={() => setSelected(s.name)}>
+                <button
+                  type="button"
+                  onClick={() => setSelected(s.name)}
+                  aria-current={selected === s.name ? "true" : undefined}
+                >
                   <div className="uart-tab__cap-name">{s.name}</div>
                   <div className="uart-tab__cap-meta">
                     {s.width && s.height ? `${s.width}×${s.height} · ` : ""}

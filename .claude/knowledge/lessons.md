@@ -1356,4 +1356,59 @@ finally:
 
 ---
 
+## L-032 · 新 sidebar / list pattern 抽出时 a11y 三件套基线 · `aria-current` + `aria-live` + destructive 防呆
+
+**Date**: 2026-05-07（ui-fluency audit 当周 6 web feat 一次发现 3 HIGH ·
+fix `<待 commit>`）
+
+**规则**：当一个 React feature 引入 **sidebar 列表 pattern**（左侧 list
++ 右侧 viewer，用 `selected` state 标记当前激活行），三件套必须
+**首次落地时一起加**，否则后续审计周必"系统性命中"：
+
+1. **`aria-current="true"`** 加在选中行的 `<button>` / `<a>`：
+   纯 CSS `is-active` border 是视觉信号，screen reader 完全感知不到
+   "我在哪一行"。`aria-current` / `aria-selected` 二选一（list 用
+   current，菜单/tab 用 selected）。
+
+2. **`aria-live="polite"` + `role="status"`** 包动态状态文本：
+   filter counter "M of N matches" / debounce hint "applying…" /
+   capture trigger "上次：N 行 / N 错误" 等会随交互变化的文本，盲用户
+   原本完全沉默；polite 不打断当前阅读，刚好。
+
+3. **destructive button 双重防呆**：
+   - 视觉：opacity 30-40% 默认（不要 0/全隐藏 + hover-only 显形 →
+     键盘用户不安全）
+   - 行为：第一次点击 *arm* (3s timeout)、第二次点击才执行；或
+     `<HitlConfirmModal>`（N=3 时按 L-020 抽 base）
+
+**反面教材** 2026-05-07：
+
+- `UartCaptureView.tsx` 删 capture：默认 opacity 0 + hover 显形 +
+  onClick 直接 `remove.mutate(name)`。键盘 Tab focus 后 Enter 立即
+  删，无任何防呆 → ui-fluency HIGH-1
+- `ScreenshotTab.tsx` / `UartCaptureView.tsx` / `FilesTab.tsx` 三个
+  sidebar 全用 `is-active` 纯视觉标选中，0 命中 `aria-current` →
+  ui-fluency HIGH-2
+- `LogcatTab.tsx` "applying…" hint + `UiDumpTab.tsx` "M / N 匹配"
+  counter 都是普通 `<span>`，0 命中 `aria-live` → ui-fluency MID-1
+
+**触发条件**：任何新 feature 出现 list/sidebar/动态 hint/destructive
+button 任一即触发，不等 N=2/N=3（这是 a11y 基线，不是抽组件抉择）。
+
+**应用到 agents**：ui-fluency-auditor grep checklist 加规则（已落档）：
+
+- list `is-active` 命中 → 同行/同 component 必须有 `aria-current` /
+  `aria-selected` / `aria-pressed` 之一 · 缺 → **HIGH**
+- destructive `mutate(...)` 在 onClick 直挂（无 confirm / modal /
+  arm-step）· 缺 → **HIGH**
+- 动态变化的状态文本（counter / hint / pill）周围找 `aria-live` ·
+  缺 → **MID**
+
+**关联**：L-029 (共享 modal a11y 三件套 · 本条 "list" 同形 "modal"
+基线，但针对不同 pattern) · L-028 (Suspense fallback minHeight · 都是
+"基线漏一次后续每个 feature 复 N 次"模式) · L-020 (N=2 不抽 base ·
+本条相反，a11y 不等 N=3 — 是基线不是抽象)
+
+---
+
 （新教训按此格式追加）

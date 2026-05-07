@@ -2026,8 +2026,10 @@ html[lang^="zh"] h3 {
   padding-left: calc(var(--space-3) - 3px);
 }
 
-/* Per-row delete button — overlay top-right; only visible on row
-   hover/focus to keep the sidebar visually quiet. */
+/* Per-row delete button — overlay top-right; muted by default to keep
+   the sidebar visually quiet, but always reachable for keyboard users
+   (ui-fluency 2026-05-07 HIGH-1: full hover-only opacity:0 paired with
+   destructive action let Tab+Enter mis-fire delete in 1 keystroke). */
 .uart-tab__cap-delete {
   position: absolute;
   top: 50%;
@@ -2044,7 +2046,7 @@ html[lang^="zh"] h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
 }
 
@@ -2054,9 +2056,25 @@ html[lang^="zh"] h3 {
   opacity: 1;
 }
 
+.uart-tab__cap-delete:hover,
+.uart-tab__list li:hover .uart-tab__cap-delete,
+.uart-tab__list li:focus-within .uart-tab__cap-delete {
+  opacity: 1;
+}
+
 .uart-tab__cap-delete:hover {
   color: var(--anth-red, #b94545);
   background: color-mix(in srgb, var(--anth-red, #b94545) 12%, transparent);
+}
+
+/* Armed (= one click landed; second click within 3s confirms) — make
+   it visually loud so the user can't miss the next click is destructive. */
+.uart-tab__cap-delete--armed {
+  opacity: 1 !important;
+  color: var(--anth-red, #b94545);
+  background: color-mix(in srgb, var(--anth-red, #b94545) 18%, transparent);
+  outline: 2px solid var(--anth-red, #b94545);
+  outline-offset: -2px;
 }
 
 .uart-tab__cap-delete:disabled {
@@ -2559,7 +2577,12 @@ html[lang^="zh"] h3 {
 }
 
 /* LOW-3: inline preview pane appearing between the two file panes
-   and the status row when a workspace text file is selected. */
+   and the status row when a workspace text file is selected.
+   ui-fluency 2026-05-07 HIGH-3: min-height locks the pane to a
+   stable height so loading→data and data→loading transitions don't
+   shove the .files-tab__status row +/-370px (CLS). 240px matches the
+   approximate stable height of small text data so the bar/empty/err
+   states pad up to the same footprint. */
 .files-tab__preview {
   background: #ffffff;
   border: 1px solid var(--anth-border);
@@ -2569,6 +2592,7 @@ html[lang^="zh"] h3 {
   flex-direction: column;
   gap: var(--space-2);
   margin-top: var(--space-3);
+  min-height: 240px;
 }
 
 .files-tab__preview--state {

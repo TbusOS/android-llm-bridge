@@ -63,6 +63,28 @@ export function UartCaptureView() {
   const remove = useDeleteUartCapture(device);
   const text = useUartCaptureText(selected, device);
 
+  // ui-fluency 2026-05-07 HIGH-1: destructive delete needs a defence
+  // against keyboard-tab+Enter mis-fire and hover slip. Two-step click:
+  // first click arms the row (button label flips to "Confirm"), second
+  // click within `_DELETE_ARM_MS` actually deletes. Auto-disarms on
+  // timeout. Cheaper than a modal and preserves the light-weight UX
+  // the original commit message picked.
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const _DELETE_ARM_MS = 3000;
+  useEffect(() => {
+    if (!armedDelete) return;
+    const t = window.setTimeout(() => setArmedDelete(null), _DELETE_ARM_MS);
+    return () => window.clearTimeout(t);
+  }, [armedDelete]);
+  const onDeleteClick = (name: string) => {
+    if (armedDelete === name) {
+      setArmedDelete(null);
+      remove.mutate(name);
+    } else {
+      setArmedDelete(name);
+    }
+  };
+
   // Auto-pick a sibling after delete: if the deleted capture was the
   // currently-selected one, jump to whichever capture is now newest.
   // Re-runs when the cached list updates after the DELETE invalidation.
@@ -175,33 +197,48 @@ export function UartCaptureView() {
             </div>
           )}
           <ul>
-            {list.data?.captures?.map((c) => (
-              <li
-                key={c.name}
-                className={selected === c.name ? "is-active" : undefined}
-              >
-                <button type="button" onClick={() => setSelected(c.name)}>
-                  <div className="uart-tab__cap-name">{c.name}</div>
-                  <div className="uart-tab__cap-meta">
-                    {formatBytes(c.size_bytes)} · {relativeTime(c.mtime, lang)}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  className="uart-tab__cap-delete"
-                  onClick={() => remove.mutate(c.name)}
-                  disabled={remove.isPending}
-                  aria-label={
-                    lang === "zh"
-                      ? `删除 capture ${c.name}`
-                      : `Delete capture ${c.name}`
-                  }
-                  title={lang === "zh" ? "删除" : "Delete"}
+            {list.data?.captures?.map((c) => {
+              const isArmed = armedDelete === c.name;
+              return (
+                <li
+                  key={c.name}
+                  className={selected === c.name ? "is-active" : undefined}
                 >
-                  <Trash2 size={12} />
-                </button>
-              </li>
-            ))}
+                  <button
+                    type="button"
+                    onClick={() => setSelected(c.name)}
+                    aria-current={selected === c.name ? "true" : undefined}
+                  >
+                    <div className="uart-tab__cap-name">{c.name}</div>
+                    <div className="uart-tab__cap-meta">
+                      {formatBytes(c.size_bytes)} · {relativeTime(c.mtime, lang)}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`uart-tab__cap-delete${isArmed ? " uart-tab__cap-delete--armed" : ""}`}
+                    onClick={() => onDeleteClick(c.name)}
+                    disabled={remove.isPending}
+                    aria-label={
+                      isArmed
+                        ? (lang === "zh"
+                            ? `再次点击确认删除 ${c.name}`
+                            : `Click again to confirm delete ${c.name}`)
+                        : (lang === "zh"
+                            ? `删除 capture ${c.name}`
+                            : `Delete capture ${c.name}`)
+                    }
+                    title={
+                      isArmed
+                        ? (lang === "zh" ? "再点一次确认" : "Click again to confirm")
+                        : (lang === "zh" ? "删除" : "Delete")
+                    }
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </aside>
 
