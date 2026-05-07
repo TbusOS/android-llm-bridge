@@ -528,17 +528,24 @@ async def workspace_download(path: str) -> FileResponse:
 # functional LOW-3: inline text preview for small workspace files.
 # Default 64 KB cap is enough to preview log tails / config files / json
 # payloads without piping multi-MB binaries into the browser. Binary
-# files (NUL byte in first 1 KB) get rejected with `is_binary=true` so
-# the UI can show "binary file — use Download" rather than a wall of
-# replacement chars.
+# files (NUL byte anywhere in the read window) get rejected with
+# `is_binary=true` so the UI can show "binary file — use Download"
+# rather than a wall of replacement chars.
 _PREVIEW_DEFAULT_BYTES = 64 * 1024
 _PREVIEW_MAX_BYTES = 1 * 1024 * 1024  # 1 MB hard cap
-_BINARY_SNIFF_BYTES = 1024
 
 
 def _looks_binary(head: bytes) -> bool:
-    """NUL byte in the first 1 KB → binary. Conservative + cheap."""
-    return b"\x00" in head[:_BINARY_SNIFF_BYTES]
+    """NUL byte anywhere in the read window → binary.
+
+    Earlier this scanned only the first 1 KB, which let
+    ELF/PE/PNG-with-ASCII-prefix files smuggle past as text + get
+    decoded with errors='replace' (security audit 2026-05-07 MID).
+    Whole-window NUL scan on 64 KB is microseconds — `bytes.__contains__`
+    is C-level memchr — so the cap-up gives correct detection at no
+    practical cost.
+    """
+    return b"\x00" in head
 
 
 @router.get("/workspace/files/preview/{path:path}")

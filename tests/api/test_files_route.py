@@ -875,7 +875,7 @@ def test_workspace_preview_truncates_large_file(client, workspace) -> None:
 
 
 def test_workspace_preview_binary_file_rejected(client, workspace) -> None:
-    """NUL byte in first 1 KB → is_binary=true + empty text."""
+    """NUL byte anywhere in the read window → is_binary=true + empty text."""
     f = workspace / "bin" / "img.png"
     f.parent.mkdir(parents=True)
     f.write_bytes(b"\x89PNG\r\n\x1a\n\x00rest of binary")
@@ -887,6 +887,29 @@ def test_workspace_preview_binary_file_rejected(client, workspace) -> None:
     assert body["is_binary"] is True
     assert body["text"] == ""
     assert body["encoding"] == "binary"
+
+
+def test_workspace_preview_binary_after_ascii_prefix_still_rejected(
+    client, workspace
+) -> None:
+    """Security audit 2026-05-07 MID-2: pre-fix _looks_binary only
+    scanned the first 1 KB, so a 1 KB+ ASCII prefix could smuggle the
+    binary tail past as text. Post-fix scans the whole read window."""
+    f = workspace / "bin" / "smuggle.dat"
+    f.parent.mkdir(parents=True)
+    # 1.5 KB of plain ASCII (well over the old 1 KB sniff cap), then
+    # NUL-laden ELF-style payload.
+    payload = (b"A" * 1500) + b"\x00\x01\x02ELFsmuggled\x00"
+    f.write_bytes(payload)
+
+    r = client.get("/workspace/files/preview/bin/smuggle.dat")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["is_binary"] is True, (
+        "post-fix must detect NUL after the old 1 KB sniff cap"
+    )
+    assert body["text"] == ""
 
 
 def test_workspace_preview_handles_invalid_utf8(client, workspace) -> None:
