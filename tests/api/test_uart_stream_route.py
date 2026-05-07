@@ -369,6 +369,57 @@ def test_oversized_write_frame_dropped_not_closed(
     assert not any(buf == huge for buf in t.last_link.writer.written)
 
 
+def test_oversized_write_frame_publishes_audit_event(
+    monkeypatch, tmp_path
+) -> None:
+    """write_dropped should also reach the audit bus so /audit/stream
+    subscribers see it (operator visibility, not just per-WS feedback).
+    Mirrors the inline ack test above but asserts the bus publish."""
+    monkeypatch.chdir(tmp_path)
+    t = _FakeBidirectionalTransport(chunks=[b"out\n"] * 10)
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+
+    captured: list[dict[str, Any]] = []
+
+    class _FakeBus:
+        async def publish(self, event: dict[str, Any]) -> None:
+            captured.append(event)
+
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.get_bus", lambda: _FakeBus()
+    )
+
+    app = create_app()
+    huge = b"A" * (64 * 1024 + 1)
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream?device=ABC123") as ws:
+            ws.send_json({"device": "ABC123", "write": True})
+            ws.receive_json()  # ready
+            ws.receive_bytes()  # drain a chunk
+            ws.send_bytes(huge)
+            # Wait until either write_dropped frame arrives (proxy for
+            # the publish having run) or we time out via iteration cap.
+            for _ in range(80):
+                msg = ws.receive()
+                if "text" in msg and msg["text"]:
+                    obj = json.loads(msg["text"])
+                    if obj.get("type") == "write_dropped":
+                        break
+            ws.send_json({"type": "close"})
+
+    assert any(e.get("kind") == "write_dropped" for e in captured), (
+        f"expected a write_dropped audit event, got {captured!r}"
+    )
+    drop_event = next(e for e in captured if e.get("kind") == "write_dropped")
+    assert drop_event["source"] == "uart_stream"
+    assert drop_event["session_id"] == "uart-stream:ABC123"
+    assert drop_event["data"]["got_bytes"] == 64 * 1024 + 1
+    assert drop_event["data"]["max_bytes"] == 64 * 1024
+    assert drop_event["data"]["reason"] == "frame_too_large"
+
+
 def test_reader_oserror_yields_single_stream_error_close(
     monkeypatch, tmp_path
 ) -> None:

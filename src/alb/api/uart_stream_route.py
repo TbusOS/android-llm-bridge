@@ -56,6 +56,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
+from alb.infra.event_bus import get_bus, make_event
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
@@ -129,15 +130,17 @@ async def uart_stream_ws(ws: WebSocket) -> None:
     )
 
     if write_enabled:
-        await _run_bidirectional(ws, transport)
+        await _run_bidirectional(ws, transport, device=device)
     else:
-        await _run_read_only(ws, transport)
+        await _run_read_only(ws, transport, device=device)
 
 
-async def _run_read_only(ws: WebSocket, transport: Any) -> None:
+async def _run_read_only(
+    ws: WebSocket, transport: Any, *, device: str | None = None,
+) -> None:
     """v1 PR-C.b path — stream_read iterator, no write."""
     pump_task = asyncio.create_task(_pump_uart_to_ws(ws, transport))
-    recv_task = asyncio.create_task(_recv_loop(ws, link=None))
+    recv_task = asyncio.create_task(_recv_loop(ws, link=None, device=device))
     try:
         _, pending = await asyncio.wait(
             {pump_task, recv_task},
@@ -154,7 +157,9 @@ async def _run_read_only(ws: WebSocket, transport: Any) -> None:
             await ws.close()
 
 
-async def _run_bidirectional(ws: WebSocket, transport: Any) -> None:
+async def _run_bidirectional(
+    ws: WebSocket, transport: Any, *, device: str | None = None,
+) -> None:
     """PR-C.c path — single shared link; writer used for client→UART."""
     try:
         link = await transport.open_session()
@@ -172,7 +177,9 @@ async def _run_bidirectional(ws: WebSocket, transport: Any) -> None:
 
     cs = _CloseState()
     pump_task = asyncio.create_task(_pump_link_to_ws(ws, link, cs))
-    recv_task = asyncio.create_task(_recv_loop(ws, link=link, close_state=cs))
+    recv_task = asyncio.create_task(
+        _recv_loop(ws, link=link, close_state=cs, device=device)
+    )
     try:
         _, pending = await asyncio.wait(
             {pump_task, recv_task},
@@ -254,6 +261,7 @@ async def _recv_loop(
     *,
     link: Any | None = None,
     close_state: _CloseState | None = None,
+    device: str | None = None,
 ) -> None:
     """Watch for client-initiated control / data frames.
 
@@ -264,7 +272,9 @@ async def _recv_loop(
                             Silently dropped in read-only mode.
 
     `close_state` (bidirectional only) is updated on writer error so
-    the outer finally can surface a single coherent close frame."""
+    the outer finally can surface a single coherent close frame.
+    `device` is the serial captured at connect time, only used to tag
+    audit-log events when frames are dropped."""
     try:
         while True:
             msg = await ws.receive()
@@ -284,6 +294,29 @@ async def _recv_loop(
                             "max_bytes": _MAX_WRITE_FRAME_BYTES,
                             "got_bytes": len(data),
                         })
+                    # Also persist to audit log so /audit/stream
+                    # subscribers can surface it (operator visibility,
+                    # not just per-WS feedback). Bus is best-effort —
+                    # any failure is swallowed since the user already
+                    # got the inline ack frame above.
+                    with contextlib.suppress(Exception):
+                        await get_bus().publish(
+                            make_event(
+                                session_id=f"uart-stream:{device or 'unknown'}",
+                                source="uart_stream",
+                                kind="write_dropped",
+                                summary=(
+                                    f"UART write frame dropped — "
+                                    f"{len(data)}B > {_MAX_WRITE_FRAME_BYTES}B cap"
+                                ),
+                                data={
+                                    "reason": "frame_too_large",
+                                    "max_bytes": _MAX_WRITE_FRAME_BYTES,
+                                    "got_bytes": len(data),
+                                    "device": device or "",
+                                },
+                            )
+                        )
                     continue
                 try:
                     link.writer.write(data)
