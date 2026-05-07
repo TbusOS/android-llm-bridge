@@ -142,6 +142,34 @@ def test_read_rejects_non_png_suffix(client, workspace) -> None:
     assert r.status_code == 400
 
 
+def test_read_rejects_symlink(client, workspace) -> None:
+    """Code-review 2026-05-07 HIGH: a symlink inside the screenshots
+    dir pointing to /etc/* (or any out-of-tree path) used to be served
+    as image/png. Reject symlinks outright."""
+    d = _shots_dir(workspace)
+    target = workspace / "secret.txt"
+    target.write_text("workspace-internal but not a screenshot")
+    link = d / "evil.png"
+    link.symlink_to(target)
+
+    r = client.get(f"/devices/{SERIAL}/screenshots/evil.png")
+    assert r.status_code == 400
+    assert "symlink" in r.json()["detail"].lower()
+
+
+def test_read_rejects_symlink_outside_workspace(client, workspace, tmp_path) -> None:
+    """Even more direct: link points to /etc/hostname-style file
+    outside the workspace. Pre-fix: 200 + plaintext leak. Post-fix: 400."""
+    d = _shots_dir(workspace)
+    outside = tmp_path / "outside-of-workspace.bin"
+    outside.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    link = d / "leak.png"
+    link.symlink_to(outside)
+
+    r = client.get(f"/devices/{SERIAL}/screenshots/leak.png")
+    assert r.status_code == 400
+
+
 def test_endpoints_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [(e["method"], e["path"]) for e in body["rest"]]

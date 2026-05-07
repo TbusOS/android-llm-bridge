@@ -61,6 +61,35 @@ def _is_uart_log_name(name: str) -> bool:
     return True
 
 
+def _safe_resolve_capture(device: str | None, name: str) -> Path:
+    """Return a Path safe to read/unlink; raises HTTPException(400) if
+    the file would resolve outside ``_logs_dir(device)`` via symlink or
+    if the entry itself is a symlink.
+
+    Code review 2026-05-07 finding (parallel to screenshots_route): the
+    name string check alone doesn't stop a symlink placed inside
+    ``workspace/.../logs/`` from leading FileResponse / read_text /
+    unlink to an arbitrary path. Mirror files_route's `.resolve() +
+    relative_to(root)` pattern + reject symlinks outright.
+    """
+    if not _is_uart_log_name(name):
+        raise HTTPException(status_code=400, detail="invalid capture name")
+    base = _logs_dir(device)
+    candidate = base / name
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="capture not found")
+    if candidate.is_symlink():
+        raise HTTPException(status_code=400, detail="symlinks not allowed")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(base.resolve())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail="path escapes logs dir"
+        ) from exc
+    return resolved
+
+
 @router.post("/uart/capture")
 async def trigger_capture(
     duration: int = Query(30, ge=1, le=_HTTP_DURATION_MAX),
@@ -138,12 +167,7 @@ async def read_capture(
     inside a <pre> with a monospace font, control chars stay visible
     as escape sequences (PR-C.b will add an xterm.js view for ANSI
     rendering)."""
-    if not _is_uart_log_name(name):
-        raise HTTPException(status_code=400, detail="invalid capture name")
-
-    f = _logs_dir(device) / name
-    if not f.exists():
-        raise HTTPException(status_code=404, detail="capture not found")
+    f = _safe_resolve_capture(device, name)
 
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
@@ -172,12 +196,7 @@ async def delete_capture(
     the user's perspective, but a strict 404 surfaces drift between
     the cached list and disk).
     """
-    if not _is_uart_log_name(name):
-        raise HTTPException(status_code=400, detail="invalid capture name")
-
-    f = _logs_dir(device) / name
-    if not f.exists():
-        raise HTTPException(status_code=404, detail="capture not found")
+    f = _safe_resolve_capture(device, name)
 
     try:
         f.unlink()

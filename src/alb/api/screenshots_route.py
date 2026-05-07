@@ -51,6 +51,36 @@ def _is_screenshot_name(name: str) -> bool:
     return True
 
 
+def _safe_resolve_screenshot(serial: str, name: str) -> Path:
+    """Return a Path safe to read; raises HTTPException(400) if the
+    file would resolve outside ``_screenshots_dir(serial)`` via symlink
+    or if the entry is itself a symlink (defence in depth).
+
+    Code review 2026-05-07 finding: ``_is_screenshot_name`` only checks
+    the user-supplied string. A symlink placed inside
+    ``workspace/devices/<serial>/screenshots/`` (e.g. by a CI runner or
+    shared host's other user) lets ``FileResponse`` follow it to any
+    readable file. Mirrors ``files_route._resolve_workspace_path``'s
+    ``.resolve() + relative_to(root)`` pattern.
+    """
+    if not _is_screenshot_name(name):
+        raise HTTPException(status_code=400, detail="invalid screenshot name")
+    base = _screenshots_dir(serial)
+    candidate = base / name
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="screenshot not found")
+    if candidate.is_symlink():
+        raise HTTPException(status_code=400, detail="symlinks not allowed")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(base.resolve())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail="path escapes screenshots dir"
+        ) from exc
+    return resolved
+
+
 def _peek_png_dims(p: Path) -> tuple[int, int] | None:
     """Read width/height from PNG header — first 24 bytes only.
 
@@ -108,13 +138,7 @@ async def list_screenshots(serial: str) -> dict[str, Any]:
 @router.get("/devices/{serial}/screenshots/{name}")
 async def read_screenshot(serial: str, name: str) -> FileResponse:
     """Return one screenshot's PNG bytes as `image/png`."""
-    if not _is_screenshot_name(name):
-        raise HTTPException(status_code=400, detail="invalid screenshot name")
-
-    f = _screenshots_dir(serial) / name
-    if not f.exists() or not f.is_file():
-        raise HTTPException(status_code=404, detail="screenshot not found")
-
+    f = _safe_resolve_screenshot(serial, name)
     return FileResponse(
         path=str(f),
         filename=name,

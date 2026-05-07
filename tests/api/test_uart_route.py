@@ -246,3 +246,36 @@ def test_delete_capture_rejects_non_uart_filename(client, workspace) -> None:
     assert r.status_code == 400
     # File must still exist — bad name shouldn't have touched it.
     assert intruder.exists()
+
+
+def test_read_capture_rejects_symlink(client, workspace) -> None:
+    """Code-review 2026-05-07 HIGH (parallel to screenshots): symlink
+    placed in logs/ used to be followed by read_text. Reject outright."""
+    target = workspace / "secret.txt"
+    target.write_text("not a uart log")
+    link_dir = workspace / "logs"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    link = link_dir / "leak-uart.log"
+    link.symlink_to(target)
+
+    r = client.get("/uart/captures/leak-uart.log")
+    assert r.status_code == 400
+    assert "symlink" in r.json()["detail"].lower()
+
+
+def test_delete_capture_rejects_symlink(client, workspace) -> None:
+    """Same protection on DELETE — even though unlink only removes the
+    link itself, refuse to act on an entry the operator clearly didn't
+    create via the capture flow."""
+    target = workspace / "real.txt"
+    target.write_text("untouched")
+    link_dir = workspace / "logs"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    link = link_dir / "evil-uart.log"
+    link.symlink_to(target)
+
+    r = client.delete("/uart/captures/evil-uart.log")
+    assert r.status_code == 400
+    # Both the link and the target must remain untouched.
+    assert link.exists()
+    assert target.exists()

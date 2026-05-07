@@ -55,9 +55,26 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+import re
+
 from alb.api.schema import API_VERSION
 from alb.infra.event_bus import get_bus, make_event
 from alb.mcp.transport_factory import build_transport
+
+# Whitelist for device serials reaching audit-log session_id / data.
+# Mirrors the conservative shape used by adb / serial CLI args; any
+# client-supplied device string failing this is replaced with `unknown`
+# before it reaches event_bus.publish() to prevent log-line injection
+# (newline / control chars) and disk-write amplification (long strings
+# spamming events.jsonl on every dropped frame).
+_DEVICE_SAFE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
+
+def _safe_device(raw: object) -> str | None:
+    """Return raw if it's a safe ASCII serial, else None."""
+    if isinstance(raw, str) and _DEVICE_SAFE_RE.match(raw):
+        return raw
+    return None
 
 router = APIRouter()
 
@@ -86,7 +103,11 @@ async def uart_stream_ws(ws: WebSocket) -> None:
 
     config = await _read_config(ws)
     config = config if isinstance(config, dict) else {}
-    device = config.get("device")
+    # Sanitize device early: it ends up in build_transport, audit-log
+    # session_id, and audit data.device. A None fallback is fine —
+    # build_transport(device_serial=None) lets serial transport pick
+    # its env-default port.
+    device = _safe_device(config.get("device"))
     write_enabled = bool(config.get("write"))
 
     try:
@@ -298,8 +319,14 @@ async def _recv_loop(
                     # subscribers can surface it (operator visibility,
                     # not just per-WS feedback). Bus is best-effort —
                     # any failure is swallowed since the user already
-                    # got the inline ack frame above.
-                    with contextlib.suppress(Exception):
+                    # got the inline ack frame above. CancelledError
+                    # included because event_bus.publish awaits both an
+                    # asyncio.Lock and a to_thread call (cancel-suspend
+                    # points); on Python 3.11+ CancelledError is
+                    # BaseException so plain suppress(Exception) lets
+                    # it leak into the WS handler shutdown path
+                    # (lessons.md L-031).
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
                         await get_bus().publish(
                             make_event(
                                 session_id=f"uart-stream:{device or 'unknown'}",

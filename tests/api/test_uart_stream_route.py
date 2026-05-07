@@ -369,6 +369,50 @@ def test_oversized_write_frame_dropped_not_closed(
     assert not any(buf == huge for buf in t.last_link.writer.written)
 
 
+def test_unsafe_device_sanitized_to_unknown_in_audit_session(
+    monkeypatch, tmp_path
+) -> None:
+    """Code/security review 2026-05-07 MID: client-supplied `device`
+    must not flow into audit-log session_id verbatim. Strings with
+    newlines, very long values, or non-ASCII land as `unknown` so
+    events.jsonl line-format and downstream filters can't be tricked."""
+    monkeypatch.chdir(tmp_path)
+    t = _FakeBidirectionalTransport(chunks=[b"out\n"] * 10)
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    captured: list[dict[str, Any]] = []
+
+    class _FakeBus:
+        async def publish(self, event: dict[str, Any]) -> None:
+            captured.append(event)
+
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.get_bus", lambda: _FakeBus()
+    )
+    app = create_app()
+    huge = b"A" * (64 * 1024 + 1)
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            # Newline in device — classic log-line injection attempt.
+            ws.send_json({"device": "legit\nfake-line", "write": True})
+            ws.receive_json()
+            ws.receive_bytes()
+            ws.send_bytes(huge)
+            for _ in range(80):
+                msg = ws.receive()
+                if "text" in msg and msg["text"]:
+                    obj = json.loads(msg["text"])
+                    if obj.get("type") == "write_dropped":
+                        break
+            ws.send_json({"type": "close"})
+
+    assert captured, "publish was never called"
+    drop = next(e for e in captured if e.get("kind") == "write_dropped")
+    assert drop["session_id"] == "uart-stream:unknown"
+    assert drop["data"]["device"] == ""
+
+
 def test_oversized_write_frame_publishes_audit_event(
     monkeypatch, tmp_path
 ) -> None:
