@@ -547,21 +547,44 @@
          React. .be-stat-value--ellipsis truncates a long probe error
          (e.g. "connection refused to http://ollama-host.internal:11434") inside
          the .be-stat-value cell so the card height remains uniform.
-         .be-card--empty is the section-level placeholder used while
-         the manifest fetch is pending or has failed. */
+
+         DEBT-031 (mockup v2 update 2026-05-07): section-level placeholder
+         BEM unified. The single `.be-card--empty` class was widened to
+         `.section-placeholder` + 3 variant modifiers so devices /
+         backends / sessions / timeline can all share one base while
+         preserving each section's existing visual rhythm:
+           --dashed: dashed border + center align (devices / timeline)
+           --solid:  solid border (backends — what .be-card--empty was)
+           --inset:  no border, inherits parent .sess-card chrome
+           --err:    color override for error state */
       .be-stat--full { grid-column: 1 / -1; }
       .be-stat-value--ellipsis {
         max-width: 100%; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
       }
-      .be-card--empty {
+      .section-placeholder {
         background: #ffffff;
-        border: 1px solid var(--anth-light-gray);
         border-radius: var(--radius-md);
         padding: var(--space-5);
         font-family: var(--font-body);
         font-size: 14px;
         color: var(--anth-text-secondary);
+      }
+      .section-placeholder--dashed {
+        border: 1px dashed var(--anth-light-gray);
+        padding: var(--space-5) var(--space-4);
+        text-align: center;
+      }
+      .section-placeholder--solid {
+        border: 1px solid var(--anth-light-gray);
+      }
+      .section-placeholder--inset {
+        padding: var(--space-5) var(--space-4);
+        text-align: center;
+        border-radius: 0;
+      }
+      .section-placeholder--err {
+        color: var(--anth-danger, #b94545);
       }
 
       /* ==========================================================
@@ -1261,7 +1284,7 @@
               </div>
 
               <!-- 7. section-level empty placeholder while manifest pending / failed -->
-              <div class="be-card--empty" style="margin-top: var(--space-3);">
+              <div class="section-placeholder section-placeholder--solid" style="margin-top: var(--space-3);">
                 <span class="lang-en">Could not fetch backends — is alb-api running?</span>
                 <span class="lang-zh">无法获取后端列表，检查 alb-api 是否在运行</span>
               </div>

@@ -785,20 +785,9 @@ html[lang^="zh"] h3 {
   gap: var(--space-3);
 }
 
-.dev-strip-state {
-  background: #ffffff;
-  border: 1px dashed var(--anth-light-gray);
-  border-radius: var(--radius-md);
-  padding: var(--space-5) var(--space-4);
-  font-family: var(--font-body);
-  font-size: 14px;
-  color: var(--anth-text-secondary);
-  text-align: center;
-}
-
-.dev-strip-state--err {
-  color: var(--anth-danger);
-}
+/* DEBT-031 (2026-05-07): .dev-strip-state / .be-card--empty /
+   .sess-card--state replaced by unified .section-placeholder + variants.
+   See block below + mockup webui-preview-v2.html DEBT-031 comment. */
 
 .dev-card {
   position: relative;
@@ -1090,17 +1079,39 @@ html[lang^="zh"] h3 {
   white-space: nowrap;
 }
 
-/* DEBT-017 / DEBT-018 sketch: shared placeholder card for loading
-   and error states across dashboard sections (today only used by the
-   LLM backends section; the wider rollout is tracked as DEBT-018). */
-.be-card--empty {
+/* DEBT-031 (2026-05-07): unified section placeholder BEM. Replaces
+   .dev-strip-state (dashed/center), .be-card--empty (solid), and
+   .sess-card--state (inset). Each variant preserves its prior visual
+   so DashboardPage's 4 sections render unchanged; only the BEM block
+   collapsed from 3 to 1. Mockup baseline:
+   docs/webui-preview-v2.html DEBT-031 comment. */
+.section-placeholder {
   background: #ffffff;
-  border: 1px solid var(--anth-light-gray);
   border-radius: var(--radius-md);
   padding: var(--space-5);
   font-family: var(--font-body);
   font-size: 14px;
   color: var(--anth-text-secondary);
+}
+
+.section-placeholder--dashed {
+  border: 1px dashed var(--anth-light-gray);
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+}
+
+.section-placeholder--solid {
+  border: 1px solid var(--anth-light-gray);
+}
+
+.section-placeholder--inset {
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  border-radius: 0;
+}
+
+.section-placeholder--err {
+  color: var(--anth-danger);
 }
 
 /* ==========================================================
@@ -1127,17 +1138,8 @@ html[lang^="zh"] h3 {
   border-bottom: 0;
 }
 
-.sess-card--state {
-  padding: var(--space-5) var(--space-4);
-  font-family: var(--font-body);
-  font-size: 14px;
-  color: var(--anth-text-secondary);
-  text-align: center;
-}
-
-.sess-card--err {
-  color: var(--anth-danger);
-}
+/* DEBT-031 (2026-05-07): .sess-card--state / --err replaced by
+   .section-placeholder.section-placeholder--inset(--err). */
 
 .sess-icon {
   width: 24px;

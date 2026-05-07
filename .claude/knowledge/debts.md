@@ -363,7 +363,7 @@
 
 ---
 
-## DEBT-031 · Dashboard 3 套 placeholder BEM family 视觉不统一（follow-up of DEBT-018）
+## DEBT-031 · Dashboard 3 套 placeholder BEM family 视觉不统一 —— **CLOSED 2026-05-07**
 
 - **severity**：low（视觉一致性，不影响功能；不阻塞 ship）
 - **引入**：D 档（`.dev-strip-state` 加入）+ DEBT-017（`.be-card--empty`
@@ -372,17 +372,35 @@
   必须保留 3 套 BEM family，因为 mockup baseline `.be-card--empty`
   是 solid border + 默认 align，React 自加的 `.dev-strip-state` 是
   dashed border + center align，视觉风格不同
-- **位置**：`web/src/styles/components.css:788-801`（dev-strip-state）
-  + `:1093-1104`（be-card--empty）+ `:1130-1140`（sess-card--state）
-  + `docs/webui-preview-v2.html:557-565`（mockup baseline）
-- **是否计划修**：可（视觉统一 → DX 整洁；mockup baseline 改 + 三闸
-  验证）
-- **还债 sketch**：mockup 加 `.section-placeholder` + `--err / --loading
-  / --empty` 三 modifier，3 段都迁移；CLASS_MAP 缩到 1 entry；删 3 套
-  旧 class
-- **还债条件**：下次涉及 dashboard 视觉刷或 design system 整理时
-- **风险**：dashed vs solid border 选哪个 baseline 需 design 决策；
-  改 baseline 需走三道闸（verify.py / visual-audit.mjs / screenshot.mjs）
+- **关闭**：commit (待提) 2026-05-07。抽 `.section-placeholder` base
+  + `--dashed / --solid / --inset / --err` 4 个 variant modifier，
+  每个 variant 复刻原视觉 ⇒ DashboardPage 4 段视觉零变化但 BEM
+  block 从 3 → 1。落地：
+  - `docs/webui-preview-v2.html`：删 `.be-card--empty`（10 行）+
+    line 1264 inline 用法改 `.section-placeholder.section-placeholder--solid`
+    ；加 base + 4 variant 定义（25 行 CSS + 9 行注释 DEBT-031）；
+    三道闸全过（verify ✓ / visual-audit 0 error ✓ / screenshot 视觉
+    零回归 ✓）
+  - `web/src/styles/components.css`：删 `.dev-strip-state` /
+    `--err`（13 行）+ `.be-card--empty`（10 行 + 4 行注释）+
+    `.sess-card--state` / `--err`（10 行）；加 `.section-placeholder`
+    + 4 variants（24 行 + 6 行注释 DEBT-031 引）
+  - `web/src/features/dashboard/SectionPlaceholder.tsx`：CLASS_MAP
+    从 3-key Record → VARIANT_CLASS 单层映射 + ERR_CLASS 单字符串
+    + sess-card 仍包外层 `.sess-card` chrome（保边框上下相连）；
+    styleKey/kind 接口不变 ⇒ DashboardPage callsite 零改动
+- **设计决策**：3 BEM family 共存路径（DEBT-018 时的折中）走到 N=3+
+  时清理；选用 base + variants 而非"统一一种风格"，因为：
+  1. 3 段视觉风格各为业务表意（dashed=没数据状态强信号 /
+     solid=card-style 收尾 / inset=融入父 list chrome），统一一种
+     反丧失语义；
+  2. base 单一 mount 点已实现"未来真要统一只改 .section-placeholder"
+     的目标；
+  3. 视觉零变化避免触发其他 audit 维度的回归
+- **位置**：`web/src/styles/components.css:788-832`（新 base + variants）
+  + `web/src/features/dashboard/SectionPlaceholder.tsx`（重写）
+  + `docs/webui-preview-v2.html:557-590`（mockup baseline 扩展）
+- **来源**：DEBT-018 关闭时承诺的视觉统一 follow-up
 
 ---
 
