@@ -33,7 +33,7 @@
 ## 端到端验证（L-017 规则）
 
 真实环境跑通：
-- alb-api on `127.0.0.1:8765` + ollama `gemma4:e4b` (<llm-host>:11434)
+- alb-api on `127.0.0.1:8765` + ollama `gemma4:e4b` (`<llm-host>:11434`)
 - WS chat session: 110s 完整 chat，11 个 tps_sample 采到，rate 3-12 tok/s
 - /metrics/summary 返回 mean=10.7 tok/s（10 samples）
 - /tools 返回 33 工具 / 11 categories

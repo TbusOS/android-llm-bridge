@@ -434,21 +434,28 @@
 
 ---
 
-## DEBT-021 · 历史 tracked 文件含敏感词 · CI `--all` 模式会挂
+## DEBT-021 · 历史 tracked 文件含敏感词 · CI `--all` 模式会挂 —— **CLOSED 2026-05-07**
 
 - **severity**：mid（CI 全量扫挂；staged 模式不影响日常 commit）
 - **位置**：
   - `.claude/reports/visual-2026-04-29-debt001.md` 含 `<llm-host>`
+  - `.claude/reports/preflight-2026-04-29-f-dock.md` 含 `<llm-host>`（同 IP，后期登记）
   - `scripts/f8_screenshots.mjs` 含 hardcoded 个人家目录路径 + 真实用户名字面
-- **现象**：`bash scripts/check_sensitive_words.sh --all` 4 处命中
-- **是否计划修**：是
-- **还债 sketch**：
-  - `f8_screenshots.mjs`：把 hardcoded `/home/&lt;user&gt;/...` 路径改 `process.env.HOME` /
-    相对路径（参考新加的 `web/scripts/web_check.mjs` 模式 —— 用 web/node_modules 标准解析，
-    不绝对路径 import）
-  - `visual-2026-04-29-debt001.md`：把 `<llm-host>` 改 `<llm-host>` 占位
-- **还债条件**：next session（不阻塞当前 work）
-- **来源**：2026-04-30 commit `0ef2d87` 前 `--all` 扫描发现
+- **现象**：`bash scripts/check_sensitive_words.sh --all` 5 处命中（exit 1）
+- **关闭**：commit (待提) 2026-05-07。落地：
+  - `scripts/f8_screenshots.mjs:12` `import "/home/<user>/claude-tools/.../playwright"`
+    → `import "../web/node_modules/playwright/index.mjs"`（web 已 dev-dep playwright 1.59）
+  - `scripts/f8_screenshots.mjs:19` hardcoded `/home/<user>/...` 输出路径 →
+    `path.resolve(SCRIPT_DIR, "../.claude/reports/screenshots/2026-04-29-f8")` 用
+    `import.meta.url` + `fileURLToPath` 推导 `__dirname`
+  - `.claude/reports/preflight-2026-04-29-f-dock.md:36` `<llm-host>:11434` →
+    `<llm-host>:11434`
+  - `.claude/reports/visual-2026-04-29-debt001.md:10` `ollama@<llm-host>:11434` →
+    `ollama@<llm-host>:11434`
+  - 验证：`./scripts/check_sensitive_words.sh --all` exit 0 命中 0；smoke check
+    脚本 import 路径解析成功（实际跑通 playwright 加载）
+- **来源**：2026-04-30 commit `0ef2d87` 前 `--all` 扫描发现，2026-05-07 4-agent
+  audit security 复发现并最终关闭
 
 ---
 

@@ -9,14 +9,20 @@
  * Run AFTER kicking off a chat session so KPI / spark / timeline have
  * real data to render.
  */
-import { chromium } from "~/claude-tools/sky-skills/node_modules/playwright/index.mjs";
+// Reach playwright via the repo's web/ workspace (where it's a dev
+// dep) using a script-relative import. Avoids hardcoded $HOME paths
+// so the script runs unchanged on any clone (fix DEBT-021).
+import { chromium } from "../web/node_modules/playwright/index.mjs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const BASE = process.env.ALB_BASE ?? "http://127.0.0.1:8765/app";
 const OUT_DIR =
   process.env.F8_OUT_DIR ??
-  "~/android-llm-bridge/.claude/reports/screenshots/2026-04-29-f8";
+  resolve(SCRIPT_DIR, "../.claude/reports/screenshots/2026-04-29-f8");
 
 const ROUTES = [
   { name: "dashboard", path: "/dashboard" },
