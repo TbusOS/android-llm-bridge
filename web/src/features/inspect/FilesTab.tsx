@@ -474,6 +474,7 @@ function FilePane(p: FilePaneProps) {
             type="button"
             className="btn"
             onClick={p.onUp}
+            aria-label="Parent directory"
             title="parent dir"
           >
             <FolderUp size={12} style={{ verticalAlign: "-2px" }} />
@@ -483,6 +484,7 @@ function FilePane(p: FilePaneProps) {
             className="btn"
             onClick={p.onRefresh}
             disabled={p.isFetching}
+            aria-label="Refresh"
             title="refresh"
           >
             <RefreshCw

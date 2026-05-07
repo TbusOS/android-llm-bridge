@@ -20,6 +20,7 @@ import {
 
 const LIST_KEY = (device: string | null | undefined) =>
   ["screenshots", device ?? null] as const;
+const STALE_MS = 10_000;
 
 export function useScreenshots(device?: string | null) {
   return useQuery({
@@ -30,6 +31,11 @@ export function useScreenshots(device?: string | null) {
     },
     enabled: !!device,
     // No auto-poll — screenshots only land when the user triggers one.
+    // ui-fluency 2026-05-07 MID-3: explicit window-focus + stale flags
+    // (mirror useFileBrowser pattern) so alt-tab back doesn't re-fire
+    // the list every time.
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
   });
 }
 

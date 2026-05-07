@@ -96,7 +96,11 @@ export function UiDumpTab() {
           )}
         </div>
         {filter && nodes.length > 0 && (
-          <span className="uart-tab__last">
+          <span
+            className="uart-tab__last"
+            role="status"
+            aria-live="polite"
+          >
             {lang === "zh"
               ? `${visibleNodes.length} / ${nodes.length} 匹配`
               : `${visibleNodes.length} of ${nodes.length} matches`}

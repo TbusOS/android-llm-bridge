@@ -28,6 +28,7 @@ const READ_KEY = (
   name: string | null | undefined,
   device: string | null | undefined,
 ) => ["uart-capture", device ?? null, name ?? null];
+const STALE_MS = 10_000;
 
 export function useUartCaptures(device?: string | null) {
   return useQuery({
@@ -35,6 +36,11 @@ export function useUartCaptures(device?: string | null) {
     queryFn: ({ signal }) => fetchUartCaptures(device, signal),
     // No auto-poll — captures only land when the user (or a future
     // background job) explicitly triggers one.
+    // ui-fluency 2026-05-07 MID-3: explicit window-focus + stale flags
+    // (mirror useFileBrowser pattern) so alt-tab back doesn't re-fire
+    // the list every time.
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -49,6 +55,8 @@ export function useUartCaptureText(
       if (!name) throw new Error("missing capture name");
       return readUartCapture(name, device, signal);
     },
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
   });
 }
 

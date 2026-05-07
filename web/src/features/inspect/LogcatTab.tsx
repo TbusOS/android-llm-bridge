@@ -144,7 +144,11 @@ export function LogcatTab() {
           />
         </label>
         {state === "ready" && filter.trim() !== lastAppliedFilter.current && (
-          <span className="uart-tab__last">
+          <span
+            className="uart-tab__last"
+            role="status"
+            aria-live="polite"
+          >
             {lang === "zh" ? "应用中…" : "applying…"}
           </span>
         )}
