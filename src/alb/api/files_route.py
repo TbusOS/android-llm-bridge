@@ -525,6 +525,83 @@ async def workspace_download(path: str) -> FileResponse:
     )
 
 
+# functional LOW-3: inline text preview for small workspace files.
+# Default 64 KB cap is enough to preview log tails / config files / json
+# payloads without piping multi-MB binaries into the browser. Binary
+# files (NUL byte in first 1 KB) get rejected with `is_binary=true` so
+# the UI can show "binary file — use Download" rather than a wall of
+# replacement chars.
+_PREVIEW_DEFAULT_BYTES = 64 * 1024
+_PREVIEW_MAX_BYTES = 1 * 1024 * 1024  # 1 MB hard cap
+_BINARY_SNIFF_BYTES = 1024
+
+
+def _looks_binary(head: bytes) -> bool:
+    """NUL byte in the first 1 KB → binary. Conservative + cheap."""
+    return b"\x00" in head[:_BINARY_SNIFF_BYTES]
+
+
+@router.get("/workspace/files/preview/{path:path}")
+async def workspace_preview(
+    path: str,
+    max_bytes: int = _PREVIEW_DEFAULT_BYTES,
+) -> dict[str, Any]:
+    """Return inline text preview of a workspace file.
+
+    Response shape:
+        ok=true, path, size_bytes, is_binary, truncated, text, encoding
+        ok=false for backend failures (path not found / not a file).
+
+    Refuses binary files with `is_binary=true` + empty text. Decodes
+    with errors='replace' so kernel printk noise doesn't crash the
+    JSON encoder.
+    """
+    if max_bytes < 1:
+        raise HTTPException(status_code=400, detail="max_bytes must be >= 1")
+    if max_bytes > _PREVIEW_MAX_BYTES:
+        max_bytes = _PREVIEW_MAX_BYTES
+
+    target = _resolve_workspace_path(path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="not a workspace file")
+
+    try:
+        stat = target.stat()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    size_bytes = stat.st_size
+    truncated = size_bytes > max_bytes
+
+    try:
+        with target.open("rb") as f:
+            data = f.read(max_bytes)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if _looks_binary(data):
+        return {
+            "ok": True,
+            "path": path,
+            "size_bytes": size_bytes,
+            "is_binary": True,
+            "truncated": False,
+            "text": "",
+            "encoding": "binary",
+        }
+
+    text = data.decode("utf-8", errors="replace")
+    return {
+        "ok": True,
+        "path": path,
+        "size_bytes": size_bytes,
+        "is_binary": False,
+        "truncated": truncated,
+        "text": text,
+        "encoding": "utf-8",
+    }
+
+
 # ─── MID-6 streaming push/pull WS endpoints ─────────────────────────
 #
 # Protocol (mirrors /uart/stream / /terminal/ws style):

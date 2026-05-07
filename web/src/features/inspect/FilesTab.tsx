@@ -28,7 +28,11 @@ import {
   type WorkspaceFileEntry,
   workspaceDownloadUrl,
 } from "../../lib/api";
-import { useDeviceFiles, useWorkspaceFiles } from "./useFileBrowser";
+import {
+  useDeviceFiles,
+  useWorkspaceFiles,
+  useWorkspacePreview,
+} from "./useFileBrowser";
 import { useFileTransferStream } from "./useFileTransferStream";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -65,6 +69,17 @@ export function FilesTab() {
   const xfer = useFileTransferStream();
   const qc = useQueryClient();
   const xferRunning = xfer.state === "connecting" || xfer.state === "running";
+
+  // Preview is shown only when a non-dir workspace file is selected.
+  // null disables the query so unselecting (or selecting a dir) stops
+  // the fetch immediately. Path is workspace-relative.
+  const previewPath =
+    selectedWorkspace && !selectedWorkspace.is_dir
+      ? workspacePath
+        ? `${workspacePath}/${selectedWorkspace.name}`
+        : selectedWorkspace.name
+      : null;
+  const preview = useWorkspacePreview(previewPath);
 
   // After a successful transfer, refresh both panes so freshly pushed /
   // pulled files appear without a manual reload.
@@ -272,6 +287,55 @@ export function FilesTab() {
           ) : null}
         </FilePane>
       </div>
+
+      {previewPath && preview.data ? (
+        <div className="files-tab__preview">
+          <div className="files-tab__preview-head">
+            <span className="files-tab__preview-name">{previewPath}</span>
+            <span className="files-tab__preview-meta">
+              {formatSize(preview.data.size_bytes)}
+              {preview.data.truncated
+                ? lang === "zh"
+                  ? " · 已截断"
+                  : " · truncated"
+                : ""}
+              {preview.data.is_binary
+                ? lang === "zh"
+                  ? " · 二进制"
+                  : " · binary"
+                : ` · ${preview.data.encoding}`}
+            </span>
+            <button
+              type="button"
+              className="files-tab__preview-close"
+              onClick={() => setSelectedWorkspace(null)}
+              aria-label={lang === "zh" ? "关闭预览" : "Close preview"}
+              title={lang === "zh" ? "关闭" : "Close"}
+            >
+              <X size={12} />
+            </button>
+          </div>
+          {preview.data.is_binary ? (
+            <div className="files-tab__preview-binary">
+              {lang === "zh"
+                ? "二进制文件 · 用「下载」按钮拉取查看"
+                : "Binary file — use Download to retrieve"}
+            </div>
+          ) : (
+            <pre className="files-tab__preview-pre">
+              {preview.data.text || (lang === "zh" ? "（空）" : "(empty)")}
+            </pre>
+          )}
+        </div>
+      ) : previewPath && preview.isLoading ? (
+        <div className="files-tab__preview files-tab__preview--state">
+          {lang === "zh" ? "加载预览…" : "Loading preview…"}
+        </div>
+      ) : previewPath && preview.isError ? (
+        <div className="files-tab__preview files-tab__preview--state files-tab__preview--err">
+          {lang === "zh" ? "预览失败" : "Preview failed"}
+        </div>
+      ) : null}
 
       <div className="files-tab__status">
         {xferRunning ? (

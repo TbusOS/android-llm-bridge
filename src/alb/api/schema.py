@@ -89,6 +89,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Push workspace→device; HITL gate on sensitive prefixes (PR-H)"},
     {"method": "GET",  "path": "/workspace/files/download/{path}",
      "description": "Stream a workspace file as a download (PR-H)"},
+    {"method": "GET",  "path": "/workspace/files/preview/{path}",
+     "description": "Inline UTF-8 text preview of a small workspace file (LOW-3)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

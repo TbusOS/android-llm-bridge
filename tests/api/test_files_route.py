@@ -837,3 +837,100 @@ def test_push_stream_no_first_message_returns_bad_config(workspace, monkeypatch)
             closed = ws.receive_json()
             assert closed["type"] == "closed"
             assert closed["reason"] == "bad_config"
+
+
+# ─── workspace_preview (functional LOW-3) ──────────────────────────
+
+
+def test_workspace_preview_text_file_full(client, workspace) -> None:
+    """Small UTF-8 file → ok=true, full text, truncated=false."""
+    f = workspace / "logs" / "small.txt"
+    f.parent.mkdir(parents=True)
+    f.write_text("hello\nworld\n", encoding="utf-8")
+
+    r = client.get("/workspace/files/preview/logs/small.txt")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["is_binary"] is False
+    assert body["truncated"] is False
+    assert body["text"] == "hello\nworld\n"
+    assert body["size_bytes"] == len("hello\nworld\n")
+    assert body["encoding"] == "utf-8"
+
+
+def test_workspace_preview_truncates_large_file(client, workspace) -> None:
+    """File larger than max_bytes → truncated=true, text only first slice."""
+    f = workspace / "logs" / "big.txt"
+    f.parent.mkdir(parents=True)
+    f.write_text("A" * 1000, encoding="utf-8")
+
+    r = client.get("/workspace/files/preview/logs/big.txt?max_bytes=100")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["truncated"] is True
+    assert body["size_bytes"] == 1000
+    assert len(body["text"]) == 100
+
+
+def test_workspace_preview_binary_file_rejected(client, workspace) -> None:
+    """NUL byte in first 1 KB → is_binary=true + empty text."""
+    f = workspace / "bin" / "img.png"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"\x89PNG\r\n\x1a\n\x00rest of binary")
+
+    r = client.get("/workspace/files/preview/bin/img.png")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["is_binary"] is True
+    assert body["text"] == ""
+    assert body["encoding"] == "binary"
+
+
+def test_workspace_preview_handles_invalid_utf8(client, workspace) -> None:
+    """Mixed UTF-8 + raw bytes (no NUL) → utf-8 decode with errors=replace."""
+    f = workspace / "logs" / "mixed.log"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"valid line\n\xff\xfeinvalid\nmore\n")
+
+    r = client.get("/workspace/files/preview/logs/mixed.log")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["is_binary"] is False
+    assert "valid line" in body["text"]
+    # � is the Unicode replacement char
+    assert "�" in body["text"]
+
+
+def test_workspace_preview_404_missing(client) -> None:
+    r = client.get("/workspace/files/preview/nope/x.txt")
+    assert r.status_code == 404
+
+
+def test_workspace_preview_400_bad_max_bytes(client, workspace) -> None:
+    f = workspace / "logs" / "x.txt"
+    f.parent.mkdir(parents=True)
+    f.write_text("hi")
+    r = client.get("/workspace/files/preview/logs/x.txt?max_bytes=0")
+    assert r.status_code == 400
+
+
+def test_workspace_preview_caps_max_bytes(client, workspace) -> None:
+    """max_bytes > 1 MB hard cap silently clamps; doesn't error."""
+    f = workspace / "logs" / "x.txt"
+    f.parent.mkdir(parents=True)
+    f.write_text("hi")
+    r = client.get("/workspace/files/preview/logs/x.txt?max_bytes=99999999")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["text"] == "hi"
+
+
+def test_workspace_preview_endpoint_listed_in_schema(client) -> None:
+    body = client.get("/api/version").json()
+    paths = [(e["method"], e["path"]) for e in body["rest"]]
+    assert ("GET", "/workspace/files/preview/{path}") in paths

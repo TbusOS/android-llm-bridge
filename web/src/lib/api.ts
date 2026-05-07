@@ -773,3 +773,33 @@ export function workspaceDownloadUrl(workspaceRelPath: string): string {
     .join("/");
   return `/workspace/files/download/${safe}`;
 }
+
+export interface WorkspaceFilePreview {
+  ok: boolean;
+  path: string;
+  size_bytes: number;
+  is_binary: boolean;
+  truncated: boolean;
+  text: string;
+  encoding: string;
+}
+
+export async function previewWorkspaceFile(
+  workspaceRelPath: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceFilePreview> {
+  const safe = workspaceRelPath
+    .split("/")
+    .filter((seg) => seg.length > 0)
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+  const r = await fetch(`/workspace/files/preview/${safe}`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /workspace/files/preview/${workspaceRelPath} returned ${r.status}`,
+      r.status,
+      "WORKSPACE_PREVIEW_FAILED",
+    );
+  }
+  return (await r.json()) as WorkspaceFilePreview;
+}

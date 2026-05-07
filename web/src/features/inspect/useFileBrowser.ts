@@ -14,6 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   listDeviceFiles,
   listWorkspaceFiles,
+  previewWorkspaceFile,
 } from "../../lib/api";
 
 const STALE_MS = 10_000;
@@ -41,5 +42,20 @@ export function useWorkspaceFiles(path: string) {
     staleTime: STALE_MS,
     refetchOnWindowFocus: false,
     queryFn: ({ signal }) => listWorkspaceFiles(path, signal),
+  });
+}
+
+/** Inline preview of one workspace file. `enabled` only when path is
+ *  non-empty so unselecting a file stops the query (no orphan fetch). */
+export function useWorkspacePreview(path: string | null) {
+  return useQuery({
+    queryKey: ["workspace-preview", path ?? null],
+    enabled: !!path,
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
+    queryFn: ({ signal }) => {
+      if (!path) throw new Error("missing path");
+      return previewWorkspaceFile(path, signal);
+    },
   });
 }

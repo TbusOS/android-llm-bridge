@@ -97,11 +97,20 @@ Notes:
   (ready→connecting→ready) 自循环重连；hint "应用中…" 在 pending 时
   显示。纯前端，~30 行)
 - **LOW 4/5 closed** (UART per-capture delete ship 2026-05-06,
-  commit (待提)：DELETE /uart/captures/{name} endpoint + 4 测试 +
+  commit `4e08fe9`：DELETE /uart/captures/{name} endpoint + 4 测试 +
   api.ts deleteUartCapture + useDeleteUartCapture hook + 每行
   hover-only ✕ 按钮。删后 effect 自动跳到现 newest；CSS opacity 0→1
   on hover/focus 保持 sidebar 视觉安静)
-- **LOW 1/5** → backlog (Files inline preview · 增量功能 · 不阻塞)
+- **LOW 3/5 closed** (Files inline preview ship 2026-05-07,
+  commit (待提)：GET /workspace/files/preview/{path} + 8 测试 +
+  api.ts previewWorkspaceFile + useWorkspacePreview hook + FilesTab
+  preview pane（panes 下方插入；选中 workspace 文件时浮现）。size
+  cap 默认 64KB / hard 1MB clamp；NUL byte 前 1KB sniff 拒二进制；
+  utf-8 errors=replace 容忍 printk noise；truncated/encoding/binary
+  meta 显式标注；X 按钮关闭)
+- **LOW 5/5 全关** — functional audit 全部收尾（HIGH 4/5 真问题修
+  + 5/02 HIGH 1 + MID-4/5/8 retroactive 共 4 virtual 锁定测试 +
+  MID 4 真修 + MID 6 真修 + LOW 5 全 ship）
 
 ### Retroactive corrections (added 2026-05-05)
 
