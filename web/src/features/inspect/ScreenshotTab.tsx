@@ -71,6 +71,11 @@ export function ScreenshotTab() {
   // last: the most recent capture's POST response, kept around so the
   // viewer can render its base64 inline without waiting for a 2nd GET.
   const [last, setLast] = useState<ScreenshotResponse | null>(null);
+  // ui-fluency 2026-05-07 LOW-3: avoid 100-300ms white-flash when
+  // switching between historical entries. Track loaded state per src
+  // so we can fade-in the new image; the same <img> element is reused
+  // (no key) so the browser keeps the old pixels until onLoad fires.
+  const [imgLoaded, setImgLoaded] = useState(false);
 
   const list = useScreenshots(device);
   const trigger = useTriggerScreenshot(device, (data) => {
@@ -88,6 +93,12 @@ export function ScreenshotTab() {
       setSelected(newest.name);
     }
   }, [list.data, selected]);
+
+  // Reset imgLoaded each time the displayed image changes — fade in
+  // when onLoad fires.
+  useEffect(() => {
+    setImgLoaded(false);
+  }, [selected]);
 
   if (!device) {
     return (
@@ -207,7 +218,16 @@ export function ScreenshotTab() {
 
         <main className="screenshot-tab__viewer">
           {imgSrc ? (
-            <img src={imgSrc} alt={imgAlt} className="screenshot-tab__img" />
+            <img
+              src={imgSrc}
+              alt={imgAlt}
+              className="screenshot-tab__img"
+              style={{
+                opacity: imgLoaded ? 1 : 0.4,
+                transition: "opacity 180ms ease",
+              }}
+              onLoad={() => setImgLoaded(true)}
+            />
           ) : (
             <SectionPlaceholder styleKey="be-card" kind="empty">
               {lang === "zh"

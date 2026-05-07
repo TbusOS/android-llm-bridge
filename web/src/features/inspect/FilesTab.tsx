@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { HitlConfirmModal } from "../../components/HitlConfirmModal";
+import type { Lang } from "../../stores/app";
 import { useApp } from "../../stores/app";
 import {
   type DeviceFileEntry,
@@ -168,6 +169,7 @@ export function FilesTab() {
     <div className="files-tab">
       <div className="files-tab__panes">
         <FilePane
+          lang={lang}
           title={lang === "zh" ? "设备" : "Device"}
           subtitle={device}
           path={devicePath}
@@ -219,6 +221,7 @@ export function FilesTab() {
         </FilePane>
 
         <FilePane
+          lang={lang}
           title={lang === "zh" ? "工作区" : "Workspace"}
           subtitle={workspacePath || "(root)"}
           path={workspacePath}
@@ -458,6 +461,7 @@ interface FilePaneProps {
   entries: PaneEntry[];
   activeName: string | null;
   onActivate: (name: string) => void;
+  lang: Lang;
   children?: React.ReactNode;
 }
 
@@ -505,11 +509,17 @@ function FilePane(p: FilePaneProps) {
       </div>
       <div className="files-tab__pane-list">
         {p.loading ? (
-          <div className="files-tab__loading">loading…</div>
+          <div className="files-tab__loading">
+            {p.lang === "zh" ? "加载中…" : "loading…"}
+          </div>
         ) : p.error ? (
           <div className="files-tab__error">{p.error}</div>
         ) : p.entries.length === 0 ? (
-          <div className="files-tab__empty">empty</div>
+          <div className="files-tab__empty">
+            {p.lang === "zh"
+              ? "目录为空 · 上一级或换路径"
+              : "Empty directory — go up or change path"}
+          </div>
         ) : (
           <ul>
             {p.entries.map((e) => (

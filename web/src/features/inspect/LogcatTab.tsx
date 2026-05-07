@@ -23,6 +23,7 @@ import { useApp } from "../../stores/app";
 import { useLogcatStream } from "./useLogcatStream";
 
 const FILTER_DEBOUNCE_MS = 600;
+const APPLIED_PILL_MS = 1500;
 
 export function LogcatTab() {
   const lang = useApp((s) => s.lang);
@@ -33,6 +34,12 @@ export function LogcatTab() {
   // Used to skip reconnect when the effect re-runs purely because of
   // state churn (ready→connecting→ready) without a real edit.
   const lastAppliedFilter = useRef<string>("");
+  // ui-fluency 2026-05-07 LOW-2: positive feedback after debounce
+  // settles. `appliedAt` stores the most-recent reconnect timestamp;
+  // a derived `justApplied` flag drives a short-lived "applied" pill
+  // so the user can see the new filter took effect.
+  const [appliedAt, setAppliedAt] = useState<number>(0);
+  const [justApplied, setJustApplied] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -108,9 +115,23 @@ export function LogcatTab() {
     const t = window.setTimeout(() => {
       lastAppliedFilter.current = trimmed;
       connect({ device, filter: trimmed || null });
+      setAppliedAt(Date.now());
     }, FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [filter, state, device, connect]);
+
+  // Show "applied" pill for APPLIED_PILL_MS after a successful debounce
+  // reconnect, then fade. Tied to appliedAt so each reconnect resets the
+  // timer.
+  useEffect(() => {
+    if (!appliedAt) return;
+    setJustApplied(true);
+    const t = window.setTimeout(
+      () => setJustApplied(false),
+      APPLIED_PILL_MS,
+    );
+    return () => window.clearTimeout(t);
+  }, [appliedAt]);
 
   const stateLabel: Record<typeof state, string> = {
     idle: lang === "zh" ? "未连接" : "idle",
@@ -150,6 +171,15 @@ export function LogcatTab() {
             aria-live="polite"
           >
             {lang === "zh" ? "应用中…" : "applying…"}
+          </span>
+        )}
+        {justApplied && filter.trim() === lastAppliedFilter.current && (
+          <span
+            className="uart-tab__last uart-tab__last--ok"
+            role="status"
+            aria-live="polite"
+          >
+            {lang === "zh" ? "已应用" : "applied"}
           </span>
         )}
         {!isLive ? (

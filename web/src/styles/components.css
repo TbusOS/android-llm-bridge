@@ -1953,6 +1953,10 @@ html[lang^="zh"] h3 {
   color: var(--anth-red, #b94545);
 }
 
+.uart-tab__last--ok {
+  color: #1f7a4d;
+}
+
 .uart-tab__body {
   display: grid;
   grid-template-columns: minmax(220px, 280px) 1fr;
