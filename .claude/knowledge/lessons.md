@@ -5,6 +5,54 @@
 
 ---
 
+## 索引（按编号 · 22 lessons + 1 meta · 2026-05-08）
+
+**前端 / UI 层**
+- L-001 · React UI 必须以 mockup HTML 为视觉基线
+- L-002 · Vite base 路径不能在 index.html link 里手写
+- L-003 · sky-skills design-review 三道闸不能完全替代视觉审
+- L-016 · view-aware 协议，scaling 也属 hook 层
+- L-018 · 静态托管 SPA fallback URL 闪现 + recovery 必须 inline 同步
+- L-022 · 设计良好的错误态是双刃剑 · 视觉 review 看不出 vite proxy 之类的配置 stale
+- L-025 · 新 useQuery hook 必须 sweep `refetchIntervalInBackground` / `refetchOnWindowFocus`
+- L-028 · React.lazy + Suspense fallback 高度必须显式匹配 lazy 子组件最小高度
+- L-029 · 共享 modal 组件 N=2 起必有 a11y 三件套基线（focus / Enter+ESC / 危险按钮顺序）
+- L-032 · 新 sidebar / list pattern 抽出时 a11y 三件套基线（aria-current + aria-live + destructive 防呆）
+
+**后端 / 协议层**
+- L-013 · bus event 加新 kind 时分类（business / metric）
+- L-014 · `@mcp.tool()` 函数首行 docstring 等同于公开 API description
+- L-021 · `status: planned → beta` 是用户可见状态变更，不是无副作用 flag
+- L-023 · 路径前缀 HITL 写在 endpoint 层是合理 v1（不是技术债）
+- L-026 · 多 task 并发 send 同一 WS 时，close-frame 必须只发一次
+- L-027 · HITL `approve_session` 用 line 字面 key 抗不住 shell 变量展开 / 别名
+- L-031 · `contextlib.suppress(Exception)` 不抓 CancelledError · 必显式列举
+- L-033 · async FastAPI endpoint 内 sync FS 调用必走 `asyncio.to_thread` · "io_to_thread sweep" 模式
+
+**抽象 / 设计 / 决策**
+- L-008 · 评估方案先看设计合理性，不先看难度
+- L-009 · 代码事实禁止 hedge
+- L-010 · 4 维度分析 - 编译能过 ≠ 设计合理
+- L-015 · ADR 备选段会随后续 ADR 反转 —— 反转时必须新立 ADR
+- L-019 · ABC 默认方法用 sentinel flag 表达 capability 否定 = 反模式
+- L-020 · ABC 第 1 个非首例消费者 = 抽象设计的免费检验（N=2 不抽象）
+- L-024 · 单元测试用 GNU coreutils mental model 写 fake，会漏掉 Android toybox 实际行为差异
+- L-030 · NaN 钳位行为按"语言 + 顺序"分级 · explicit NaN check 是唯一跨语言可移植安全写法
+
+**流程 / 协作 / 安全**
+- L-004 · 公开仓 commit message 中文（vendor 规则不适用）
+- L-005 · 公开仓 vs 内网仓物理分离（不能 sync）
+- L-006 · 95 服务器禁止 adb kill-server
+- L-007 · 外发内容必须脱敏 + 双 grep 自检
+- L-011 · 上游原码保留 + 下游宏 gate 原则
+- L-012 · 配置体系必须遵循框架原生流程
+- L-017 · 端到端验证才能发现 wiring 静默 bug —— code review 看不出
+
+**meta**
+- L-meta-001 · "新增类规则" lesson 必带 grep pattern + 反面教材 + 正例 + agent checklist 同步
+
+---
+
 ## L-001 · React UI 必须以 mockup HTML 为视觉基线
 
 **坑**：2026-04-24 第一版 ChatPage 直接用 anthropic.css 的 `--anth-*`
