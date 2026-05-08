@@ -807,4 +807,96 @@
 
 ---
 
+## DEBT-032 · `_safe_resolve_*` × 3 同形 path-resolve helper —— **CLOSED 2026-05-08**
+
+- **severity**：mid（架构 N=3 抽 base 阈值教科书触发；arch-reviewer
+  2026-05-08 finding · 三处 helper docstring 互相点名"Mirror X 同
+  pattern"）
+- **位置**：`src/alb/api/screenshots_route.py:_safe_resolve_screenshot`
+  + `src/alb/api/uart_route.py:_safe_resolve_capture` +
+  `src/alb/api/files_route.py:_resolve_workspace_path`（参考实现）
+- **关闭**：commit `ee1de9c`（2026-05-08）。抽 `src/alb/infra/safe_path.py
+  ::resolve_under(base, name, *, is_valid_name, ...)` 公共 helper，三
+  层防御（name gate + symlink reject + resolve.relative_to）。
+  screenshots_route + uart_route 缩到 3 行调用，删 50 行同形代码。
+  `files_route._resolve_workspace_path` 保持现状（语义不同——多段 rel
+  path vs 单 filename 卡槽）
+- **来源**：architecture-reviewer 2026-05-08 跑 5/06~5/08 累 16 commits
+  audit · finding 1（5 维评审中"模块边界"维度）
+- **关联**：L-020 (N=2 不抽 base，N≥3 才抽 · 本条是教科书触发条件)
+
+---
+
+## DEBT-033 · mockup v3 扩 inspect 4 子 tab baseline
+
+- **severity**：high（mockup-baseline-checker 标 high）但**非紧急**——
+  inspect 子 tab 的 BEM class（uart-tab__* / screenshot-tab__* /
+  uidump-tab__* / files-tab__*）从 PR-C/F/G 时期就在 React 单边推
+  进，mockup v2 只覆盖 dashboard + inspect subnav。已是历史欠债的
+  延续，不是 5/06~5/08 新增违规
+- **位置**：`docs/webui-preview-v2.html`（仅画 dashboard + inspect
+  subnav + sys-grid + charts-grid）
+- **现象**：约 30 个 React 自创 BEM class 在 mockup 0 命中。违反
+  feedback memory "React UI 必须以 mockup HTML 为基线"硬规则，但
+  事实上是渐进引入，mockup 滞后
+- **是否计划修**：是（视用户决策时机）
+- **还债 sketch**：
+  1. 起 mockup v3 加 4 段 inspect 子 tab 视觉骨架（screenshot
+     sidebar+viewer / uart capture sidebar+pre / ui-dump tree /
+     files dual-pane+preview）
+  2. 三道闸过（verify.py / visual-audit.mjs / screenshot.mjs）
+  3. 回审 React 实现是否需调整对齐
+- **工作量**：~600-800 行 HTML + 多次 visual review 迭代
+- **来源**：mockup-baseline-checker 2026-05-08 audit · 主 finding
+- **关联**：feedback `feedback_react_ui_design_baseline.md`（"先
+  mockup 走三闸 → React 照搬 class"原则）
+
+---
+
+## DEBT-034 · architecture.md REST envelope 三态约定缺文档化
+
+- **severity**：low（架构层规范化债，不阻塞功能）
+- **位置**：`screenshots_route.py:list_screenshots/read_screenshot`
+  + `uart_route.py:read_capture/delete_capture` +
+  `files_route.py:list_device_files/workspace_files/workspace_download
+  /workspace_preview` 等多 endpoint
+- **现象**：当前 REST endpoint 三种 response envelope 形态并存：
+  (a) `{ok, ..., entries|screenshots|...}` 200 + ok-flag
+  (b) `FileResponse` 直接抛 `HTTPException(4xx)`
+  (c) `device_files` 永远返 200 + `ok: false + error` 字段
+  同一文件 files_route 三种都用过；前端 useQuery 行为不同（
+  HTTPException 触发 onError，200+ok=false 走 isSuccess+渲染 error
+  文案）
+- **是否计划修**：是（写约定 + 必要时统一）
+- **还债 sketch**：
+  - 写 `architecture.md`（如不存在则创建——需用户允许）"REST envelope
+    三态约定"段：何时返 200+{ok:false}（device-side failure surface
+    if device 上脚本/adb 自身失败）vs HTTPException（4xx/5xx 真错）
+    vs FileResponse（二进制流）
+  - 不必立刻统一既有 endpoint，但新写 endpoint 强制按约定
+- **工作量**：~50-100 行约定文档 · 0 代码改
+- **来源**：architecture-reviewer 2026-05-08 finding 2
+
+---
+
+## DEBT-035 · L-meta-001 候选 · reviewer 新增类规则必带 grep pattern
+
+- **severity**：low（meta-lesson 归档级，不影响代码）
+- **位置**：`.claude/knowledge/lessons.md`（待加）
+- **现象**：L-014 / L-025 / L-032 / L-033 都是"新 X 时漏一组 sweep
+  规则"形态（mcp tool docstring / useQuery bg gate / sidebar a11y /
+  async io-to-thread）。这 4 条已经有共同骨架："新增 X 时必跑 sweep
+  checklist {a, b, c}"。但 meta-pattern 没正式入档，新 lesson 写时
+  容易漏 grep pattern（变成纯描述规则随项目 N 增长稀释成"依赖人
+  记忆"）
+- **是否计划修**：是
+- **还债 sketch**：写 L-meta-001："reviewer 的'新增类规则'必带可
+  执行 grep pattern + 至少 1 个反面教材 + 至少 1 个已知正例 + agent
+  checklist 同步"。本 5/08 part 113/N 已实操（L-031/032/033 同步到
+  agent grep checklist），把模式正式入档
+- **工作量**：~30-50 行 lesson 文本
+- **来源**：architecture-reviewer 2026-05-08 finding · meta-观察
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）
