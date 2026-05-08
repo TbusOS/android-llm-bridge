@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { HitlConfirmModal } from "../../components/HitlConfirmModal";
+import { formatBytes } from "../../lib/format";
 import type { Lang } from "../../stores/app";
 import { useApp } from "../../stores/app";
 import {
@@ -196,7 +197,7 @@ export function FilesTab() {
             name: e.name,
             is_dir: e.is_dir,
             is_link: e.is_link,
-            meta: `${formatSize(e.size)} · ${e.mode}`,
+            meta: `${formatBytes(e.size)} · ${e.mode}`,
             mtime: e.mtime,
           }))}
           activeName={selectedDevice?.name ?? null}
@@ -248,7 +249,7 @@ export function FilesTab() {
             name: e.name,
             is_dir: e.is_dir,
             is_link: e.is_link,
-            meta: `${formatSize(e.size)}`,
+            meta: `${formatBytes(e.size)}`,
             mtime: e.mtime_epoch
               ? new Date(e.mtime_epoch * 1000).toISOString().slice(0, 19)
               : "",
@@ -296,7 +297,7 @@ export function FilesTab() {
           <div className="files-tab__preview-head">
             <span className="files-tab__preview-name">{previewPath}</span>
             <span className="files-tab__preview-meta">
-              {formatSize(preview.data.size_bytes)}
+              {formatBytes(preview.data.size_bytes)}
               {preview.data.truncated
                 ? lang === "zh"
                   ? " · 已截断"
@@ -360,7 +361,7 @@ export function FilesTab() {
                 ? `${Math.round(xfer.progress.percent)}%`
                 : (lang === "zh" ? "传输中…" : "transferring…")}
               {xfer.progress?.bytes_transferred
-                ? ` · ${formatSize(xfer.progress.bytes_transferred)}`
+                ? ` · ${formatBytes(xfer.progress.bytes_transferred)}`
                 : ""}
             </span>
             <button
@@ -384,7 +385,7 @@ export function FilesTab() {
               ? xfer.result.local
               : xfer.result.remote}
             {xfer.result.bytes_transferred
-              ? ` (${formatSize(xfer.result.bytes_transferred)})`
+              ? ` (${formatBytes(xfer.result.bytes_transferred)})`
               : ""}
           </span>
         ) : null}
@@ -569,12 +570,6 @@ function parentPath(p: string, sep: "/" = "/"): string {
   return norm.slice(0, i + 1);
 }
 
-function formatSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
 
 /**
  * Trail-edge debounce — `value` echoes back after `delayMs` of no

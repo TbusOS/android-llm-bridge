@@ -31,14 +31,9 @@ import {
   screenshotImageUrl,
   type ScreenshotResponse,
 } from "../../lib/api";
+import { formatBytes } from "../../lib/format";
 import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useScreenshots, useTriggerScreenshot } from "./useScreenshots";
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
-}
 
 function relativeTime(mtimeSec: number, lang: "zh" | "en"): string {
   const diffSec = Math.max(0, Date.now() / 1000 - mtimeSec);

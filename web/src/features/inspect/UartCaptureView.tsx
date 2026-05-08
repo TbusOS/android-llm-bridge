@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { Play, RefreshCw, Trash2 } from "lucide-react";
 
 import { useApp } from "../../stores/app";
+import { formatBytes } from "../../lib/format";
 import {
   useDeleteUartCapture,
   useTriggerUartCapture,
@@ -25,12 +26,6 @@ import {
 const DEFAULT_DURATION = 30;
 const MIN_DURATION = 1;
 const MAX_DURATION = 300;
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
-}
 
 function relativeTime(mtimeSec: number, lang: "zh" | "en"): string {
   const diffSec = Math.max(0, Date.now() / 1000 - mtimeSec);
