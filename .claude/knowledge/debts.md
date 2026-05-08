@@ -11,11 +11,10 @@
 
 ---
 
-## 索引（按状态 + 编号 · 35 项 / 33 关 + 2 候选 + 0 进行中 · 2026-05-08）
+## 索引（按状态 + 编号 · 35 项 / 34 关 + 1 候选 + 0 进行中 · 2026-05-08）
 
-**候选未关（2 项 · 需用户决策方向）**
+**候选未关（1 项 · 需用户决策方向）**
 - DEBT-033 (high) · mockup v3 扩 inspect 4 子 tab baseline
-- DEBT-034 (low) · architecture.md REST envelope 三态约定缺文档化
 
 **未关 backlog（5 项 · 视触发条件）**
 - DEBT-005 · workspace/sessions 没自动清理
@@ -29,9 +28,9 @@
 - DEBT-016 · vite base 在 GH Pages 部署不正确，SPA shell 资源加载 404
 - DEBT-022 (mid) · device card 信息薄 · 缺刷新机制 + 多维元数据
 
-**已关（按时间倒序 · 26 项）**
+**已关（按时间倒序 · 27 项）**
 
-5/08：032 035
+5/08：032 034 035
 5/07：021 031
 5/06：018 029（含 MID-6 4-commit batch）
 5/02：023 024 025 026 027 028 030 + 4-agent 联合 audit 9 HIGH
@@ -887,7 +886,7 @@
 
 ---
 
-## DEBT-034 · architecture.md REST envelope 三态约定缺文档化
+## DEBT-034 · architecture.md REST envelope 三态约定缺文档化 —— **CLOSED 2026-05-08**
 
 - **severity**：low（架构层规范化债，不阻塞功能）
 - **位置**：`screenshots_route.py:list_screenshots/read_screenshot`
@@ -901,14 +900,14 @@
   同一文件 files_route 三种都用过；前端 useQuery 行为不同（
   HTTPException 触发 onError，200+ok=false 走 isSuccess+渲染 error
   文案）
-- **是否计划修**：是（写约定 + 必要时统一）
-- **还债 sketch**：
-  - 写 `architecture.md`（如不存在则创建——需用户允许）"REST envelope
-    三态约定"段：何时返 200+{ok:false}（device-side failure surface
-    if device 上脚本/adb 自身失败）vs HTTPException（4xx/5xx 真错）
-    vs FileResponse（二进制流）
-  - 不必立刻统一既有 endpoint，但新写 endpoint 强制按约定
-- **工作量**：~50-100 行约定文档 · 0 代码改
+- **关闭**：commit (待提) 2026-05-08。`.claude/knowledge/architecture.md`
+  加 "REST envelope 三态约定（DEBT-034 close 2026-05-08）" 段，明确：
+  - (a) 200 + `{ok: true, ...payload}` 用于成功 read/list
+  - (b) 200 + `{ok: false, error}` 用于 device-side / 上游失败
+  - (c) HTTPException(4xx/5xx) 用于输入不合法 / 真错
+  - 例外：FileResponse 二进制流 / WebSocket 长连接 envelope 不适用
+  - 5xx detail 不能 leak 路径（generic message + server log 留 trace）
+  - 各类已知 endpoint 实例
 - **来源**：architecture-reviewer 2026-05-08 finding 2
 
 ---

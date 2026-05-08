@@ -144,6 +144,73 @@ ChatRequest ──┐
   三个 query 名被 spa-github-pages 套路占用；TanStack Router 业务
   search params 不可用这三个名。共享 SPA fallback 协议见 ADR-023。
 
+## REST envelope 三态约定（DEBT-034 close 2026-05-08）
+
+新加 REST endpoint 时**必须**按以下三态选 response 形态。前端
+`useQuery` 行为依赖此约定（200 + ok 走 isSuccess + 渲染 error 文案；
+HTTPException 触发 onError）。
+
+### (a) 200 + `{ok: true, ...payload}` — list / read 成功
+适用：endpoint 自身逻辑成功，向客户端交付结构化数据。
+
+```python
+return {"ok": True, "serial": serial, "screenshots": entries}
+return {"ok": True, "name": name, "size_bytes": size, "text": text}
+```
+
+实例：`screenshots_route.list_screenshots`、`uart_route.read_capture`、
+`files_route.list_device_files (success branch)`。
+
+### (b) 200 + `{ok: false, error: "..."}` — device-side / 上游失败
+适用：endpoint 路径执行了但**上游 device / adb / build_transport
+返回了业务级失败**（非真错）。前端拿到 isSuccess=true + ok=false →
+渲染"业务失败"文案而不触发 onError。
+
+```python
+try:
+    t = build_transport(device_serial=serial)
+except Exception as exc:
+    return {
+        "ok": False,
+        "serial": serial,
+        "transport": None,
+        "error": f"{type(exc).__name__}: {exc}",
+    }
+```
+
+实例：`devices_route.device_screenshot`、`uart_route.trigger_capture`
+（capture_uart 返失败时）、`files_route.list_device_files`（adb ls
+失败时）。
+
+### (c) `HTTPException(4xx/5xx)` — 输入不合法 / 真错
+适用：路由层 reject（path traversal / 名字校验 / max_bytes < 1）或
+代码内部 OSError / 资源不存在。前端 onError 触发。
+
+```python
+if not _is_valid_name(name):
+    raise HTTPException(status_code=400, detail="invalid name")
+if not target.exists():
+    raise HTTPException(status_code=404, detail="not found")
+except OSError as exc:
+    raise HTTPException(status_code=500, detail="filesystem read failed") from exc
+```
+
+实例：`screenshots_route.read_screenshot`（path traversal / not found）、
+`files_route.workspace_download`、`files_route.workspace_preview`。
+
+### 例外：FileResponse / WebSocket
+- **FileResponse** 是二进制流，envelope 不适用（直接返字节流 +
+  Content-Type）。错误仍走 (c) HTTPException。
+- **WebSocket** 长连接 envelope 不适用，走自己的 frame 协议
+  （`{v, type: "ready"}` / `{type: "closed", reason}` 见 ADR-022 +
+  L-026）。
+
+### 5xx detail 不能 leak 路径
+500 detail 必须用 generic message（"filesystem read failed"），**不
+能** `str(exc)` 直接 raise——OSError 文本含绝对路径泄露 workspace
+布局。完整 traceback 走 server log（uvicorn 自动）。
+2026-05-08 part 118 修了 3 处历史漏检（files_route + uart_route × 2）。
+
 ## 测试地图
 
 - `tests/api/` — FastAPI 端点（含 WS）
