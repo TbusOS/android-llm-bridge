@@ -793,6 +793,114 @@
       }
 
       /* ==========================================================
+         Inspect → Screenshot / UART capture / UI Dump / Files
+         共享 sidebar+viewer 视觉骨架（DEBT-033 mockup v3 step 1
+         · 2026-05-08）。
+
+         BEM 块命名约定（4 inspect 子 tab 同一家族）：
+         - `.uart-tab` 是历史命名（PR-C 时期 UART capture 第一个落
+           盘），现在被 4 个 capture sidebar tab 共享：
+           ScreenshotTab / UartCaptureView / UiDumpTab / FilesTab。
+           不重命名以保前向兼容（已大量 React 调用点引用）。
+         - `.screenshot-tab__*` `.uidump-tab__*` `.files-tab__*` 是
+           各 tab 的特化 viewer 视觉，叠在 `.uart-tab__body` 之上。
+         - 详细 modifier（active 行高亮 / hover-only delete 按钮等）
+           见 web/src/styles/components.css，本 mockup 只画 baseline
+           视觉骨架，不重复每个 modifier。
+         ========================================================== */
+      .uart-tab {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        margin-top: var(--space-3);
+      }
+      .uart-tab__bar {
+        display: flex; align-items: center; gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+        background: var(--anth-cream);
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+      }
+      .uart-tab__last {
+        margin-left: auto;
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-secondary);
+      }
+      .uart-tab__body {
+        display: grid;
+        grid-template-columns: minmax(220px, 280px) 1fr;
+        gap: var(--space-3);
+        min-height: 480px;
+      }
+      .uart-tab__list {
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        background: var(--anth-cream);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .uart-tab__list-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--space-2) var(--space-3);
+        font-family: var(--font-heading);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--anth-text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        border-bottom: 1px solid var(--anth-light-gray);
+      }
+      .uart-tab__count {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--anth-text-tertiary);
+        letter-spacing: 0; text-transform: none;
+      }
+      .uart-tab__list ul {
+        list-style: none; margin: 0; padding: 0;
+        overflow-y: auto;
+      }
+      .uart-tab__list li {
+        border-bottom: 1px solid var(--anth-light-gray);
+      }
+      .uart-tab__list li > button {
+        display: block; width: 100%; text-align: left;
+        padding: var(--space-2) 28px var(--space-2) var(--space-3);
+        background: none; border: 0; cursor: pointer;
+        font-family: var(--font-mono); color: inherit;
+      }
+      .uart-tab__list li.is-active > button {
+        background: white;
+        border-left: 3px solid var(--anth-orange);
+        padding-left: calc(var(--space-3) - 3px);
+      }
+      .uart-tab__cap-name {
+        font-size: 11px; color: var(--anth-text);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .uart-tab__cap-meta {
+        font-size: 10px; color: var(--anth-text-tertiary);
+        margin-top: 2px;
+      }
+
+      /* Screenshot viewer — pinned right pane shows the picked PNG */
+      .screenshot-tab__viewer {
+        background: #1e1e1e;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-3);
+        min-height: 480px;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .screenshot-tab__placeholder {
+        font-family: var(--font-mono); font-size: 12px;
+        color: #b9b9b9;
+      }
+
+      /* ==========================================================
          Footer caption
          ========================================================== */
       .preview-foot {
@@ -1589,6 +1697,98 @@
                   fill="none" stroke="#6a9bcc" stroke-width="2" stroke-linejoin="round"/>
               </svg>
               <div class="chart-foot"><span>−60 s</span><span style="margin-left:auto;">now</span></div>
+            </div>
+          </div>
+
+          <!-- Inspect → Screenshot sub-tab preview (DEBT-033 step 1 · 2026-05-08) -->
+          <div class="group-head">
+            <h2><span class="lang-en">Inspect → Screenshot</span><span class="lang-zh">Inspect → 屏幕截图</span></h2>
+            <span class="meta"><span class="lang-en">Capture button at top, history sidebar on the left, viewer on the right</span><span class="lang-zh">顶部抓屏按钮，左侧历史，右侧查看器</span></span>
+          </div>
+
+          <div class="uart-tab">
+            <!-- Top action bar: capture / download / refresh -->
+            <div class="uart-tab__bar">
+              <button class="link-arrow" type="button" style="background: var(--anth-orange); color: white; border-color: var(--anth-orange); padding: 6px 12px; font-size: 13px; font-family: var(--font-heading); border-radius: var(--radius-sm); border: 1px solid;">
+                <span class="lang-en">Capture</span><span class="lang-zh">抓屏</span>
+              </button>
+              <button class="link-arrow" type="button" style="background: white; color: var(--anth-text); padding: 6px 12px; font-size: 13px; font-family: var(--font-heading); border-radius: var(--radius-sm); border: 1px solid var(--anth-light-gray);">
+                <span class="lang-en">Download</span><span class="lang-zh">下载 PNG</span>
+              </button>
+              <button class="link-arrow" type="button" aria-label="Refresh" style="background: white; padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--anth-light-gray);">↻</button>
+              <span class="uart-tab__last">1080×1920 · 218 KB · 2026-05-08T11-23-45.png</span>
+            </div>
+
+            <div class="uart-tab__body">
+              <!-- Left: history sidebar -->
+              <aside class="uart-tab__list" aria-label="Screenshot history">
+                <div class="uart-tab__list-head">
+                  <span><span class="lang-en">Screenshots</span><span class="lang-zh">历史 截图</span></span>
+                  <span class="uart-tab__count">4</span>
+                </div>
+                <ul>
+                  <li class="is-active">
+                    <button type="button" aria-current="true">
+                      <div class="uart-tab__cap-name">2026-05-08T11-23-45.png</div>
+                      <div class="uart-tab__cap-meta">1080×1920 · 218 KB · 12s ago</div>
+                    </button>
+                  </li>
+                  <li>
+                    <button type="button">
+                      <div class="uart-tab__cap-name">2026-05-08T11-18-02.png</div>
+                      <div class="uart-tab__cap-meta">1080×1920 · 195 KB · 6m ago</div>
+                    </button>
+                  </li>
+                  <li>
+                    <button type="button">
+                      <div class="uart-tab__cap-name">2026-05-08T10-44-11.png</div>
+                      <div class="uart-tab__cap-meta">1080×1920 · 224 KB · 39m ago</div>
+                    </button>
+                  </li>
+                  <li>
+                    <button type="button">
+                      <div class="uart-tab__cap-name">2026-05-08T09-02-30.png</div>
+                      <div class="uart-tab__cap-meta">1080×1920 · 187 KB · 2h ago</div>
+                    </button>
+                  </li>
+                </ul>
+              </aside>
+
+              <!-- Right: viewer with PNG (placeholder SVG instead of real png) -->
+              <main class="screenshot-tab__viewer">
+                <svg viewBox="0 0 270 480" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Selected screenshot preview" style="max-width: 100%; max-height: 720px; border-radius: var(--radius-sm); box-shadow: 0 4px 16px rgba(0,0,0,0.4);">
+                  <!-- Phone frame -->
+                  <rect x="0" y="0" width="270" height="480" rx="14" fill="#0f0f0f"/>
+                  <!-- Status bar -->
+                  <rect x="14" y="14" width="242" height="20" fill="#1a1a1a"/>
+                  <text x="22" y="28" font-family="monospace" font-size="9" fill="#9ad0c2">10:42</text>
+                  <text x="232" y="28" font-family="monospace" font-size="9" fill="#9ad0c2" text-anchor="end">●●●● 84%</text>
+                  <!-- App content rows -->
+                  <rect x="22" y="48" width="226" height="42" rx="6" fill="#262626"/>
+                  <rect x="32" y="56" width="80" height="8" rx="2" fill="#d97757"/>
+                  <rect x="32" y="72" width="180" height="6" rx="2" fill="#5a5a5a"/>
+                  <rect x="22" y="100" width="226" height="64" rx="6" fill="#1f2a1f"/>
+                  <rect x="32" y="110" width="100" height="9" rx="2" fill="#9ad08a"/>
+                  <rect x="32" y="125" width="206" height="6" rx="2" fill="#5a5a5a"/>
+                  <rect x="32" y="138" width="190" height="6" rx="2" fill="#5a5a5a"/>
+                  <rect x="32" y="151" width="120" height="6" rx="2" fill="#5a5a5a"/>
+                  <rect x="22" y="178" width="226" height="42" rx="6" fill="#262626"/>
+                  <rect x="32" y="186" width="60" height="8" rx="2" fill="#88aacc"/>
+                  <rect x="32" y="202" width="170" height="6" rx="2" fill="#5a5a5a"/>
+                  <rect x="22" y="232" width="226" height="42" rx="6" fill="#262626"/>
+                  <rect x="32" y="240" width="120" height="8" rx="2" fill="#cccccc"/>
+                  <rect x="32" y="256" width="100" height="6" rx="2" fill="#5a5a5a"/>
+                  <rect x="22" y="286" width="226" height="42" rx="6" fill="#262626"/>
+                  <rect x="32" y="294" width="90" height="8" rx="2" fill="#d97757"/>
+                  <rect x="32" y="310" width="190" height="6" rx="2" fill="#5a5a5a"/>
+                  <!-- Nav bar -->
+                  <rect x="14" y="448" width="242" height="20" fill="#0a0a0a"/>
+                  <circle cx="80" cy="458" r="4" fill="#5a5a5a"/>
+                  <rect x="124" y="455" width="22" height="6" rx="3" fill="#5a5a5a"/>
+                  <polygon points="186,455 196,460 186,465" fill="#5a5a5a"/>
+                  <text x="135" y="478" font-family="sans-serif" font-size="6" fill="#3a3a3a" text-anchor="middle">[ placeholder rendering of an Android home screen ]</text>
+                </svg>
+              </main>
             </div>
           </div>
 
