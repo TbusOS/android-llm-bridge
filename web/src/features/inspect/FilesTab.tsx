@@ -25,6 +25,7 @@ import { HitlConfirmModal } from "../../components/HitlConfirmModal";
 import { formatBytes } from "../../lib/format";
 import type { Lang } from "../../stores/app";
 import { useApp } from "../../stores/app";
+import { NoDeviceCard } from "../../components/NoDeviceCard";
 import {
   type DeviceFileEntry,
   type WorkspaceFileEntry,
@@ -108,16 +109,7 @@ export function FilesTab() {
   }, [xfer.state, xfer.result, xfer.error, device]);
 
   if (!device) {
-    return (
-      <div className="mock-card">
-        <h1 style={{ fontSize: 22 }}>{lang === "zh" ? "文件" : "Files"}</h1>
-        <p className="section-sub">
-          {lang === "zh"
-            ? "顶栏选一台设备再回这里。"
-            : "Pick a device from the top-bar picker, then come back."}
-        </p>
-      </div>
-    );
+    return <NoDeviceCard titleZh="文件" titleEn="Files" />;
   }
 
   const onDeviceEntryActivate = (entry: DeviceFileEntry) => {

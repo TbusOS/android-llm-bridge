@@ -32,6 +32,7 @@ import {
   type ScreenshotResponse,
 } from "../../lib/api";
 import { formatBytes } from "../../lib/format";
+import { NoDeviceCard } from "../../components/NoDeviceCard";
 import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useScreenshots, useTriggerScreenshot } from "./useScreenshots";
 
@@ -96,16 +97,7 @@ export function ScreenshotTab() {
   }, [selected]);
 
   if (!device) {
-    return (
-      <div className="mock-card">
-        <h1 style={{ fontSize: 22 }}>{lang === "zh" ? "屏幕截图" : "Screenshot"}</h1>
-        <p className="section-sub">
-          {lang === "zh"
-            ? "顶栏选一台设备再回这里。"
-            : "Pick a device from the top-bar picker, then come back."}
-        </p>
-      </div>
-    );
+    return <NoDeviceCard titleZh="屏幕截图" titleEn="Screenshot" />;
   }
 
   // Pick the right image source. Prefer the inline base64 from the

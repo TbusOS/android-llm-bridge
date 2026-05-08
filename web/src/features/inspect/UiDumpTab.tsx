@@ -18,6 +18,7 @@ import {
   type UiDumpResponse,
   type UiNode,
 } from "../../lib/api";
+import { NoDeviceCard } from "../../components/NoDeviceCard";
 
 // Row height matches mono font 11px × line-height 1.7 ≈ 18.7px + 1px
 // border-bottom; estimate slightly above to avoid resize jitter when
@@ -41,16 +42,7 @@ export function UiDumpTab() {
   });
 
   if (!device) {
-    return (
-      <div className="mock-card">
-        <h1 style={{ fontSize: 22 }}>{lang === "zh" ? "UI 树" : "UI Dump"}</h1>
-        <p className="section-sub">
-          {lang === "zh"
-            ? "顶栏选一台设备再回这里。"
-            : "Pick a device from the top-bar picker, then come back."}
-        </p>
-      </div>
-    );
+    return <NoDeviceCard titleZh="UI 树" titleEn="UI Dump" />;
   }
 
   const dump = last?.ui_dump;

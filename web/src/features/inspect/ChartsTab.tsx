@@ -14,6 +14,7 @@
 
 import { CircleStop, Pause, Play } from "lucide-react";
 import { useApp } from "../../stores/app";
+import { NoDeviceCard } from "../../components/NoDeviceCard";
 import { Sparkline } from "../dashboard/Sparkline";
 import { type MetricSample, useMetricsStream } from "./useMetricsStream";
 
@@ -25,16 +26,7 @@ export function ChartsTab() {
   const m = useMetricsStream();
 
   if (!device) {
-    return (
-      <div className="mock-card">
-        <h1 style={{ fontSize: 22 }}>{lang === "zh" ? "实时图表" : "Charts"}</h1>
-        <p className="section-sub">
-          {lang === "zh"
-            ? "顶栏选一台设备再回这里。"
-            : "Pick a device from the top-bar picker, then come back."}
-        </p>
-      </div>
-    );
+    return <NoDeviceCard titleZh="实时图表" titleEn="Charts" />;
   }
 
   const last = m.samples[m.samples.length - 1];
