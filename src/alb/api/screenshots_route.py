@@ -24,6 +24,7 @@ end can reuse the same query/mutation pattern.
 
 from __future__ import annotations
 
+import asyncio
 import struct
 from pathlib import Path
 from typing import Any
@@ -112,9 +113,18 @@ async def list_screenshots(serial: str) -> dict[str, Any]:
     capture has happened yet (mirrors /uart/captures).
     """
     base = _screenshots_dir(serial)
-    if not base.exists():
-        return {"ok": True, "serial": serial, "screenshots": []}
+    # perf-audit 2026-05-08 LOW: glob + N×(stat + 24-byte read) is fast
+    # but still sync FS in async path. Hand off to worker thread (L-033
+    # io_to_thread sweep). Cheap on small N, future-proofs against an
+    # unbounded screenshots history that becomes hot path.
+    entries = await asyncio.to_thread(_list_screenshots_entries, base)
+    return {"ok": True, "serial": serial, "screenshots": entries}
 
+
+def _list_screenshots_entries(base: Path) -> list[dict[str, Any]]:
+    """glob + per-entry stat + PNG dim peek in one worker pass."""
+    if not base.exists():
+        return []
     entries: list[dict[str, Any]] = []
     for p in base.glob("*.png"):
         try:
@@ -132,7 +142,7 @@ async def list_screenshots(serial: str) -> dict[str, Any]:
             }
         )
     entries.sort(key=lambda e: e["mtime"], reverse=True)
-    return {"ok": True, "serial": serial, "screenshots": entries}
+    return entries
 
 
 @router.get("/devices/{serial}/screenshots/{name}")

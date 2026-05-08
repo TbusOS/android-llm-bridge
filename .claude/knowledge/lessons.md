@@ -1411,4 +1411,72 @@ button 任一即触发，不等 N=2/N=3（这是 a11y 基线，不是抽组件�
 
 ---
 
+## L-033 · async FastAPI endpoint 内 sync FS 调用必走 `asyncio.to_thread` · "io_to_thread sweep" 模式
+
+**Date**: 2026-05-08（perf-audit-2026-05-08 sweep · fix `<待 commit>`）
+
+**规则**：FastAPI `async def` endpoint 里 **任何同步 FS / IO 调用**
+（`Path.read_text` / `Path.read_bytes` / `Path.open().read()` /
+`Path.stat` / `Path.glob` / `os.listdir` / `subprocess.run` /
+`time.sleep` 等）必须包到 `await asyncio.to_thread(...)`。否则**单
+event loop stall**：高 QPS 下任意一个慢 IO 就让所有连接卡住。
+
+```python
+# ❌ 错（async 路径 sync IO，loop 卡）
+@router.get("/preview/{path}")
+async def preview(path: str):
+    target = resolve(path)
+    data = target.read_bytes()  # 64 KB cache miss → ms 级 stall
+    return {"text": data.decode("utf-8")}
+
+# ✅ 对（sync IO 入 worker thread，loop 自由）
+@router.get("/preview/{path}")
+async def preview(path: str):
+    target = resolve(path)
+    data = await asyncio.to_thread(target.read_bytes)
+    return {"text": data.decode("utf-8")}
+```
+
+**触发条件**：
+
+- `async def` endpoint / WS handler 中 path/file/glob/stat/subprocess
+- 单文件 ≤4 KB cache hit 影响小，但 cold cache / >64 KB / 慢盘
+  立刻显形为 P99 spike
+- 高 QPS（多用户同时点 preview / list）下，event loop 一旦卡，所有
+  其它请求排队等
+
+**反面教材** 2026-05-08 perf-audit `5/06~5/08 累积 15 commits`：
+
+- `workspace_preview`：`target.stat()` + `target.open("rb").read(64K)`
+  + `_looks_binary()` 三步全 sync → MID
+- `read_capture`：`f.read_text()` 同步加载 5-50 MB UART log + UTF-8
+  decode → LOW（边界场景但触发即 200-500 ms stall）
+- `list_screenshots`：`base.glob` + N×`stat` + N×`f.read(24)` 全 sync →
+  LOW（小 N 无感，未来 unbounded 后变 hot path）
+
+修法（同源批量）：
+
+- 抽 `_xxx_in_thread(args)` helper（pure sync 函数），endpoint 内
+  `await asyncio.to_thread(_xxx_in_thread, args)` 调用一次
+- 多个相关 IO（如 `stat + read`）打包进同一 helper，避免多次 thread
+  hop overhead
+
+**触发时机**：每次新写 async endpoint 时；对老 endpoint 周期性
+sweep（5/02 perf-audit 漏检的 `read_capture` 就是没 sweep 全才漏）。
+
+**应用到 agents**：performance-auditor + code-reviewer agent grep
+checklist 加规则：
+
+- async endpoint / async def 内命中 `\.\(read_text\|read_bytes\|stat\|glob\|listdir\|open\)\(` →
+  上下文 5 行内无 `asyncio\.to_thread` → **MID** finding
+- 同 commit 多处命中 → 建议批量 sweep（一次 commit 修完同源债）
+
+**关联**：L-014 (alb_describe / hot path 同形 · "新功能必 sweep
+checklist" 模式) · L-025 (useQuery refetchInterval · 同形 "新 hook
+必 sweep config flag" 模式) · L-032 (sidebar a11y · 同形 "基线漏一次
+全 feature 复 N 次") · ADR-026 (httpx.AsyncClient · 同源 IO 协程化
+原则)
+
+---
+
 （新教训按此格式追加）

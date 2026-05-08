@@ -23,6 +23,7 @@ file owns only the stateless capture-style flow.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,13 @@ def _is_uart_log_name(name: str) -> bool:
     if not name.endswith("-uart.log"):
         return False
     return True
+
+
+def _read_capture_text(f: Path) -> tuple[str, int]:
+    """read_text + stat together in worker thread (L-033)."""
+    text = f.read_text(encoding="utf-8", errors="replace")
+    size = f.stat().st_size
+    return text, size
 
 
 def _safe_resolve_capture(device: str | None, name: str) -> Path:
@@ -169,9 +177,11 @@ async def read_capture(
     rendering)."""
     f = _safe_resolve_capture(device, name)
 
+    # perf-audit 2026-05-08 LOW: 5-min UART log can be 5-50 MB; sync
+    # read_text + UTF-8 decode would block the event loop. Hand off
+    # to a worker thread (L-033 io_to_thread sweep).
     try:
-        text = f.read_text(encoding="utf-8", errors="replace")
-        size = f.stat().st_size
+        text, size = await asyncio.to_thread(_read_capture_text, f)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

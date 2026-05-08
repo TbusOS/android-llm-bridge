@@ -535,6 +535,21 @@ _PREVIEW_DEFAULT_BYTES = 64 * 1024
 _PREVIEW_MAX_BYTES = 1 * 1024 * 1024  # 1 MB hard cap
 
 
+def _workspace_preview_exists(target: Path) -> bool:
+    """Combined exists + is_file check; runs in worker thread so the
+    sync FS calls don't block the event loop."""
+    return target.exists() and target.is_file()
+
+
+def _workspace_preview_read(target: Path, max_bytes: int) -> tuple[int, bytes]:
+    """stat + read first max_bytes; raises OSError up to caller. Runs
+    in worker thread (perf-audit 2026-05-08 MID)."""
+    size = target.stat().st_size
+    with target.open("rb") as f:
+        data = f.read(max_bytes)
+    return size, data
+
+
 def _looks_binary(head: bytes) -> bool:
     """NUL byte anywhere in the read window → binary.
 
@@ -569,22 +584,20 @@ async def workspace_preview(
         max_bytes = _PREVIEW_MAX_BYTES
 
     target = _resolve_workspace_path(path)
-    if not target.exists() or not target.is_file():
+    # is_file() also stats so check + read happen on the worker thread
+    # together — perf-audit 2026-05-08 MID + L-033: async endpoint must
+    # not touch sync FS on the event loop.
+    if not await asyncio.to_thread(_workspace_preview_exists, target):
         raise HTTPException(status_code=404, detail="not a workspace file")
 
     try:
-        stat = target.stat()
+        size_bytes, data = await asyncio.to_thread(
+            _workspace_preview_read, target, max_bytes
+        )
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    size_bytes = stat.st_size
     truncated = size_bytes > max_bytes
-
-    try:
-        with target.open("rb") as f:
-            data = f.read(max_bytes)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     if _looks_binary(data):
         return {
