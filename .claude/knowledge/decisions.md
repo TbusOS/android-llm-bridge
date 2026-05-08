@@ -13,6 +13,43 @@
 
 ---
 
+## 索引（按主题 · 19 ADR + 4 seed · 2026-05-08）
+
+**核心架构（transport / backend / event）**
+- ADR-001 · Transport 抽象 + 4 实现
+- ADR-016 · LLMBackend ABC
+- ADR-024 · LLMBackend ABC capability 改用 class attribute（amends ADR-016）
+- ADR-018 · audit 升级为事件总线（C 档重构）
+- ADR-026 (seed) · backend 配置边界：CLI flag 还是 config 文件
+- ADR-027 · BackendSpec.runs_on_cpu → host_compute_type 三态
+- ADR-033 (seed) · transport capability 用 ABC class-attr 标，不 hasattr 检测
+- ADR-035 · LlamaCpp 嵌入式 backend deferred · 改 step 顺序 step 2/3 互换
+
+**流 / 协议（WS / SSE / chat / stream）**
+- ADR-007 · long log 不进 LLM context
+- ADR-019 · token 事件不广播
+- ADR-021 · token 不广播但聚合 tps_sample
+- ADR-022 · Dashboard 同页双 WS 实例
+- ADR-030 (seed) · stream hook 抽象时机评估
+- ADR-036 · 流式文件传输用 WS 而非 SSE / Job-Model（MID-6）
+
+**Web Tier / 前端**
+- ADR-017 · Web Tier 1 技术栈
+- ADR-023 · SPA fallback 跨部署 surface 异构实现
+- ADR-025 · per-backend 并行 useQueries · Dashboard 健康探测 polling 分层
+- ADR-028 · device 信息分层 · dashboard summary vs inspect details
+- ADR-029 · device 信息刷新策略 · auto polling vs button vs WS push
+- ADR-032 · Inspect 8 tabs 走 unmount/remount，不做 keepAlive
+
+**安全 / 部署**
+- ADR-031 (seed) · filesync HITL 写在 endpoint 层 vs PermissionEngine
+- ADR-034 (seed) · alb-api 默认 bind 127.0.0.1，0.0.0.0 须显式开启
+
+**工程方法 / 团队**
+- ADR-020 · agents 团队工程方法论
+
+---
+
 ## ADR-001 · Transport 抽象 + 4 实现
 
 - **日期**：M1 早期（2026-04 初）

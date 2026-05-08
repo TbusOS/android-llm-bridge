@@ -8,6 +8,40 @@
 - severity：high（影响功能 / 安全）/ mid（影响维护 / 体验）/ low（small）
 - 引入时间 + commit
 - 是否计划修：是 / 否 / 视情况
+
+---
+
+## 索引（按状态 + 编号 · 35 项 / 33 关 + 2 候选 + 0 进行中 · 2026-05-08）
+
+**候选未关（2 项 · 需用户决策方向）**
+- DEBT-033 (high) · mockup v3 扩 inspect 4 子 tab baseline
+- DEBT-034 (low) · architecture.md REST envelope 三态约定缺文档化
+
+**未关 backlog（5 项 · 视触发条件）**
+- DEBT-005 · workspace/sessions 没自动清理
+- DEBT-006 · workspace/events.jsonl 没 rotation
+- DEBT-007 · ts_approx 字段语义已无用
+- DEBT-008 (mid) · GET /metrics/summary 缺 short-TTL cache
+- DEBT-009 · Vite base URL 硬编码风险
+- DEBT-010 · /audit/stream WS 协议没预留 session_id / kinds 过滤
+- DEBT-012 · web/ reducer 纯函数无单测
+- DEBT-013 · 前端 METRIC_KINDS 与后端 _DEFAULT_METRIC_KINDS 双写不同步
+- DEBT-016 · vite base 在 GH Pages 部署不正确，SPA shell 资源加载 404
+- DEBT-022 (mid) · device card 信息薄 · 缺刷新机制 + 多维元数据
+
+**已关（按时间倒序 · 26 项）**
+
+5/08：032 035
+5/07：021 031
+5/06：018 029（含 MID-6 4-commit batch）
+5/02：023 024 025 026 027 028 030 + 4-agent 联合 audit 9 HIGH
+5/01：020 015（mechanism）
+4/30：017 019
+4/29：001 002 003 004 011
+
+（详见各 DEBT 段落正文 — Ctrl-F "## DEBT-NNN" 跳转）
+
+---
 - 还债条件：什么情况下应该停下来还
 
 ---
