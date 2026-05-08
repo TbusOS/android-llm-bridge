@@ -7,9 +7,10 @@
  * each clickable region).
  */
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { ScanSearch, X } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { useApp } from "../../stores/app";
 import {
@@ -17,6 +18,13 @@ import {
   type UiDumpResponse,
   type UiNode,
 } from "../../lib/api";
+
+// Row height matches mono font 11px × line-height 1.7 ≈ 18.7px + 1px
+// border-bottom; estimate slightly above to avoid resize jitter when
+// rows wrap onto a second line (rare — usually only the bounds field
+// is wide). useVirtualizer measures real heights at runtime via
+// `measureElement`, so this estimate is a hint not a hard cap.
+const _UIDUMP_ROW_ESTIMATE = 24;
 
 export function UiDumpTab() {
   const lang = useApp((s) => s.lang);
@@ -62,6 +70,17 @@ export function UiDumpTab() {
     const q = deferredFilter.toLowerCase();
     return nodes.filter((n) => nodeMatch(n.node, q));
   }, [nodes, deferredFilter]);
+
+  // ui-fluency MID-4 (2026-05-07): virtualize the row list. >1000 node
+  // dumps used to render every row and pay layout cost on each filter
+  // keystroke; only render visible rows now.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visibleNodes.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => _UIDUMP_ROW_ESTIMATE,
+    overscan: 12,
+  });
 
   return (
     <div className="uidump-tab">
@@ -116,7 +135,7 @@ export function UiDumpTab() {
         )}
       </div>
 
-      <div className="uidump-tab__list">
+      <div className="uidump-tab__list" ref={listRef}>
         {nodes.length === 0 && (
           <div className="uart-tab__empty">
             {lang === "zh" ? "点上方「抓 UI」按钮" : "Press Dump above"}
@@ -129,28 +148,54 @@ export function UiDumpTab() {
               : `No nodes match "${filter}"`}
           </div>
         )}
-        {visibleNodes.map(({ node, depth }, i) => (
+        {visibleNodes.length > 0 && (
           <div
-            key={`${i}-${node.index}`}
-            className="uidump-tab__row"
-            style={{ paddingLeft: 8 + depth * 14 }}
+            className="uidump-tab__virt"
+            style={{ height: rowVirtualizer.getTotalSize() }}
           >
-            <span className="uidump-tab__cls">
-              {shortClass(node.class)}
-            </span>
-            {node.resource_id && (
-              <span className="uidump-tab__id">#{node.resource_id.split("/").pop()}</span>
-            )}
-            {node.text && <span className="uidump-tab__text">"{node.text}"</span>}
-            {node.content_desc && (
-              <span className="uidump-tab__desc">[{node.content_desc}]</span>
-            )}
-            <span className="uidump-tab__bounds">
-              {node.bounds[0]},{node.bounds[1]} → {node.bounds[2]},{node.bounds[3]}
-            </span>
-            {node.clickable && <span className="uidump-tab__pill">click</span>}
+            {rowVirtualizer.getVirtualItems().map((vRow) => {
+              const { node, depth } = visibleNodes[vRow.index];
+              return (
+                <div
+                  key={vRow.key}
+                  className="uidump-tab__virt-row"
+                  data-index={vRow.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{ transform: `translateY(${vRow.start}px)` }}
+                >
+                  <div
+                    className="uidump-tab__row"
+                    style={{ paddingLeft: 8 + depth * 14 }}
+                  >
+                    <span className="uidump-tab__cls">
+                      {shortClass(node.class)}
+                    </span>
+                    {node.resource_id && (
+                      <span className="uidump-tab__id">
+                        #{node.resource_id.split("/").pop()}
+                      </span>
+                    )}
+                    {node.text && (
+                      <span className="uidump-tab__text">"{node.text}"</span>
+                    )}
+                    {node.content_desc && (
+                      <span className="uidump-tab__desc">
+                        [{node.content_desc}]
+                      </span>
+                    )}
+                    <span className="uidump-tab__bounds">
+                      {node.bounds[0]},{node.bounds[1]} → {node.bounds[2]},
+                      {node.bounds[3]}
+                    </span>
+                    {node.clickable && (
+                      <span className="uidump-tab__pill">click</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

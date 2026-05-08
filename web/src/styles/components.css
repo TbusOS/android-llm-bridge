@@ -2365,11 +2365,29 @@ html[lang^="zh"] h3 {
   border: 1px solid var(--anth-border);
   border-radius: var(--radius-md);
   padding: var(--space-2);
-  max-height: 640px;
+  /* ui-fluency MID-4 (2026-05-07): switch from max-height to fixed
+     height so @tanstack/react-virtual can size against a stable
+     scroll element. 640px matches the prior max-height visual. */
+  height: 640px;
   overflow-y: auto;
+  position: relative;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.7;
+}
+
+/* Inner spacer + absolute-positioned row wrappers for the virtualized
+   list. Rows are translateY-positioned by useVirtualizer. */
+.uidump-tab__virt {
+  position: relative;
+  width: 100%;
+}
+
+.uidump-tab__virt-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .uidump-tab__row {
