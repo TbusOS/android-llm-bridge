@@ -30,6 +30,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from alb.capabilities.logging import capture_uart
+from alb.infra.safe_path import resolve_under
 from alb.infra.workspace import workspace_root
 from alb.mcp.transport_factory import build_transport
 
@@ -70,32 +71,15 @@ def _read_capture_text(f: Path) -> tuple[str, int]:
 
 
 def _safe_resolve_capture(device: str | None, name: str) -> Path:
-    """Return a Path safe to read/unlink; raises HTTPException(400) if
-    the file would resolve outside ``_logs_dir(device)`` via symlink or
-    if the entry itself is a symlink.
-
-    Code review 2026-05-07 finding (parallel to screenshots_route): the
-    name string check alone doesn't stop a symlink placed inside
-    ``workspace/.../logs/`` from leading FileResponse / read_text /
-    unlink to an arbitrary path. Mirror files_route's `.resolve() +
-    relative_to(root)` pattern + reject symlinks outright.
-    """
-    if not _is_uart_log_name(name):
-        raise HTTPException(status_code=400, detail="invalid capture name")
-    base = _logs_dir(device)
-    candidate = base / name
-    if not candidate.exists() or not candidate.is_file():
-        raise HTTPException(status_code=404, detail="capture not found")
-    if candidate.is_symlink():
-        raise HTTPException(status_code=400, detail="symlinks not allowed")
-    try:
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(base.resolve())
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400, detail="path escapes logs dir"
-        ) from exc
-    return resolved
+    """Defer to shared infra helper (DEBT-032 抽出)."""
+    return resolve_under(
+        _logs_dir(device),
+        name,
+        is_valid_name=_is_uart_log_name,
+        not_found_detail="capture not found",
+        invalid_name_detail="invalid capture name",
+        escape_detail="path escapes logs dir",
+    )
 
 
 @router.post("/uart/capture")

@@ -32,6 +32,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from alb.infra.safe_path import resolve_under
 from alb.infra.workspace import workspace_root
 
 router = APIRouter()
@@ -53,33 +54,16 @@ def _is_screenshot_name(name: str) -> bool:
 
 
 def _safe_resolve_screenshot(serial: str, name: str) -> Path:
-    """Return a Path safe to read; raises HTTPException(400) if the
-    file would resolve outside ``_screenshots_dir(serial)`` via symlink
-    or if the entry is itself a symlink (defence in depth).
-
-    Code review 2026-05-07 finding: ``_is_screenshot_name`` only checks
-    the user-supplied string. A symlink placed inside
-    ``workspace/devices/<serial>/screenshots/`` (e.g. by a CI runner or
-    shared host's other user) lets ``FileResponse`` follow it to any
-    readable file. Mirrors ``files_route._resolve_workspace_path``'s
-    ``.resolve() + relative_to(root)`` pattern.
-    """
-    if not _is_screenshot_name(name):
-        raise HTTPException(status_code=400, detail="invalid screenshot name")
-    base = _screenshots_dir(serial)
-    candidate = base / name
-    if not candidate.exists() or not candidate.is_file():
-        raise HTTPException(status_code=404, detail="screenshot not found")
-    if candidate.is_symlink():
-        raise HTTPException(status_code=400, detail="symlinks not allowed")
-    try:
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(base.resolve())
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=400, detail="path escapes screenshots dir"
-        ) from exc
-    return resolved
+    """Defer to shared infra helper — single source of truth for the
+    "single-filename slot inside a known dir" case (DEBT-032 抽出)."""
+    return resolve_under(
+        _screenshots_dir(serial),
+        name,
+        is_valid_name=_is_screenshot_name,
+        not_found_detail="screenshot not found",
+        invalid_name_detail="invalid screenshot name",
+        escape_detail="path escapes screenshots dir",
+    )
 
 
 def _peek_png_dims(p: Path) -> tuple[int, int] | None:
