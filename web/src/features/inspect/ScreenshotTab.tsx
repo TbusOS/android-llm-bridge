@@ -31,7 +31,7 @@ import {
   screenshotImageUrl,
   type ScreenshotResponse,
 } from "../../lib/api";
-import { SectionPlaceholder } from "../dashboard/SectionPlaceholder";
+import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useScreenshots, useTriggerScreenshot } from "./useScreenshots";
 
 function formatBytes(n: number): string {

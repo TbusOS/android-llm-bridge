@@ -1,8 +1,13 @@
 /**
  * SectionPlaceholder — DEBT-018 close + DEBT-031 close.
  *
- * Single mount point for DashboardPage's 4 loading/error/empty
- * placeholder areas (devices · backends · sessions · timeline).
+ * Shared UI primitive for any section's loading/error/empty placeholder
+ * area. First landed on Dashboard's 4 sections (devices / backends /
+ * sessions / timeline); now also used by inspect/ScreenshotTab's empty
+ * viewer state. Lives in `web/src/components/` because both
+ * `features/dashboard/` and `features/inspect/` consume it — keeping
+ * it inside one feature would create a horizontal feature→feature
+ * import (architecture-reviewer 2026-05-08 finding).
  *
  * DEBT-031 (2026-05-07): the 3 separate BEM families this component
  * used to map to (`dev-strip-state` / `be-card--empty` /

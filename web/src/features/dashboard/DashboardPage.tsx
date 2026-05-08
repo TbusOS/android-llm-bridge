@@ -23,7 +23,7 @@ import { LiveSessionCard } from "./LiveSessionCard";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
-import { SectionPlaceholder } from "./SectionPlaceholder";
+import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useAuditStream } from "./useAuditStream";
 import { useBackends } from "./useBackends";
 import { useDevices } from "./useDevices";
