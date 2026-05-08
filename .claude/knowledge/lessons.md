@@ -1479,4 +1479,82 @@ checklist" 模式) · L-025 (useQuery refetchInterval · 同形 "新 hook
 
 ---
 
+## L-meta-001 · "新增类规则" lesson 必带可执行 grep pattern + 反面教材 + 正例 + agent checklist 同步 · 防止 lesson 写完就稀释
+
+**Date**: 2026-05-08（architecture-reviewer 跨 16 commits audit 提的
+meta-观察 · 关 DEBT-035）
+
+**规则**：lessons.md 里所有"新增 X 时漏一组规则"形态的 lesson —— 即
+**新增类规则**（new-instance-of-X 时必须按 checklist 加上某些东西）
+—— 写入时**必须四件套同时落地**，否则规则随项目 N 增长自然稀释成
+"依赖人记忆"，下次跑 reviewer 不会自动捕捉，等于没写。
+
+**四件套**：
+
+1. **可执行 grep pattern**（不只描述，要能 `grep -rE` 跑）：
+   - 给出具体正则，标注上下文窗口（"5 行内"/"同一组件内"等）
+   - 标注命中后的判定（HIGH / MID / LOW）
+2. **至少 1 个反面教材**（具体 commit / 文件 / 行号）：
+   - 来源真实 commit · 让 reviewer 知道"长这样的 diff 该报"
+   - 跨语言时给等价反例（Python + JS / 前端 + 后端）
+3. **至少 1 个已知正例**（修法参考）：
+   - 当前仓里能跑得对的 reference 实现位置
+   - reviewer 报 finding 时可直接指 "参考 X 文件 Y 行"
+4. **agent definition checklist 同步**：
+   - 新 lesson 写完，**同 commit** 或紧跟 commit 把规则加到对应
+     `.claude/agents/<reviewer>.md` 的"自动 grep checklist"段
+   - 这是 lesson **从写到生效**的关键步骤；漏了就是知识衰减
+
+**Why**：
+
+- L-014 (mcp tool docstring sweep) / L-025 (useQuery refetchInterval
+  background gate) / L-032 (sidebar a11y 三件套) / L-033 (async sync
+  FS to_thread) 都是同骨架"新增 X 时漏一组规则" — 写 lesson 时若漏
+  了 grep pattern + agent sync，下次审 PR 不会自动报 → finding 靠
+  人脑记
+- 5/02 4-agent audit 找到 9 HIGH 之所以有效，正是因为 agents 已加
+  L-019/022/024/025/026/027/028/029 的 grep checklist 自动跑 · 5/08
+  part 113 把 L-031/032/033 同步进去后，下次跑 reviewer 自动报这 3
+  类 finding · 不再依赖主对话上下文记忆
+- 反面案例：5/02 perf-audit 漏检 `read_capture` 是 sync IO，因为
+  当时 L-014/L-025 模式没扩展到"async sync FS"维度。L-033 入档
+  后 part 113 sync 到 performance-auditor + code-reviewer
+  checklist，5/08 perf-audit 才在新 commit 里捕捉到
+
+**反面教材** 2026-05-08：
+
+- L-031 / L-032 / L-033 三 lesson 入 lessons.md（5/06~5/08 part 91/
+  105/109）时**仅 L-031 同步到 code-reviewer checklist**；L-032/033
+  靠主对话临时口头提醒。直到 5/08 part 113 才系统补完。中间 ~3 天
+  跑 audit 没自动捕捉 a11y/sync-IO 类 finding 是潜在风险
+
+**已知正例**：
+
+- L-031 同 commit 写 lesson + 同步到 `.claude/agents/code-reviewer.md`
+  ：grep pattern (`with contextlib\.suppress\(Exception\)` 5 行内
+  await task/aclose) + 反面教材 (commit `7b9afc0` _pump_transfer
+  finally) + 正例 (`terminal_route.py:166-168`) + agent
+  checklist 段 "来自 L-031" 完整四件套
+- 5/08 part 113 commit `e185b4a` 把 L-032/033 补完同款四件套
+
+**触发条件**：写新 lesson 时检查是否属"新增类规则" — 标志是规则
+描述含 "新 X 时必加 Y/Z" 形态。是 → 必须四件套；否（如 L-019
+sentinel 反模式 / L-031 语言细节） → 仍鼓励但不强制 grep pattern
+（因为 grep 形式可能不通用）。
+
+**应用到 agents**：
+
+- 写 lesson PR 同时改 `.claude/agents/<相关 reviewer>.md` 加 grep
+  规则段 → 一次 commit ship + 一次 commit sync 是接受的，但**不
+  能跨周**
+- 主对话 review lesson 入档时 **必须问一句**："这条 grep pattern
+  落到哪个 agent？" 漏问就是责任在主对话
+
+**关联**：L-014 / L-025 / L-032 / L-033（这 4 条都是 meta-pattern
+的实例 · 本条是它们的共性提取） · `agents/code-reviewer.md` 等 6 个
+agent definition（grep checklist 段） · 5/08 part 113 commit
+`e185b4a`（meta-pattern 落地实操）
+
+---
+
 （新教训按此格式追加）

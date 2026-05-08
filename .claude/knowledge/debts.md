@@ -879,22 +879,20 @@
 
 ---
 
-## DEBT-035 · L-meta-001 候选 · reviewer 新增类规则必带 grep pattern
+## DEBT-035 · L-meta-001 候选 · reviewer 新增类规则必带 grep pattern —— **CLOSED 2026-05-08**
 
 - **severity**：low（meta-lesson 归档级，不影响代码）
-- **位置**：`.claude/knowledge/lessons.md`（待加）
+- **位置**：`.claude/knowledge/lessons.md`
 - **现象**：L-014 / L-025 / L-032 / L-033 都是"新 X 时漏一组 sweep
   规则"形态（mcp tool docstring / useQuery bg gate / sidebar a11y /
   async io-to-thread）。这 4 条已经有共同骨架："新增 X 时必跑 sweep
   checklist {a, b, c}"。但 meta-pattern 没正式入档，新 lesson 写时
   容易漏 grep pattern（变成纯描述规则随项目 N 增长稀释成"依赖人
   记忆"）
-- **是否计划修**：是
-- **还债 sketch**：写 L-meta-001："reviewer 的'新增类规则'必带可
-  执行 grep pattern + 至少 1 个反面教材 + 至少 1 个已知正例 + agent
-  checklist 同步"。本 5/08 part 113/N 已实操（L-031/032/033 同步到
-  agent grep checklist），把模式正式入档
-- **工作量**：~30-50 行 lesson 文本
+- **关闭**：commit (待提) 2026-05-08。`.claude/knowledge/lessons.md`
+  加 L-meta-001："新增类规则" lesson 必带四件套（可执行 grep pattern
+  + 反面教材 + 正例 + agent checklist 同步），5/06~5/08 part 91/105/
+  109/113 实操经验正式入档
 - **来源**：architecture-reviewer 2026-05-08 finding · meta-观察
 
 ---
