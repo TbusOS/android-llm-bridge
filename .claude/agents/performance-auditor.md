@@ -39,6 +39,11 @@ tools: Read, Grep, Bash, Write
 
 ### 3. 后端运行时
 - 同步 IO 在 async 路径（如 `open()` 在 endpoint 里 —— 应该 `asyncio.to_thread`）
+  - **L-033 grep checklist**（自动跑）：`async def` 内命中
+    `\.read_text\(|\.read_bytes\(|\.open\(.*\)\.read\(|\.stat\(|\.glob\(|\.iterdir\(|os\.listdir\(|subprocess\.run\(|time\.sleep\(`
+    且 5 行内无 `asyncio\.to_thread\(` 包裹 → **MID** finding。同源
+    多处命中建议 batch sweep（一次 commit 修完同源债，参考 5/08
+    `eebcc8d` io_to_thread sweep）
 - 文件遍历是否懒读（`events.jsonl` 全量读 vs streaming）
 - 长循环 / 重计算是否在 request-time 而不是 cache
 - DB / FS / network 调用次数

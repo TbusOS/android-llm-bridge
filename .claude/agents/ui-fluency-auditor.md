@@ -57,6 +57,24 @@ visual-audit-runner）也**不**做基线对照（那是 mockup-baseline-checker
 ### tooltip vs 始终可见 helper
 - 命中 `<label title="..."` 含警告 / 风险说明 → **MID** finding "title 移动端 + 键盘 focus 都看不到，警告应改 helper text"
 
+### 来自 L-032 (sidebar / list pattern a11y 三件套基线) — 不等 N=3，首次出现就加
+新 sidebar / 选中行 list pattern（`is-active` / `selected` state 标记当前行）出现即触发：
+
+1. **`aria-current` / `aria-selected` / `aria-pressed` 标识**：
+   - grep 命中 `className=.*is-active|className=.*selected\?|className=.*active\?` 在 `<button>` / `<a>` / `<li>` 上 → 同 element 必有 `aria-current="true"` / `aria-selected="true"` / `aria-pressed=` 之一
+   - 缺 → **HIGH** finding（盲用户无法感知"我现在选的是哪一行"）
+2. **动态状态文本 `aria-live`**：
+   - grep 命中"M of N" / "matches" / "applying" / "上次" 等会随交互变化的 inline span → 必有 `role="status"` + `aria-live="polite"`
+   - 缺 → **MID** finding（盲用户对状态变化完全沉默）
+3. **destructive button 双重防呆**：
+   - grep 命中 `mutation\.mutate\(.*\)` / `mutate\(.*\)` 直挂在 `onClick` 且语义是删除 / 不可逆（按钮含 Trash / Delete / Remove icon）→ 必有 confirm modal / native confirm() / arm-step 任一
+   - 视觉防呆：`opacity:\s*0\b` 仅 hover 显形 + destructive → 双重失败 → **HIGH**
+   - 缺 → **HIGH** finding（键盘 Tab+Enter 一键误删）
+
+**理由**：sidebar/list a11y 不是抽象时机决策（L-020），而是基线必加；漏一次后续每个 feature 复 N 次（5/06~07 audit 一次发现 ScreenshotTab/UartCaptureView/FilesTab 三处同款漏）。
+
+**修法参考**：`web/src/features/inspect/UartCaptureView.tsx` 已修——`aria-current={selected === c.name ? "true" : undefined}` + 两步式 armed delete + opacity:0.35 默认（不再 hover-only 0）。
+
 ## 评审维度
 
 ### 1. 交互延迟

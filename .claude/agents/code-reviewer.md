@@ -78,9 +78,25 @@ tools: Read, Grep, Bash
 
 **已知正例**：`src/alb/api/terminal_route.py:166-168` `with contextlib.suppress(asyncio.CancelledError): await t`（已使用专用形式）。可作为修法参考。
 
+### 来自 L-033 (async FastAPI sync FS 必 to_thread) — async endpoint 内同步 IO 卡 event loop
+
+**FastAPI async 路径**（`@router.{get,post,...}` + `async def`）里**任何同步 FS / IO 调用**会让 event loop 卡住，影响所有并发连接。
+
+- diff 命中 `async def` 函数体内（含 WS handler）出现：
+  - `\.read_text\(|\.read_bytes\(|\.open\(.*\)\.read\(|\.write_text\(|\.write_bytes\(|\.stat\(|\.glob\(|\.iterdir\(|os\.listdir\(|subprocess\.run\(|time\.sleep\(`
+  - **且** 上下文 5 行内**没有** `asyncio\.to_thread\(` 包裹 → **MID** finding
+- 修法：抽 `_xxx_in_thread(args) -> R` pure-sync helper，endpoint 内 `await asyncio.to_thread(_xxx_in_thread, args)` 调一次。多个相关 IO（`stat + read`）打包同一 helper 减少 thread hop。
+
+**已知正例**：
+- `src/alb/api/files_route.py:_workspace_preview_exists / _workspace_preview_read`（5/08 io_to_thread sweep）
+- `src/alb/api/uart_route.py:_read_capture_text`（同 sweep）
+- `src/alb/api/screenshots_route.py:_list_screenshots_entries`（同 sweep）
+
+**触发条件**：每次新写 async endpoint 或 WS handler 时；老 endpoint 周期 sweep（5/02 perf-audit 漏检 `read_capture` 是没 sweep 全才漏）。同源批量修一次 commit 比逐个修更经济。
+
 执行流程：
 1. `git diff <range>` 拿改动
-2. 按以上 8 条 grep 跑一遍
+2. 按以上 9 条 grep 跑一遍（L-019~L-031 + L-033）
 3. 发现命中 → 立刻报 finding（不用等"5 维评审"框架）
 4. 5 维评审继续，但 grep 命中先于 5 维输出
 
