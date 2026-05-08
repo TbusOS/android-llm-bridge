@@ -148,17 +148,17 @@ export function UartLiveStream({ device }: Props) {
             onClick={onConnect}
             disabled={!device}
           >
-            <Play size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <Play size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "连接" : "Connect"}
           </button>
         ) : (
           <button type="button" className="btn" onClick={disconnect}>
-            <CircleStop size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <CircleStop size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "断开" : "Disconnect"}
           </button>
         )}
         <button type="button" className="btn" onClick={onClear}>
-          <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
+          <Eraser size={12} className="icon-inline" />{" "}
           {lang === "zh" ? "清屏" : "Clear"}
         </button>
         {(state === "error" || state === "ended") && (
@@ -173,7 +173,7 @@ export function UartLiveStream({ device }: Props) {
                 : "wipe stale bytes and reopen the stream"
             }
           >
-            <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <Eraser size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "清屏并重连" : "Clear & reconnect"}
           </button>
         )}
@@ -184,7 +184,7 @@ export function UartLiveStream({ device }: Props) {
             onChange={(e) => setWriteMode(e.target.checked)}
             disabled={state === "ready" || state === "connecting"}
           />
-          <Keyboard size={12} style={{ verticalAlign: "-2px", marginLeft: 4 }} />{" "}
+          <Keyboard size={12} className="icon-inline" style={{ marginLeft: 4 }} />{" "}
           {lang === "zh" ? "允许键盘输入" : "Allow input"}
           <span className="uart-tab__write-hint">
             {lang === "zh" ? "误键可能锁板" : "wrong byte can lock board"}

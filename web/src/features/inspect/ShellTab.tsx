@@ -180,17 +180,17 @@ export function ShellTab() {
             onClick={onConnect}
             disabled={!device}
           >
-            <Play size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <Play size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "连接" : "Connect"}
           </button>
         ) : (
           <button type="button" className="btn" onClick={disconnect}>
-            <CircleStop size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <CircleStop size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "断开" : "Disconnect"}
           </button>
         )}
         <button type="button" className="btn" onClick={onClear}>
-          <Eraser size={12} style={{ verticalAlign: "-2px" }} />{" "}
+          <Eraser size={12} className="icon-inline" />{" "}
           {lang === "zh" ? "清屏" : "Clear"}
         </button>
         <span className={stateClass[state]}>● {stateLabel[state]}</span>

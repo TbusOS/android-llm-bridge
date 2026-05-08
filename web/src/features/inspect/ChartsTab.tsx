@@ -49,12 +49,12 @@ export function ChartsTab() {
             className="btn btn--primary"
             onClick={() => m.connect(device, 60)}
           >
-            <Play size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <Play size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "连接" : "Connect"}
           </button>
         ) : (
           <button type="button" className="btn" onClick={m.disconnect}>
-            <CircleStop size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <CircleStop size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "断开" : "Disconnect"}
           </button>
         )}
@@ -64,7 +64,7 @@ export function ChartsTab() {
             className="btn"
             onClick={() => (m.paused ? m.resume() : m.pause())}
           >
-            <Pause size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <Pause size={12} className="icon-inline" />{" "}
             {m.paused
               ? lang === "zh" ? "继续" : "Resume"
               : lang === "zh" ? "暂停" : "Pause"}

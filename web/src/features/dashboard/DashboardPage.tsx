@@ -86,7 +86,7 @@ export function DashboardPage() {
             onClick={onRefreshDevices}
             aria-label={lang === "zh" ? "刷新设备信息" : "Refresh devices"}
           >
-            <RefreshCw size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <RefreshCw size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "刷新" : "Refresh"}
           </button>
           <a className="link-arrow" href="#all-devices">

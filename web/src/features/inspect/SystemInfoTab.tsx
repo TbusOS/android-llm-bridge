@@ -56,7 +56,7 @@ export function SystemInfoTab() {
           disabled={q.isFetching}
           aria-label={lang === "zh" ? "刷新系统信息" : "Refresh system info"}
         >
-          <RefreshCw size={12} style={{ verticalAlign: "-2px" }} />{" "}
+          <RefreshCw size={12} className="icon-inline" />{" "}
           {q.isFetching
             ? lang === "zh" ? "刷新中…" : "Refreshing…"
             : lang === "zh" ? "刷新" : "Refresh"}

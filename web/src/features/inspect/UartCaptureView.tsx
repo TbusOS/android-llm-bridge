@@ -140,7 +140,7 @@ export function UartCaptureView() {
           onClick={onCapture}
           disabled={trigger.isPending}
         >
-          <Play size={12} style={{ verticalAlign: "-2px" }} />{" "}
+          <Play size={12} className="icon-inline" />{" "}
           {trigger.isPending
             ? lang === "zh"
               ? `抓取中… (${duration}s)`
@@ -155,7 +155,7 @@ export function UartCaptureView() {
           onClick={() => list.refetch()}
           aria-label={lang === "zh" ? "刷新历史列表" : "Refresh history"}
         >
-          <RefreshCw size={12} style={{ verticalAlign: "-2px" }} />
+          <RefreshCw size={12} className="icon-inline" />
         </button>
         {trigger.data?.ok && (
           <span className="uart-tab__last">

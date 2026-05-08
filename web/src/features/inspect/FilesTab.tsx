@@ -213,7 +213,7 @@ export function FilesTab() {
             }
             onClick={onPull}
           >
-            <ArrowDownToLine size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <ArrowDownToLine size={12} className="icon-inline" />{" "}
             {xferRunning && xfer.result?.direction !== "push"
               ? lang === "zh" ? "拉取中…" : "Pulling…"
               : lang === "zh" ? "拉到工作区" : "Pull"}
@@ -269,7 +269,7 @@ export function FilesTab() {
             }
             onClick={() => onPush(false)}
           >
-            <ArrowUpFromLine size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <ArrowUpFromLine size={12} className="icon-inline" />{" "}
             {xferRunning && xfer.result?.direction !== "pull"
               ? lang === "zh" ? "推送中…" : "Pushing…"
               : lang === "zh" ? "推到设备" : "Push"}
@@ -284,7 +284,7 @@ export function FilesTab() {
               )}
               download={selectedWorkspace.name}
             >
-              <Download size={12} style={{ verticalAlign: "-2px" }} />{" "}
+              <Download size={12} className="icon-inline" />{" "}
               {lang === "zh" ? "下载" : "Download"}
             </a>
           ) : null}
@@ -369,7 +369,7 @@ export function FilesTab() {
               onClick={xfer.cancel}
               title={lang === "zh" ? "取消传输" : "Cancel transfer"}
             >
-              <X size={11} style={{ verticalAlign: "-2px" }} />{" "}
+              <X size={11} className="icon-inline" />{" "}
               {lang === "zh" ? "取消" : "Cancel"}
             </button>
           </div>
@@ -481,7 +481,7 @@ function FilePane(p: FilePaneProps) {
             aria-label="Parent directory"
             title="parent dir"
           >
-            <FolderUp size={12} style={{ verticalAlign: "-2px" }} />
+            <FolderUp size={12} className="icon-inline" />
           </button>
           <button
             type="button"
@@ -493,7 +493,7 @@ function FilePane(p: FilePaneProps) {
           >
             <RefreshCw
               size={12}
-              style={{ verticalAlign: "-2px" }}
+              className="icon-inline"
               className={p.isFetching ? "spin" : ""}
             />
           </button>

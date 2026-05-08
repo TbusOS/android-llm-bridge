@@ -141,14 +141,14 @@ export function ScreenshotTab() {
           onClick={() => trigger.mutate()}
           disabled={trigger.isPending}
         >
-          <Camera size={12} style={{ verticalAlign: "-2px" }} />{" "}
+          <Camera size={12} className="icon-inline" />{" "}
           {trigger.isPending
             ? lang === "zh" ? "抓取中…" : "Capturing…"
             : lang === "zh" ? "抓屏" : "Capture"}
         </button>
         {imgSrc && downloadHref && (
           <a className="btn" href={downloadHref} download={downloadName}>
-            <Download size={12} style={{ verticalAlign: "-2px" }} />{" "}
+            <Download size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "下载 PNG" : "Download"}
           </a>
         )}
@@ -158,7 +158,7 @@ export function ScreenshotTab() {
           onClick={() => list.refetch()}
           aria-label={lang === "zh" ? "刷新历史列表" : "Refresh history"}
         >
-          <RefreshCw size={12} style={{ verticalAlign: "-2px" }} />
+          <RefreshCw size={12} className="icon-inline" />
         </button>
         {captureFailed && (
           <span className="uart-tab__last uart-tab__last--err">

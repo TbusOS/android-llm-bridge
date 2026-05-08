@@ -1868,6 +1868,14 @@ html[lang^="zh"] h3 {
   animation: spin 1s linear infinite;
 }
 
+/* mockup-baseline-checker 2026-05-08 DEBT-NEW-B: 28+ React 调用点
+   散落 `style={{ verticalAlign: "-2px" }}` 给 inline lucide 图标按
+   钮做基线对齐微调（按钮 svg 默认 baseline 偏高 2px）。L-020 N=3+
+   阈值教科书触发，抽 utility class 替换散 inline。 */
+.icon-inline {
+  vertical-align: -2px;
+}
+
 /* ==========================================================
    UART tab — capture viewer (PR-C.a)
    ========================================================== */

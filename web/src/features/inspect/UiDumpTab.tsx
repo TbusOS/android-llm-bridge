@@ -91,7 +91,7 @@ export function UiDumpTab() {
           onClick={() => m.mutate()}
           disabled={m.isPending}
         >
-          <ScanSearch size={12} style={{ verticalAlign: "-2px" }} />{" "}
+          <ScanSearch size={12} className="icon-inline" />{" "}
           {m.isPending
             ? lang === "zh" ? "抓取中…" : "Dumping…"
             : lang === "zh" ? "抓 UI" : "Dump"}

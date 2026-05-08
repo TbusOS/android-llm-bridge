@@ -38,7 +38,7 @@ export function DeviceStripCompact({ devices, onSelect, onAdd }: Props) {
       >
         <div>
           <div className="add-title">
-            <Plus size={14} style={{ verticalAlign: "-2px" }} />{" "}
+            <Plus size={14} className="icon-inline" />{" "}
             {lang === "zh" ? "添加设备" : "Add device"}
           </div>
           <div className="add-sub">
