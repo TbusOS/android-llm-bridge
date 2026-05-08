@@ -171,5 +171,30 @@ ChatRequest ──┐
 - DEBT-022 batch 9/9 ship · 4-agent audit 9 HIGH 全修 · functional MID 4
   收头 · L-030 v2 修订 · ADR-027 升正
 
+### 2026-05-06 → 5/08 跨 3 天 27 commits（part 94~120 · audit batch + knowledge garden）
+
+- functional audit 5/02 batch 全收尾（HEAD `90f812a`）：HIGH 4 真修 +
+  1 virtual / MID 4 真修 + 4 virtual / LOW 5 全 ship（screenshot history
+  sidebar / UI Dump filter counter / Logcat debounced auto-reconnect /
+  UART per-capture delete / Files inline preview）
+- DEBT-018 SectionPlaceholder 抽组件（`acc747e`）+ DEBT-031 BEM 统一
+  （`5af675c`）+ DEBT-032 抽 `infra/safe_path.resolve_under` (`ee1de9c`)
+  + DEBT-035 L-meta-001 入档（`fc337dd`）
+- 6 reviewer agent audit 全闭环：code (1H+2M) / security (1M+DEBT-021) /
+  ui-fluency (3H+4M+3L) / perf (1M+2L) / arch (1抽 base+3 backlog) /
+  mockup-baseline (1抽 utility+1 大 backlog) = 19 finding 全清
+- audit fix 类：HIGH 1 symlink leak（`bbf9264`）+ MID device sanitize +
+  L-031 suppress + NUL sniff bypass + io_to_thread sweep（`eebcc8d`）
+- L-meta-001 落地 + 自循环 3 次（formatBytes / NoDeviceCard / OSError
+  detail leak），证明 meta-pattern 主动扫能持续补 reviewer 漏检
+- agent grep checklist 同步 L-031/032/033（`e185b4a`）—— "reviewer
+  越用越聪明"机制持续维护
+- Knowledge garden 三件套全索引化（lessons.md / decisions.md / debts.md）
+- 累计：21→22 lessons + L-meta · 32→33 关 DEBT + 2 候选 · 主 bundle
+  110.32→110.52 KB gzip（92% 预算守住）· 869 pytest pass
+
+候选未关（需用户决策）：DEBT-033 (high) mockup v3 扩 inspect baseline
+· DEBT-034 (low) architecture.md REST envelope 三态约定
+
 详见 `~/.claude/projects/<project>/memory/project_status.md` 或本目录
 `decisions.md`。
