@@ -595,7 +595,12 @@ async def workspace_preview(
             _workspace_preview_read, target, max_bytes
         )
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # str(OSError) often contains absolute path ("[Errno 2] ... '/abs/path'")
+        # which leaks workspace layout to web clients. Generic message;
+        # full stack trace still hits server logs via uvicorn.
+        raise HTTPException(
+            status_code=500, detail="filesystem read failed"
+        ) from exc
 
     truncated = size_bytes > max_bytes
 

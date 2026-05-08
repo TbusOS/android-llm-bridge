@@ -167,7 +167,11 @@ async def read_capture(
     try:
         text, size = await asyncio.to_thread(_read_capture_text, f)
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # Generic message — str(OSError) leaks absolute path. See
+        # files_route.workspace_preview for the same fix.
+        raise HTTPException(
+            status_code=500, detail="capture read failed"
+        ) from exc
 
     return {
         "ok": True,
@@ -195,6 +199,8 @@ async def delete_capture(
     try:
         f.unlink()
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500, detail="capture delete failed"
+        ) from exc
 
     return {"ok": True, "name": name}
