@@ -6,7 +6,9 @@ side (that's inherently manual). What it does:
     1. Probe the host for required binaries / env vars.
     2. Print concrete, copy-pasteable next steps for the user.
     3. Run a verification probe and print the outcome.
-    4. Point the user at the relevant docs/methods/*.md file.
+    4. Optionally persist verified parameters to ~/.config/alb/config.toml
+       (`--save`).
+    5. Point the user at the relevant docs/methods/*.md file.
 """
 
 from __future__ import annotations
@@ -14,15 +16,18 @@ from __future__ import annotations
 import os
 import shutil
 import socket
+import tomllib
 from pathlib import Path
+from typing import Any
 
+import tomli_w
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from alb.cli.common import run_async
-from alb.infra.config import load_active
+from alb.infra.config import global_config_path, load_active
 from alb.transport.adb import AdbTransport
 from alb.transport.serial import SerialTransport
 
@@ -52,6 +57,42 @@ def _probe(label: str, ok: bool, detail: str = "") -> None:
     if detail:
         line += f" [dim]{detail}[/]"
     console.print(line)
+
+
+def _persist_serial_config(updates: dict[str, Any]) -> Path:
+    """Merge `updates` into [transport.serial] in the global config.toml.
+
+    Reads any existing file (preserving sibling sections like
+    [transport.adb] / [permissions] / etc), updates only the serial keys
+    that are passed in, and writes back. Creates parent dir if missing.
+
+    Returns the path that was written, so the caller can echo it.
+    """
+    path = global_config_path()
+    raw: dict[str, Any] = {}
+    if path.exists():
+        try:
+            with path.open("rb") as f:
+                raw = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError):
+            # Don't silently destroy a broken file; refuse to overwrite.
+            raise typer.BadParameter(
+                f"Existing {path} is not valid TOML; refusing to overwrite. "
+                "Fix or remove it manually, then re-run with --save."
+            )
+
+    transport = raw.setdefault("transport", {})
+    serial = transport.setdefault("serial", {})
+    for k, v in updates.items():
+        if v is None:
+            serial.pop(k, None)
+        else:
+            serial[k] = v
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as f:
+        tomli_w.dump(raw, f)
+    return path
 
 
 # ─── adb ──────────────────────────────────────────────────────────
@@ -234,8 +275,18 @@ def setup_serial(
     tcp_port: int = typer.Option(9001, "--tcp-port"),
     device: str | None = typer.Option(None, "--device", help="Local /dev/ttyUSB0 etc."),
     baud: int = typer.Option(115200, "--baud"),
+    save: bool = typer.Option(
+        False,
+        "--save",
+        help="After probes pass, persist tcp_host/tcp_port/baud/device to "
+        "~/.config/alb/config.toml under \\[transport.serial].",
+    ),
 ) -> None:
-    """Verify UART reachability (TCP via ser2net or local /dev/tty*)."""
+    """Verify UART reachability (TCP via ser2net or local /dev/tty*).
+
+    Pass --save to write verified parameters to the global config so
+    subsequent `alb serial *` commands pick them up automatically.
+    """
     console.print(Panel.fit("Checking serial / method G setup", border_style="blue"))
 
     # Picocom / socat presence (optional but nice to have)
@@ -270,9 +321,35 @@ def setup_serial(
         t = SerialTransport(tcp_host=tcp_host, tcp_port=tcp_port, baud=baud)
 
     info = run_async(t.health())
-    _probe("serial endpoint open", bool(info.get("connected")))
-    if not info.get("connected"):
+    connected = bool(info.get("connected"))
+    _probe("serial endpoint open", connected)
+    if not connected:
         console.print(f"  [dim]error: {info.get('error')}[/]")
+
+    if save:
+        if not connected:
+            console.print(
+                "\n[yellow]✗ probe failed — refusing to persist invalid "
+                "parameters to config.toml[/]"
+            )
+            raise typer.Exit(1)
+        # Only persist what the user actually expressed — passing
+        # `default_tcp_port=None` later in tomllib re-load would simply
+        # fall back to defaults (existing keys outside [transport.serial]
+        # are preserved by the merge).
+        if device:
+            updates: dict[str, Any] = {
+                "default_baud": baud,
+                "pty_link_dir": "",  # local /dev mode doesn't use the TCP path
+            }
+        else:
+            updates = {
+                "default_tcp_host": tcp_host,
+                "default_tcp_port": tcp_port,
+                "default_baud": baud,
+            }
+        path = _persist_serial_config(updates)
+        _probe(f"saved → {path}", True)
 
     console.print()
     console.print(
