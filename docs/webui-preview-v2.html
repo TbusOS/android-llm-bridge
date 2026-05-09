@@ -947,6 +947,65 @@
       }
       .uart-tab__list li { position: relative; }
 
+      /* UI Dump tab — flat indented tree of accessibility nodes from
+         uiautomator dump. DEBT-033 step 3/4 · 2026-05-09. */
+      .uidump-tab {
+        display: flex; flex-direction: column;
+        gap: var(--space-3); margin-top: var(--space-3);
+      }
+      .uidump-tab__filter {
+        position: relative; display: inline-block;
+      }
+      .uidump-tab__filter input {
+        width: 240px;
+        padding: 4px 28px 4px 8px;
+        font-size: 12px;
+        font-family: var(--font-body);
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-sm);
+      }
+      .uidump-tab__filter-clear {
+        position: absolute;
+        right: 4px; top: 50%;
+        transform: translateY(-50%);
+        background: none; border: 0; padding: 2px;
+        cursor: pointer;
+        color: var(--anth-text-tertiary);
+      }
+      /* The list is a fixed-height scroll container; React side
+         virtualizes via @tanstack/react-virtual (MID-4 fix
+         2026-05-08). Mockup just shows a static slice. */
+      .uidump-tab__list {
+        background: var(--anth-cream);
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-2);
+        height: 640px; overflow-y: auto;
+        font-family: var(--font-mono);
+        font-size: 11px; line-height: 1.7;
+      }
+      .uidump-tab__row {
+        display: flex; flex-wrap: wrap;
+        gap: 6px; align-items: baseline;
+        border-bottom: 1px dashed var(--anth-light-gray);
+        padding: 1px 0;
+      }
+      .uidump-tab__cls { color: var(--anth-text); font-weight: 600; }
+      .uidump-tab__id { color: var(--anth-orange); }
+      .uidump-tab__text { color: #1f7a4d; }
+      .uidump-tab__desc {
+        color: var(--anth-text-secondary); font-style: italic;
+      }
+      .uidump-tab__bounds {
+        color: var(--anth-text-tertiary); margin-left: auto;
+      }
+      .uidump-tab__pill {
+        background: var(--anth-orange); color: white;
+        font-size: 9px; padding: 1px 6px;
+        border-radius: 999px; font-weight: 600;
+        text-transform: uppercase;
+      }
+
       /* ==========================================================
          Footer caption
          ========================================================== */
@@ -1915,6 +1974,108 @@
 [    0.505729] dumpstate: collecting bug report on /data/log/
 [    0.563288] adb shell: PTY opened on /dev/pts/0</pre>
               </main>
+            </div>
+          </div>
+
+          <!-- Inspect → UI Dump sub-tab preview (DEBT-033 step 3/4 · 2026-05-09) -->
+          <div class="group-head">
+            <h2><span class="lang-en">Inspect → UI Dump</span><span class="lang-zh">Inspect → UI 树</span></h2>
+            <span class="meta"><span class="lang-en">uiautomator hierarchy as a flat indented tree · filter by class / id / text</span><span class="lang-zh">uiautomator 层级树 · 按 class / id / text 过滤</span></span>
+          </div>
+
+          <div class="uidump-tab">
+            <div class="uart-tab__bar">
+              <button class="link-arrow" type="button" style="background: var(--anth-orange); color: white; border-color: var(--anth-orange); padding: 6px 12px; font-size: 13px; font-family: var(--font-heading); border-radius: var(--radius-sm); border: 1px solid;">
+                <span class="lang-en">Dump</span><span class="lang-zh">抓 UI</span>
+              </button>
+              <div class="uidump-tab__filter">
+                <input type="text" placeholder="filter class / id / text" value="Button">
+                <button class="uidump-tab__filter-clear" type="button" aria-label="Clear filter">✕</button>
+              </div>
+              <span class="uart-tab__last" role="status" aria-live="polite">12 of 187 matches</span>
+              <span class="uart-tab__last">187 nodes · com.android.settings/.MainActivity</span>
+            </div>
+
+            <div class="uidump-tab__list">
+              <div class="uidump-tab__row" style="padding-left: 8px;">
+                <span class="uidump-tab__cls">DecorView</span>
+                <span class="uidump-tab__bounds">0,0 → 1080,1920</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 22px;">
+                <span class="uidump-tab__cls">FrameLayout</span>
+                <span class="uidump-tab__id">#android:id/content</span>
+                <span class="uidump-tab__bounds">0,72 → 1080,1810</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 36px;">
+                <span class="uidump-tab__cls">LinearLayout</span>
+                <span class="uidump-tab__bounds">0,72 → 1080,1810</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 50px;">
+                <span class="uidump-tab__cls">Toolbar</span>
+                <span class="uidump-tab__id">#action_bar</span>
+                <span class="uidump-tab__bounds">0,72 → 1080,228</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 64px;">
+                <span class="uidump-tab__cls">TextView</span>
+                <span class="uidump-tab__text">"Settings"</span>
+                <span class="uidump-tab__desc">[heading]</span>
+                <span class="uidump-tab__bounds">48,108 → 320,192</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 50px;">
+                <span class="uidump-tab__cls">RecyclerView</span>
+                <span class="uidump-tab__id">#list</span>
+                <span class="uidump-tab__bounds">0,228 → 1080,1810</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 64px;">
+                <span class="uidump-tab__cls">LinearLayout</span>
+                <span class="uidump-tab__bounds">0,228 → 1080,392</span>
+                <span class="uidump-tab__pill">click</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 78px;">
+                <span class="uidump-tab__cls">ImageView</span>
+                <span class="uidump-tab__id">#icon</span>
+                <span class="uidump-tab__bounds">48,266 → 144,354</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 78px;">
+                <span class="uidump-tab__cls">TextView</span>
+                <span class="uidump-tab__id">#title</span>
+                <span class="uidump-tab__text">"Network &amp; internet"</span>
+                <span class="uidump-tab__bounds">192,266 → 800,330</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 78px;">
+                <span class="uidump-tab__cls">TextView</span>
+                <span class="uidump-tab__id">#summary</span>
+                <span class="uidump-tab__text">"Wi-Fi · Mobile · Hotspot"</span>
+                <span class="uidump-tab__bounds">192,330 → 700,392</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 64px;">
+                <span class="uidump-tab__cls">Button</span>
+                <span class="uidump-tab__id">#connect_btn</span>
+                <span class="uidump-tab__text">"Connect"</span>
+                <span class="uidump-tab__bounds">820,266 → 1032,354</span>
+                <span class="uidump-tab__pill">click</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 64px;">
+                <span class="uidump-tab__cls">LinearLayout</span>
+                <span class="uidump-tab__bounds">0,392 → 1080,556</span>
+                <span class="uidump-tab__pill">click</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 78px;">
+                <span class="uidump-tab__cls">TextView</span>
+                <span class="uidump-tab__id">#title</span>
+                <span class="uidump-tab__text">"Connected devices"</span>
+                <span class="uidump-tab__bounds">192,430 → 800,494</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 64px;">
+                <span class="uidump-tab__cls">Switch</span>
+                <span class="uidump-tab__id">#bluetooth_toggle</span>
+                <span class="uidump-tab__desc">[on]</span>
+                <span class="uidump-tab__bounds">920,560 → 1056,620</span>
+                <span class="uidump-tab__pill">click</span>
+              </div>
+              <div class="uidump-tab__row" style="padding-left: 36px; color: var(--anth-text-tertiary); font-style: italic;">
+                <span>… 173 more rows truncated by virtualization …</span>
+              </div>
             </div>
           </div>
 
