@@ -900,6 +900,53 @@
         color: #b9b9b9;
       }
 
+      /* UART capture viewer — pinned right pane shows pre text content
+         (kernel printk / boot log). DEBT-033 step 2/4 · 2026-05-09. */
+      .uart-tab__duration {
+        display: inline-flex; align-items: center; gap: var(--space-2);
+        font-family: var(--font-mono); font-size: 12px;
+        color: var(--anth-text-secondary);
+      }
+      .uart-tab__duration input {
+        width: 64px; padding: 4px 6px;
+        font-family: var(--font-mono); font-size: 13px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-sm);
+        background: white;
+      }
+      .uart-tab__viewer {
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        background: #1e1e1e;
+        color: #e0e0e0;
+        overflow: hidden;
+        display: flex; flex-direction: column;
+        min-height: 480px;
+      }
+      .uart-tab__pre {
+        margin: 0; padding: var(--space-3);
+        flex: 1;
+        font-family: var(--font-mono); font-size: 12px;
+        line-height: 1.5;
+        color: #e0e0e0; background: transparent;
+        white-space: pre-wrap; overflow-y: auto;
+      }
+      /* hover-only delete trash button on each capture row · L-032
+         destructive 防呆：opacity 0.35 默认（不全隐 keyboard 可达），
+         hover/focus 1.0，--armed 红色 outline 等"再点确认 3s"
+         (5/07 part 105 ship in React side) */
+      .uart-tab__cap-delete {
+        position: absolute; top: 50%; right: 6px;
+        transform: translateY(-50%);
+        width: 22px; height: 22px;
+        padding: 0; background: none; border: 0;
+        border-radius: var(--radius-sm);
+        cursor: pointer; color: var(--anth-text-tertiary);
+        display: inline-flex; align-items: center; justify-content: center;
+        opacity: 0.35;
+      }
+      .uart-tab__list li { position: relative; }
+
       /* ==========================================================
          Footer caption
          ========================================================== */
@@ -1788,6 +1835,85 @@
                   <polygon points="186,455 196,460 186,465" fill="#5a5a5a"/>
                   <text x="135" y="478" font-family="sans-serif" font-size="6" fill="#3a3a3a" text-anchor="middle">[ placeholder rendering of an Android home screen ]</text>
                 </svg>
+              </main>
+            </div>
+          </div>
+
+          <!-- Inspect → UART capture sub-tab preview (DEBT-033 step 2/4 · 2026-05-09) -->
+          <div class="group-head">
+            <h2><span class="lang-en">Inspect → UART capture</span><span class="lang-zh">Inspect → UART 抓取</span></h2>
+            <span class="meta"><span class="lang-en">Duration input + Capture, history sidebar with delete button, raw text on right</span><span class="lang-zh">时长输入 + 抓取，历史侧栏带删除，右侧裸文本</span></span>
+          </div>
+
+          <div class="uart-tab">
+            <!-- Top action bar: duration + capture / refresh + meta -->
+            <div class="uart-tab__bar">
+              <label class="uart-tab__duration">
+                <span><span class="lang-en">Duration (s)</span><span class="lang-zh">时长（秒）</span></span>
+                <input type="number" value="30" min="1" max="300">
+              </label>
+              <button class="link-arrow" type="button" style="background: var(--anth-orange); color: white; border-color: var(--anth-orange); padding: 6px 12px; font-size: 13px; font-family: var(--font-heading); border-radius: var(--radius-sm); border: 1px solid;">
+                <span class="lang-en">Capture</span><span class="lang-zh">抓取</span>
+              </button>
+              <button class="link-arrow" type="button" aria-label="Refresh" style="background: white; padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--anth-light-gray);">↻</button>
+              <span class="uart-tab__last">last: 1842 lines / 3 errors</span>
+            </div>
+
+            <div class="uart-tab__body">
+              <!-- Left: capture history sidebar -->
+              <aside class="uart-tab__list" aria-label="UART capture history">
+                <div class="uart-tab__list-head">
+                  <span><span class="lang-en">Captures</span><span class="lang-zh">历史 captures</span></span>
+                  <span class="uart-tab__count">3</span>
+                </div>
+                <ul>
+                  <li class="is-active">
+                    <button type="button" aria-current="true">
+                      <div class="uart-tab__cap-name">2026-05-09T00-12-30-uart.log</div>
+                      <div class="uart-tab__cap-meta">42.6 KB · 18s ago</div>
+                    </button>
+                    <button type="button" class="uart-tab__cap-delete" aria-label="Delete capture">🗑</button>
+                  </li>
+                  <li>
+                    <button type="button">
+                      <div class="uart-tab__cap-name">2026-05-09T00-08-15-uart.log</div>
+                      <div class="uart-tab__cap-meta">38.1 KB · 4m ago</div>
+                    </button>
+                    <button type="button" class="uart-tab__cap-delete" aria-label="Delete capture">🗑</button>
+                  </li>
+                  <li>
+                    <button type="button">
+                      <div class="uart-tab__cap-name">2026-05-08T23-55-02-uart.log</div>
+                      <div class="uart-tab__cap-meta">5.2 MB · 17m ago</div>
+                    </button>
+                    <button type="button" class="uart-tab__cap-delete" aria-label="Delete capture">🗑</button>
+                  </li>
+                </ul>
+              </aside>
+
+              <!-- Right: viewer with kernel printk style raw bytes -->
+              <main class="uart-tab__viewer">
+                <pre class="uart-tab__pre">[    0.000000] Booting Linux on physical CPU 0x0
+[    0.000000] Linux version 6.1.75-android14 #1 SMP PREEMPT
+[    0.000000] Machine model: arm64 8-core devboard rev 2.1
+[    0.012431] Memory: 7782912K/8388608K available (kB reserved)
+[    0.024890] CPU: All CPU(s) started at EL1
+[    0.038122] init: starting service 'console'
+[    0.052418] android_init: enabling avb verity
+[    0.067501] adb: enabled on usb0
+[    0.082137] usb 1-1: new high-speed USB device number 2
+[    0.124881] usb 1-1: New USB device found, idVendor=18d1
+[    0.158420] selinux: SELinux:  Permission denied for /dev/null
+[    0.193770] init: avd_proxy: Service started
+[    0.227104] mali: GPU init done · clock 800 MHz · 16-thread queue
+[    0.258932] thermal_zone0: temp 46.2 C (limit 85.0 C)
+[    0.291014] battery: capacity 72% · health good · 3.94 V
+[    0.328591] wlan0: link is Up · SSID lab-2.4G · RSSI -58 dBm
+[    0.382225] system_server: started · pid 1834
+[    0.421887] zygote: forked process 1842 (com.example.app)
+[    0.462113] surfaceflinger: refresh rate 60 Hz · 1080×1920
+[    0.505729] dumpstate: collecting bug report on /data/log/
+[    0.563288] adb shell: PTY opened on /dev/pts/0</pre>
               </main>
             </div>
           </div>
