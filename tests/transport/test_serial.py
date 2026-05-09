@@ -779,3 +779,112 @@ async def test_shell_reboot_non_normal_unsupported() -> None:
     r = await t.reboot("recovery")
     assert not r.ok
     assert r.error_code == "TRANSPORT_NOT_SUPPORTED"
+
+
+# ─── Bug-1: ser2net back-to-back connect retry ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_open_tcp_retries_transient_reset_then_succeeds(monkeypatch) -> None:
+    """First connect raises ConnectionResetError, second succeeds → returns link."""
+    calls = {"n": 0}
+    fake_reader = asyncio.StreamReader()
+    fake_writer_obj = type(
+        "W", (), {
+            "close": lambda self: None,
+            "wait_closed": staticmethod(lambda: asyncio.sleep(0)),
+        },
+    )()
+
+    async def fake_open(host, port):  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionResetError(104, "Connection reset by peer")
+        return fake_reader, fake_writer_obj
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+
+    t = SerialTransport(tcp_host="localhost", tcp_port=9001)
+    # Speed up the test (real defaults sleep 0.1s+0.3s+0.6s)
+    t._CONNECT_BACKOFF_S = (0.0, 0.0, 0.0)
+    link = await t._open_tcp_with_retry()
+    assert link.mode == "tcp"
+    assert calls["n"] == 2  # one fail, one success
+
+
+@pytest.mark.asyncio
+async def test_open_tcp_exhausts_budget_raises_connection_error(monkeypatch) -> None:
+    """All attempts reset → raises ConnectionError, exhausted attempts in message."""
+    calls = {"n": 0}
+
+    async def fake_open(host, port):  # noqa: ANN001
+        calls["n"] += 1
+        raise ConnectionResetError(104, "reset")
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+
+    t = SerialTransport(tcp_host="localhost", tcp_port=9001)
+    t._CONNECT_BACKOFF_S = (0.0, 0.0, 0.0)
+    with pytest.raises(ConnectionError, match="kept resetting"):
+        await t._open_tcp_with_retry()
+    assert calls["n"] == 3  # all 3 attempts consumed
+
+
+@pytest.mark.asyncio
+async def test_open_tcp_does_not_retry_refused(monkeypatch) -> None:
+    """ConnectionRefusedError = real misconfig → fail fast on first attempt."""
+    calls = {"n": 0}
+
+    async def fake_open(host, port):  # noqa: ANN001
+        calls["n"] += 1
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+
+    t = SerialTransport(tcp_host="localhost", tcp_port=9001)
+    t._CONNECT_BACKOFF_S = (0.0, 0.0, 0.0)
+    with pytest.raises(ConnectionError, match="Cannot reach"):
+        await t._open_tcp_with_retry()
+    assert calls["n"] == 1  # no retry
+
+
+@pytest.mark.asyncio
+async def test_open_tcp_does_not_retry_timeout(monkeypatch) -> None:
+    """Timeout = network problem → fail fast."""
+    calls = {"n": 0}
+
+    async def fake_open(host, port):  # noqa: ANN001
+        calls["n"] += 1
+        raise asyncio.TimeoutError("connect timeout")
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+
+    t = SerialTransport(tcp_host="localhost", tcp_port=9001)
+    t._CONNECT_BACKOFF_S = (0.0, 0.0, 0.0)
+    with pytest.raises(ConnectionError, match="Cannot reach"):
+        await t._open_tcp_with_retry()
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_open_tcp_succeeds_first_attempt(monkeypatch) -> None:
+    """No race → no retry penalty; one open_connection call."""
+    calls = {"n": 0}
+    fake_reader = asyncio.StreamReader()
+    fake_writer_obj = type(
+        "W", (), {
+            "close": lambda self: None,
+            "wait_closed": staticmethod(lambda: asyncio.sleep(0)),
+        },
+    )()
+
+    async def fake_open(host, port):  # noqa: ANN001
+        calls["n"] += 1
+        return fake_reader, fake_writer_obj
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+
+    t = SerialTransport(tcp_host="localhost", tcp_port=9001)
+    link = await t._open_tcp_with_retry()
+    assert link.mode == "tcp"
+    assert calls["n"] == 1

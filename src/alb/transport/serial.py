@@ -153,19 +153,22 @@ class SerialTransport(Transport):
         self._link: _SerialLink | None = None
 
     # ── Connection management ────────────────────────────────────
+    # Bounded retry budget for the ser2net "back-to-back connect" race
+    # (Bug-1): two `alb serial …` commands separated by < ~200ms can hit
+    # the moment ser2net is still releasing the underlying serial fd from
+    # the previous client; the kernel then RSTs the second TCP connect.
+    # Retry only on transient resets — refused / timeout / generic OSError
+    # almost always mean a real configuration problem and should fail fast.
+    _TRANSIENT_CONNECT_ERRORS: tuple[type[BaseException], ...] = (
+        ConnectionResetError,
+        BrokenPipeError,
+    )
+    _CONNECT_BACKOFF_S: tuple[float, ...] = (0.1, 0.3, 0.6)
+
     async def _open(self) -> _SerialLink:
         """Open a connection. Caller is responsible for closing via _close()."""
         if self.tcp_host and self.tcp_port:
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.tcp_host, self.tcp_port),
-                    timeout=10,
-                )
-            except (OSError, asyncio.TimeoutError) as e:
-                raise ConnectionError(
-                    f"Cannot reach ser2net endpoint {self.tcp_host}:{self.tcp_port}: {e}"
-                ) from e
-            return _SerialLink(reader=reader, writer=writer, closer=None, mode="tcp")
+            return await self._open_tcp_with_retry()
 
         assert self.device is not None
         if not os.path.exists(self.device):
@@ -186,6 +189,44 @@ class SerialTransport(Transport):
             url=self.device, baudrate=self.baud
         )
         return _SerialLink(reader=reader, writer=writer, closer=None, mode="local")
+
+    async def _open_tcp_with_retry(self) -> _SerialLink:
+        """TCP connect with bounded retry on transient resets.
+
+        Retries are scheduled at cumulative offsets ~0.1 / 0.4 / 1.0s
+        (the entries in :attr:`_CONNECT_BACKOFF_S`). Non-transient errors
+        (refused / timeout / ENETUNREACH / ENOENT-style) raise on the
+        first attempt — those reflect real misconfig, not a race.
+        """
+        last_err: Exception | None = None
+        attempts = len(self._CONNECT_BACKOFF_S)
+        for attempt in range(1, attempts + 1):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.tcp_host, self.tcp_port),
+                    timeout=10,
+                )
+                return _SerialLink(
+                    reader=reader, writer=writer, closer=None, mode="tcp"
+                )
+            except self._TRANSIENT_CONNECT_ERRORS as e:
+                last_err = e
+                if attempt < attempts:
+                    await asyncio.sleep(self._CONNECT_BACKOFF_S[attempt - 1])
+                    continue
+                raise ConnectionError(
+                    f"ser2net endpoint {self.tcp_host}:{self.tcp_port} "
+                    f"kept resetting after {attempts} attempts: {e}"
+                ) from e
+            except (OSError, asyncio.TimeoutError) as e:
+                raise ConnectionError(
+                    f"Cannot reach ser2net endpoint "
+                    f"{self.tcp_host}:{self.tcp_port}: {e}"
+                ) from e
+        # Type-checker: the loop body always returns or raises.
+        raise ConnectionError(
+            f"unreachable: ser2net retry budget logic bug: {last_err}"
+        )
 
     async def _close(self, link: _SerialLink) -> None:
         try:
