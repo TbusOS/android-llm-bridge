@@ -323,14 +323,13 @@ def setup_serial(
                 "parameters to config.toml[/]"
             )
             raise typer.Exit(1)
-        # Only persist what the user actually expressed — passing
-        # `default_tcp_port=None` later in tomllib re-load would simply
-        # fall back to defaults (existing keys outside [transport.serial]
-        # are preserved by the merge).
+        # Only persist what the user actually expressed.  Untouched keys
+        # (pty_link_dir / handshake_timeout / prompts) keep whatever the
+        # user previously configured — `_persist_serial_config` merges,
+        # never blanket-replaces.
         if device:
             updates: dict[str, Any] = {
                 "default_baud": baud,
-                "pty_link_dir": "",  # local /dev mode doesn't use the TCP path
             }
         else:
             updates = {

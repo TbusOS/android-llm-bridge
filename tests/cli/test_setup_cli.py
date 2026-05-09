@@ -110,6 +110,28 @@ def test_persist_refuses_to_clobber_invalid_toml(tmp_path: Path) -> None:
     assert "not [valid TOML" in path.read_text()
 
 
+def test_persist_does_not_clobber_unrelated_serial_keys(tmp_path: Path) -> None:
+    """Re-running --save in device mode must NOT zero out pty_link_dir.
+
+    Locks against a previous foot-gun where device-mode --save force-set
+    pty_link_dir = "" — clobbering whatever the user had previously
+    configured. _persist_serial_config now only writes what the caller
+    explicitly passed in `updates`.
+    """
+    path = Path(tmp_path / "config.toml")
+    path.write_text(
+        "[transport.serial]\n"
+        'pty_link_dir = "/srv/pty/cache"\n'
+        "handshake_timeout = 4.5\n"
+    )
+    # Simulate device-mode --save: only pass `default_baud`, nothing else.
+    _persist_serial_config({"default_baud": 921600})
+    raw = _read(path)
+    assert raw["transport"]["serial"]["default_baud"] == 921600
+    assert raw["transport"]["serial"]["pty_link_dir"] == "/srv/pty/cache"
+    assert raw["transport"]["serial"]["handshake_timeout"] == 4.5
+
+
 def test_persist_creates_parent_directory(tmp_path: Path, monkeypatch) -> None:
     """When XDG dir doesn't exist yet, helper mkdirs it."""
     target = tmp_path / "deep" / "nested" / "config.toml"

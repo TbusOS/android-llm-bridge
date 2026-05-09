@@ -185,6 +185,32 @@ def test_session_show_json(monkeypatch, tmp_path: Path) -> None:
     assert payload["messages"][0]["content"] == "hello"
 
 
+def test_session_show_json_returns_all_messages_regardless_of_full(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """JSON output is always full (--full is human-render only).
+
+    Locks the contract that programmatic consumers see every message
+    regardless of whether the caller passed --full. Avoids a foot-gun
+    where a script silently parses 10 of N messages.
+    """
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    msgs = [{"role": "user", "content": f"msg-{i}"} for i in range(15)]
+    _seed_session(tmp_path, "20260509-json-full", messages=msgs)
+
+    # default (no --full) and --full should produce identical JSON in JSON mode
+    r1 = runner.invoke(app, ["--json", "session", "show", "20260509-json-full"])
+    r2 = runner.invoke(
+        app, ["--json", "session", "show", "20260509-json-full", "--full"]
+    )
+    assert r1.exit_code == 0
+    assert r2.exit_code == 0
+    p1 = json.loads(r1.stdout)
+    p2 = json.loads(r2.stdout)
+    assert p1 == p2
+    assert len(p1["messages"]) == 15  # all 15, never elided
+
+
 # ─── replay ────────────────────────────────────────────────────────
 
 

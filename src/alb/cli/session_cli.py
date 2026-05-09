@@ -37,7 +37,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from alb.agent.session import ChatSession
-from alb.infra.workspace import workspace_root
+from alb.infra.workspace import InvalidSessionId, session_path, workspace_root
 
 app = typer.Typer(help="Inspect persisted chat sessions.")
 console = Console()
@@ -158,8 +158,19 @@ def cmd_list(
 
 
 def _ensure_session_exists(session_id: str) -> Path:
-    """Return the session dir; raise typer.Exit(1) with a friendly message otherwise."""
-    sdir = _sessions_root() / session_id
+    """Return the session dir; raise typer.Exit(1) on missing / invalid id.
+
+    Validation runs through `infra.workspace.session_path` so traversal
+    attempts (`../etc`, absolute paths, separators) are rejected at the
+    same root layer that protects every other entry point (chat_cli /
+    Web UI / future MCP tool). See L-035.
+    """
+    try:
+        sdir = session_path(session_id, ensure_dir=False)
+    except InvalidSessionId as e:
+        console.print(f"[red]✗[/] invalid session id [bold]{session_id}[/]")
+        console.print(f"  [dim]{e}[/]")
+        raise typer.Exit(1) from None
     if not sdir.is_dir():
         console.print(
             f"[red]✗[/] no session [bold]{session_id}[/] under "
@@ -198,22 +209,36 @@ def cmd_show(
     ctx: typer.Context,
     session_id: str = typer.Argument(...),
     full: bool = typer.Option(
-        False, "--full", help="Print every message (default: first 5 + last 5)."
+        False,
+        "--full",
+        help="Text-mode only: print every message (default: first 5 + last 5). "
+        "JSON mode always returns all messages.",
     ),
 ) -> None:
-    """Show meta + head/tail summary of one session."""
+    """Show meta + head/tail summary of one session.
+
+    Output rules:
+        - text mode default → first 5 + ellipsis + last 5 messages
+        - text mode `--full` → every message rendered
+        - `alb --json session show <id>` → always all messages (programmatic
+          consumers get a stable shape; `--full` is ignored in JSON)
+    """
     _ensure_session_exists(session_id)
     s = ChatSession.load(session_id)
     msgs = s.messages()
 
     if (ctx.obj or {}).get("json"):
         meta = _load_meta(s.meta_file)
+        # JSON consumers always get the full list; --full is a human-render
+        # flag (text mode elides middle when len > 10). Programmatic users
+        # don't want their parser to hit a "5 head + 5 tail with elision
+        # marker" surprise.
         print(json.dumps(
             {
                 "ok": True,
                 "meta": meta,
                 "turns": len(msgs),
-                "messages": [m.to_dict() for m in (msgs if full else msgs)],
+                "messages": [m.to_dict() for m in msgs],
             },
             indent=2,
             ensure_ascii=False,

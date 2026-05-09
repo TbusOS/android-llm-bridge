@@ -9,8 +9,19 @@ M0 skeleton; full implementation in M1.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+# session_id factory format: `<YYYYMMDD>-<8 hex>` (see agent/session.new_session_id).
+# The pattern is intentionally tighter than the factory so we reject any
+# user-supplied id that could escape the sessions/ root via `..` / absolute
+# paths / unicode trickery. See L-035 (path-traversal hardening).
+_SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+class InvalidSessionId(ValueError):
+    """Raised when a user-supplied session_id would escape `sessions/`."""
 
 
 def workspace_root() -> Path:
@@ -87,9 +98,34 @@ def resolve_capture_path(
 
 
 def session_path(session_id: str, filename: str = "", *, ensure_dir: bool = True) -> Path:
-    """Path inside a session directory."""
+    """Path inside a session directory.
+
+    Rejects any session_id that would escape `<workspace>/sessions/`:
+
+    - empty / dot / `..` / containing `/` or `\\` / absolute paths
+    - any character outside ``[A-Za-z0-9_-]``
+    - longer than 128 characters
+
+    These checks are at the root layer (not just the CLI) so every caller
+    — `chat_cli` / `session_cli` / future Web UI / future MCP tool — gets
+    the same protection without duplicating sanitization. Raises
+    :class:`InvalidSessionId` (a `ValueError` subclass) on rejection.
+    """
+    if not _SAFE_SESSION_ID_RE.match(session_id):
+        raise InvalidSessionId(
+            f"invalid session_id {session_id!r}: must match [A-Za-z0-9][A-Za-z0-9_-]* "
+            f"(<= 128 chars); rejected to prevent path traversal"
+        )
     root = workspace_root()
     base = root / "sessions" / session_id
     if ensure_dir:
         base.mkdir(parents=True, exist_ok=True)
+    # Defence-in-depth: even if regex passes, double-check resolved path is
+    # under sessions/. Catches any future regex relaxation that lets a `..`
+    # slip through unicode or symlink games.
+    sessions_root = (root / "sessions").resolve()
+    if not base.resolve().is_relative_to(sessions_root):
+        raise InvalidSessionId(
+            f"session_id {session_id!r} escapes sessions/ after path resolution"
+        )
     return base / filename if filename else base

@@ -193,13 +193,16 @@ class SerialTransport(Transport):
     async def _open_tcp_with_retry(self) -> _SerialLink:
         """TCP connect with bounded retry on transient resets.
 
-        Retries are scheduled at cumulative offsets ~0.1 / 0.4 / 1.0s
-        (the entries in :attr:`_CONNECT_BACKOFF_S`). Non-transient errors
-        (refused / timeout / ENETUNREACH / ENOENT-style) raise on the
-        first attempt — those reflect real misconfig, not a race.
+        Layout: ``len(_CONNECT_BACKOFF_S) + 1`` attempts total, with each
+        backoff entry consumed as the wait *between* attempts. Default
+        ``_CONNECT_BACKOFF_S = (0.1, 0.3, 0.6)`` means 4 attempts dotted
+        across cumulative ~1.0s, matching the commit-message claim.
+        Non-transient errors (refused / timeout / ENETUNREACH / ENOENT-
+        style) raise on the first attempt — those reflect real misconfig,
+        not a race.
         """
         last_err: Exception | None = None
-        attempts = len(self._CONNECT_BACKOFF_S)
+        attempts = len(self._CONNECT_BACKOFF_S) + 1
         for attempt in range(1, attempts + 1):
             try:
                 reader, writer = await asyncio.wait_for(
@@ -212,6 +215,8 @@ class SerialTransport(Transport):
             except self._TRANSIENT_CONNECT_ERRORS as e:
                 last_err = e
                 if attempt < attempts:
+                    # Sleep entries map 1:1 to inter-attempt gaps:
+                    # attempt=1 → sleep[0], attempt=2 → sleep[1], ...
                     await asyncio.sleep(self._CONNECT_BACKOFF_S[attempt - 1])
                     continue
                 raise ConnectionError(
@@ -223,9 +228,8 @@ class SerialTransport(Transport):
                     f"Cannot reach ser2net endpoint "
                     f"{self.tcp_host}:{self.tcp_port}: {e}"
                 ) from e
-        # Type-checker: the loop body always returns or raises.
-        raise ConnectionError(
-            f"unreachable: ser2net retry budget logic bug: {last_err}"
+        raise AssertionError(  # mypy doesn't track loop exhaustion
+            f"ser2net retry loop exited without return/raise: {last_err}"
         )
 
     async def _close(self, link: _SerialLink) -> None:

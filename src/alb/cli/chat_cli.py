@@ -30,6 +30,7 @@ from alb.agent.loop import AgentLoop
 from alb.agent.session import ChatSession
 from alb.cli.common import run_async
 from alb.infra.prompt_builder import default_agent_prompt
+from alb.infra.workspace import InvalidSessionId
 
 app = typer.Typer(
     name="chat",
@@ -160,7 +161,12 @@ def chat(
     )
 
     if session_id:
-        session = ChatSession.load(session_id)
+        try:
+            session = ChatSession.load(session_id)
+        except InvalidSessionId as e:
+            console.print(f"[red]✗ invalid session id: {session_id}[/]")
+            console.print(f"  [dim]{e}[/]")
+            raise typer.Exit(code=1) from None
         if not session.meta_file.exists():
             console.print(f"[red]✗ session not found: {session_id}[/]")
             raise typer.Exit(code=1)

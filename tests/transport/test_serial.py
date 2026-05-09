@@ -814,7 +814,11 @@ async def test_open_tcp_retries_transient_reset_then_succeeds(monkeypatch) -> No
 
 @pytest.mark.asyncio
 async def test_open_tcp_exhausts_budget_raises_connection_error(monkeypatch) -> None:
-    """All attempts reset → raises ConnectionError, exhausted attempts in message."""
+    """All attempts reset → raises ConnectionError, exhausted attempts in message.
+
+    With N backoff entries, total attempts = N+1 (each entry is a *gap*
+    between attempts). N=3 backoff → 4 attempts.
+    """
     calls = {"n": 0}
 
     async def fake_open(host, port):  # noqa: ANN001
@@ -825,9 +829,9 @@ async def test_open_tcp_exhausts_budget_raises_connection_error(monkeypatch) -> 
 
     t = SerialTransport(tcp_host="localhost", tcp_port=9001)
     t._CONNECT_BACKOFF_S = (0.0, 0.0, 0.0)
-    with pytest.raises(ConnectionError, match="kept resetting"):
+    with pytest.raises(ConnectionError, match="kept resetting after 4 attempts"):
         await t._open_tcp_with_retry()
-    assert calls["n"] == 3  # all 3 attempts consumed
+    assert calls["n"] == 4  # 3 backoff entries → 4 attempts
 
 
 @pytest.mark.asyncio
@@ -864,6 +868,33 @@ async def test_open_tcp_does_not_retry_timeout(monkeypatch) -> None:
     with pytest.raises(ConnectionError, match="Cannot reach"):
         await t._open_tcp_with_retry()
     assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_open_tcp_consumes_every_backoff_entry(monkeypatch) -> None:
+    """All N backoff entries get sleep'd between the N+1 attempts.
+
+    Locks against a previous off-by-one where the last entry was never
+    consumed, so the documented "cumulative ~1.0s" was actually ~0.4s.
+    """
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        await real_sleep(0)  # yield without actual delay
+
+    async def fake_open(host, port):  # noqa: ANN001
+        raise ConnectionResetError(104, "reset")
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    t = SerialTransport(tcp_host="localhost", tcp_port=9001)
+    t._CONNECT_BACKOFF_S = (0.1, 0.3, 0.6)  # default
+    with pytest.raises(ConnectionError):
+        await t._open_tcp_with_retry()
+    assert sleeps == [0.1, 0.3, 0.6]  # every entry consumed in order
 
 
 @pytest.mark.asyncio
