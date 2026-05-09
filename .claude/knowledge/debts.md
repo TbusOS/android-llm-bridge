@@ -11,10 +11,9 @@
 
 ---
 
-## 索引（按状态 + 编号 · 35 项 / 34 关 + 1 候选 + 0 进行中 · 2026-05-08）
+## 索引（按状态 + 编号 · 35 项 / 35 关 + 0 候选 · 2026-05-09）
 
-**候选未关（1 项 · 需用户决策方向）**
-- DEBT-033 (high) · mockup v3 扩 inspect 4 子 tab baseline
+**候选未关：0** —— 全部 reviewer audit batch backlog 收尾完成 🎉
 
 **未关 backlog（5 项 · 视触发条件）**
 - DEBT-005 · workspace/sessions 没自动清理
@@ -28,8 +27,9 @@
 - DEBT-016 · vite base 在 GH Pages 部署不正确，SPA shell 资源加载 404
 - DEBT-022 (mid) · device card 信息薄 · 缺刷新机制 + 多维元数据
 
-**已关（按时间倒序 · 27 项）**
+**已关（按时间倒序 · 28 项）**
 
+5/09：033（4-step mockup v3 ship）
 5/08：032 034 035
 5/07：021 031
 5/06：018 029（含 MID-6 4-commit batch）
@@ -860,29 +860,40 @@
 
 ---
 
-## DEBT-033 · mockup v3 扩 inspect 4 子 tab baseline
+## DEBT-033 · mockup v3 扩 inspect 4 子 tab baseline —— **CLOSED 2026-05-09**
 
 - **severity**：high（mockup-baseline-checker 标 high）但**非紧急**——
   inspect 子 tab 的 BEM class（uart-tab__* / screenshot-tab__* /
   uidump-tab__* / files-tab__*）从 PR-C/F/G 时期就在 React 单边推
   进，mockup v2 只覆盖 dashboard + inspect subnav。已是历史欠债的
   延续，不是 5/06~5/08 新增违规
-- **位置**：`docs/webui-preview-v2.html`（仅画 dashboard + inspect
+- **位置**：`docs/webui-preview-v2.html`（原仅画 dashboard + inspect
   subnav + sys-grid + charts-grid）
-- **现象**：约 30 个 React 自创 BEM class 在 mockup 0 命中。违反
-  feedback memory "React UI 必须以 mockup HTML 为基线"硬规则，但
-  事实上是渐进引入，mockup 滞后
-- **是否计划修**：是（视用户决策时机）
-- **还债 sketch**：
-  1. 起 mockup v3 加 4 段 inspect 子 tab 视觉骨架（screenshot
-     sidebar+viewer / uart capture sidebar+pre / ui-dump tree /
-     files dual-pane+preview）
-  2. 三道闸过（verify.py / visual-audit.mjs / screenshot.mjs）
-  3. 回审 React 实现是否需调整对齐
-- **工作量**：~600-800 行 HTML + 多次 visual review 迭代
+- **关闭**：2026-05-08 part 123 + 2026-05-09 part 124~126 共 4 commit
+  逐 step ship：
+  - step 1 ScreenshotTab（commit `dccf80a` · 2026-05-08）—— sidebar +
+    Android phone placeholder SVG viewer + .uart-tab__* 共享骨架立
+    template
+  - step 2 UART capture（commit `1156dfa` · 2026-05-09）—— duration
+    input + sidebar with delete trash + .uart-tab__viewer 黑底 mono
+    pre 文本（21 行 kernel printk demo）
+  - step 3 UI Dump（commit `7caf1f6` · 2026-05-09）—— filter input
+    带 ✕ + counter aria-live + 14 row 缩进 tree（class/id/text/
+    bounds/click pill 颜色编码）
+  - step 4 Files（commit (待提) · 2026-05-09）—— dual-pane (device +
+    workspace) + Pull/Push/Download 按钮 + .files-tab__preview 内联
+    预览（last_kmsg 风格 stack trace demo · min-height 240 防 CLS）
+- **设计决策**：mockup 不重复 React side 所有 modifier（hover-only
+  delete / armed two-step / virtualized list 等），只画 baseline
+  视觉骨架 + 注释引用 components.css 完整 modifier 位置——避免
+  mockup 与 React side 双向同步债
+- **三道闸**：4 step 各自 verify.py / visual-audit.mjs / screenshot.mjs
+  全过 · 截图分别存
+  `.claude/reports/screenshots/debt033-step{1,2,3,4}-mockup.png`
 - **来源**：mockup-baseline-checker 2026-05-08 audit · 主 finding
 - **关联**：feedback `feedback_react_ui_design_baseline.md`（"先
-  mockup 走三闸 → React 照搬 class"原则）
+  mockup 走三闸 → React 照搬 class"原则） · L-001 (React UI 必须以
+  mockup HTML 为视觉基线)
 
 ---
 

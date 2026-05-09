@@ -1006,6 +1006,107 @@
         text-transform: uppercase;
       }
 
+      /* Files tab — dual pane file browser (device left, workspace right)
+         + inline preview pane below. DEBT-033 step 4/4 · 2026-05-09. */
+      .files-tab {
+        display: flex; flex-direction: column;
+        gap: var(--space-3); margin-top: var(--space-3);
+      }
+      .files-tab__panes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-3);
+      }
+      .files-tab__pane {
+        display: flex; flex-direction: column;
+        background: white;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        min-height: 360px;
+      }
+      .files-tab__pane-head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: var(--space-2) var(--space-3);
+        border-bottom: 1px solid var(--anth-light-gray);
+        background: var(--anth-cream);
+      }
+      .files-tab__pane-title { font-family: var(--font-heading); font-size: 13px; font-weight: 600; }
+      .files-tab__pane-sub {
+        font-family: var(--font-mono); font-size: 10px;
+        color: var(--anth-text-tertiary); margin-top: 2px;
+      }
+      .files-tab__pane-path {
+        padding: var(--space-2) var(--space-3);
+        border-bottom: 1px solid var(--anth-light-gray);
+        background: var(--anth-cream);
+      }
+      .files-tab__pane-path input {
+        width: 100%; padding: 4px 8px;
+        font-family: var(--font-mono); font-size: 11px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-sm);
+        background: white;
+      }
+      .files-tab__pane-list { flex: 1; overflow-y: auto; }
+      .files-tab__pane-list ul { list-style: none; margin: 0; padding: 0; }
+      .files-tab__pane-list li { border-bottom: 1px solid #f3eee7; }
+      .files-tab__pane-list li > button {
+        width: 100%; text-align: left;
+        background: transparent; border: 0;
+        padding: 6px var(--space-3);
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: var(--space-2); align-items: center;
+        cursor: pointer; font-size: 12px;
+      }
+      .files-tab__pane-list li.is-active > button { background: #fbe9dd; }
+      .files-tab__entry-name {
+        font-family: var(--font-mono); color: var(--anth-text);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .files-tab__entry-meta, .files-tab__entry-mtime {
+        font-family: var(--font-mono); font-size: 10px;
+        color: var(--anth-text-tertiary);
+      }
+      /* Inline preview pane — DEBT-033 step 4 · LOW-3 close 5/07.
+         min-height locks pane against CLS shift between loading/data
+         (ui-fluency 2026-05-07 HIGH-3 fix in React side). */
+      .files-tab__preview {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: var(--space-3);
+        display: flex; flex-direction: column;
+        gap: var(--space-2);
+        min-height: 240px;
+      }
+      .files-tab__preview-head {
+        display: flex; align-items: center; gap: var(--space-3);
+        border-bottom: 1px solid var(--anth-light-gray);
+        padding-bottom: var(--space-2);
+      }
+      .files-tab__preview-name {
+        flex: 1;
+        font-family: var(--font-mono); font-size: 12px;
+        color: var(--anth-text);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .files-tab__preview-meta {
+        font-family: var(--font-mono); font-size: 11px;
+        color: var(--anth-text-tertiary);
+      }
+      .files-tab__preview-pre {
+        margin: 0;
+        font-family: var(--font-mono); font-size: 11px;
+        line-height: 1.5;
+        white-space: pre-wrap; word-break: break-word;
+        max-height: 360px; overflow-y: auto;
+        background: var(--anth-cream);
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-sm);
+      }
+
       /* ==========================================================
          Footer caption
          ========================================================== */
@@ -2076,6 +2177,88 @@
               <div class="uidump-tab__row" style="padding-left: 36px; color: var(--anth-text-tertiary); font-style: italic;">
                 <span>… 173 more rows truncated by virtualization …</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Inspect → Files sub-tab preview (DEBT-033 step 4/4 · 2026-05-09) -->
+          <div class="group-head">
+            <h2><span class="lang-en">Inspect → Files</span><span class="lang-zh">Inspect → 文件</span></h2>
+            <span class="meta"><span class="lang-en">Two-pane file browser (device · workspace) + inline preview · Pull/Push with HITL gate</span><span class="lang-zh">双栏文件浏览（设备 · 工作区）+ 内联预览 · Pull/Push 带 HITL</span></span>
+          </div>
+
+          <div class="files-tab">
+            <div class="files-tab__panes">
+              <!-- Left: Device pane -->
+              <div class="files-tab__pane">
+                <div class="files-tab__pane-head">
+                  <div>
+                    <div class="files-tab__pane-title"><span class="lang-en">Device</span><span class="lang-zh">设备</span></div>
+                    <div class="files-tab__pane-sub">7bcb178…</div>
+                  </div>
+                  <div style="display:flex; gap:4px;">
+                    <button type="button" aria-label="Parent directory" style="padding:4px 8px; border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm); background:white; font-size:11px;">↑</button>
+                    <button type="button" aria-label="Refresh" style="padding:4px 8px; border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm); background:white; font-size:11px;">↻</button>
+                  </div>
+                </div>
+                <div class="files-tab__pane-path"><input type="text" value="/sdcard/" spellcheck="false"></div>
+                <div class="files-tab__pane-list">
+                  <ul>
+                    <li><button type="button"><span class="files-tab__entry-name">📁 Android</span><span class="files-tab__entry-meta">drwxr-xr-x</span><span class="files-tab__entry-mtime">2026-04-21</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">📁 DCIM</span><span class="files-tab__entry-meta">drwxr-xr-x</span><span class="files-tab__entry-mtime">2026-05-08</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">📁 Download</span><span class="files-tab__entry-meta">drwxr-xr-x</span><span class="files-tab__entry-mtime">2026-05-09</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">📁 Pictures</span><span class="files-tab__entry-meta">drwxr-xr-x</span><span class="files-tab__entry-mtime">2026-05-08</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">· build.prop.bak</span><span class="files-tab__entry-meta">8.2 KB · -rw-r-----</span><span class="files-tab__entry-mtime">2026-05-08</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">· last_kmsg</span><span class="files-tab__entry-meta">156 KB · -rw-r-----</span><span class="files-tab__entry-mtime">2026-05-09</span></button></li>
+                  </ul>
+                </div>
+                <div style="padding:var(--space-2) var(--space-3); border-top: 1px solid var(--anth-light-gray); display:flex; gap:var(--space-2);">
+                  <button type="button" style="background: var(--anth-orange); color: white; padding: 4px 10px; font-size: 12px; border-radius: var(--radius-sm); border: 1px solid var(--anth-orange);">↓ <span class="lang-en">Pull</span><span class="lang-zh">拉到工作区</span></button>
+                </div>
+              </div>
+
+              <!-- Right: Workspace pane -->
+              <div class="files-tab__pane">
+                <div class="files-tab__pane-head">
+                  <div>
+                    <div class="files-tab__pane-title"><span class="lang-en">Workspace</span><span class="lang-zh">工作区</span></div>
+                    <div class="files-tab__pane-sub">devices/7bcb178…/pulls</div>
+                  </div>
+                  <div style="display:flex; gap:4px;">
+                    <button type="button" aria-label="Parent directory" style="padding:4px 8px; border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm); background:white; font-size:11px;">↑</button>
+                    <button type="button" aria-label="Refresh" style="padding:4px 8px; border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm); background:white; font-size:11px;">↻</button>
+                  </div>
+                </div>
+                <div class="files-tab__pane-path"><input type="text" value="devices/7bcb178/pulls" spellcheck="false"></div>
+                <div class="files-tab__pane-list">
+                  <ul>
+                    <li class="is-active"><button type="button" aria-current="true"><span class="files-tab__entry-name">· last_kmsg</span><span class="files-tab__entry-meta">156 KB</span><span class="files-tab__entry-mtime">just now</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">· build.prop.bak</span><span class="files-tab__entry-meta">8.2 KB</span><span class="files-tab__entry-mtime">2m ago</span></button></li>
+                    <li><button type="button"><span class="files-tab__entry-name">· bugreport.zip</span><span class="files-tab__entry-meta">11.4 MB</span><span class="files-tab__entry-mtime">1h ago</span></button></li>
+                  </ul>
+                </div>
+                <div style="padding:var(--space-2) var(--space-3); border-top: 1px solid var(--anth-light-gray); display:flex; gap:var(--space-2);">
+                  <button type="button" style="background: var(--anth-orange); color: white; padding: 4px 10px; font-size: 12px; border-radius: var(--radius-sm); border: 1px solid var(--anth-orange);">↑ <span class="lang-en">Push</span><span class="lang-zh">推到设备</span></button>
+                  <button type="button" style="background: white; padding: 4px 10px; font-size: 12px; border-radius: var(--radius-sm); border: 1px solid var(--anth-light-gray);">⬇ <span class="lang-en">Download</span><span class="lang-zh">下载</span></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Inline preview pane (visible when selected workspace file is text) -->
+            <div class="files-tab__preview">
+              <div class="files-tab__preview-head">
+                <span class="files-tab__preview-name">devices/7bcb178/pulls/last_kmsg</span>
+                <span class="files-tab__preview-meta">156.0 KB · utf-8 · truncated</span>
+                <button type="button" aria-label="Close preview" style="background:none; border:0; padding:2px; cursor:pointer; color:var(--anth-text-tertiary);">✕</button>
+              </div>
+              <pre class="files-tab__preview-pre">[12345.67890] android: app=com.example.foo died: SIGABRT
+[12345.68012] backtrace:
+  #00 pc 00012345  /system/lib64/libc.so (abort+44)
+  #01 pc 00067890  /system/lib64/libfoo.so (Foo::crash+128)
+  #02 pc 000abcde  /apex/com.android.runtime/lib64/libart.so
+[12345.68220] thermal_zone0: throttling at 78.5 C
+[12345.69001] battery: voltage 3.92 V · capacity 71%
+[12345.70123] mali: GPU reset triggered after 3 timeouts
+[12345.70554] dmesg buffer rewound · 16384 lines truncated …</pre>
             </div>
           </div>
 
