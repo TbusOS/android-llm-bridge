@@ -56,6 +56,36 @@ def workspace_path(
     return base / filename
 
 
+def resolve_capture_path(
+    output: Path | str | None,
+    default_name: str,
+    *,
+    default_category: str = "logs",
+    device: str | None = None,
+) -> Path:
+    """Decide where a capture artifact lands.
+
+    Shared by capture_uart / collect_logcat / collect_dmesg / bugreport so all
+    `--output / -o` flags behave the same way (N=4 callers · L-020 abstract).
+
+    Rules:
+        - output=None        → workspace_path(default_category, default_name, device=device)
+        - output is an existing dir or ends with "/"  → <dir>/<default_name>
+          (directory is created if missing)
+        - otherwise → treat as exact file path (parent is created)
+    """
+    if output is None:
+        return workspace_path(default_category, default_name, device=device)
+
+    p = Path(output).expanduser()
+    looks_like_dir = p.is_dir() or str(output).endswith(("/", "\\"))
+    if looks_like_dir:
+        p.mkdir(parents=True, exist_ok=True)
+        return p / default_name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def session_path(session_id: str, filename: str = "", *, ensure_dir: bool = True) -> Path:
     """Path inside a session directory."""
     root = workspace_root()

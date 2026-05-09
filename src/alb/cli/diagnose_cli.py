@@ -12,11 +12,19 @@ app = typer.Typer(help="Diagnostic data collection.")
 
 @app.command("bugreport")
 def cmd_bugreport(
-    ctx: typer.Context, device: str | None = typer.Option(None, "--device")
+    ctx: typer.Context,
+    device: str | None = typer.Option(None, "--device"),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Local zip path (default: workspace/.../bugreports/<ts>-bugreport.zip; "
+        "trailing '/' or existing dir → that dir + auto name).",
+    ),
 ) -> None:
-    """Run adb bugreport and pull the zip."""
+    """Run adb bugreport and pull the zip (default: workspace/, or --output)."""
     t = get_transport(ctx, device_serial=device)
-    result = run_async(bugreport(t, device=device))
+    result = run_async(bugreport(t, device=device, output=output))
     print_result(ctx, result)
 
 

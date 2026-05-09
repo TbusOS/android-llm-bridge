@@ -90,6 +90,63 @@ async def test_collect_dmesg_counts_errors(monkeypatch, tmp_path: Path) -> None:
     assert r.data.errors >= 2  # "BUG:" + "panic" + "failed" pattern
 
 
+# ─── --output / -o overrides (parity with capture_uart) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_collect_logcat_output_as_file_path(tmp_path: Path) -> None:
+    """--output <file>: log written to that exact file (parent auto-created)."""
+    chunks = [b"04-15 10:30:00.123 1 1 I A: hi\n"]
+    t = _mk_transport(stream_chunks=chunks)
+    target = tmp_path / "subdir" / "my-run.txt"  # parent doesn't exist
+    r = await collect_logcat(t, duration=1, output=target)
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art == target
+    assert art.exists()
+    assert target.parent.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_collect_logcat_output_as_directory(tmp_path: Path) -> None:
+    """--output <dir>/: trailing slash → auto-create dir + <ts>-logcat.txt."""
+    chunks = [b"04-15 10:30:00.123 1 1 I A: hi\n"]
+    t = _mk_transport(stream_chunks=chunks)
+    out_dir = tmp_path / "my_logs"
+    r = await collect_logcat(t, duration=1, output=str(out_dir) + "/")
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art.parent == out_dir
+    assert art.name.endswith("-logcat.txt")
+    assert art.exists()
+
+
+@pytest.mark.asyncio
+async def test_collect_dmesg_output_as_file_path(tmp_path: Path) -> None:
+    """--output <file>: dmesg written to exact file (parent auto-created)."""
+    chunks = [b"[ 0.0 ] msg\n"]
+    t = _mk_transport(stream_chunks=chunks)
+    target = tmp_path / "deep" / "boot.log"
+    r = await collect_dmesg(t, duration=1, output=target)
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art == target
+    assert art.exists()
+
+
+@pytest.mark.asyncio
+async def test_collect_dmesg_output_as_existing_directory(tmp_path: Path) -> None:
+    """--output <existing-dir>: dmesg lands inside (no trailing slash needed)."""
+    (tmp_path / "exists").mkdir()
+    chunks = [b"[ 0.0 ] msg\n"]
+    t = _mk_transport(stream_chunks=chunks)
+    r = await collect_dmesg(t, duration=1, output=tmp_path / "exists")
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art.parent == tmp_path / "exists"
+    assert art.name.endswith("-dmesg.txt")
+
+
 @pytest.mark.asyncio
 async def test_search_logs_rejects_bad_regex() -> None:
     r = await search_logs(pattern="[unclosed")

@@ -202,8 +202,15 @@ def logcat(
     tag: list[str] = typer.Option(None, "--tag", help="Tag filter (repeatable)."),
     clear: bool = typer.Option(False, "--clear", help="logcat -c before collecting."),
     device: str | None = typer.Option(None, "--device"),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Local log path (default: workspace/.../logs/<ts>-logcat.txt; "
+        "trailing '/' or existing dir → that dir + auto name).",
+    ),
 ) -> None:
-    """Collect logcat to workspace for `duration` seconds."""
+    """Collect logcat to workspace (or --output) for `duration` seconds."""
     transport = get_transport(ctx, device_serial=device)
     result = run_async(
         collect_logcat(
@@ -213,6 +220,7 @@ def logcat(
             tags=tag,
             clear_before=clear,
             device=device,
+            output=output,
         )
     )
     print_result(ctx, result)
@@ -223,10 +231,19 @@ def dmesg(
     ctx: typer.Context,
     duration: int = typer.Option(10, "--duration", "-d"),
     device: str | None = typer.Option(None, "--device"),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Local log path (default: workspace/.../logs/<ts>-dmesg.txt; "
+        "trailing '/' or existing dir → that dir + auto name).",
+    ),
 ) -> None:
-    """Collect kernel dmesg."""
+    """Collect kernel dmesg to workspace (or --output)."""
     transport = get_transport(ctx, device_serial=device)
-    result = run_async(collect_dmesg(transport, duration=duration, device=device))
+    result = run_async(
+        collect_dmesg(transport, duration=duration, device=device, output=output)
+    )
     print_result(ctx, result)
 
 

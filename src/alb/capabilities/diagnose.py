@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from alb.infra.result import Result, fail, ok
-from alb.infra.workspace import iso_timestamp, workspace_path
+from alb.infra.workspace import iso_timestamp, resolve_capture_path, workspace_path
 from alb.transport.base import Transport
 
 
@@ -78,11 +78,19 @@ async def bugreport(
     transport: Transport,
     *,
     device: str | None = None,
+    output: Path | str | None = None,
 ) -> Result[BugreportResult]:
-    """Trigger `bugreportz` and pull the zip into workspace.
+    """Trigger `bugreportz` and pull the zip into workspace (or `output`).
 
     LLM: takes 60-180s. Returns only the zip path; use alb_log_search on
     the extracted main.txt for analysis.
+
+    Args:
+        output: Optional override for the zip path (same rules as
+            `capture_uart` / `collect_logcat` / `resolve_capture_path`):
+            - None → workspace/.../bugreports/<ts>-bugreport.zip
+            - Existing dir or trailing "/" → that dir + auto file name
+            - Anything else → exact file path
     """
     if transport.name != "adb":
         return fail(
@@ -114,9 +122,12 @@ async def bugreport(
             category="capability",
         )
 
-    local_dir = workspace_path("bugreports", iso_timestamp(), device=device).parent
-    local_zip = local_dir / f"{iso_timestamp()}-bugreport.zip"
-    local_zip.parent.mkdir(parents=True, exist_ok=True)
+    local_zip = resolve_capture_path(
+        output,
+        f"{iso_timestamp()}-bugreport.zip",
+        default_category="bugreports",
+        device=device,
+    )
 
     pull_r = await transport.pull(remote_zip, local_zip)
     if not pull_r.ok:

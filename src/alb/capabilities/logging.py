@@ -15,7 +15,12 @@ from typing import Any
 
 from alb.infra.events import bus
 from alb.infra.result import Result, fail, ok
-from alb.infra.workspace import iso_timestamp, workspace_path, workspace_root
+from alb.infra.workspace import (
+    iso_timestamp,
+    resolve_capture_path,
+    workspace_path,
+    workspace_root,
+)
 from alb.transport.base import Transport
 
 
@@ -103,11 +108,19 @@ async def collect_logcat(
     tags: list[str] | None = None,
     clear_before: bool = False,
     device: str | None = None,
+    output: Path | str | None = None,
 ) -> Result[LogcatSummary]:
     """Collect logcat for N seconds into a workspace file.
 
     LLM: returns a summary (lines/errors/warnings). Full log is in
     `result.artifacts[0]`; use `search_logs` or `tail_log` to read it.
+
+    Args:
+        output: Optional override for the artifact path (same rules as
+            `capture_uart` / `_resolve_capture_path`):
+            - None → workspace/.../logs/<ts>-logcat.txt
+            - Existing dir or trailing "/" → that dir + auto file name
+            - Anything else → exact file path
     """
     if duration < 1 or duration > 3600:
         return fail(
@@ -133,8 +146,8 @@ async def collect_logcat(
     if tags and not filt:
         filt = " ".join(f"{t}:V" for t in tags) + " *:S"
 
-    artifact = workspace_path(
-        "logs",
+    artifact = _resolve_capture_path(
+        output,
         f"{iso_timestamp()}-logcat.txt",
         device=device,
     )
@@ -243,7 +256,14 @@ async def collect_dmesg(
     *,
     duration: int = 10,
     device: str | None = None,
+    output: Path | str | None = None,
 ) -> Result[DmesgSummary]:
+    """Collect kernel dmesg into a workspace file.
+
+    Args:
+        output: Optional override for the artifact path (same rules as
+            `capture_uart` / `collect_logcat` / `_resolve_capture_path`).
+    """
     if duration < 1 or duration > 3600:
         return fail(
             code="INVALID_DURATION",
@@ -252,8 +272,8 @@ async def collect_dmesg(
             category="input",
         )
 
-    artifact = workspace_path(
-        "logs",
+    artifact = _resolve_capture_path(
+        output,
         f"{iso_timestamp()}-dmesg.txt",
         device=device,
     )
@@ -469,32 +489,10 @@ async def _drain_stream(
                 break
 
 
-def _resolve_capture_path(
-    output: Path | str | None,
-    default_name: str,
-    *,
-    device: str | None = None,
-) -> Path:
-    """Decide where a capture artifact lands.
-
-    Rules:
-        - output=None        → workspace/.../logs/<default_name>
-        - output is an existing dir or ends with "/"  → <dir>/<default_name>
-          (directory is created if missing)
-        - otherwise → treat as exact file path (parent is created)
-    """
-    if output is None:
-        return workspace_path("logs", default_name, device=device)
-
-    p = Path(output).expanduser()
-    # Treat trailing slash or existing dir as "put file inside this dir".
-    # Everything else is a concrete file path.
-    looks_like_dir = p.is_dir() or str(output).endswith(("/", "\\"))
-    if looks_like_dir:
-        p.mkdir(parents=True, exist_ok=True)
-        return p / default_name
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+# NB: `_resolve_capture_path` was promoted to `infra/workspace.resolve_capture_path`
+# (N=4 callers across logging + diagnose). Keep the private alias for any
+# external code that imported the underscore name historically.
+_resolve_capture_path = resolve_capture_path
 
 
 def _resolve_search_targets(path: Path | None, device: str | None) -> list[Path]:

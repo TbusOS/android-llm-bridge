@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from pathlib import Path
+
 from alb.capabilities.diagnose import (
     _count_cpu_cores,
     _parse_bugreportz_output,
@@ -14,6 +16,7 @@ from alb.capabilities.diagnose import (
     _parse_wm_density,
     _parse_wm_size,
     anr_pull,
+    bugreport,
     devinfo,
 )
 from alb.infra.permissions import PermissionResult
@@ -223,6 +226,47 @@ async def test_devinfo_extras_full() -> None:
     assert r.data.extras["ram_avail_kb"] == 5500000
     assert r.data.extras["display"] == {"size": "1080x2400", "density": "420"}
     assert r.data.extras["temp_c"] == pytest.approx(47.35)
+
+
+# ─── bugreport --output (parity with capture_uart / logcat / dmesg) ────
+
+
+@pytest.mark.asyncio
+async def test_bugreport_output_as_file_path(monkeypatch, tmp_path: Path) -> None:
+    """--output <file>: zip written to that exact file (parent auto-created)."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path / "ws"))
+    t = _mk_transport({
+        "bugreportz": ShellResult(
+            ok=True, exit_code=0,
+            stdout="OK:/sdcard/bugreports/x.zip\n", stderr="", duration_ms=10,
+        ),
+    })
+    target = tmp_path / "out" / "session-A.zip"
+    r = await bugreport(t, device="abc", output=target)
+    assert r.ok
+    assert r.data is not None
+    art = Path(r.artifacts[0])
+    assert art == target
+    assert art.exists()
+
+
+@pytest.mark.asyncio
+async def test_bugreport_output_as_directory(monkeypatch, tmp_path: Path) -> None:
+    """--output <dir>/: trailing slash → auto-create dir + <ts>-bugreport.zip inside."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path / "ws"))
+    t = _mk_transport({
+        "bugreportz": ShellResult(
+            ok=True, exit_code=0,
+            stdout="OK:/sdcard/bugreports/x.zip\n", stderr="", duration_ms=10,
+        ),
+    })
+    out_dir = tmp_path / "captures"
+    r = await bugreport(t, device="abc", output=str(out_dir) + "/")
+    assert r.ok
+    art = Path(r.artifacts[0])
+    assert art.parent == out_dir
+    assert art.name.endswith("-bugreport.zip")
+    assert art.exists()
 
 
 @pytest.mark.asyncio
