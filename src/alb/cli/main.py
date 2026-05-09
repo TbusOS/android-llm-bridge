@@ -28,6 +28,7 @@ from alb.cli.app_cli import app as app_cli
 from alb.cli.chat_cli import app as chat_cli
 from alb.cli.common import get_transport, print_result, run_async
 from alb.cli.diagnose_cli import app as diagnose_cli
+from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
 from alb.cli.power_cli import app as power_cli
 from alb.cli.serial_cli import app as serial_cli
@@ -142,6 +143,9 @@ def status(ctx: typer.Context) -> None:
 
 # `alb setup {adb,wifi,ssh,serial}` — guided setup (see setup_cli.py)
 app.add_typer(setup_cli, name="setup", help="Guided setup for each transport.")
+app.command("doctor", help="One-shot environment health check (env/config/transports).")(
+    run_doctor
+)
 
 
 # ─── Device / transport commands ───────────────────────────────────

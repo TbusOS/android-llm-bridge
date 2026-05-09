@@ -14,8 +14,6 @@ side (that's inherently manual). What it does:
 from __future__ import annotations
 
 import os
-import shutil
-import socket
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -26,6 +24,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from alb.cli._probes import check_binary as _check_binary
+from alb.cli._probes import check_tcp_listen as _check_tcp_listen
 from alb.cli.common import run_async
 from alb.infra.config import global_config_path, load_active
 from alb.transport.adb import AdbTransport
@@ -36,19 +36,9 @@ console = Console()
 
 
 # ─── Shared helpers ───────────────────────────────────────────────
-def _check_binary(name: str) -> tuple[bool, str]:
-    path = shutil.which(name)
-    if path:
-        return True, path
-    return False, f"not found in PATH"
-
-
-def _check_tcp_listen(host: str, port: int) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=2):
-            return True
-    except OSError:
-        return False
+# `check_binary` and `check_tcp_listen` live in `cli/_probes.py` (shared
+# with `alb doctor`). The aliases above keep this module's call sites
+# unchanged.
 
 
 def _probe(label: str, ok: bool, detail: str = "") -> None:
