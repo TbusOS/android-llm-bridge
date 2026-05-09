@@ -29,13 +29,13 @@ tags: [capability, logging, logcat, dmesg, uart]
 
 ```bash
 # logcat 采集
-alb logcat [--duration N] [--filter FILTER] [--tag TAG]... [--clear]
+alb logcat [--duration N] [--filter FILTER] [--tag TAG]... [--clear] [--output PATH]
 
 # dmesg
-alb dmesg [--duration N]
+alb dmesg [--duration N] [--output PATH]
 
 # uart（方案 G）
-alb uart-capture [--duration N] [--baud 115200]
+alb uart-capture [--duration N] [--baud 115200] [--output PATH]
 
 # 检索已采集的日志
 alb log search <pattern> [--device D] [--from TIME] [--to TIME]
@@ -48,13 +48,22 @@ alb log head <path> [--lines N]
 alb log list [--device D]
 ```
 
+`--output / -o` 行为（logcat / dmesg / uart-capture / `alb diag bugreport` 共用语义）：
+
+- 不传 → 落 `workspace/.../logs/<ts>-<name>.txt`（兼容老行为）
+- 末尾 `/` 或现有目录 → 当作目录，文件落里面，自动 mkdir
+- 否则 → 当作精确文件路径，父目录自动 mkdir
+
 例子：
 ```bash
 alb logcat --duration 30 --filter "*:E"                     # 仅 Error 级别
 alb logcat --duration 60 --tag ActivityManager --tag WindowManager
 alb logcat --clear --duration 120                           # 先清缓冲再采集
+alb logcat --duration 30 --output ./logs/                   # 落到当前目录的 logs/
+alb logcat --duration 30 --output ./run-A.txt               # 落到指定文件
 alb dmesg --duration 10
 alb uart-capture --duration 30 --baud 1500000
+alb diag bugreport --output ./reports/                      # zip 落到 reports/
 alb log search "FATAL" --from "2026-04-15T10:00" --to "2026-04-15T11:00"
 alb log tail workspace/devices/abc/logs/xxx.txt --lines 50
 ```

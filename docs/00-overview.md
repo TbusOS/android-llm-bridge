@@ -135,6 +135,14 @@ LLM：[alb.profile.each("lab") {
 | `power` | `alb reboot` / `alb sleep-wake` / `alb battery` | `alb_reboot` 等 | A / B / C / G | 重启 / 休眠唤醒 / 电池状态 |
 | `app` | `alb app install/uninstall/start/stop` | `alb_app_*` | A / B / C | apk 管理 |
 
+**辅助命令**（不算业务能力，但日常用）：
+
+| 命令 | 用途 |
+|-----|------|
+| `alb doctor` | 一键 6 层环境健康检查（env / binaries / config / adb / serial / ssh），退出码 0/1 可 CI 消费 |
+| `alb session list` / `show <id>` / `replay <id>` | 查看 / 回放过去 ChatSession 的 messages.jsonl |
+| `alb setup adb` / `setup serial [--save]` / `setup wifi` / `setup ssh` | 引导式设置；`serial --save` 把验证过的参数写到 config.toml |
+
 **M2+ 规划能力**：
 - `perf` —— CPU / MEM / FPS / 温度 / 电流 持续采集
 - `benchmark` —— 跑分集成（AnTuTu / GeekBench / 自定义）

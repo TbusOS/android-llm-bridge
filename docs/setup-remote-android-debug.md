@@ -206,7 +206,15 @@ which alb-mcp alb-api
 
 ### 4.5 配 `~/.config/alb/config.toml`（UART 端口持久化）
 
-alb 的 `alb setup serial --tcp-port 19001` 只做**即时检查**，不落盘到配置。要让后续所有 `alb serial capture / shell / send / health` 命令用 19001 / 1500000 作为默认，写 config.toml：
+让后续所有 `alb serial capture / shell / send / health` 命令默认用 19001 / 1500000。**推荐**用 `--save` 让 alb 自己写：
+
+```bash
+alb setup serial --tcp-host localhost --tcp-port 19001 --baud 1500000 --save
+# probe 通过后自动写到 ~/.config/alb/config.toml 的 [transport.serial] 段；
+# 已存在的其他 section（[transport.adb] / [permissions]）原样保留
+```
+
+如果想手写也可以：
 
 ```bash
 mkdir -p ~/.config/alb
@@ -251,6 +259,14 @@ alb setup serial --tcp-host localhost --tcp-port 19001 --baud 1500000
 # picocom / socat 缺失是 optional，不影响核心功能
 ```
 
+或者一行 `alb doctor` 一次性查 6 层（env / binaries / config / adb / serial / ssh）：
+
+```bash
+alb doctor
+# 6 层全 ✓ → 设置完成；某层 ✗/! → 看建议修复
+# 退出码 0=无 err，1=至少一 err（CI / oncall 脚本可消费）
+```
+
 ---
 
 ## 五、闭环验证（两路都通）
@@ -259,7 +275,8 @@ alb setup serial --tcp-host localhost --tcp-port 19001 --baud 1500000
 # === ADB 路径 ===
 alb shell 'getprop ro.product.model'         # 打印板子型号
 alb shell 'getprop ro.build.version.release' # Android 版本
-alb logcat --duration 10 --save              # 抓 10 秒日志到 workspace/
+alb logcat --duration 10                     # 抓 10 秒日志到 workspace/.../logs/<ts>-logcat.txt
+alb logcat --duration 10 --output ./logs/    # 或落到指定目录
 
 # === UART 路径 ===
 alb serial health                            # 看连接状态 + endpoint + baud
@@ -363,7 +380,9 @@ netsh interface ipv4 show excludedportrange protocol=tcp  :: 查 Windows 保留�
 
 ### 问题 6：`alb serial send` 后立刻 `alb serial capture` 报 `Connection reset by peer`
 
-这是 alb 内部每次 API 都 open/close 连接造成的 race condition，不是桥问题。workaround：两次命令之间 `sleep 1`，或者用 `alb serial shell '<cmd>'` 单次连接搞定 send+receive。
+**已修**（part 131 起 `SerialTransport._open_tcp_with_retry`）：连续两次命令之间 ser2net 桥 fd-release race 现在自动 bounded retry（3 次 backoff 0.1/0.3/0.6s 内自愈），不需要手动 `sleep 1`。
+
+如果仍持续报 `kept resetting after 3 attempts`，那说明桥真有问题（COM 口被独占 / 桥 hang），重启 Windows 桥脚本即可。
 
 ### 问题 7：`alb: command not found`
 
