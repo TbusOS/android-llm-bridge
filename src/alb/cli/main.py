@@ -32,6 +32,7 @@ from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
 from alb.cli.power_cli import app as power_cli
 from alb.cli.serial_cli import app as serial_cli
+from alb.cli.session_cli import app as session_cli
 from alb.cli.setup_cli import app as setup_cli
 from alb.cli.skills_cli import app as skills_cli
 from alb.cli.info_cli import app as info_cli
@@ -264,6 +265,7 @@ app.add_typer(app_cli, name="app", help="APK management.")
 app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
 app.add_typer(skills_cli, name="skills", help="SKILL.md generator for LLM clients.")
 app.add_typer(chat_cli, name="chat", help="Interactive LLM agent REPL.")
+app.add_typer(session_cli, name="session", help="Inspect persisted chat sessions (list/show/replay).")
 app.add_typer(ui_cli, name="ui", help="UI diagnostics (screenshot / uiautomator dump).")
 app.add_typer(info_cli, name="info", help="Structured device info (system/cpu/memory/...).")
 app.add_typer(metrics_cli, name="metrics", help="Live telemetry samples (cpu/mem/temp/io).")
