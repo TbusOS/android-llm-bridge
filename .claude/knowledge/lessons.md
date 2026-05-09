@@ -5,7 +5,7 @@
 
 ---
 
-## 索引（按编号 · 22 lessons + 1 meta · 2026-05-08）
+## 索引（按编号 · 23 lessons + 1 meta · 2026-05-09）
 
 **前端 / UI 层**
 - L-001 · React UI 必须以 mockup HTML 为视觉基线
@@ -28,6 +28,7 @@
 - L-027 · HITL `approve_session` 用 line 字面 key 抗不住 shell 变量展开 / 别名
 - L-031 · `contextlib.suppress(Exception)` 不抓 CancelledError · 必显式列举
 - L-033 · async FastAPI endpoint 内 sync FS 调用必走 `asyncio.to_thread` · "io_to_thread sweep" 模式
+- L-034 · per-connection 独占网关 vs listen-socket daemon 的 ECONNRESET 语义不同 · TCP 重试范围必须按 transport 角色设计
 
 **抽象 / 设计 / 决策**
 - L-008 · 评估方案先看设计合理性，不先看难度
@@ -1524,6 +1525,132 @@ checklist" 模式) · L-025 (useQuery refetchInterval · 同形 "新 hook
 必 sweep config flag" 模式) · L-032 (sidebar a11y · 同形 "基线漏一次
 全 feature 复 N 次") · ADR-026 (httpx.AsyncClient · 同源 IO 协程化
 原则)
+
+---
+
+## L-034 · per-connection 独占网关 vs listen-socket daemon 的 ECONNRESET 语义不同 · TCP 重试范围必须按 transport 角色设计
+
+**Date**: 2026-05-09（Bug-1 fix · part 131 commit `fb236ac`）
+
+**规则**：写 transport `_open()` / `_connect()` 的 retry policy 前，
+**先分清网关角色**：
+
+- **per-connection 独占网关**（ser2net、socat single-port、qemu serial
+  bridge、某些 SLIP 桥）：一次只允许一个客户端持有底层资源（serial
+  fd / pty）。前一个客户端断开后有 release window，期间新连接 accept()
+  但被立即 RST。这种 ECONNRESET 是**预期的临时态**，必须 bounded
+  retry 吸收。
+- **listen-socket daemon**（adb server、sshd、redis、postgres 等）：
+  服务端始终接受新连接、每个连接独立处理。ECONNRESET 几乎一定是真
+  问题（client crash / firewall RST inject / kernel resource exhaust），
+  retry 是误判 → 掩盖真 bug。
+
+不分清两者就一股脑 retry 全部 `ConnectionResetError` →daemon 类
+transport 上把真错误吸成静默重试，等 issue 跑出来追溯极慢。
+
+**触发条件**：
+
+- 写新 transport 的 connect 路径
+- 看到 in-flight 已经处理 `ConnectionResetError` / `BrokenPipeError`，
+  但 connect 阶段没处理 → 判断要不要补
+- review 别人加 retry loop 时
+
+**反面教材**（假想 · 但模式真实存在 · 给 reviewer 一眼能识别的 diff）：
+
+```python
+# ❌ 错（adb daemon 是 listen socket，retry 会掩盖真 bug）
+class AdbTransport:
+    async def _open(self) -> Link:
+        for attempt in range(3):
+            try:
+                return await connect_adb_server()
+            except ConnectionResetError:
+                # daemon 端 RST 几乎不可能是 race，是 daemon crash /
+                # firewall 干预 / 资源耗尽 — retry 掩盖真错误
+                await asyncio.sleep(0.1 * 2**attempt)
+                continue
+        raise
+```
+
+```python
+# ❌ 错（同样在 ssh transport / redis client 加宽泛 retry）
+async def _open_ssh(self):
+    for _ in range(5):
+        try:
+            return await asyncssh.connect(...)
+        except (OSError, ConnectionError):  # 太宽：refused / unreachable / RST 都吃
+            await asyncio.sleep(0.5)
+            continue
+```
+
+**正例**（part 131 fb236ac · `src/alb/transport/serial.py:155-220`）：
+
+```python
+class SerialTransport:
+    # 窄白名单 + bounded budget + 错误信息标注语义
+    _TRANSIENT_CONNECT_ERRORS = (ConnectionResetError, BrokenPipeError)
+    _CONNECT_BACKOFF_S = (0.1, 0.3, 0.6)  # cumulative ~1s 内自愈
+
+    async def _open_tcp_with_retry(self) -> _SerialLink:
+        attempts = len(self._CONNECT_BACKOFF_S)
+        for attempt in range(1, attempts + 1):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.tcp_host, self.tcp_port),
+                    timeout=10,
+                )
+                return _SerialLink(reader=reader, writer=writer, ...)
+            except self._TRANSIENT_CONNECT_ERRORS as e:
+                # 已知 ser2net 有 fd-release race；其他 transport 不该来这条
+                if attempt < attempts:
+                    await asyncio.sleep(self._CONNECT_BACKOFF_S[attempt - 1])
+                    continue
+                raise ConnectionError(
+                    f"... kept resetting after {attempts} attempts: {e}"
+                ) from e
+            except (OSError, asyncio.TimeoutError) as e:
+                # refused / timeout / ENETUNREACH 立刻失败 — 真 misconfig
+                raise ConnectionError(f"Cannot reach ...: {e}") from e
+```
+
+设计四要点（reviewer checklist）：
+
+1. **retry 范围窄**：仅在已确认是 per-connection 独占网关的 transport 加
+2. **错误白名单**：只 retry `ConnectionResetError` + `BrokenPipeError`；
+   refused / timeout / ENETUNREACH 立即失败
+3. **budget bounded**：3 次 backoff 累计 ~1s；超出抛 `ConnectionError`
+   with "kept resetting after N attempts"
+4. **错误信息语义化**：retry 耗尽后的错误信息和 first-attempt 错误信息
+   必须不同（前者带 attempts 计数）
+
+**应用到 agents**：code-reviewer + architecture-reviewer 看到 transport
+`_open` / `_connect` 加 retry 时：
+
+- grep `except.*ConnectionResetError|BrokenPipeError.*\n.*sleep\|continue`
+  on transport 类
+- 命中后**不直接报 finding**，要看上下文 transport 角色：
+  - 是 per-connection 独占网关（ser2net 类）→ ✅ ok
+  - 是 daemon-style listen socket（adb / ssh / redis / pg 类）→ **HIGH**
+    finding（提示 retry 掩盖真错）
+- review 评论里要明确标注 transport 角色判断依据
+
+**关联**：
+
+- L-019（ABC sentinel · 同形 "广覆盖看似聪明，实际掩盖语义差异"）
+- L-020（N=2 不抽 base · 本条 N=1 的 retry pattern 故意不抽 base
+  helper，因为不同 transport 的 transient-error 语义不同，抽出来反而
+  失去类型差异）
+- L-009（代码事实禁止 hedge · "ser2net 是 per-connection 是事实，
+  不靠猜测"）
+- next_dev_priorities.md Bug-1 历史 · 修复 commit `fb236ac` part 131
+
+**L-meta-001 四件套自检**：
+
+- ✅ grep pattern：`except.*ConnectionResetError|BrokenPipeError.*\n.*sleep\|continue`
+- ✅ 反面教材：AdbTransport / ssh client 假想 retry diff（具体可识别）
+- ✅ 正例：`src/alb/transport/serial.py:155-220` part 131 实现
+- ⚠️ agent checklist 同步：本条更偏架构判断（transport 角色）而非
+  mechanical grep；reviewer 上下文阅读后判断，不能纯 regex 自动报
 
 ---
 

@@ -51,6 +51,20 @@ tools: Read, Grep, Bash, WebFetch
 - error code 是否走 `src/alb/infra/errors.py` 的 catalog
 - response 是否用 Result envelope（`{ok, data?, error?}`）
 
+### 6. Transport 行为语义判定（L-034）
+
+新增 transport `_open` / `_connect` retry on `ConnectionResetError` /
+`BrokenPipeError` 时，看 transport 是哪类**才能决定 retry 是否合理**：
+
+- **per-connection 独占网关**（ser2net、socat、qemu serial bridge —
+  底层资源 per-connection 独占）→ retry 必要：fd-release race
+- **listen-socket daemon**（adb / sshd / redis / pg / 任何 client-server
+  daemon）→ retry **掩盖真 bug**，应建议改"一次失败即报"
+
+review 评论里必须显式写明 transport 角色判断依据；不能写"加了 retry 应该
+更鲁棒了"这种没分清角色的论断。L-034 详细规则 + 反例 + 正例（serial.py
+part 131 fb236ac）见 `.claude/knowledge/lessons.md#L-034`。
+
 ## 强烈鼓励质疑（核心能力）
 
 每次评审必须回答：

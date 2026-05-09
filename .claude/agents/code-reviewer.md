@@ -94,9 +94,39 @@ tools: Read, Grep, Bash
 
 **触发条件**：每次新写 async endpoint 或 WS handler 时；老 endpoint 周期 sweep（5/02 perf-audit 漏检 `read_capture` 是没 sweep 全才漏）。同源批量修一次 commit 比逐个修更经济。
 
+### 来自 L-034 (transport ECONNRESET retry · per-connection vs daemon 角色) — connect 阶段 retry 范围必须按 transport 角色判定
+
+**Transport `_open()` / `_connect()`**里加 `ConnectionResetError` retry loop 时，**先确认 transport 是哪类**：
+
+- **per-connection 独占网关**（ser2net、socat、qemu serial bridge）→ retry **必要**：底层 fd release window 期间会 RST 新连接
+- **listen-socket daemon**（adb server / sshd / redis / postgres / 任何 client-server daemon）→ retry **掩盖真 bug**：daemon 端 RST 几乎一定是 client crash / firewall / 资源耗尽
+
+grep 命中（diff 里新增 transport `_open` / `_connect` retry on `ConnectionResetError` / `BrokenPipeError`）：
+
+- `except.*\(ConnectionResetError\|BrokenPipeError\).*\n.*\(sleep\|continue\)` —— 命中后**不直接报**
+- 看 transport 角色：
+  - per-connection 独占网关（确认底层资源是 per-connection 独占）→ ✅ ok
+  - daemon-style listen socket → **HIGH** finding：retry 会掩盖真错误 → 让 caller 看到一次失败明确报错好诊断
+- review 评论里**必须**显式标注 transport 角色判断依据（如"ser2net 独占 serial fd"或"adb daemon 是 listen socket，多 client 并发"）
+
+**已知正例**：`src/alb/transport/serial.py:_open_tcp_with_retry`（part 131 fb236ac）—— 窄白名单 (`ConnectionResetError` + `BrokenPipeError`)、3 次 backoff bounded、错误信息标注 "kept resetting after N attempts"
+
+**反例**（应该报 HIGH 的 diff 形状）：
+
+```python
+class AdbTransport:
+    async def _open(self):
+        for attempt in range(3):
+            try:
+                return await connect_adb_server()
+            except ConnectionResetError:  # adb 是 daemon，retry 掩盖真错
+                await asyncio.sleep(0.1 * 2**attempt)
+                continue
+```
+
 执行流程：
 1. `git diff <range>` 拿改动
-2. 按以上 9 条 grep 跑一遍（L-019~L-031 + L-033）
+2. 按以上 10 条 grep 跑一遍（L-019~L-031 + L-033 + L-034）
 3. 发现命中 → 立刻报 finding（不用等"5 维评审"框架）
 4. 5 维评审继续，但 grep 命中先于 5 维输出
 
