@@ -127,3 +127,28 @@ def test_endpoint_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [(e["method"], e["path"]) for e in body["rest"]]
     assert ("GET", "/sessions") in paths
+
+
+def test_scan_runs_in_worker_thread_l033(monkeypatch, client, workspace) -> None:
+    """Verify L-033: sync FS scan goes through asyncio.to_thread.
+
+    Records every to_thread call during the request; the sessions scan
+    must show up at least once.
+    """
+    seen: list[str] = []
+    import asyncio as _asyncio
+
+    real_to_thread = _asyncio.to_thread
+
+    async def tracking_to_thread(fn, /, *args, **kwargs):
+        seen.append(getattr(fn, "__name__", repr(fn)))
+        return await real_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "alb.api.sessions_route.asyncio.to_thread", tracking_to_thread
+    )
+
+    _make_session(workspace, "20260511-thr", created="2026-05-11T00:00:00+00:00")
+    r = client.get("/sessions")
+    assert r.status_code == 200
+    assert "_scan_sessions_in_thread" in seen

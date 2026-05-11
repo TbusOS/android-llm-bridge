@@ -9,10 +9,15 @@ Pure filesystem scan over the layout produced by
 
 No transport / LLM backend dependency, so this endpoint stays cheap and
 always answers (even when no device is attached).
+
+L-033: scan runs in a worker thread via `asyncio.to_thread`; do NOT
+inline sync FS in the `async def` endpoint, or N sessions × 4 FS calls
+will stall the event loop on each request.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +70,24 @@ def _summarize(session_dir: Path) -> dict[str, Any]:
     }
 
 
+def _scan_sessions_in_thread(sessions_root: Path, limit: int) -> list[dict[str, Any]]:
+    """Sync helper: bulk-scan sessions/ and return summaries (newest first).
+
+    All FS calls (`exists` / `iterdir` / `is_dir` / `stat` / `read_text` /
+    binary `open`) live here so the caller pays ONE thread hop instead of
+    4×N for N sessions. Pure sync — callers from async paths must wrap in
+    `asyncio.to_thread`.
+    """
+    if not sessions_root.exists():
+        return []
+    summaries = [_summarize(p) for p in sessions_root.iterdir() if p.is_dir()]
+    summaries.sort(
+        key=lambda s: s.get("created") or s["session_id"],
+        reverse=True,
+    )
+    return summaries[:limit]
+
+
 @router.get("/sessions")
 async def list_sessions(
     limit: int = Query(20, ge=1, le=100),
@@ -74,15 +97,12 @@ async def list_sessions(
     Sort key: `meta.created` (ISO 8601 sorts lexicographically); falls
     back to the directory name when meta.json is missing or malformed
     (session_id format `<utc-date>-<short-uuid>` also sorts by time).
+
+    L-033: scan delegates to a worker thread so 4×N sync FS calls don't
+    stall the event loop. One thread hop per request regardless of N.
     """
     sessions_root = workspace_root() / "sessions"
-    if not sessions_root.exists():
-        return {"ok": True, "sessions": []}
-
-    summaries = [_summarize(p) for p in sessions_root.iterdir() if p.is_dir()]
-
-    def _sort_key(s: dict[str, Any]) -> str:
-        return s.get("created") or s["session_id"]
-
-    summaries.sort(key=_sort_key, reverse=True)
-    return {"ok": True, "sessions": summaries[:limit]}
+    sessions = await asyncio.to_thread(
+        _scan_sessions_in_thread, sessions_root, limit
+    )
+    return {"ok": True, "sessions": sessions}
