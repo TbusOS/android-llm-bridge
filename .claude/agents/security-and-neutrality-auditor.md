@@ -56,6 +56,25 @@ tools: Read, Grep, Bash
 - `--all` 模式扫所有 tracked，命中是否在 `lessons.md` 历史豁免清单
   （如已知 `scripts/f8_screenshots.mjs` 是历史存量）— 不在豁免则 **HIGH**
 
+### 来自 L-035 (path-traversal 根因层 reject) — 用户输入拼路径必须 reject `..` / 绝对路径
+
+**`Path / user_input` 不规范化**：`Path("/base") / "../etc"` 不会变成 `/etc`，但 `is_dir()` 跟随符号链 + 文件存在就放行，下游 `read_text()` 直接读穿。`if ".." in name` 这种字符串 in 检查漏掉绝对路径 / unicode / NUL 字节，**不是足够防护**。
+
+- diff 命中 `[Pp]ath\([^)]*\) / [a-z_]+` 或 `_root\(\)\s*/\s*[a-z_]+` 上下文 5 行内 **没有** `_SAFE_.*_RE\.match` / `is_relative_to` / `validate_.*_id` 类 helper → **MID** finding（如果 user_input 来自 CLI / API / WS / MCP 边界外，**升 HIGH**）
+- 命中 `if '..' in <var>` 或 `if '/' in <var>` 当 sanitize → **HIGH** finding（不完备：漏 absolute path / NUL / unicode）
+- 重点目录：`sessions/` / `workspace/` / `config/` / `artifacts/` / `bugreports/` —— 任何用户能命名的 dir 都要查
+- 修法**必须在根因层**（构造 Path 的源头函数）enforce，不在 CLI / API 层重复 sanitize（漏一份就是漏；下个 surface 接入还会再漏）
+
+**已知正例**：
+- `src/alb/infra/workspace.py:_SAFE_SESSION_ID_RE` + `InvalidSessionId` + `session_path()` 双道防御（regex + `.resolve().is_relative_to()` 防 symlink 绕过）
+- `src/alb/infra/safe_path.resolve_under()`（part 110 抽 N=2 → N=3 时再考虑统一进 session_path）
+
+**反面教材**（修复前的 bug · part 134 `a1612aa` 修复）：
+```bash
+ALB_WORKSPACE=/tmp/ws alb session show ../etc
+# → 成功逃出 sessions/ 读 /tmp/ws/etc/{meta.json,messages.jsonl}
+```
+
 ## 评审维度
 
 ### 1. 项目级中立性（CLAUDE.md ABSOLUTE 禁用词）

@@ -13,7 +13,7 @@
 
 ---
 
-## 索引（按主题 · 19 ADR + 4 seed · 2026-05-08）
+## 索引（按主题 · 19 ADR + 5 seed · 2026-05-09）
 
 **核心架构（transport / backend / event）**
 - ADR-001 · Transport 抽象 + 4 实现
@@ -32,6 +32,7 @@
 - ADR-022 · Dashboard 同页双 WS 实例
 - ADR-030 (seed) · stream hook 抽象时机评估
 - ADR-036 · 流式文件传输用 WS 而非 SSE / Job-Model（MID-6）
+- ADR-037 (seed) · transport 配置常量（retry / timeout / backoff）用 class attribute
 
 **Web Tier / 前端**
 - ADR-017 · Web Tier 1 技术栈
@@ -1002,6 +1003,61 @@ FilesTab chunk +1.01 KB gzip（hook + 进度 UI 全在 lazy chunk）
 本 ADR 应用) · L-031 (suppress + 嵌套 generator · 本 ADR 实施触发) ·
 ADR-024 (LLMBackend ABC capability · 同形态用 class-attr 暴露能力) ·
 functional-audit-2026-05-02.md MID-6
+
+---
+
+## ADR-037 (seed) · transport 配置常量（retry / timeout / backoff）用 class attribute，不 module-level
+
+**Status**: seed（part 132 立 L-034 时部分论证，part 134 self-audit
+architecture-reviewer 建议升 seed）
+**Date**: 2026-05-09
+**Decider**: architecture-reviewer self-audit + 主对话同意
+
+**Context**：
+
+part 131 (`fb236ac`) 在 `SerialTransport` 加 ECONNRESET 重试时，把 retry
+触发异常集合 + backoff 序列两个常量放在了 class attribute
+（`SerialTransport._TRANSIENT_CONNECT_ERRORS` / `_CONNECT_BACKOFF_S`），
+而不是 module-level 常量。L-034 lesson 明确 transport retry 范围按角色
+判定（per-connection 网关 vs daemon），本 ADR 把"放在 class 上"这个
+落点决策正式约定下来。
+
+**Decision**：
+
+Transport 子类的连接行为常量（retry trigger 异常集合、backoff 序列、
+timeout 上限、connect window 等）**放 class attribute，不放 module-level
+constants**。
+
+**Why class attribute**：
+
+1. **不同 transport 角色需要不同策略**（L-034）：ser2net per-connection
+   网关 retry RST 必要；adb / sshd listen-socket daemon retry RST 掩盖
+   真 bug。module-level 常量会被错误复用
+2. **测试可干净注入**：`monkeypatch.setattr(Cls, "_X", ...)` 隔离作用域，
+   不污染其他 transport 测试
+3. **子类显式 override**：未来 SshTransport 加自己的 retry 必须显式
+   `_TRANSIENT_CONNECT_ERRORS = (...)`，比 module-level 静默继承更难错
+4. **与 ADR-024 / ADR-033 一致**：capability via class-attr pattern 已
+   立先例（LLMBackend / Transport ABC），retry policy 是同 pattern
+
+**Consequences**：
+
+- 第 N 个 transport 加 retry 时，复制粘贴一份 class attribute 而非 import
+  shared module-level constant —— 看似 dup，实际语义独立
+- module-level shared constant 会让"为什么 SshTransport 用了 ser2net 的
+  backoff" 变成 latent bug
+- 当前 N=1 (Serial) 远未到拐点
+
+**Reverses if**：3 个以上 transport 复用了完全相同的 retry policy（说明
+确实是通用 transport 行为），抽 mixin / module-level 才有意义。届时
+立新 ADR override 本 seed。
+
+**关联**：
+
+- L-034（per-connection vs daemon · 本 ADR 的语义来源）
+- ADR-024（LLMBackend ABC capability via class-attr · 同 pattern 先例）
+- ADR-033 seed（transport capability via class-attr · 同 pattern 邻居）
+- 实操 commit `fb236ac` part 131 + `a1612aa` part 134
 
 ---
 

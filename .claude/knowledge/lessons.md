@@ -5,7 +5,7 @@
 
 ---
 
-## 索引（按编号 · 23 lessons + 1 meta · 2026-05-09）
+## 索引（按编号 · 24 lessons + 1 meta · 2026-05-09）
 
 **前端 / UI 层**
 - L-001 · React UI 必须以 mockup HTML 为视觉基线
@@ -29,6 +29,7 @@
 - L-031 · `contextlib.suppress(Exception)` 不抓 CancelledError · 必显式列举
 - L-033 · async FastAPI endpoint 内 sync FS 调用必走 `asyncio.to_thread` · "io_to_thread sweep" 模式
 - L-034 · per-connection 独占网关 vs listen-socket daemon 的 ECONNRESET 语义不同 · TCP 重试范围必须按 transport 角色设计
+- L-035 · 用户输入拼路径必须根因层 reject `..` / 绝对路径 / 分隔符 · `Path / user_input` 不规范化必逃逸
 
 **抽象 / 设计 / 决策**
 - L-008 · 评估方案先看设计合理性，不先看难度
@@ -1651,6 +1652,105 @@ class SerialTransport:
 - ✅ 正例：`src/alb/transport/serial.py:155-220` part 131 实现
 - ⚠️ agent checklist 同步：本条更偏架构判断（transport 角色）而非
   mechanical grep；reviewer 上下文阅读后判断，不能纯 regex 自动报
+
+---
+
+## L-035 · 用户输入拼路径必须根因层 reject `..` / 绝对路径 / 分隔符 · `Path / user_input` 不规范化必逃逸
+
+**Date**: 2026-05-09（self-audit security-reviewer 找到 path traversal MID ·
+PoC 验证 · 修复 commit `a1612aa` part 134）
+
+**规则**：所有"用户输入字段拼到文件路径"的位点，**必须在根因层（构造 Path
+的源头函数）** reject `..` / 绝对路径 / 路径分隔符 / 非 ASCII 等异常输入。
+**不能依赖 CLI 层 / API 层各自重复 sanitize**，否则下一个新 surface（Web /
+MCP / 自动化脚本）忘了 sanitize 就漏。
+
+`Path("/base") / "../etc"` 不会规范化为 `/etc`，但 `is_dir()` 跟随符号链
++ 文件存在就放行。下游 `read_text()` / `open()` 直接读穿。
+
+```python
+# ❌ 错（CLI 层只查存在不查越界）
+def _ensure_session_exists(session_id: str) -> Path:
+    sdir = _sessions_root() / session_id
+    if not sdir.is_dir():  # 跟随符号链；不阻止 ".."
+        raise typer.Exit(1)
+    return sdir
+
+# ❌ 错（API 层重复一份 sanitize 容易漏）
+@router.get("/sessions/{session_id}")
+def show(session_id: str):
+    sdir = workspace_root() / "sessions" / session_id
+    if ".." in session_id:  # 漏掉 absolute path / unicode / NUL
+        raise HTTPException(400)
+    ...
+
+# ✅ 对（根因层 enforce + 异常类型 + 字符白名单 + .resolve() 防 symlink）
+_SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+class InvalidSessionId(ValueError):
+    pass
+
+def session_path(session_id: str, ...) -> Path:
+    if not _SAFE_SESSION_ID_RE.match(session_id):
+        raise InvalidSessionId(...)
+    base = workspace_root() / "sessions" / session_id
+    sessions_root = (workspace_root() / "sessions").resolve()
+    if not base.resolve().is_relative_to(sessions_root):
+        raise InvalidSessionId(...)  # defence-in-depth: symlink 绕过
+    return base
+```
+
+**触发条件**：
+
+- 任何函数签名 `(user_input: str) -> Path` 或 `Path / user_input` 拼接
+- 任何 stat / open / read / iterdir 之前的路径来自外部输入
+- 重点目录：sessions/ / workspace/ / config/ / artifacts/
+
+**反面教材** 2026-05-09 Bug-X PoC（part 134 `a1612aa` 修复前）：
+
+```bash
+# 攻击者只需可读的任意文件路径（受 workspace 父目录权限限制）：
+mkdir -p /tmp/ws/etc
+echo '{"backend":"evil","model":"pwned"}' > /tmp/ws/etc/meta.json
+echo '{"role":"user","content":"INJECTED"}' > /tmp/ws/etc/messages.jsonl
+ALB_WORKSPACE=/tmp/ws alb session show ../etc
+# → backend=evil model=pwned 都加载进来
+```
+
+CLI 自调用是自伤，**但** trust boundary 在 part 130 已经从 1 个命令（chat）
+扩到 4 个（chat / show / replay / list）。Web/MCP 接入后是真实任意文件读。
+
+**正例**（part 134 `a1612aa`）：
+
+- `src/alb/infra/workspace.py:13-30` `_SAFE_SESSION_ID_RE` + `InvalidSessionId`
+- `src/alb/infra/workspace.py:91-122` `session_path()` 双道防御（regex + resolve）
+- `src/alb/cli/session_cli.py:_ensure_session_exists` 走 `session_path` 不重新拼
+- `src/alb/cli/chat_cli.py:163-168` 同源 `InvalidSessionId` catch
+- `tests/infra/test_workspace_session_id.py` 22 例（15 恶意 + 6 合法 + 1 symlink）
+
+**应用到 agents**：security-and-neutrality-auditor + code-reviewer agent
+grep checklist 加规则：
+
+- 命中 `Path\([^)]*\) / [a-z_]+` 或 `_root\(\)\s*/\s*[a-z_]+` 上下文 5 行
+  内无 `_SAFE_.*_RE\.match` 或 `is_relative_to` → **MID/HIGH** finding
+- 命中 user-input 拼路径 + 仅 `if ".." in name`（字符串 in 检查）→
+  **HIGH** finding（漏 absolute path / unicode / NUL）
+- 推荐修法：根因层（构造 Path 的源头）加 helper + 自定义 ValueError
+
+**关联**：
+
+- L-009（代码事实禁止 hedge · "PoC 已验证"是事实，不是猜测）
+- L-019（ABC sentinel 反模式 · 同形 "宽松默认看似无害，实际是设计陷阱"）
+- L-meta-001（四件套：本条全部满足）
+- 修复 commit `a1612aa` part 134
+
+**L-meta-001 四件套自检**：
+
+- ✅ grep pattern：见上方 "应用到 agents" 段
+- ✅ 反面教材：part 134 修复前 PoC（具体 bash 命令可复现）
+- ✅ 正例：infra/workspace.py + 测试文件
+- ✅ agent checklist 同步：security-and-neutrality-auditor + code-reviewer
+  下一段 commit 同步规则到 agent definition
 
 ---
 

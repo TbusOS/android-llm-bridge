@@ -11,11 +11,13 @@
 
 ---
 
-## 索引（按状态 + 编号 · 35 项 / 35 关 + 0 候选 · 2026-05-09）
+## 索引（按状态 + 编号 · 37 项 / 35 关 + 2 候选 · 2026-05-09）
 
-**候选未关：0** —— 全部 reviewer audit batch backlog 收尾完成 🎉
+**候选未关：2** —— DEBT-036 (session listing N=2→N=3 触发抽) + DEBT-037 (config.toml 原子写 + 0600)
 
-**未关 backlog（5 项 · 视触发条件）**
+**未关 backlog（视触发条件）**
+- DEBT-036 · session listing helpers cross-surface drift（N=3 surface 触发抽）
+- DEBT-037 · config.toml 写入非原子 + 0644 模式（加 secret 字段或下次 security-audit 触发）
 - DEBT-005 · workspace/sessions 没自动清理
 - DEBT-006 · workspace/events.jsonl 没 rotation
 - DEBT-007 · ts_approx 字段语义已无用
@@ -938,6 +940,51 @@
   + 反面教材 + 正例 + agent checklist 同步），5/06~5/08 part 91/105/
   109/113 实操经验正式入档
 - **来源**：architecture-reviewer 2026-05-08 finding · meta-观察
+
+---
+
+## DEBT-036 · session listing helpers 跨 surface drift 风险
+
+- **severity**：low（v1 复制是有意识决策，N=3 时必抽）
+- **位置**：`src/alb/cli/session_cli.py:43-95` vs `src/alb/api/sessions_route.py:28-65`
+- **现象**：part 130 (`c39ccbe`) 加 `alb session list/show/replay` 时，
+  4 个文件系统 helper（`_count_lines` / `_mtime_iso` / `_load_meta` /
+  `_summarize_session`）与 `api/sessions_route.py` 字节级同形。当时
+  按 L-020 决定不抽 base，理由：API 端是 `async def` 调 sync FS（要
+  `to_thread` wrapper），CLI 端是 sync 直调，两边职责差异让 N=2 抽出来
+  反而在异步边界变复杂
+- **触发关闭**（任一）：
+  - MCP `session_list` tool 出现（N=3 surface），抽 `agent/session_index.py`
+    暴露 `scan_sessions() -> list[SessionSummary]` (dataclass，非 dict)
+  - 两端字段定义首次 drift（`last_event_ts` schema 偏离 / 新字段单边添加）
+- **修法（关闭时）**：抽 `agent/session_index.py` · CLI 直调 · API 包
+  `await asyncio.to_thread(scan_sessions)` 满足 L-033
+- **来源**：architecture-reviewer 2026-05-09 self-audit finding 3 ·
+  part 134 时点 N=2 hold
+
+---
+
+## DEBT-037 · `~/.config/alb/config.toml` 写入非原子 + 0644 模式
+
+- **severity**：low（reliability + future-secret hardening）
+- **位置**：`src/alb/cli/setup_cli.py:_persist_serial_config`（part 128 `77c22a0`）
+- **现象**：
+  - 写入流程 `path.exists() → tomllib.load → mutate → mkdir → open(wb) →
+    tomli_w.dump`。`tomli_w.dump` 中途崩溃（disk full / SIGTERM / OOM）
+    会留下 truncated TOML，下次跑 `--save` 触发 `tomllib.TOMLDecodeError`
+    被 `typer.BadParameter` 拦截要求"manually fix"，用户原配置已损坏
+  - 默认 0644 权限，当前 `[transport.serial]` 不含 secret 但同文件
+    可能未来加 `[transport.adb] server_socket` / `[backends.openai] api_key` /
+    ssh key path，team server 多人共用场景同机其他用户能读
+- **修法**：
+  - 原子写：`tempfile.mkstemp(dir=path.parent) → write → os.replace(tmp, path)`（POSIX 原子）
+  - 权限：`os.umask(0o077)` 包写入 + `path.chmod(0o600)` + `path.parent.chmod(0o700)`
+- **触发关闭**（任一）：
+  - 任何 secret 字段加入 config.toml（api_key / ssh_key_path 等）
+  - 用户报告 `--save` 中断后 config 损坏
+  - 下次 security-audit batch
+- **来源**：security-and-neutrality-auditor 2026-05-09 self-audit findings 2+3 ·
+  part 134 时点低优 hold
 
 ---
 

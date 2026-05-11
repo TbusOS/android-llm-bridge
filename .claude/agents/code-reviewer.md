@@ -124,9 +124,25 @@ class AdbTransport:
                 continue
 ```
 
+### 来自 L-035 (path-traversal 根因层 reject) — 用户输入拼路径必须 reject `..` / 绝对路径 / 分隔符
+
+**`Path / user_input`** 不会规范化 `..`，下游 `is_dir()` / `read_text()` 一律放行；`if ".." in name` 字符串检查漏掉绝对路径 / unicode / NUL。**修法在根因层**（构造 Path 的源头函数）enforce，不在 CLI / API 层重复 sanitize。
+
+- diff 命中 `[Pp]ath\([^)]*\) / [a-z_]+` 或 `_root\(\)\s*/\s*[a-z_]+` 上下文 5 行内**没有** `_SAFE_.*_RE\.match` / `is_relative_to` / `validate_.*_id` 类 helper → **MID** finding（user_input 来自 CLI / API / WS / MCP 边界外则 **HIGH**）
+- 命中 `if '..' in <var>` 或 `if '/' in <var>` 当 sanitize → **HIGH**（不完备）
+- 推荐修法：根因层（构造 Path 的源头）加 helper + 自定义 ValueError 子类（如 `InvalidSessionId`），CLI 层 catch 转 `typer.Exit(1)` 友好错误
+
+**已知正例**：`src/alb/infra/workspace.py:session_path` part 134 `a1612aa` —— `_SAFE_SESSION_ID_RE` regex + `.resolve().is_relative_to()` 双道防御
+
+**反面教材**（part 134 修复前 PoC）：
+```bash
+ALB_WORKSPACE=/tmp/ws alb session show ../etc
+# → 逃出 sessions/ 读任意 meta.json + messages.jsonl
+```
+
 执行流程：
 1. `git diff <range>` 拿改动
-2. 按以上 10 条 grep 跑一遍（L-019~L-031 + L-033 + L-034）
+2. 按以上 11 条 grep 跑一遍（L-019~L-031 + L-033 + L-034 + L-035）
 3. 发现命中 → 立刻报 finding（不用等"5 维评审"框架）
 4. 5 维评审继续，但 grep 命中先于 5 维输出
 
