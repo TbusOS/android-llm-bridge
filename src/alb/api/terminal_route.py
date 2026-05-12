@@ -73,6 +73,27 @@ async def terminal_ws(ws: WebSocket) -> None:
     read_only = bool(config.get("read_only", False))
     session_id = str(config.get("session_id") or f"term-{iso_timestamp()}")
 
+    # Validate session_id BEFORE spawning the PTY shell. Doing it after
+    # would leak the spawned shell subprocess on bad session_id (since
+    # the except branch returns without `await shell.close()`).
+    # See L-035 caller-side-wrap rule: validate at trust boundary, before
+    # any side-effect.
+    try:
+        audit_path = session_path(session_id, "terminal.jsonl")
+    except InvalidSessionId as e:
+        await ws.send_json({
+            "type": "closed",
+            "exit_code": -1,
+            "error": {
+                "code": "INVALID_SESSION_ID",
+                "message": str(e),
+                "suggestion": "use [A-Za-z0-9][A-Za-z0-9_-]* (<= 128 chars)",
+            },
+        })
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
+
     transport = build_transport(device_serial=device)
 
     try:
@@ -98,26 +119,6 @@ async def terminal_ws(ws: WebSocket) -> None:
                 "code": "PTY_SPAWN_FAILED",
                 "message": str(e),
                 "suggestion": "",
-            },
-        })
-        with contextlib.suppress(Exception):
-            await ws.close()
-        return
-
-    try:
-        audit_path = session_path(session_id, "terminal.jsonl")
-    except InvalidSessionId as e:
-        # Client-supplied session_id failed regex / traversal check.
-        # Emit a structured closed frame so xterm.js can surface the
-        # message instead of seeing an abrupt 1011 close (same pattern
-        # as TRANSPORT_NO_PTY / PTY_SPAWN_FAILED above).
-        await ws.send_json({
-            "type": "closed",
-            "exit_code": -1,
-            "error": {
-                "code": "INVALID_SESSION_ID",
-                "message": str(e),
-                "suggestion": "use [A-Za-z0-9][A-Za-z0-9_-]* (<= 128 chars)",
             },
         })
         with contextlib.suppress(Exception):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from typer.testing import CliRunner
 
 from alb.cli.main import app
@@ -48,13 +49,29 @@ def test_bad_profile_flag_emits_bad_parameter() -> None:
     assert "invalid profile name" in combined.lower()
 
 
-def test_bad_alb_profile_env_emits_bad_parameter(monkeypatch) -> None:
-    """Same protection as --profile flag, but for `ALB_PROFILE` env."""
+def test_bad_alb_profile_env_does_not_block_help(monkeypatch) -> None:
+    """ALB_PROFILE env validation is LAZY (deferred to load_active call).
+
+    A leftover/stale env var should not block `alb --help` or
+    `alb <subcmd> --help`. The env is caught when subcommands actually
+    invoke `load_active()` (e.g. `alb status`), via `profile_path()`
+    raising `InvalidProfileName`.
+    """
     monkeypatch.setenv("ALB_PROFILE", "../etc")
-    r = runner.invoke(app, ["version"])
-    assert r.exit_code != 0
-    combined = r.stdout + (r.stderr or "")
-    assert "alb_profile" in combined.lower() or "invalid" in combined.lower()
+    r = runner.invoke(app, ["--help"])
+    assert r.exit_code == 0
+    r2 = runner.invoke(app, ["fs", "--help"])
+    assert r2.exit_code == 0
+
+
+def test_bad_alb_profile_env_lazy_raise_in_subcommand(monkeypatch) -> None:
+    """When a subcommand actually loads the profile, bad env raises."""
+    from alb.infra.config import load_profile
+    from alb.infra.workspace import InvalidProfileName
+
+    monkeypatch.setenv("ALB_PROFILE", "../etc")
+    with pytest.raises(InvalidProfileName):
+        load_profile()  # picks up ALB_PROFILE from env when name=None
 
 
 def test_skills_preview_includes_capabilities() -> None:

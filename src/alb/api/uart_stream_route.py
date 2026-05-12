@@ -69,7 +69,11 @@ def _safe_device(raw: object) -> str | None:
     without raising. Hard-reject form lives in `workspace_path` (raises
     `InvalidDeviceSerial`) for L-035 enforcement.
     """
-    return raw if isinstance(raw, str) and is_safe_device(raw) else None
+    # is_safe_device's isinstance check is enough for the type narrow.
+    if is_safe_device(raw):
+        assert isinstance(raw, str)  # for mypy / readability
+        return raw
+    return None
 
 router = APIRouter()
 

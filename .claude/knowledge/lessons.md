@@ -1784,6 +1784,35 @@ Caller-side 友好错误展示（捕获 `Invalid*` 异常转结构化错误）�
 `tests/infra/test_config.py` / `tests/api/test_*_route.py` —— 每维度 PoC
 + 参数化恶意输入 + 合法输入边界，逐 commit 增量。
 
+**caller-side wrap 必须在任何 side-effect 之前**（part 143 找到的回归
+教训）：
+
+`Invalid*` 异常的 catch 包装在 caller 层时，必须放在**所有触发副作用
+的 await 调用之前**。否则触发→失败→return 路径会泄漏已分配的资源。
+part 140 把 `terminal_route.py` 的 `session_path(session_id)` 校验放
+在 `await transport.interactive_shell(...)` 之后，恶意 `session_id`
+触发的 except 分支跳过 `await shell.close()`，泄漏 PTY 子进程。
+
+```python
+# ❌ 错（PTY 已 spawn 才校验，except return 漏 close）
+shell = await transport.interactive_shell(...)
+try:
+    audit_path = session_path(session_id, "terminal.jsonl")
+except InvalidSessionId:
+    await ws.send_json({"type": "closed", ...})
+    return  # ← shell 子进程 leak
+
+# ✅ 对（校验前置到任何 side-effect 之前）
+try:
+    audit_path = session_path(session_id, "terminal.jsonl")
+except InvalidSessionId:
+    await ws.send_json({"type": "closed", ...})
+    return  # ← 此时还没 spawn shell，无 leak
+shell = await transport.interactive_shell(...)
+```
+
+修复 commit `<part 143>`。
+
 **应用到 agents**：security-and-neutrality-auditor + code-reviewer agent
 grep checklist 加规则：
 

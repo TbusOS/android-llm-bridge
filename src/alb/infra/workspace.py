@@ -49,23 +49,31 @@ class InvalidProfileName(ValueError):
     """Raised when a user-supplied profile name would escape `profiles/`."""
 
 
-def is_safe_session_id(s: str) -> bool:
-    """True if `s` is a safe session_id (no traversal). See `session_path`."""
+def is_safe_session_id(s: object) -> bool:
+    """True if `s` is a safe session_id (no traversal). See `session_path`.
+
+    Accepts any object — non-str input returns False so callers can pass
+    raw JSON / dict-get values without an extra isinstance check.
+    """
     return isinstance(s, str) and bool(_SAFE_SESSION_ID_RE.match(s))
 
 
-def is_safe_device(s: str) -> bool:
+def is_safe_device(s: object) -> bool:
     """True if `s` is a safe device serial (no traversal). See `workspace_path`.
 
     Single source of truth for the device-string shape used by:
     `workspace_path(device=)`, `_screenshots_dir`, `_logs_dir`, MCP
-    `alb_log_search`, WS `uart_stream` audit logs, etc.
+    `alb_log_search`, WS `uart_stream` audit logs, etc. Accepts any
+    object — non-str returns False.
     """
     return isinstance(s, str) and bool(_SAFE_DEVICE_RE.match(s))
 
 
-def is_safe_profile_name(s: str) -> bool:
-    """True if `s` is a safe profile name (no traversal). See `profile_path`."""
+def is_safe_profile_name(s: object) -> bool:
+    """True if `s` is a safe profile name (no traversal). See `profile_path`.
+
+    Accepts any object — non-str returns False.
+    """
     return isinstance(s, str) and bool(_SAFE_PROFILE_NAME_RE.match(s))
 
 

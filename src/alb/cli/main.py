@@ -7,7 +7,6 @@ See docs/llm-integration.md §五 for full CLI conventions.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -63,9 +62,13 @@ def _main_options(
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output."),
 ) -> None:
-    # Early-validate `--profile` flag AND `ALB_PROFILE` env so bad values
-    # show a friendly typer error rather than a Python traceback when the
-    # first subcommand reaches `load_active()`.
+    # Early-validate `--profile` flag so bad values show a friendly typer
+    # error rather than a Python traceback.  `ALB_PROFILE` env is NOT
+    # validated here on purpose — doing so would also block
+    # `ALB_PROFILE=stale alb <sub> --help` from showing help, which is a
+    # foot-gun when users have a leftover env var.  Bad env is caught
+    # lazily inside `profile_path()` when subcommands actually call
+    # `load_active()`.
     from alb.infra.workspace import is_safe_profile_name
 
     if profile is not None and not is_safe_profile_name(profile):
@@ -73,13 +76,6 @@ def _main_options(
             f"invalid profile name {profile!r}: must match "
             f"[A-Za-z0-9][A-Za-z0-9_-]* (<= 64 chars).",
             param_hint="--profile",
-        )
-    env_profile = os.environ.get("ALB_PROFILE")
-    if env_profile and not is_safe_profile_name(env_profile):
-        raise typer.BadParameter(
-            f"invalid ALB_PROFILE env {env_profile!r}: must match "
-            f"[A-Za-z0-9][A-Za-z0-9_-]* (<= 64 chars).",
-            param_hint="ALB_PROFILE",
         )
     ctx.obj = {
         "json": json_output,

@@ -211,6 +211,24 @@ def test_chat_ws_session_not_found(client, monkeypatch):
     assert ev["error"]["code"] == "SESSION_NOT_FOUND"
 
 
+def test_chat_ws_invalid_session_id_emits_done_error(client, monkeypatch):
+    """L-035: WS path-traversal session_id → structured `done ok:false`
+    error frame, not raw exception. Mirrors `test_chat_invalid_session_id_returns_400_envelope`
+    for the POST path.
+    """
+    monkeypatch.setattr(
+        "alb.api.chat_route.get_backend",
+        lambda name, **kw: _StreamingFakeBackend(reply="x"),
+    )
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "hi", "tools": False, "session_id": "../etc"})
+        ev = ws.receive_json()
+
+    assert ev["type"] == "done"
+    assert ev["ok"] is False
+    assert ev["error"]["code"] == "INVALID_SESSION_ID"
+
+
 # ─── Audit bus integration ──────────────────────────────────────────
 
 
