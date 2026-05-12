@@ -143,8 +143,13 @@ def _list_screenshots_entries(base: Path) -> list[dict[str, Any]]:
 
 @router.get("/devices/{serial}/screenshots/{name}")
 async def read_screenshot(serial: str, name: str) -> FileResponse:
-    """Return one screenshot's PNG bytes as `image/png`."""
-    f = _safe_resolve_screenshot(serial, name)
+    """Return one screenshot's PNG bytes as `image/png`.
+
+    L-033: `resolve_under` internally does sync stat / resolve calls;
+    wrap in a worker thread to keep the event loop free. FileResponse
+    streams bytes async itself.
+    """
+    f = await asyncio.to_thread(_safe_resolve_screenshot, serial, name)
     return FileResponse(
         path=str(f),
         filename=name,

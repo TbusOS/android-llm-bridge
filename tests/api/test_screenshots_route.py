@@ -142,6 +142,36 @@ def test_read_rejects_non_png_suffix(client, workspace) -> None:
     assert r.status_code == 400
 
 
+def test_read_screenshot_resolve_runs_in_worker_thread_l033(
+    monkeypatch, client, workspace
+) -> None:
+    """L-033: read_screenshot must offload _safe_resolve_screenshot to
+    a worker thread (sync stat / resolve / symlink check inside).
+
+    Locks the part 141 sweep.
+    """
+    # Plant a real PNG so the resolve actually fires
+    d = _shots_dir(workspace)
+    png = d / "lock.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+    seen: list[str] = []
+    import asyncio as _asyncio
+
+    real_to_thread = _asyncio.to_thread
+
+    async def tracking_to_thread(fn, /, *args, **kwargs):
+        seen.append(getattr(fn, "__name__", repr(fn)))
+        return await real_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "alb.api.screenshots_route.asyncio.to_thread", tracking_to_thread
+    )
+    r = client.get(f"/devices/{SERIAL}/screenshots/lock.png")
+    assert r.status_code == 200
+    assert "_safe_resolve_screenshot" in seen
+
+
 def test_serial_path_traversal_400(client, workspace) -> None:
     """L-035 root-layer reject: `serial=../etc` must 400, not silently
     list files outside the device dir.

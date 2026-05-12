@@ -181,6 +181,30 @@ def test_read_capture_rejects_path_traversal(client) -> None:
     assert r.status_code in (400, 404)
 
 
+def test_list_captures_runs_in_worker_thread_l033(
+    monkeypatch, client, workspace
+) -> None:
+    """L-033: list_captures must delegate FS scan to asyncio.to_thread.
+
+    Locks the part 141 sweep against future inlining of sync FS in the
+    async endpoint.
+    """
+    seen: list[str] = []
+    import asyncio as _asyncio
+
+    real_to_thread = _asyncio.to_thread
+
+    async def tracking_to_thread(fn, /, *args, **kwargs):
+        seen.append(getattr(fn, "__name__", repr(fn)))
+        return await real_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr("alb.api.uart_route.asyncio.to_thread", tracking_to_thread)
+    (workspace / "logs").mkdir()
+    r = client.get("/uart/captures")
+    assert r.status_code == 200
+    assert "_list_captures_in_thread" in seen
+
+
 def test_device_query_param_path_traversal_400(client, workspace) -> None:
     """L-035 root-layer reject: `?device=../etc` must 400, not silently
     list captures from outside the device dir.

@@ -131,16 +131,15 @@ async def trigger_capture(
     }
 
 
-@router.get("/uart/captures")
-async def list_captures(device: str | None = Query(None)) -> dict[str, Any]:
-    """List captures, newest first. Always returns ok=true with possibly
-    empty `captures` so the UI just shows an empty-state instead of a
-    server error when no UART has been captured yet."""
-    base = _logs_dir(device)
-    if not base.exists():
-        return {"ok": True, "device": device, "captures": []}
+def _list_captures_in_thread(base: Path) -> list[dict[str, Any]]:
+    """Sync helper: scan base for `*-uart.log`, return summaries newest first.
 
-    entries = []
+    All FS calls (`exists` / `glob` / `stat`) live here so the async
+    endpoint pays ONE thread hop instead of N. L-033.
+    """
+    if not base.exists():
+        return []
+    entries: list[dict[str, Any]] = []
     for p in base.glob("*-uart.log"):
         try:
             stat = p.stat()
@@ -154,6 +153,20 @@ async def list_captures(device: str | None = Query(None)) -> dict[str, Any]:
             }
         )
     entries.sort(key=lambda e: e["mtime"], reverse=True)
+    return entries
+
+
+@router.get("/uart/captures")
+async def list_captures(device: str | None = Query(None)) -> dict[str, Any]:
+    """List captures, newest first. Always returns ok=true with possibly
+    empty `captures` so the UI just shows an empty-state instead of a
+    server error when no UART has been captured yet.
+
+    L-033: scan delegates to a worker thread so 1+N×stat sync FS doesn't
+    stall the event loop.
+    """
+    base = _logs_dir(device)
+    entries = await asyncio.to_thread(_list_captures_in_thread, base)
     return {"ok": True, "device": device, "captures": entries}
 
 
@@ -170,7 +183,9 @@ async def read_capture(
     inside a <pre> with a monospace font, control chars stay visible
     as escape sequences (PR-C.b will add an xterm.js view for ANSI
     rendering)."""
-    f = _safe_resolve_capture(device, name)
+    # L-033: resolve_under internally does .exists/.is_file/.is_symlink/
+    # .resolve(strict=True) — all sync stat calls. Wrap to keep loop free.
+    f = await asyncio.to_thread(_safe_resolve_capture, device, name)
 
     # perf-audit 2026-05-08 LOW: 5-min UART log can be 5-50 MB; sync
     # read_text + UTF-8 decode would block the event loop. Hand off
@@ -205,10 +220,14 @@ async def delete_capture(
     the user's perspective, but a strict 404 surfaces drift between
     the cached list and disk).
     """
-    f = _safe_resolve_capture(device, name)
+    # L-033: resolve_under + unlink are both sync FS — bundle in one
+    # worker-thread hop.
+    def _resolve_and_unlink() -> None:
+        f = _safe_resolve_capture(device, name)
+        f.unlink()
 
     try:
-        f.unlink()
+        await asyncio.to_thread(_resolve_and_unlink)
     except OSError as exc:
         raise HTTPException(
             status_code=500, detail="capture delete failed"
