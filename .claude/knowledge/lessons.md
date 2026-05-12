@@ -1765,9 +1765,20 @@ CLI 自调用是自伤，**但** trust boundary 在 part 130 已经从 1 个命�
   `_SAFE_PROFILE_NAME_RE` + `InvalidProfileName`
 - _resolve_search_targets device（part 140 `551bef6`）：MCP `alb_log_search`
   入口，校验 `device`；`search_logs` 捕获并返 `INVALID_DEVICE` fail Result
-- 公开 is_safe_X helper（part 142 `<待提>`）：`is_safe_session_id` /
+- 公开 is_safe_X helper（part 142 `88606a6`）：`is_safe_session_id` /
   `is_safe_device` / `is_safe_profile_name` 抽出 N=5+ caller 共享单一
   来源；`_SAFE_*_RE` 改回真正 module-private
+
+**故意不收紧的接口**（design decision，不算 L-035 漏检）：
+
+- `search_logs(path=...)` / CLI `alb log search --path` / MCP `alb_log_search`
+  的 `path` 参数：刻意接受任意 FS 位置（用户可以 grep 任意 *.txt），由
+  caller 的 trust boundary 控制。这是 grep-style 工具的 feature 而非
+  bug — 如果某天接到非 trusted caller（如未来 web exposes 任意 path
+  search），需要在那一层重新加沙箱，不在根因层 reject
+- `--output` / `-o` 参数（`alb logcat` / `alb dmesg` / `alb diag bugreport`
+  等）：用户明确选写入位置，可以是绝对路径 / `~` / 跨 workspace。也是
+  feature 不是 bug
 
 Caller-side 友好错误展示（捕获 `Invalid*` 异常转结构化错误）：
 
