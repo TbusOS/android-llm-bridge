@@ -55,24 +55,21 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-import re
-
 from alb.api.schema import API_VERSION
 from alb.infra.event_bus import get_bus, make_event
+from alb.infra.workspace import _SAFE_DEVICE_RE
 from alb.mcp.transport_factory import build_transport
-
-# Whitelist for device serials reaching audit-log session_id / data.
-# Mirrors the conservative shape used by adb / serial CLI args; any
-# client-supplied device string failing this is replaced with `unknown`
-# before it reaches event_bus.publish() to prevent log-line injection
-# (newline / control chars) and disk-write amplification (long strings
-# spamming events.jsonl on every dropped frame).
-_DEVICE_SAFE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
 def _safe_device(raw: object) -> str | None:
-    """Return raw if it's a safe ASCII serial, else None."""
-    if isinstance(raw, str) and _DEVICE_SAFE_RE.match(raw):
+    """Return raw if it's a safe ASCII serial, else None.
+
+    Uses the shared `infra/workspace._SAFE_DEVICE_RE` (single source of truth).
+    Forgiving wrapper here — bad input becomes None so callers can fall
+    back to "unknown" in audit logs without raising. Hard-reject form lives
+    in `workspace_path` (raises `InvalidDeviceSerial`) for L-035 enforcement.
+    """
+    if isinstance(raw, str) and _SAFE_DEVICE_RE.match(raw):
         return raw
     return None
 

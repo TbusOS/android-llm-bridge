@@ -19,9 +19,22 @@ from pathlib import Path
 # paths / unicode trickery. See L-035 (path-traversal hardening).
 _SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
+# device serial shape: adb serial / ssh host / serial port basename.  Mirrors
+# the conservative shape from `api/uart_stream_route._DEVICE_SAFE_RE` (the
+# original N=1 site). Shared here so `workspace_path` can enforce L-035 at
+# root layer for the `device=` keyword (a known user-input vector via
+# `--device` CLI flag and `?device=` query params).
+# Leading char must be alnum so we reject `.` / `..` / `.foo` even though
+# the remaining char class allows `.` (for IP-style serials like 192.168.x.x).
+_SAFE_DEVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+
 
 class InvalidSessionId(ValueError):
     """Raised when a user-supplied session_id would escape `sessions/`."""
+
+
+class InvalidDeviceSerial(ValueError):
+    """Raised when a user-supplied device serial would escape the workspace."""
 
 
 def workspace_root() -> Path:
@@ -56,7 +69,18 @@ def workspace_path(
     Example:
       workspace_path('logs', 'xxx.txt', device='abc123')
       -> /ws/devices/abc123/logs/xxx.txt
+
+    Raises `InvalidDeviceSerial` when `device` would escape the workspace
+    (`..`, absolute paths, separators, non-ASCII, > 64 chars).  Mirrors
+    the L-035 root-layer-enforce pattern from `session_path`.  Category
+    and filename are internal (caller-controlled) and not validated.
     """
+    if device and not _SAFE_DEVICE_RE.match(device):
+        # Falsy `device` (None / "") falls through to no-device path below.
+        raise InvalidDeviceSerial(
+            f"invalid device {device!r}: must match [A-Za-z0-9._:-]{{1,64}} "
+            f"with alnum leading char (rejected to prevent path traversal)"
+        )
     root = workspace_root()
     if device:
         base = root / "devices" / device / category
