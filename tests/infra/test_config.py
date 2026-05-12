@@ -87,6 +87,38 @@ def test_load_profile_returns_empty_when_absent(monkeypatch, tmp_path: Path) -> 
     assert prof.devices == []
 
 
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "..",
+        "../etc",
+        "/abs",
+        "name/with/slash",
+        r"name\back",
+        "ümlaut",
+        "",
+        ".hidden",
+        "-leading-dash",
+    ],
+)
+def test_load_profile_rejects_path_traversal(
+    monkeypatch, tmp_path: Path, bad_name: str
+) -> None:
+    """L-035: profile name from --profile / ALB_PROFILE must reject `..` /
+    absolute / separators before path construction.
+
+    Without the check, an attacker setting `ALB_PROFILE=../etc` would
+    make `profile_path("../etc")` build `<root>/profiles/../etc.toml` →
+    resolves to `<root>/etc.toml`, allowing attacker-planted TOML to
+    load as alb config.
+    """
+    from alb.infra.workspace import InvalidProfileName
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    with pytest.raises(InvalidProfileName):
+        load_profile(bad_name)
+
+
 def test_load_profile_parses_devices(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
     prof_dir = tmp_path / "profiles"

@@ -37,6 +37,18 @@ class InvalidDeviceSerial(ValueError):
     """Raised when a user-supplied device serial would escape the workspace."""
 
 
+# profile name shape: same conservative class as session_id but tighter
+# leading-char rule (must alnum). Profile names appear in `--profile <name>`
+# CLI flag and `ALB_PROFILE` env; `profile_path(name)` builds
+# `workspace/profiles/<name>.toml` so a `../etc` name would land
+# `workspace/etc.toml` and load attacker-planted TOML as alb config.
+_SAFE_PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+class InvalidProfileName(ValueError):
+    """Raised when a user-supplied profile name would escape `profiles/`."""
+
+
 def workspace_root() -> Path:
     """Return the workspace root. Configurable via ALB_WORKSPACE env."""
     env = os.environ.get("ALB_WORKSPACE")

@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from alb.infra.workspace import workspace_root
+from alb.infra.workspace import (
+    InvalidProfileName,
+    _SAFE_PROFILE_NAME_RE,
+    workspace_root,
+)
 
 
 # ─── Data model ────────────────────────────────────────────────────
@@ -103,6 +107,20 @@ def global_config_path() -> Path:
 
 
 def profile_path(name: str) -> Path:
+    """Build the path for a named profile under workspace/profiles/.
+
+    Raises `InvalidProfileName` on `..` / absolute paths / separators /
+    non-ASCII / > 64 chars. Mirrors the L-035 root-layer-enforce pattern
+    from `session_path` and `workspace_path` device validation. A bad
+    profile name otherwise lets `f"{name}.toml"` escape via `..` and
+    load attacker-planted TOML as alb config (since attackers may set
+    `ALB_PROFILE` env / inject into `--profile`).
+    """
+    if not _SAFE_PROFILE_NAME_RE.match(name):
+        raise InvalidProfileName(
+            f"invalid profile name {name!r}: must match [A-Za-z0-9][A-Za-z0-9_-]* "
+            f"(<= 64 chars); rejected to prevent path traversal"
+        )
     return workspace_root() / "profiles" / f"{name}.toml"
 
 

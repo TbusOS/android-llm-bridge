@@ -1704,7 +1704,36 @@ def session_path(session_id: str, ...) -> Path:
 
 - 任何函数签名 `(user_input: str) -> Path` 或 `Path / user_input` 拼接
 - 任何 stat / open / read / iterdir 之前的路径来自外部输入
-- 重点目录：sessions/ / workspace/ / config/ / artifacts/
+- 重点目录：sessions/ / workspace/ / config/ / artifacts/ / profiles/
+- **隐蔽变种**：`_foo_dir(user_input) -> Path` 这种"helper 内部拼接"，下游
+  即使用 `resolve_under` 加防穿越也接不住
+
+**`base.resolve()` flatten gotcha**（part 138 找到的非显义陷阱）：
+
+`resolve_under(base, name, ...)` 防 `name` 穿越（regex + symlink + `relative_to`），
+但 `base.resolve()` 会把 base 内部的 `..` 也 flatten。如果 base 本身已被
+`<...>/devices/../etc/screenshots` 污染，`base.resolve()` 变成
+`<root>/etc/screenshots`，然后 `resolved.relative_to(base.resolve())` 对
+该 escape 目标里的任意文件反而 succeed —— escape 完成。
+
+```python
+# ❌ 错（resolve_under 看似严格，但 base 被上游污染就漏）
+def _screenshots_dir(serial: str) -> Path:
+    return workspace_root() / "devices" / serial / "screenshots"
+
+def read_screenshot(serial: str, name: str):
+    return resolve_under(_screenshots_dir(serial), name, ...)
+    # serial="../etc" + name="leaked.png" → 读 <root>/etc/screenshots/leaked.png
+
+# ✅ 对（构造 Path 的源头 helper 自己校验 user_input）
+def _screenshots_dir(serial: str) -> Path:
+    if not _SAFE_DEVICE_RE.match(serial):
+        raise HTTPException(400, detail=f"invalid serial: {serial!r}")
+    return workspace_root() / "devices" / serial / "screenshots"
+```
+
+教训：**`_foo_dir(user_input) -> Path` 也是根因层**，不只 `Path / user_input`
+直接拼接才是。reviewer 看到这种 helper 必须问"user_input 校验在哪"。
 
 **反面教材** 2026-05-09 Bug-X PoC（part 134 `a1612aa` 修复前）：
 
@@ -1720,13 +1749,18 @@ ALB_WORKSPACE=/tmp/ws alb session show ../etc
 CLI 自调用是自伤，**但** trust boundary 在 part 130 已经从 1 个命令（chat）
 扩到 4 个（chat / show / replay / list）。Web/MCP 接入后是真实任意文件读。
 
-**正例**（part 134 `a1612aa`）：
+**正例**（多 commit 累计 · 5 维度全覆盖）：
 
-- `src/alb/infra/workspace.py:13-30` `_SAFE_SESSION_ID_RE` + `InvalidSessionId`
-- `src/alb/infra/workspace.py:91-122` `session_path()` 双道防御（regex + resolve）
-- `src/alb/cli/session_cli.py:_ensure_session_exists` 走 `session_path` 不重新拼
-- `src/alb/cli/chat_cli.py:163-168` 同源 `InvalidSessionId` catch
-- `tests/infra/test_workspace_session_id.py` 22 例（15 恶意 + 6 合法 + 1 symlink）
+- session_id（part 134 `a1612aa`）：`infra/workspace.py` `_SAFE_SESSION_ID_RE` +
+  `InvalidSessionId` + `session_path()` 双道防御（regex + resolve+is_relative_to）
+- workspace_path device（part 137 `2dbb7b2`）：`_SAFE_DEVICE_RE` +
+  `InvalidDeviceSerial` + `workspace_path()` 加 device 校验
+- API 路由 helper（part 138 `5e78c34`）：`_screenshots_dir(serial)` /
+  `_logs_dir(device)` 在路径构造前 reject 非法 device serial（bypass
+  `resolve_under` 的 base.resolve() flatten 陷阱）
+- profile name（part 139 `<待提>`）：`_SAFE_PROFILE_NAME_RE` +
+  `InvalidProfileName` + `profile_path()` 加校验
+- 测试覆盖：22 + 25 + 2 PoC + 9 参数化 = 58 例
 
 **应用到 agents**：security-and-neutrality-auditor + code-reviewer agent
 grep checklist 加规则：
