@@ -33,13 +33,25 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from alb.infra.safe_path import resolve_under
-from alb.infra.workspace import workspace_root
+from alb.infra.workspace import _SAFE_DEVICE_RE, workspace_root
 
 router = APIRouter()
 
 
 def _screenshots_dir(serial: str) -> Path:
-    """Mirror `capabilities.ui.screenshot`'s output path."""
+    """Mirror `capabilities.ui.screenshot`'s output path.
+
+    L-035: reject `..` / absolute / non-safe `serial` BEFORE building the
+    Path. `base.resolve()` in `resolve_under` would otherwise flatten an
+    escaped base (`devices/../etc/screenshots` → `etc/screenshots`),
+    making `resolved.relative_to(base.resolve())` succeed for a file in
+    the escaped target.
+    """
+    if not _SAFE_DEVICE_RE.match(serial):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid device serial: {serial!r}",
+        )
     return workspace_root() / "devices" / serial / "screenshots"
 
 

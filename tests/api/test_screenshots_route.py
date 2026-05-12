@@ -142,6 +142,39 @@ def test_read_rejects_non_png_suffix(client, workspace) -> None:
     assert r.status_code == 400
 
 
+def test_serial_path_traversal_400(client, workspace) -> None:
+    """L-035 root-layer reject: `serial=../etc` must 400, not silently
+    list files outside the device dir.
+
+    Before part 138 the bug worked like this: `_screenshots_dir(serial)`
+    built `<root>/devices/../etc/screenshots`. `resolve_under` later
+    called `base.resolve()` which flattened the `..`, so any file in
+    `<root>/etc/screenshots` would `relative_to(base.resolve())`
+    successfully — escape.
+    """
+    # Plant a screenshot in the escaped target so we'd see it if the
+    # bug were unfixed (would 200 with the file listed).
+    escaped = workspace / "etc" / "screenshots"
+    escaped.mkdir(parents=True)
+    (escaped / "leaked.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    )
+
+    # FastAPI / Starlette URL-decodes the path param; for safety we try
+    # both the percent-encoded and the literal form.
+    for serial in ("..%2Fetc", "../etc"):
+        r = client.get(f"/devices/{serial}/screenshots")
+        # If routing matched our endpoint, we expect 400 (validation);
+        # if Starlette refused to route, 404 is also fine — neither
+        # should be a successful list of the escaped target.
+        assert r.status_code in (400, 404), (
+            f"serial={serial!r}: expected 400/404, got {r.status_code} "
+            f"body={r.text}"
+        )
+        if r.status_code == 200:
+            assert "leaked.png" not in r.text
+
+
 def test_read_rejects_symlink(client, workspace) -> None:
     """Code-review 2026-05-07 HIGH: a symlink inside the screenshots
     dir pointing to /etc/* (or any out-of-tree path) used to be served

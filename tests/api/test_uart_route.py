@@ -181,6 +181,28 @@ def test_read_capture_rejects_path_traversal(client) -> None:
     assert r.status_code in (400, 404)
 
 
+def test_device_query_param_path_traversal_400(client, workspace) -> None:
+    """L-035 root-layer reject: `?device=../etc` must 400, not silently
+    list captures from outside the device dir.
+
+    Mirrors the screenshots route fix in part 138 — `_logs_dir(device)`
+    used to build `<root>/devices/../etc/logs` then `resolve_under`
+    flattened the escape via `base.resolve()`.
+    """
+    escaped = workspace / "etc" / "logs"
+    escaped.mkdir(parents=True)
+    (escaped / "2026-05-12T00-00-00-uart.log").write_text("leaked\n")
+
+    for device in ("..%2Fetc", "../etc"):
+        r = client.get(f"/uart/captures?device={device}")
+        assert r.status_code in (400, 404), (
+            f"device={device!r}: expected 400/404, got {r.status_code} "
+            f"body={r.text}"
+        )
+        if r.status_code == 200:
+            assert "leaked" not in r.text
+
+
 def test_read_capture_rejects_non_uart_filename(client, workspace) -> None:
     logs = workspace / "logs"
     logs.mkdir(parents=True, exist_ok=True)

@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from alb.capabilities.logging import capture_uart
 from alb.infra.safe_path import resolve_under
-from alb.infra.workspace import workspace_root
+from alb.infra.workspace import _SAFE_DEVICE_RE, workspace_root
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
@@ -45,9 +45,20 @@ _HTTP_DURATION_MAX = 300
 def _logs_dir(device: str | None) -> Path:
     """Resolve the workspace logs dir the same way capture_uart writes
     into. capture_uart uses workspace_path('logs', ..., device=device);
-    we mirror that path here so listings show what was just written."""
+    we mirror that path here so listings show what was just written.
+
+    L-035: reject `..` / absolute / non-safe `device` BEFORE building the
+    Path. `base.resolve()` in `resolve_under` would otherwise flatten an
+    escaped base, making the `relative_to` check trivially pass for any
+    file in the escaped target.
+    """
     root = workspace_root()
     if device:
+        if not _SAFE_DEVICE_RE.match(device):
+            raise HTTPException(
+                status_code=400,
+                detail=f"invalid device serial: {device!r}",
+            )
         return root / "devices" / device / "logs"
     return root / "logs"
 
