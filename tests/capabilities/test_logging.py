@@ -148,6 +148,26 @@ async def test_collect_dmesg_output_as_existing_directory(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_search_logs_rejects_traversal_in_device(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """L-035: `device='../etc'` must return fail Result, not escape rglob.
+
+    Plants a *.txt in the escaped target so we'd see results if the bug
+    were unfixed.
+    """
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    escaped = tmp_path / "etc" / "logs"
+    escaped.mkdir(parents=True)
+    (escaped / "leaked.txt").write_text("API_KEY=xyz\n")
+
+    r = await search_logs("API_KEY", device="../etc")
+    assert not r.ok
+    assert r.error is not None
+    assert r.error.code == "INVALID_DEVICE"
+
+
+@pytest.mark.asyncio
 async def test_search_logs_rejects_bad_regex() -> None:
     r = await search_logs(pattern="[unclosed")
     assert not r.ok

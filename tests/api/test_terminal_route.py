@@ -148,6 +148,16 @@ def test_terminal_ws_unsupported_transport(no_pty_client) -> None:
         assert ev["error"]["code"] == "TRANSPORT_NO_PTY"
 
 
+def test_terminal_ws_invalid_session_id_structured_close(client) -> None:
+    """L-035: bad client-supplied session_id → structured `closed` frame
+    with INVALID_SESSION_ID, not abrupt 1011 close. Locks meta-audit fix."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"session_id": "../etc"})
+        ev = ws.receive_json()
+        assert ev["type"] == "closed"
+        assert ev["error"]["code"] == "INVALID_SESSION_ID"
+
+
 def test_terminal_ws_hitl_blocks_dangerous_command(client) -> None:
     """Type a dangerous command — the WS should send a hitl_request
     instead of forwarding it to the shell."""

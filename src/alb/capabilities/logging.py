@@ -16,6 +16,8 @@ from typing import Any
 from alb.infra.events import bus
 from alb.infra.result import Result, fail, ok
 from alb.infra.workspace import (
+    InvalidDeviceSerial,
+    _SAFE_DEVICE_RE,
     iso_timestamp,
     resolve_capture_path,
     workspace_path,
@@ -328,7 +330,15 @@ async def search_logs(
             category="input",
         )
 
-    files = _resolve_search_targets(path, device)
+    try:
+        files = _resolve_search_targets(path, device)
+    except InvalidDeviceSerial as e:
+        return fail(
+            code="INVALID_DEVICE",
+            message=str(e),
+            suggestion="Use a valid device serial (alnum + . : - _; <= 64 chars)",
+            category="input",
+        )
     matches: list[SearchMatch] = []
     truncated = False
 
@@ -496,9 +506,23 @@ _resolve_capture_path = resolve_capture_path
 
 
 def _resolve_search_targets(path: Path | None, device: str | None) -> list[Path]:
+    """Build the list of `*.txt` files to search.
+
+    L-035: `device` is a user-input vector (MCP `alb_log_search` accepts
+    arbitrary serial; CLI `--device` flag); reject `..` / absolute paths
+    / etc at root layer rather than letting `(root / "devices" / device
+    / "logs").rglob(...)` escape via `..`. base.resolve() flatten gotcha
+    applies here too — the rglob walk would happily enumerate files in
+    the escaped target.
+    """
     if path is not None:
         return [path] if path.is_file() else sorted(path.rglob("*.txt"))
     root = workspace_root()
     if device:
+        if not _SAFE_DEVICE_RE.match(device):
+            raise InvalidDeviceSerial(
+                f"invalid device {device!r}: must match [A-Za-z0-9._:-]{{1,64}} "
+                f"with alnum leading char (rejected to prevent path traversal)"
+            )
         return sorted((root / "devices" / device / "logs").rglob("*.txt"))
     return sorted((root / "devices").rglob("*.txt"))

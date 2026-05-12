@@ -7,6 +7,7 @@ See docs/llm-integration.md §五 for full CLI conventions.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -62,6 +63,24 @@ def _main_options(
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output."),
 ) -> None:
+    # Early-validate `--profile` flag AND `ALB_PROFILE` env so bad values
+    # show a friendly typer error rather than a Python traceback when the
+    # first subcommand reaches `load_active()`.
+    from alb.infra.workspace import _SAFE_PROFILE_NAME_RE
+
+    if profile is not None and not _SAFE_PROFILE_NAME_RE.match(profile):
+        raise typer.BadParameter(
+            f"invalid profile name {profile!r}: must match "
+            f"[A-Za-z0-9][A-Za-z0-9_-]* (<= 64 chars).",
+            param_hint="--profile",
+        )
+    env_profile = os.environ.get("ALB_PROFILE")
+    if env_profile and not _SAFE_PROFILE_NAME_RE.match(env_profile):
+        raise typer.BadParameter(
+            f"invalid ALB_PROFILE env {env_profile!r}: must match "
+            f"[A-Za-z0-9][A-Za-z0-9_-]* (<= 64 chars).",
+            param_hint="ALB_PROFILE",
+        )
     ctx.obj = {
         "json": json_output,
         "profile": profile,

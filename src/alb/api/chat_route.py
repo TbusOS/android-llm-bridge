@@ -51,6 +51,7 @@ from alb.agent.session import ChatSession
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.metric_sampler import TokenSampler
 from alb.infra.prompt_builder import default_agent_prompt
+from alb.infra.workspace import InvalidSessionId
 
 _SUMMARY_MAX = 120
 
@@ -271,7 +272,17 @@ async def _build_agent(
     )
 
     if req.session_id:
-        session = ChatSession.load(req.session_id)
+        try:
+            session = ChatSession.load(req.session_id)
+        except InvalidSessionId as e:
+            return {
+                "error": {
+                    "code": "INVALID_SESSION_ID",
+                    "message": str(e),
+                    "suggestion": "use [A-Za-z0-9][A-Za-z0-9_-]* (<= 128 chars)",
+                },
+                "session_id": req.session_id,
+            }
         if not session.meta_file.exists():
             return {
                 "error": {

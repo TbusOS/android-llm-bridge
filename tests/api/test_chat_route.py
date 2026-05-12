@@ -87,6 +87,24 @@ def test_chat_session_not_found(client, fake_backend_patch):
     assert body["error"]["code"] == "SESSION_NOT_FOUND"
 
 
+def test_chat_invalid_session_id_returns_400_envelope(client, fake_backend_patch):
+    """L-035: bad session_id (traversal attempt) must not 500/traceback —
+    returns structured INVALID_SESSION_ID error envelope.
+
+    Locks against the meta-audit finding (part 140): chat_route called
+    `ChatSession.load(req.session_id)` without catching `InvalidSessionId`,
+    leaking traceback + regex details on 500.
+    """
+    r = client.post(
+        "/chat",
+        json={"message": "hi", "tools": False, "session_id": "../etc"},
+    )
+    assert r.status_code == 200  # envelope shape regardless of error
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "INVALID_SESSION_ID"
+
+
 def test_chat_backend_init_failed(client, monkeypatch):
     def _bad_factory(name: str, **kwargs):
         raise ValueError(f"unknown backend: {name!r}")

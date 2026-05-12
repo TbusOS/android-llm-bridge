@@ -39,6 +39,24 @@ def test_describe_json() -> None:
     assert any(c["name"] == "shell" for c in payload["capabilities"])
 
 
+def test_bad_profile_flag_emits_bad_parameter() -> None:
+    """L-035: `alb --profile ../etc <cmd>` shows a friendly typer error
+    rather than a Python traceback. Locks the part 140 meta-audit fix."""
+    r = runner.invoke(app, ["--profile", "../etc", "version"])
+    assert r.exit_code != 0
+    combined = r.stdout + (r.stderr or "")
+    assert "invalid profile name" in combined.lower()
+
+
+def test_bad_alb_profile_env_emits_bad_parameter(monkeypatch) -> None:
+    """Same protection as --profile flag, but for `ALB_PROFILE` env."""
+    monkeypatch.setenv("ALB_PROFILE", "../etc")
+    r = runner.invoke(app, ["version"])
+    assert r.exit_code != 0
+    combined = r.stdout + (r.stderr or "")
+    assert "alb_profile" in combined.lower() or "invalid" in combined.lower()
+
+
 def test_skills_preview_includes_capabilities() -> None:
     r = runner.invoke(app, ["skills", "preview"])
     assert r.exit_code == 0

@@ -40,7 +40,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
 from alb.infra.event_bus import get_bus, make_event
-from alb.infra.workspace import iso_timestamp, session_path
+from alb.infra.workspace import InvalidSessionId, iso_timestamp, session_path
 from alb.mcp.transport_factory import build_transport
 from alb.transport.interactive import InteractiveShell
 from alb.transport.terminal_guard import TerminalGuard
@@ -104,7 +104,25 @@ async def terminal_ws(ws: WebSocket) -> None:
             await ws.close()
         return
 
-    audit_path = session_path(session_id, "terminal.jsonl")
+    try:
+        audit_path = session_path(session_id, "terminal.jsonl")
+    except InvalidSessionId as e:
+        # Client-supplied session_id failed regex / traversal check.
+        # Emit a structured closed frame so xterm.js can surface the
+        # message instead of seeing an abrupt 1011 close (same pattern
+        # as TRANSPORT_NO_PTY / PTY_SPAWN_FAILED above).
+        await ws.send_json({
+            "type": "closed",
+            "exit_code": -1,
+            "error": {
+                "code": "INVALID_SESSION_ID",
+                "message": str(e),
+                "suggestion": "use [A-Za-z0-9][A-Za-z0-9_-]* (<= 128 chars)",
+            },
+        })
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
 
     async def on_hitl(line: str, rule) -> None:  # noqa: ANN001
         await ws.send_json({
