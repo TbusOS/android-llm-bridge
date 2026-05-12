@@ -26,8 +26,8 @@ from rich.table import Table
 
 from alb.cli._probes import check_binary as _check_binary
 from alb.cli._probes import check_tcp_listen as _check_tcp_listen
-from alb.cli.common import run_async
-from alb.infra.config import global_config_path, load_active
+from alb.cli.common import load_active_friendly, run_async
+from alb.infra.config import global_config_path
 from alb.transport.adb import AdbTransport
 from alb.transport.serial import SerialTransport
 
@@ -112,7 +112,7 @@ def setup_adb() -> None:
     # Probe devices
     if ok_bin:
         try:
-            settings = load_active()
+            settings = load_active_friendly()
             t = AdbTransport(
                 bin_path=settings.config.adb.bin_path,
                 server_socket=settings.config.adb.server_socket or server_sock or None,
@@ -162,7 +162,7 @@ def setup_wifi(
     if not ok_bin:
         raise typer.Exit(1)
 
-    settings = load_active()
+    settings = load_active_friendly()
     t = AdbTransport(
         bin_path=settings.config.adb.bin_path,
         server_socket=settings.config.adb.server_socket,

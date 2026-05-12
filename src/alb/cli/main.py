@@ -26,7 +26,7 @@ from alb.infra.env_loader import load_env_files
 load_env_files()
 from alb.cli.app_cli import app as app_cli
 from alb.cli.chat_cli import app as chat_cli
-from alb.cli.common import get_transport, print_result, run_async
+from alb.cli.common import get_transport, load_active_friendly, print_result, run_async
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
@@ -39,7 +39,6 @@ from alb.cli.info_cli import app as info_cli
 from alb.cli.metrics_cli import app as metrics_cli
 from alb.cli.playground_cli import app as playground_cli
 from alb.cli.ui_cli import app as ui_cli
-from alb.infra.config import load_active
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
 
 app = typer.Typer(
@@ -131,7 +130,7 @@ def describe(ctx: typer.Context) -> None:
 @app.command()
 def status(ctx: typer.Context) -> None:
     """Current device / transport / recent state."""
-    settings = load_active((ctx.obj or {}).get("profile"))
+    settings = load_active_friendly((ctx.obj or {}).get("profile"))
 
     if (ctx.obj or {}).get("transport") is None and settings.primary_transport != "adb":
         console.print(

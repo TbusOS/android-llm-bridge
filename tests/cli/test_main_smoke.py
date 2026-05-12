@@ -74,6 +74,36 @@ def test_bad_alb_profile_env_lazy_raise_in_subcommand(monkeypatch) -> None:
         load_profile()  # picks up ALB_PROFILE from env when name=None
 
 
+def test_bad_alb_profile_env_friendly_error_in_status_subcommand(monkeypatch) -> None:
+    """`alb status` with bad ALB_PROFILE must show friendly typer error,
+    not a Python traceback. Locks the part 145 e2e-smoke-discovered bug
+    where part 143 lazy-raise lacked caller-side catch.
+    """
+    monkeypatch.setenv("ALB_PROFILE", "../etc")
+    r = runner.invoke(app, ["status"])
+    assert r.exit_code == 2  # typer.BadParameter → exit 2
+    combined = r.stdout + (r.stderr or "")
+    # Friendly error (typer's BadParameter rendering), no Python traceback
+    assert "ALB_PROFILE or --profile" in combined
+    assert "Traceback" not in combined
+    assert "InvalidProfileName" not in combined
+
+
+def test_bad_alb_profile_env_doctor_treats_as_layer_finding(monkeypatch) -> None:
+    """`alb doctor` is intentionally different — bad ALB_PROFILE should
+    show up as a config-layer `err` finding, not crash. Doctor's purpose
+    is to diagnose problems including its own config.
+    """
+    monkeypatch.setenv("ALB_PROFILE", "../etc")
+    r = runner.invoke(app, ["doctor"])
+    # exit 1 because at least one layer is err
+    assert r.exit_code == 1
+    combined = r.stdout + (r.stderr or "")
+    assert "Traceback" not in combined
+    # config layer (or serial layer) reports the err
+    assert "../etc" in combined or "invalid profile" in combined.lower()
+
+
 def test_skills_preview_includes_capabilities() -> None:
     r = runner.invoke(app, ["skills", "preview"])
     assert r.exit_code == 0

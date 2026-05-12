@@ -10,7 +10,9 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from alb.infra.config import ActiveSettings, load_active as _raw_load_active
 from alb.infra.result import Result
+from alb.infra.workspace import InvalidProfileName
 from alb.mcp.transport_factory import build_transport
 from alb.transport.base import Transport
 
@@ -24,6 +26,25 @@ def run_async(coro: Any) -> Any:
     except KeyboardInterrupt:
         console.print("\n[red]Interrupted[/]")
         raise typer.Exit(code=130) from None
+
+
+def load_active_friendly(profile_name: str | None = None) -> ActiveSettings:
+    """`load_active` with `InvalidProfileName` → `typer.BadParameter` mapping.
+
+    Use this from any CLI subcommand that needs active settings (status /
+    setup / chat / etc.). Bad `--profile` flag or `ALB_PROFILE` env now
+    surfaces as a friendly typer error rather than a Python traceback.
+
+    `alb doctor` is the exception — its `_probe_config` deliberately treats
+    a bad config as a layer finding, not a fatal error, so doctor uses
+    `load_active()` directly inside a try/except.
+    """
+    try:
+        return _raw_load_active(profile_name)
+    except InvalidProfileName as e:
+        raise typer.BadParameter(
+            str(e), param_hint="ALB_PROFILE or --profile"
+        ) from None
 
 
 def get_transport(

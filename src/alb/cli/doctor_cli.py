@@ -174,7 +174,11 @@ def _probe_adb() -> Layer:
 
 def _probe_serial() -> Layer:
     layer = Layer("serial")
-    settings = load_active()
+    try:
+        settings = load_active()
+    except Exception as e:  # noqa: BLE001 — surface bad config as err, don't crash
+        layer.add("config load", "err", str(e))
+        return layer
     cfg = settings.config.serial
     host, port = cfg.default_tcp_host, cfg.default_tcp_port
     listening = check_tcp_listen(host, port, timeout=1.5)
