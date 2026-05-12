@@ -33,7 +33,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from alb.infra.safe_path import resolve_under
-from alb.infra.workspace import _SAFE_DEVICE_RE, workspace_root
+from alb.infra.workspace import is_safe_device, workspace_root
 
 router = APIRouter()
 
@@ -47,7 +47,7 @@ def _screenshots_dir(serial: str) -> Path:
     making `resolved.relative_to(base.resolve())` succeed for a file in
     the escaped target.
     """
-    if not _SAFE_DEVICE_RE.match(serial):
+    if not is_safe_device(serial):
         raise HTTPException(
             status_code=400,
             detail=f"invalid device serial: {serial!r}",

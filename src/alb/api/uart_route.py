@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from alb.capabilities.logging import capture_uart
 from alb.infra.safe_path import resolve_under
-from alb.infra.workspace import _SAFE_DEVICE_RE, workspace_root
+from alb.infra.workspace import is_safe_device, workspace_root
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter()
@@ -54,7 +54,7 @@ def _logs_dir(device: str | None) -> Path:
     """
     root = workspace_root()
     if device:
-        if not _SAFE_DEVICE_RE.match(device):
+        if not is_safe_device(device):
             raise HTTPException(
                 status_code=400,
                 detail=f"invalid device serial: {device!r}",

@@ -20,7 +20,7 @@ from typing import Any
 
 from alb.infra.workspace import (
     InvalidProfileName,
-    _SAFE_PROFILE_NAME_RE,
+    is_safe_profile_name,
     workspace_root,
 )
 
@@ -116,7 +116,7 @@ def profile_path(name: str) -> Path:
     load attacker-planted TOML as alb config (since attackers may set
     `ALB_PROFILE` env / inject into `--profile`).
     """
-    if not _SAFE_PROFILE_NAME_RE.match(name):
+    if not is_safe_profile_name(name):
         raise InvalidProfileName(
             f"invalid profile name {name!r}: must match [A-Za-z0-9][A-Za-z0-9_-]* "
             f"(<= 64 chars); rejected to prevent path traversal"

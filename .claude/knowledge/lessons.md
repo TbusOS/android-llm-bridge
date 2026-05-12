@@ -1749,18 +1749,40 @@ ALB_WORKSPACE=/tmp/ws alb session show ../etc
 CLI 自调用是自伤，**但** trust boundary 在 part 130 已经从 1 个命令（chat）
 扩到 4 个（chat / show / replay / list）。Web/MCP 接入后是真实任意文件读。
 
-**正例**（多 commit 累计 · 5 维度全覆盖）：
+**正例**（多 commit 累计 · 6 个根因层 path-construction 防御点 + 4 个 caller-side 友好错误展示）：
 
-- session_id（part 134 `a1612aa`）：`infra/workspace.py` `_SAFE_SESSION_ID_RE` +
-  `InvalidSessionId` + `session_path()` 双道防御（regex + resolve+is_relative_to）
-- workspace_path device（part 137 `2dbb7b2`）：`_SAFE_DEVICE_RE` +
-  `InvalidDeviceSerial` + `workspace_path()` 加 device 校验
-- API 路由 helper（part 138 `5e78c34`）：`_screenshots_dir(serial)` /
-  `_logs_dir(device)` 在路径构造前 reject 非法 device serial（bypass
-  `resolve_under` 的 base.resolve() flatten 陷阱）
-- profile name（part 139 `<待提>`）：`_SAFE_PROFILE_NAME_RE` +
-  `InvalidProfileName` + `profile_path()` 加校验
-- 测试覆盖：22 + 25 + 2 PoC + 9 参数化 = 58 例
+根因层（构造 Path 的源头函数 / helper 都加校验）：
+
+- session_id（part 134 `a1612aa`）：`infra/workspace.session_path()` 用
+  `_SAFE_SESSION_ID_RE` + `InvalidSessionId`，双道防御（regex +
+  resolve+is_relative_to）
+- workspace_path device（part 137 `2dbb7b2`）：`infra/workspace.workspace_path()`
+  用 `_SAFE_DEVICE_RE` + `InvalidDeviceSerial`
+- API 路由 dir helper（part 138 `5e78c34`）：`_screenshots_dir(serial)` /
+  `_logs_dir(device)` 在路径构造前 reject（防 `resolve_under` 的
+  `base.resolve()` flatten 陷阱，见下方专门段）
+- profile_path（part 139 `571802c`）：`infra/config.profile_path()` 用
+  `_SAFE_PROFILE_NAME_RE` + `InvalidProfileName`
+- _resolve_search_targets device（part 140 `551bef6`）：MCP `alb_log_search`
+  入口，校验 `device`；`search_logs` 捕获并返 `INVALID_DEVICE` fail Result
+- 公开 is_safe_X helper（part 142 `<待提>`）：`is_safe_session_id` /
+  `is_safe_device` / `is_safe_profile_name` 抽出 N=5+ caller 共享单一
+  来源；`_SAFE_*_RE` 改回真正 module-private
+
+Caller-side 友好错误展示（捕获 `Invalid*` 异常转结构化错误）：
+
+- `cli/session_cli._ensure_session_exists` + `cli/chat_cli`（part 134
+  `a1612aa`）：catch `InvalidSessionId` → `typer.Exit(1)` + hint
+- `api/chat_route` POST `/chat`（part 140 `551bef6`）：catch → error envelope
+  `INVALID_SESSION_ID`
+- `api/terminal_route` WS（part 140 `551bef6`）：catch → 结构化 closed frame
+  `INVALID_SESSION_ID`，不发 1011 abrupt
+- `cli/main._main_options` callback（part 140 `551bef6`）：early-validate
+  `--profile` flag + `ALB_PROFILE` env，raise `typer.BadParameter`
+
+**测试覆盖**：see `tests/infra/test_workspace_session_id.py` /
+`tests/infra/test_config.py` / `tests/api/test_*_route.py` —— 每维度 PoC
++ 参数化恶意输入 + 合法输入边界，逐 commit 增量。
 
 **应用到 agents**：security-and-neutrality-auditor + code-reviewer agent
 grep checklist 加规则：

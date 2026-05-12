@@ -49,6 +49,26 @@ class InvalidProfileName(ValueError):
     """Raised when a user-supplied profile name would escape `profiles/`."""
 
 
+def is_safe_session_id(s: str) -> bool:
+    """True if `s` is a safe session_id (no traversal). See `session_path`."""
+    return isinstance(s, str) and bool(_SAFE_SESSION_ID_RE.match(s))
+
+
+def is_safe_device(s: str) -> bool:
+    """True if `s` is a safe device serial (no traversal). See `workspace_path`.
+
+    Single source of truth for the device-string shape used by:
+    `workspace_path(device=)`, `_screenshots_dir`, `_logs_dir`, MCP
+    `alb_log_search`, WS `uart_stream` audit logs, etc.
+    """
+    return isinstance(s, str) and bool(_SAFE_DEVICE_RE.match(s))
+
+
+def is_safe_profile_name(s: str) -> bool:
+    """True if `s` is a safe profile name (no traversal). See `profile_path`."""
+    return isinstance(s, str) and bool(_SAFE_PROFILE_NAME_RE.match(s))
+
+
 def workspace_root() -> Path:
     """Return the workspace root. Configurable via ALB_WORKSPACE env."""
     env = os.environ.get("ALB_WORKSPACE")
@@ -87,7 +107,7 @@ def workspace_path(
     the L-035 root-layer-enforce pattern from `session_path`.  Category
     and filename are internal (caller-controlled) and not validated.
     """
-    if device and not _SAFE_DEVICE_RE.match(device):
+    if device and not is_safe_device(device):
         # Falsy `device` (None / "") falls through to no-device path below.
         raise InvalidDeviceSerial(
             f"invalid device {device!r}: must match [A-Za-z0-9._:-]{{1,64}} "
@@ -147,7 +167,7 @@ def session_path(session_id: str, filename: str = "", *, ensure_dir: bool = True
     the same protection without duplicating sanitization. Raises
     :class:`InvalidSessionId` (a `ValueError` subclass) on rejection.
     """
-    if not _SAFE_SESSION_ID_RE.match(session_id):
+    if not is_safe_session_id(session_id):
         raise InvalidSessionId(
             f"invalid session_id {session_id!r}: must match [A-Za-z0-9][A-Za-z0-9_-]* "
             f"(<= 128 chars); rejected to prevent path traversal"

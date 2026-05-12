@@ -66,16 +66,16 @@ def _main_options(
     # Early-validate `--profile` flag AND `ALB_PROFILE` env so bad values
     # show a friendly typer error rather than a Python traceback when the
     # first subcommand reaches `load_active()`.
-    from alb.infra.workspace import _SAFE_PROFILE_NAME_RE
+    from alb.infra.workspace import is_safe_profile_name
 
-    if profile is not None and not _SAFE_PROFILE_NAME_RE.match(profile):
+    if profile is not None and not is_safe_profile_name(profile):
         raise typer.BadParameter(
             f"invalid profile name {profile!r}: must match "
             f"[A-Za-z0-9][A-Za-z0-9_-]* (<= 64 chars).",
             param_hint="--profile",
         )
     env_profile = os.environ.get("ALB_PROFILE")
-    if env_profile and not _SAFE_PROFILE_NAME_RE.match(env_profile):
+    if env_profile and not is_safe_profile_name(env_profile):
         raise typer.BadParameter(
             f"invalid ALB_PROFILE env {env_profile!r}: must match "
             f"[A-Za-z0-9][A-Za-z0-9_-]* (<= 64 chars).",

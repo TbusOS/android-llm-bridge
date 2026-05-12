@@ -17,7 +17,7 @@ from alb.infra.events import bus
 from alb.infra.result import Result, fail, ok
 from alb.infra.workspace import (
     InvalidDeviceSerial,
-    _SAFE_DEVICE_RE,
+    is_safe_device,
     iso_timestamp,
     resolve_capture_path,
     workspace_path,
@@ -519,7 +519,7 @@ def _resolve_search_targets(path: Path | None, device: str | None) -> list[Path]
         return [path] if path.is_file() else sorted(path.rglob("*.txt"))
     root = workspace_root()
     if device:
-        if not _SAFE_DEVICE_RE.match(device):
+        if not is_safe_device(device):
             raise InvalidDeviceSerial(
                 f"invalid device {device!r}: must match [A-Za-z0-9._:-]{{1,64}} "
                 f"with alnum leading char (rejected to prevent path traversal)"

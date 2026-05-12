@@ -57,21 +57,19 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
 from alb.infra.event_bus import get_bus, make_event
-from alb.infra.workspace import _SAFE_DEVICE_RE
+from alb.infra.workspace import is_safe_device
 from alb.mcp.transport_factory import build_transport
 
 
 def _safe_device(raw: object) -> str | None:
     """Return raw if it's a safe ASCII serial, else None.
 
-    Uses the shared `infra/workspace._SAFE_DEVICE_RE` (single source of truth).
-    Forgiving wrapper here — bad input becomes None so callers can fall
-    back to "unknown" in audit logs without raising. Hard-reject form lives
-    in `workspace_path` (raises `InvalidDeviceSerial`) for L-035 enforcement.
+    Forgiving wrapper around `infra.workspace.is_safe_device` — bad input
+    becomes None so callers can fall back to "unknown" in audit logs
+    without raising. Hard-reject form lives in `workspace_path` (raises
+    `InvalidDeviceSerial`) for L-035 enforcement.
     """
-    if isinstance(raw, str) and _SAFE_DEVICE_RE.match(raw):
-        return raw
-    return None
+    return raw if isinstance(raw, str) and is_safe_device(raw) else None
 
 router = APIRouter()
 
