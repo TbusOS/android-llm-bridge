@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections import Counter
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -227,11 +228,14 @@ async def capture_uart(
     )
 
     start = perf_counter()
+    deadline = start + duration
     stats = _LineStats()
     try:
         async with asyncio.timeout(duration + 5):
             await _drain_stream(
-                transport.stream_read("uart"),
+                _reconnecting_serial_stream(
+                    transport, "uart", deadline_perf=deadline,
+                ),
                 artifact,
                 stats,
                 max_seconds=duration,
@@ -497,6 +501,54 @@ async def _drain_stream(
             await event_bus.publish(topic, chunk)
             if perf_counter() - start >= max_seconds:
                 break
+
+
+_RECONNECT_BACKOFF_S = 0.5
+
+
+async def _reconnecting_serial_stream(
+    transport: Transport,
+    source: str,
+    *,
+    deadline_perf: float,
+    backoff_s: float = _RECONNECT_BACKOFF_S,
+    **kwargs: Any,
+) -> AsyncIterator[bytes]:
+    """Iterate ``transport.stream_read(source)``, reconnecting on early EOF
+    until ``deadline_perf`` (a ``perf_counter()`` value) is reached.
+
+    Why: TCP UART bridges (ser2net / windows_serial_bridge / socat) commonly
+    close the client connection when the COM port has no data — making a
+    naive ``async for chunk in transport.stream_read("uart")`` return in
+    ~100 ms even when the caller asked for ``duration=240``. The dominant
+    capture workflow is "start capture, *then* reboot the board" — which
+    requires holding the slot open until real bytes arrive or the user-
+    requested duration is up. See
+    ``BUG_serial_capture_idle_auto_exit.md`` for the field report.
+
+    Backoff: a constant ``backoff_s`` sleep between reconnect attempts (no
+    exponential growth — we want responsiveness when the bridge starts
+    flowing data again, and outer ``asyncio.timeout(duration + slack)`` is
+    a hard cap regardless).
+    """
+    while perf_counter() < deadline_perf:
+        try:
+            async for chunk in transport.stream_read(source, **kwargs):
+                yield chunk
+                if perf_counter() >= deadline_perf:
+                    return
+        except (asyncio.CancelledError, GeneratorExit):
+            raise
+        except Exception:  # noqa: BLE001 — survive transient transport errors
+            # _drain_stream's outer timeout (duration + slack) is the hard
+            # bound; here we just want to keep trying until the soft deadline.
+            pass
+        # Inner iterator exhausted or raised. Short backoff before next
+        # attempt — without it we'd spin the CPU when the bridge EOF-loops.
+        remaining = deadline_perf - perf_counter()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(backoff_s, remaining))
 
 
 # NB: `_resolve_capture_path` was promoted to `infra/workspace.resolve_capture_path`

@@ -18,10 +18,30 @@ async def _stream(chunks: list[bytes]) -> AsyncIterator[bytes]:
 
 
 def _mk_serial_mock(chunks: list[bytes]) -> AsyncMock:
+    """Mock serial transport. ``stream_read`` yields ``chunks`` exactly
+    once; any subsequent call (e.g. after capture_uart reconnects on EOF)
+    yields nothing — same as a real TCP bridge where you can't re-read
+    a stream past EOF.
+    """
     t = AsyncMock()
     t.name = "serial"
     t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
-    t.stream_read = lambda *a, **kw: _stream(chunks)
+
+    consumed = {"v": False}
+
+    def _factory(*_a, **_kw) -> AsyncIterator[bytes]:
+        async def _gen() -> AsyncIterator[bytes]:
+            if consumed["v"]:
+                if False:  # makes _gen an async-gen with zero yields
+                    yield b""
+                return
+            consumed["v"] = True
+            for c in chunks:
+                yield c
+
+        return _gen()
+
+    t.stream_read = _factory
     return t
 
 
@@ -123,3 +143,99 @@ async def test_capture_uart_output_trailing_slash(tmp_path: Path) -> None:
     art = Path(r.artifacts[0])
     assert art.parent == tmp_path / "fresh_dir"
     assert art.name.endswith("-uart.log")
+
+
+# ─── idle-bridge bug regression (BUG_serial_capture_idle_auto_exit) ───
+@pytest.mark.asyncio
+async def test_capture_uart_holds_duration_when_stream_idles(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """When the bridge immediately EOFs (idle COM port), capture_uart must
+    keep reconnecting until the requested duration elapses — not return
+    after ~100 ms with a 0-byte log.
+    """
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+
+    call_count = 0
+
+    def _empty_stream(*_a, **_kw):
+        nonlocal call_count
+        call_count += 1
+
+        async def _gen():
+            if False:  # makes _gen an async-generator function that yields nothing
+                yield b""
+
+        return _gen()
+
+    t = AsyncMock()
+    t.name = "serial"
+    t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
+    t.stream_read = _empty_stream
+
+    duration = 1
+    r = await capture_uart(t, duration=duration)
+
+    assert r.ok
+    assert r.data is not None
+    # Pre-fix the function returned in ~120 ms; require at least 80 % of
+    # the requested duration so the regression is impossible to miss.
+    assert r.data.duration_captured_ms >= int(duration * 1000 * 0.8), (
+        f"idle stream auto-exited at {r.data.duration_captured_ms} ms "
+        f"instead of holding for ~{duration*1000} ms"
+    )
+    # And we must have actually reconnected — otherwise the fix is a no-op.
+    assert call_count >= 2, (
+        f"only attempted {call_count} reconnect(s) in {duration}s — "
+        "backoff too long or reconnect loop missing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_capture_uart_catches_late_data_after_reconnect(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Workflow: start capture → reboot board → boot log only arrives on a
+    later reconnect. Pre-fix the capture had already given up; post-fix it
+    keeps reopening the stream until real bytes show up.
+    """
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+
+    call_count = 0
+    data_delivered = {"v": False}
+
+    def _late_data_stream(*_a, **_kw):
+        nonlocal call_count
+        call_count += 1
+        current = call_count
+
+        async def _gen():
+            # First two opens: bridge immediately EOFs (board still idle).
+            if current < 3 or data_delivered["v"]:
+                if False:  # unreachable; keeps _gen an async-gen function
+                    yield b""
+                return
+            # Third open: real bytes finally arrive (e.g. reboot started).
+            # Mark delivered so a later reconnect doesn't replay the same
+            # bytes — matches a real TCP bridge.
+            data_delivered["v"] = True
+            yield b"[boot] u-boot 2024.04\n"
+            yield b"[boot] kernel start\n"
+
+        return _gen()
+
+    t = AsyncMock()
+    t.name = "serial"
+    t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
+    t.stream_read = _late_data_stream
+
+    r = await capture_uart(t, duration=2)
+
+    assert r.ok
+    assert r.data is not None
+    assert r.data.lines == 2, (
+        f"expected to catch the 2 late boot lines, got {r.data.lines}"
+    )
+    content = Path(r.artifacts[0]).read_bytes()
+    assert b"u-boot" in content
+    assert b"kernel start" in content
