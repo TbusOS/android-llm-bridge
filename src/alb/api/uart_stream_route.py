@@ -56,6 +56,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
+from alb.capabilities.logging import _reconnecting_serial_stream
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.workspace import is_safe_device
 from alb.mcp.transport_factory import build_transport
@@ -226,12 +227,19 @@ async def _run_bidirectional(
 async def _pump_uart_to_ws(ws: WebSocket, transport: Any) -> None:
     """Async iterator over UART bytes → ws.send_bytes per chunk.
 
-    Read-only PR-C.b path — uses transport.stream_read which opens its
-    own link. Stops on WebSocketDisconnect / iterator exhaustion /
-    send error. Errors reported as closed-frame before bubbling.
+    Read-only PR-C.b path — wraps ``transport.stream_read("uart")`` in
+    :func:`_reconnecting_serial_stream` (no deadline) so an idle UART
+    bridge that EOFs the client connection doesn't tear the WS down;
+    we reopen and keep listening until the client closes the WS or
+    ``_run_read_only`` cancels us. See
+    ``BUG_serial_capture_idle_auto_exit.md`` for the field report on
+    the equivalent CLI path.
+
+    Stops on WebSocketDisconnect / outer cancel / send error. Other
+    errors reported as closed-frame before bubbling.
     """
     try:
-        async for chunk in transport.stream_read("uart"):
+        async for chunk in _reconnecting_serial_stream(transport, "uart"):
             if not chunk:
                 continue
             try:

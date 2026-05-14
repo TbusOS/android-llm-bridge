@@ -14,7 +14,15 @@ from alb.transport.base import ShellResult, Transport
 
 
 class _FakeSerialStreamTransport(Transport):
-    """Yields a fixed sequence of UART chunks then ends."""
+    """Yields a fixed sequence of UART chunks then ends.
+
+    ``stream_read`` is **single-shot**: after the first call exhausts the
+    chunk list, subsequent calls yield nothing. This matches a real TCP
+    bridge (ser2net / windows_serial_bridge) where you can't re-read a
+    stream past EOF — and is required for tests to behave deterministically
+    now that the pump path wraps ``stream_read`` in a reconnect loop
+    (``_reconnecting_serial_stream``).
+    """
 
     name = "serial"
 
@@ -24,6 +32,8 @@ class _FakeSerialStreamTransport(Transport):
             b"[    0.123456] init: starting\n",
             b"\x1b[1;32mOK\x1b[0m\n",  # ANSI green
         ]
+        self._consumed = False
+        self.stream_read_calls = 0
 
     async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
         return ShellResult(ok=True)
@@ -31,6 +41,12 @@ class _FakeSerialStreamTransport(Transport):
     async def stream_read(self, source: str, **kwargs: Any):  # noqa: ANN001
         if source != "uart":
             return
+        self.stream_read_calls += 1
+        if self._consumed:
+            if False:  # keep _gen an async-generator function with zero yields
+                yield b""
+            return
+        self._consumed = True
         for c in self.chunks:
             yield c
 
@@ -61,7 +77,12 @@ def client(monkeypatch, tmp_path):
 
 def test_stream_sends_ready_then_binary_then_closed(client) -> None:
     """Happy path: server sends ready JSON, then all UART chunks as
-    binary frames, then a closed JSON frame."""
+    binary frames, then (after client close) a closed JSON frame.
+
+    The pump path wraps stream_read in a reconnect loop so the WS
+    survives an idle bridge EOF — the natural way to end a session
+    is the client sending {"type":"close"} (or disconnecting).
+    """
     with client.websocket_connect("/uart/stream") as ws:
         # No client-first config — server falls through with device=None.
         ready = ws.receive_json()
@@ -77,7 +98,8 @@ def test_stream_sends_ready_then_binary_then_closed(client) -> None:
         assert chunks[0].startswith(b"[    0.000000]")
         assert b"\x1b[1;32mOK\x1b[0m" in chunks[2]
 
-        # After the iterator exhausts, server sends closed.
+        # Client-initiated close ends the session cleanly.
+        ws.send_text(json.dumps({"type": "close"}))
         closed = ws.receive_json()
         assert closed["type"] == "closed"
 
@@ -141,6 +163,90 @@ def test_stream_endpoint_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [w["path"] for w in body["ws"]]
     assert "/uart/stream" in paths
+
+
+class _IdleThenDataTransport(Transport):
+    """Simulates a TCP UART bridge that EOFs immediately on the first few
+    reconnect attempts (board idle), then on a later attempt delivers a
+    burst of bytes (board rebooted mid-session). Used to lock in the WS
+    reconnect-on-EOF fix for the read-only pump.
+    """
+
+    name = "serial"
+
+    def __init__(self, eof_count: int = 2, payload: list[bytes] | None = None) -> None:
+        self._eof_remaining = eof_count
+        self._payload = payload if payload is not None else [
+            b"[boot] u-boot 2024.04\n",
+            b"[boot] kernel start\n",
+        ]
+        self._delivered = False
+        self.stream_read_calls = 0
+
+    async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+        return ShellResult(ok=True)
+
+    async def stream_read(self, source: str, **kwargs: Any):  # noqa: ANN001
+        if source != "uart":
+            return
+        self.stream_read_calls += 1
+        if self._eof_remaining > 0:
+            self._eof_remaining -= 1
+            if False:  # keep this an async-gen with zero yields
+                yield b""
+            return
+        if self._delivered:
+            if False:
+                yield b""
+            return
+        self._delivered = True
+        for c in self._payload:
+            yield c
+
+    async def push(self, local, remote):  # noqa: ANN001
+        return ShellResult(ok=True)
+
+    async def pull(self, remote, local):  # noqa: ANN001
+        return ShellResult(ok=True)
+
+    async def reboot(self, mode: str = "normal") -> ShellResult:
+        return ShellResult(ok=True)
+
+    async def health(self) -> dict[str, Any]:
+        return {"ok": True}
+
+
+def test_stream_survives_idle_eof_and_catches_late_data(
+    monkeypatch, tmp_path
+) -> None:
+    """BUG fix companion to capture_uart: when the bridge EOFs the client
+    connection on idle, the WS read-only pump must reconnect — not tear
+    the session down. Verified by a fake transport that EOFs twice then
+    yields a real boot burst on the third connect."""
+    monkeypatch.chdir(tmp_path)
+    t = _IdleThenDataTransport(eof_count=2)
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ready = ws.receive_json()
+            assert ready["type"] == "ready"
+            # Two EOFs + one data round = 3 stream_read calls. Each EOF
+            # incurs a 0.5 s reconnect backoff, so allow a few seconds for
+            # the data to arrive.
+            first = ws.receive_bytes()
+            second = ws.receive_bytes()
+            assert b"u-boot" in first
+            assert b"kernel start" in second
+            ws.send_text(json.dumps({"type": "close"}))
+            closed = ws.receive_json()
+            assert closed["type"] == "closed"
+    assert t.stream_read_calls >= 3, (
+        f"expected ≥3 reconnect attempts to recover late data, "
+        f"got {t.stream_read_calls}"
+    )
 
 
 # ─── PR-C.c bidirectional mode regressions ─────────────────────────
@@ -215,6 +321,7 @@ def test_bidirectional_write_false_uses_read_only_path(monkeypatch, tmp_path) ->
             assert ready["write"] is False
             for _ in range(3):
                 ws.receive_bytes()
+            ws.send_text(json.dumps({"type": "close"}))
             ws.receive_json()  # closed
     assert t.last_link is None  # open_session never called
 
