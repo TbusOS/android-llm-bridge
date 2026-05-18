@@ -843,6 +843,47 @@ export async function previewWorkspaceFile(
   return (await r.json()) as WorkspaceFilePreview;
 }
 
+/* ─── Log search (regex over workspace logs) ────────────────────── */
+
+export interface LogSearchMatch {
+  path: string;
+  line_number: number;
+  content: string;
+}
+
+export interface LogSearchData {
+  pattern: string;
+  matches: LogSearchMatch[];
+  truncated: boolean;
+  match_count: number;
+}
+
+export interface LogSearchResponse {
+  ok: boolean;
+  data?: LogSearchData;
+  error?: { code: string; message: string; suggestion?: string };
+  timing_ms?: number;
+}
+
+export async function fetchLogSearch(
+  pattern: string,
+  opts: { device?: string | null; max?: number } = {},
+  signal?: AbortSignal,
+): Promise<LogSearchResponse> {
+  const params = new URLSearchParams({ pattern });
+  if (opts.device) params.set("device", opts.device);
+  if (opts.max != null) params.set("max", String(opts.max));
+  const r = await fetch(`/api/log/search?${params.toString()}`, { signal });
+  if (!r.ok && r.status !== 422 && r.status !== 400) {
+    throw new AlbApiError(
+      `GET /api/log/search returned ${r.status}`,
+      r.status,
+      "LOG_SEARCH_FAILED",
+    );
+  }
+  return (await r.json()) as LogSearchResponse;
+}
+
 /* ─── Power (battery / reboot / sleep-wake) ────────────────────── */
 
 export interface BatteryData {

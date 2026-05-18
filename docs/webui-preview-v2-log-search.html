@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Log Search tab — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect Log Search tab — regex search across workspace logs with line-level highlight.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .log-search-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+
+      .log-search {
+        max-width: 1100px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+      }
+
+      .log-search__bar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+        padding: var(--space-3) var(--space-4);
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+      }
+      .log-search__input {
+        flex: 1 1 320px;
+        min-width: 220px;
+        font: inherit;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 13px;
+        padding: 8px 12px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+      .log-search__input:focus {
+        outline: 2px solid var(--anth-orange);
+        outline-offset: -1px;
+        border-color: var(--anth-orange);
+      }
+      .log-search__limit {
+        font: inherit;
+        font-size: 13px;
+        padding: 8px 10px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        background: #ffffff;
+        width: 90px;
+      }
+      .log-search__submit {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        background: #a85a26;
+        color: #ffffff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 8px 18px;
+        cursor: pointer;
+      }
+      .log-search__submit:hover { background: #8e4a1f; }
+      .log-search__submit[disabled] { opacity: 0.55; cursor: progress; }
+
+      .log-search__status {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+      }
+      .log-search__status--truncated { color: #b46c2c; }
+      .log-search__status--err { color: #b54b3d; }
+
+      .log-search__results {
+        background: #1e1e1e;
+        color: #e6e6e6;
+        border-radius: 12px;
+        padding: var(--space-3) 0;
+        max-height: 60vh;
+        overflow: auto;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        line-height: 1.5;
+      }
+      .log-search__row {
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        gap: 12px;
+        padding: 2px var(--space-4);
+      }
+      .log-search__row:hover {
+        background: #2b2b2b;
+      }
+      .log-search__line {
+        color: #b0aea5;
+        text-align: right;
+      }
+      .log-search__hit {
+        background: #5c3b1a;
+        color: #ffd7b3;
+        padding: 0 2px;
+        border-radius: 2px;
+      }
+      .log-search__path {
+        display: block;
+        font-size: 11px;
+        color: #6a9bcc;
+        padding: var(--space-2) var(--space-4) 0;
+      }
+      .log-search__path:not(:first-child) {
+        margin-top: var(--space-2);
+        border-top: 1px solid #333;
+        padding-top: var(--space-3);
+      }
+
+      .log-search__empty {
+        padding: var(--space-6);
+        text-align: center;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="log-search-wrap">
+      <h1 style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">Log Search tab</h1>
+      <main class="log-search" role="region" aria-label="Log search">
+
+        <form class="log-search__bar">
+          <input
+            class="log-search__input"
+            type="search"
+            placeholder='regex e.g. "panic|oops|BUG|fatal"'
+            value="panic|oops|fatal"
+            aria-label="search regex"
+          >
+          <label class="log-search__status" for="ls-max">max</label>
+          <input id="ls-max" class="log-search__limit" type="number" value="200" min="1" max="1000">
+          <button type="submit" class="log-search__submit">search</button>
+          <span class="log-search__status">
+            <span class="lang-en">22 matches in 3 files · 38 ms</span>
+            <span class="lang-zh">22 处命中 / 3 个文件 · 38 ms</span>
+          </span>
+        </form>
+
+        <div class="log-search__results" role="region" aria-label="Matches">
+          <div class="log-search__path">workspace/devices/abc123/logs/2026-05-18T10-22-uart.log</div>
+          <div class="log-search__row">
+            <span class="log-search__line">147</span>
+            <span>[    1.234] kernel BUG at fs/inode.c:147 — <span class="log-search__hit">BUG</span> in inode hash</span>
+          </div>
+          <div class="log-search__row">
+            <span class="log-search__line">148</span>
+            <span>[    1.236] Modules linked in: nfnetlink</span>
+          </div>
+          <div class="log-search__row">
+            <span class="log-search__line">203</span>
+            <span>[    2.018] Internal error: <span class="log-search__hit">Oops</span>: 96000007 [#1] SMP</span>
+          </div>
+
+          <div class="log-search__path">workspace/devices/abc123/logs/2026-05-18T10-12-logcat.txt</div>
+          <div class="log-search__row">
+            <span class="log-search__line">8421</span>
+            <span>06-12 03:18:42.412 1234 1234 E ActivityManager: <span class="log-search__hit">FATAL</span> EXCEPTION in main thread</span>
+          </div>
+          <div class="log-search__row">
+            <span class="log-search__line">8422</span>
+            <span>06-12 03:18:42.413 1234 1234 E ActivityManager: java.lang.NullPointerException</span>
+          </div>
+
+          <div class="log-search__path">workspace/devices/abc123/logs/2026-05-17T16-08-dmesg.txt</div>
+          <div class="log-search__row">
+            <span class="log-search__line">512</span>
+            <span>[ 1245.012] Kernel <span class="log-search__hit">panic</span> - not syncing: VFS: Unable to mount root fs</span>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </body>
+</html>

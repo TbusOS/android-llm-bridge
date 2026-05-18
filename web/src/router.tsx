@@ -75,7 +75,8 @@ export type InspectTabKey =
   | "screenshot"
   | "ui-dump"
   | "files"
-  | "power";
+  | "power"
+  | "log-search";
 const INSPECT_TAB_KEYS: InspectTabKey[] = [
   "system",
   "charts",
@@ -86,6 +87,7 @@ const INSPECT_TAB_KEYS: InspectTabKey[] = [
   "ui-dump",
   "files",
   "power",
+  "log-search",
 ];
 
 const inspectRoute = createRoute({
