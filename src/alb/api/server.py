@@ -18,6 +18,7 @@ import sys
 from fastapi import FastAPI
 
 from alb import __version__
+from alb.api.app_route import router as app_route_router
 from alb.api.audit_route import router as audit_router
 from alb.api.chat_route import router as chat_router
 from alb.api.devices_route import router as devices_router
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"ok": "true", "version": __version__, "api": "alb"}
 
+    app.include_router(app_route_router)
     app.include_router(audit_router)
     app.include_router(chat_router)
     app.include_router(devices_router)

@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>App tab — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect App tab — install / uninstall / start / stop / list / info / clear-data.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .app-tab-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+
+      .app-tab {
+        max-width: 1200px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(280px, 360px) 1fr;
+        gap: var(--space-4);
+      }
+
+      .app-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+      }
+
+      .app-card__head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: var(--space-3);
+      }
+
+      .app-card__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .app-card__hint {
+        margin: 0 0 var(--space-3);
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+        line-height: 1.5;
+      }
+
+      .app-card__row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+        margin-bottom: var(--space-2);
+      }
+
+      .app-card__row input[type="text"],
+      .app-card__row input[type="file"] {
+        font: inherit;
+        font-size: 13px;
+        padding: 6px 10px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 6px;
+        background: #ffffff;
+        flex: 1 1 180px;
+      }
+
+      .app-btn {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        background: #a85a26;
+        color: #ffffff;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 6px 14px;
+        cursor: pointer;
+      }
+      .app-btn:hover { background: #8e4a1f; }
+      .app-btn[disabled] { opacity: 0.55; cursor: progress; }
+      .app-btn--danger { background: #b54b3d; }
+      .app-btn--danger:hover { background: #993e32; }
+      .app-btn--ghost { background: transparent; color: #a85a26; padding: 6px 10px; }
+      .app-btn--ghost:hover { background: var(--anth-bg-subtle); }
+
+      /* ---- Install + uninstall sidebar ---- */
+      .app-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+
+      .app-result {
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--anth-bg-subtle);
+        border: 1px dashed var(--anth-mid-gray);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        word-break: break-all;
+      }
+      .app-result[data-status="err"] {
+        color: #b54b3d;
+        border-color: #b54b3d;
+      }
+
+      /* ---- Package list + info panel ---- */
+      .app-list-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        max-height: 70vh;
+        min-height: 420px;
+      }
+
+      .app-list-card__head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+
+      .app-list-card__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .app-list-card__filter {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .app-list-card__filter input {
+        font: inherit;
+        font-size: 13px;
+        padding: 6px 10px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 6px;
+        width: 180px;
+      }
+
+      .app-list-card__filter label {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .app-list-card__body {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) 1fr;
+        gap: var(--space-3);
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      .app-pkg-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        overflow: auto;
+        background: var(--anth-bg-subtle);
+      }
+
+      .app-pkg {
+        display: block;
+        padding: 6px 10px;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        cursor: pointer;
+        border-bottom: 1px solid var(--anth-light-gray);
+      }
+
+      .app-pkg:hover {
+        background: #ffffff;
+      }
+
+      .app-pkg.is-active {
+        background: #fef0e8;
+        color: #a85a26;
+      }
+
+      /* ---- Selected package detail ---- */
+      .app-detail {
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        padding: var(--space-3);
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        overflow: auto;
+      }
+
+      .app-detail__name {
+        margin: 0;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 14px;
+        color: var(--anth-text);
+        word-break: break-all;
+      }
+
+      .app-detail__meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 8px;
+        font-size: 12px;
+      }
+
+      .app-detail__meta-label {
+        color: var(--anth-text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 11px;
+      }
+
+      .app-detail__meta-value {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        color: var(--anth-text);
+      }
+
+      .app-detail__perm {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .app-detail__perm-chip {
+        font-size: 11px;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        background: var(--anth-bg-subtle);
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--anth-light-gray);
+        color: var(--anth-text-secondary);
+      }
+
+      .app-detail__actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="app-tab-wrap">
+      <h1 style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">App tab</h1>
+      <main class="app-tab" role="region" aria-label="App tab">
+
+        <aside class="app-sidebar">
+          <section class="app-card">
+            <header class="app-card__head"><h2 class="app-card__title">install apk</h2></header>
+            <p class="app-card__hint">
+              <span class="lang-en">Push an APK file and run `pm install` on the device.</span>
+              <span class="lang-zh">上传 apk 推到设备 · pm install。</span>
+            </p>
+            <div class="app-card__row">
+              <input type="file" accept=".apk">
+            </div>
+            <div class="app-card__row">
+              <label><input type="checkbox" checked> replace</label>
+              <label><input type="checkbox"> grant runtime</label>
+              <label><input type="checkbox"> downgrade</label>
+            </div>
+            <div class="app-card__row">
+              <button type="button" class="app-btn">install</button>
+            </div>
+            <div class="app-result">
+              ok · /data/local/tmp/payload.apk · pm install -r returned Success
+            </div>
+          </section>
+
+          <section class="app-card">
+            <header class="app-card__head"><h2 class="app-card__title">start / stop / clear by name</h2></header>
+            <div class="app-card__row">
+              <input type="text" placeholder="com.example.app or pkg/.Activity" value="com.example.app">
+            </div>
+            <div class="app-card__row">
+              <button type="button" class="app-btn">start</button>
+              <button type="button" class="app-btn">stop</button>
+              <button type="button" class="app-btn app-btn--danger">clear data</button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="app-list-card">
+          <header class="app-list-card__head">
+            <h2 class="app-list-card__title">installed packages</h2>
+            <div class="app-list-card__filter">
+              <input type="text" placeholder="filter" value="chrome">
+              <label><input type="checkbox"> system</label>
+              <button type="button" class="app-btn app-btn--ghost">refresh</button>
+            </div>
+          </header>
+
+          <div class="app-list-card__body">
+            <ul class="app-pkg-list">
+              <li class="app-pkg is-active">com.android.chrome</li>
+              <li class="app-pkg">com.chrome.beta</li>
+              <li class="app-pkg">com.chrome.dev</li>
+              <li class="app-pkg">com.example.a</li>
+              <li class="app-pkg">com.example.b</li>
+              <li class="app-pkg">com.example.c</li>
+            </ul>
+
+            <div class="app-detail">
+              <h3 class="app-detail__name">com.android.chrome</h3>
+              <div class="app-detail__meta">
+                <span class="app-detail__meta-label">version</span>
+                <span class="app-detail__meta-value">126.0.6478.122</span>
+                <span class="app-detail__meta-label">code</span>
+                <span class="app-detail__meta-value">647812245</span>
+                <span class="app-detail__meta-label">installed</span>
+                <span class="app-detail__meta-value">2026-01-12 09:14</span>
+                <span class="app-detail__meta-label">updated</span>
+                <span class="app-detail__meta-value">2026-05-04 22:30</span>
+              </div>
+              <div>
+                <span class="app-detail__meta-label">requested permissions</span>
+                <div class="app-detail__perm" style="margin-top: 4px;">
+                  <span class="app-detail__perm-chip">INTERNET</span>
+                  <span class="app-detail__perm-chip">CAMERA</span>
+                  <span class="app-detail__perm-chip">RECORD_AUDIO</span>
+                  <span class="app-detail__perm-chip">LOCATION</span>
+                </div>
+              </div>
+              <div class="app-detail__actions">
+                <button type="button" class="app-btn">start</button>
+                <button type="button" class="app-btn">stop</button>
+                <button type="button" class="app-btn app-btn--danger">clear data</button>
+                <button type="button" class="app-btn app-btn--danger">uninstall</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </body>
+</html>

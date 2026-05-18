@@ -843,6 +843,139 @@ export async function previewWorkspaceFile(
   return (await r.json()) as WorkspaceFilePreview;
 }
 
+/* ─── App (install / uninstall / start / stop / list / info / clear) ─ */
+
+export interface AppListData {
+  packages: string[];
+  count: number;
+}
+
+export interface AppInfoData {
+  package: string;
+  version_name: string;
+  version_code: string;
+  first_install_time: string;
+  last_update_time: string;
+  requested_permissions: string[];
+}
+
+export interface AppEnvelope<T> {
+  ok: boolean;
+  data?: T;
+  error?: { code: string; message: string; suggestion?: string };
+  timing_ms?: number;
+}
+
+export async function fetchAppList(
+  device: string | null | undefined,
+  opts: { filter?: string; include_system?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<AppEnvelope<AppListData>> {
+  const p = new URLSearchParams();
+  if (device) p.set("device", device);
+  if (opts.filter) p.set("filter", opts.filter);
+  if (opts.include_system) p.set("include_system", "true");
+  const r = await fetch(`/api/app/list?${p.toString()}`, { signal });
+  if (!r.ok && r.status !== 503 && r.status !== 400) {
+    throw new AlbApiError(
+      `GET /api/app/list returned ${r.status}`,
+      r.status,
+      "APP_LIST_FAILED",
+    );
+  }
+  return (await r.json()) as AppEnvelope<AppListData>;
+}
+
+export async function fetchAppInfo(
+  pkg: string,
+  device: string | null | undefined,
+  signal?: AbortSignal,
+): Promise<AppEnvelope<AppInfoData>> {
+  const p = new URLSearchParams({ package: pkg });
+  if (device) p.set("device", device);
+  const r = await fetch(`/api/app/info?${p.toString()}`, { signal });
+  if (!r.ok && r.status !== 503 && r.status !== 400) {
+    throw new AlbApiError(
+      `GET /api/app/info returned ${r.status}`,
+      r.status,
+      "APP_INFO_FAILED",
+    );
+  }
+  return (await r.json()) as AppEnvelope<AppInfoData>;
+}
+
+async function _postApp(
+  endpoint: string,
+  device: string | null | undefined,
+  body: object,
+): Promise<AppEnvelope<unknown>> {
+  const r = await fetch(`/api/app/${endpoint}${_qDevice(device)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /api/app/${endpoint} returned ${r.status}`,
+      r.status,
+      "APP_OP_FAILED",
+    );
+  }
+  return (await r.json()) as AppEnvelope<unknown>;
+}
+
+export const postAppStart = (
+  device: string | null | undefined,
+  component: string,
+) => _postApp("start", device, { component });
+
+export const postAppStop = (
+  device: string | null | undefined,
+  pkg: string,
+) => _postApp("stop", device, { package: pkg });
+
+export const postAppClearData = (
+  device: string | null | undefined,
+  pkg: string,
+) => _postApp("clear-data", device, { package: pkg });
+
+export const postAppUninstall = (
+  device: string | null | undefined,
+  pkg: string,
+  opts: { keep_data?: boolean; allow_dangerous?: boolean } = {},
+) =>
+  _postApp("uninstall", device, {
+    package: pkg,
+    keep_data: opts.keep_data ?? false,
+    allow_dangerous: opts.allow_dangerous ?? false,
+  });
+
+export async function postAppInstall(
+  device: string | null | undefined,
+  file: File,
+  opts: { replace?: boolean; grant_runtime?: boolean; downgrade?: boolean } = {},
+): Promise<AppEnvelope<unknown>> {
+  const p = new URLSearchParams();
+  if (device) p.set("device", device);
+  if (opts.replace === false) p.set("replace", "false");
+  if (opts.grant_runtime) p.set("grant_runtime", "true");
+  if (opts.downgrade) p.set("downgrade", "true");
+  const fd = new FormData();
+  fd.append("apk", file);
+  const r = await fetch(`/api/app/install?${p.toString()}`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /api/app/install returned ${r.status}`,
+      r.status,
+      "APP_INSTALL_FAILED",
+    );
+  }
+  return (await r.json()) as AppEnvelope<unknown>;
+}
+
 /* ─── Diag (bugreport / anr / tombstone) ───────────────────────── */
 
 export interface DiagBugreportResult {
