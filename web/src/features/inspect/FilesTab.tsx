@@ -486,8 +486,7 @@ function FilePane(p: FilePaneProps) {
           >
             <RefreshCw
               size={12}
-              className="icon-inline"
-              className={p.isFetching ? "spin" : ""}
+              className={`icon-inline${p.isFetching ? " spin" : ""}`}
             />
           </button>
         </div>

@@ -60,10 +60,41 @@ const terminalRoute = createRoute({
   ),
 });
 
+// Inspect supports an optional ?tab=<key> deep-link so the Dashboard
+// QuickActionRow / external links can jump straight to a sub-tab
+// (e.g. /inspect?tab=logcat lands on the Logcat tab instead of the
+// default System Info). The 8 keys mirror InspectPage's `TabKey`.
+export type InspectTabKey =
+  | "system"
+  | "charts"
+  | "uart"
+  | "logcat"
+  | "shell"
+  | "screenshot"
+  | "ui-dump"
+  | "files";
+const INSPECT_TAB_KEYS: InspectTabKey[] = [
+  "system",
+  "charts",
+  "uart",
+  "logcat",
+  "shell",
+  "screenshot",
+  "ui-dump",
+  "files",
+];
+
 const inspectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/inspect",
   component: InspectPage,
+  validateSearch: (search: Record<string, unknown>): { tab?: InspectTabKey } => {
+    const raw = search.tab;
+    if (typeof raw === "string" && (INSPECT_TAB_KEYS as string[]).includes(raw)) {
+      return { tab: raw as InspectTabKey };
+    }
+    return {};
+  },
 });
 
 const playgroundRoute = createRoute({

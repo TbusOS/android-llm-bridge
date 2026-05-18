@@ -2,6 +2,10 @@
  * Quick actions — auto-fit (220px min) grid of qa-card buttons.  Each
  * card has a 36-px rounded square icon (orange on subtle bg) + title +
  * sub-line.  Routes to the matching module.
+ *
+ * Inspect-tab actions deep-link via `?tab=<key>` (see
+ * `router.tsx` validateSearch) so a tap on "Tail Logcat" lands the
+ * user on the Logcat tab, not the default System Info.
  */
 import { Link } from "@tanstack/react-router";
 import {
@@ -11,15 +15,31 @@ import {
   ScrollText,
   SquareTerminal,
 } from "lucide-react";
+import type { InspectTabKey } from "../../router";
 import { useApp } from "../../stores/app";
 import type { QuickActionData } from "./types";
 
-const ICONS: Record<string, { Icon: LucideIcon; to: string }> = {
-  "new-chat": { Icon: MessageSquare, to: "/chat" },
-  "open-terminal": { Icon: SquareTerminal, to: "/terminal" },
-  "tail-logcat": { Icon: ScrollText, to: "/inspect" },
-  screenshot: { Icon: Camera, to: "/inspect" },
+type ActionTarget =
+  | { kind: "plain"; to: string }
+  | { kind: "inspect"; tab: InspectTabKey };
+
+const ACTIONS: Record<string, { Icon: LucideIcon; target: ActionTarget }> = {
+  "new-chat": { Icon: MessageSquare, target: { kind: "plain", to: "/chat" } },
+  "open-terminal": {
+    Icon: SquareTerminal,
+    target: { kind: "inspect", tab: "shell" },
+  },
+  "tail-logcat": {
+    Icon: ScrollText,
+    target: { kind: "inspect", tab: "logcat" },
+  },
+  screenshot: {
+    Icon: Camera,
+    target: { kind: "inspect", tab: "screenshot" },
+  },
 };
+
+const FALLBACK = ACTIONS["new-chat"]!;
 
 interface Props {
   actions: QuickActionData[];
@@ -31,10 +51,14 @@ export function QuickActionRow({ actions }: Props) {
   return (
     <div className="qa-row">
       {actions.map((a) => {
-        const def = ICONS[a.key] ?? { Icon: MessageSquare, to: "/chat" };
+        const def = ACTIONS[a.key] ?? FALLBACK;
         const Icon = def.Icon;
+        const linkProps =
+          def.target.kind === "inspect"
+            ? ({ to: "/inspect", search: { tab: def.target.tab } } as const)
+            : ({ to: def.target.to } as const);
         return (
-          <Link key={a.key} to={def.to} className="qa-card">
+          <Link key={a.key} {...linkProps} className="qa-card">
             <span className="qa-icon">
               <Icon size={18} aria-hidden={true} />
             </span>

@@ -146,7 +146,9 @@ export function UiDumpTab() {
             style={{ height: rowVirtualizer.getTotalSize() }}
           >
             {rowVirtualizer.getVirtualItems().map((vRow) => {
-              const { node, depth } = visibleNodes[vRow.index];
+              const item = visibleNodes[vRow.index];
+              if (!item) return null;
+              const { node, depth } = item;
               return (
                 <div
                   key={vRow.key}

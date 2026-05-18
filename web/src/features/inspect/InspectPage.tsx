@@ -1,14 +1,20 @@
 /**
- * Inspect — per-device drill-in module.  Five sub-tabs:
- *   System Info / Charts / Screenshot / UI Dump / Files.
+ * Inspect — per-device drill-in module. Eight sub-tabs:
+ *   System Info / Charts / UART / Logcat / Shell / Screenshot /
+ *   UI Dump / Files.
  *
- * SubNav state lives in component-local useState (not in the URL or
- * Zustand) — Inspect is always entered from the activity bar so a
- * sub-tab doesn't deserve a route segment yet.  When Screenshot / UI
- * Dump / Files ship with deep links, they should each become nested
- * routes under /inspect/...
+ * SubNav state syncs with `?tab=<key>` in the URL so that:
+ *   - Dashboard QuickActionRow / external links can deep-link straight
+ *     to a tab (e.g. `/inspect?tab=logcat`);
+ *   - browser back/forward navigates between tabs;
+ *   - on a clean `/inspect` URL we default to `system`.
+ *
+ * Eventually each tab should become a nested route under `/inspect/...`
+ * (DEBT: SubNav-as-routes refactor) but the `?tab=` query is enough for
+ * the wire-up of the four QuickActions on the Dashboard.
  */
-import { Suspense, lazy, useState } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Suspense, lazy } from "react";
 import { SubNav } from "../../components/SubNav";
 import { useApp } from "../../stores/app";
 
@@ -53,7 +59,19 @@ type TabKey =
 export function InspectPage() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
-  const [tab, setTab] = useState<TabKey>("system");
+  // `strict: false` lets us read the search param without coupling to
+  // the route id (avoids a circular import with router.tsx). The
+  // route's validateSearch has already narrowed `tab` to a known key
+  // or stripped it.
+  const search = useSearch({ strict: false }) as { tab?: TabKey };
+  const navigate = useNavigate();
+  const tab: TabKey = search.tab ?? "system";
+  const setTab = (next: TabKey) => {
+    navigate({
+      to: "/inspect",
+      search: next === "system" ? {} : { tab: next },
+    });
+  };
 
   const tabs = [
     {
