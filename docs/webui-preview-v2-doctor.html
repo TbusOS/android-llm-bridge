@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Doctor Panel — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Doctor route — six-layer environment health snapshot. React implementation must mirror this class structure (mockup-baseline-checker rule).">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      /* 3 px orange brand stripe at the very top (mirrors v2 shell) so
+         the doctor page carries the signature anthropic-orange in the
+         hero region — visual-audit otherwise warns the page is too
+         monochrome. */
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .doctor-page-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      html[lang^="zh"] body, html[lang^="zh"] h1, html[lang^="zh"] h2, html[lang^="zh"] p {
+        font-family: "Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+      }
+
+      .doctor-page { max-width: 980px; margin: 0 auto; }
+
+      /* ----- Header strip: title + last-checked + refresh ----- */
+      .doctor-page__header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: var(--space-4);
+        margin-bottom: var(--space-4);
+      }
+      .doctor-page__heading h1 {
+        margin: 0 0 var(--space-1);
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 28px;
+        letter-spacing: -0.01em;
+      }
+      .doctor-page__heading p {
+        margin: 0;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .doctor-page__actions {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+      }
+      .doctor-page__updated {
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+      }
+      .doctor-page__refresh {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        /* Slightly darker than --anth-orange to hit WCAG AA contrast (≥4.5:1)
+           against white button text; the hover state goes darker still. */
+        background: #a85a26;
+        color: white;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 8px 18px;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      .doctor-page__refresh:hover { background: #8e4a1f; }
+      .doctor-page__refresh[disabled] { opacity: 0.55; cursor: progress; }
+
+      /* ----- Summary chips ----- */
+      .doctor-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        margin-bottom: var(--space-5);
+      }
+      .doctor-summary__chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .doctor-summary__chip[data-status="ok"] { color: var(--anth-green); }
+      .doctor-summary__chip[data-status="warn"] { color: #b46c2c; }
+      .doctor-summary__chip[data-status="err"] { color: #b54b3d; }
+      .doctor-summary__chip[data-status="skip"] { color: var(--anth-text-secondary); }
+      .doctor-summary__icon {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        text-align: center;
+        line-height: 14px;
+      }
+
+      /* ----- Layer grid: 2 columns on wide, 1 column on narrow ----- */
+      .doctor-layers {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+        gap: var(--space-4);
+      }
+      .doctor-layer-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+      .doctor-layer-card__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+      .doctor-layer-card__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--anth-text);
+      }
+      .doctor-layer-card__status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .doctor-layer-card[data-status="ok"]   .doctor-layer-card__status { color: var(--anth-green); }
+      .doctor-layer-card[data-status="warn"] .doctor-layer-card__status { color: #b46c2c; }
+      .doctor-layer-card[data-status="err"]  .doctor-layer-card__status { color: #b54b3d; }
+      .doctor-layer-card[data-status="skip"] .doctor-layer-card__status { color: var(--anth-text-secondary); }
+
+      .doctor-layer-card[data-status="err"]  { border-left: 4px solid #b54b3d; }
+      .doctor-layer-card[data-status="warn"] { border-left: 4px solid #b46c2c; }
+
+      .doctor-checks {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .doctor-check {
+        display: grid;
+        grid-template-columns: 16px 1fr auto;
+        gap: 10px;
+        align-items: baseline;
+        font-size: 13px;
+        padding: 4px 0;
+        border-bottom: 1px dashed transparent;
+      }
+      .doctor-check + .doctor-check {
+        border-top: 1px dashed var(--anth-light-gray);
+      }
+      .doctor-check__icon {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        line-height: 1;
+        text-align: center;
+      }
+      .doctor-check[data-status="ok"]   .doctor-check__icon { color: var(--anth-green); }
+      .doctor-check[data-status="warn"] .doctor-check__icon { color: #b46c2c; }
+      .doctor-check[data-status="err"]  .doctor-check__icon { color: #b54b3d; }
+      .doctor-check[data-status="skip"] .doctor-check__icon { color: var(--anth-text-secondary); }
+
+      .doctor-check__name {
+        color: var(--anth-text);
+        font-weight: 500;
+      }
+      .doctor-check__detail {
+        color: var(--anth-text-secondary);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        word-break: break-all;
+        text-align: right;
+      }
+
+      /* ----- Loading / error states ----- */
+      .doctor-state-banner {
+        background: var(--anth-bg-subtle);
+        border: 1px dashed var(--anth-mid-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+        text-align: center;
+        color: var(--anth-text-secondary);
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="doctor-page-wrap">
+    <main class="doctor-page" role="main">
+      <header class="doctor-page__header">
+        <div class="doctor-page__heading">
+          <h1>
+            <span class="lang-en">Doctor — environment health</span>
+            <span class="lang-zh">Doctor 环境健康检查</span>
+          </h1>
+          <p>
+            <span class="lang-en">Six-layer snapshot: env, binaries, config, adb, serial, ssh. Same probes as <code>alb doctor</code>.</span>
+            <span class="lang-zh">六层快照：env、binaries、config、adb、serial、ssh。和 <code>alb doctor</code> 命令一致。</span>
+          </p>
+        </div>
+        <div class="doctor-page__actions">
+          <span class="doctor-page__updated">
+            <span class="lang-en">Updated 2 s ago</span>
+            <span class="lang-zh">2 秒前刷新</span>
+          </span>
+          <button type="button" class="doctor-page__refresh">
+            <span class="lang-en">Refresh</span>
+            <span class="lang-zh">刷新</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="doctor-summary" role="status">
+        <span class="doctor-summary__chip" data-status="ok">
+          <span class="doctor-summary__icon">✓</span>
+          <span>5 ok</span>
+        </span>
+        <span class="doctor-summary__chip" data-status="warn">
+          <span class="doctor-summary__icon">!</span>
+          <span>0 warn</span>
+        </span>
+        <span class="doctor-summary__chip" data-status="err">
+          <span class="doctor-summary__icon">✗</span>
+          <span>0 err</span>
+        </span>
+        <span class="doctor-summary__chip" data-status="skip">
+          <span class="doctor-summary__icon">○</span>
+          <span>1 skip</span>
+        </span>
+      </div>
+
+      <div class="doctor-layers">
+
+        <article class="doctor-layer-card" data-status="ok">
+          <header class="doctor-layer-card__header">
+            <h2 class="doctor-layer-card__title">env</h2>
+            <span class="doctor-layer-card__status">✓ ok</span>
+          </header>
+          <ul class="doctor-checks">
+            <li class="doctor-check" data-status="skip">
+              <span class="doctor-check__icon">○</span>
+              <span class="doctor-check__name">ALB_WORKSPACE</span>
+              <span class="doctor-check__detail">(unset)</span>
+            </li>
+            <li class="doctor-check" data-status="ok">
+              <span class="doctor-check__icon">✓</span>
+              <span class="doctor-check__name">ADB_SERVER_SOCKET</span>
+              <span class="doctor-check__detail">tcp:localhost:5037</span>
+            </li>
+            <li class="doctor-check" data-status="skip">
+              <span class="doctor-check__icon">○</span>
+              <span class="doctor-check__name">ALB_CONFIG</span>
+              <span class="doctor-check__detail">(unset)</span>
+            </li>
+            <li class="doctor-check" data-status="skip">
+              <span class="doctor-check__icon">○</span>
+              <span class="doctor-check__name">ALB_PROFILE</span>
+              <span class="doctor-check__detail">(unset)</span>
+            </li>
+          </ul>
+        </article>
+
+        <article class="doctor-layer-card" data-status="ok">
+          <header class="doctor-layer-card__header">
+            <h2 class="doctor-layer-card__title">binaries</h2>
+            <span class="doctor-layer-card__status">✓ ok</span>
+          </header>
+          <ul class="doctor-checks">
+            <li class="doctor-check" data-status="ok">
+              <span class="doctor-check__icon">✓</span>
+              <span class="doctor-check__name">adb</span>
+              <span class="doctor-check__detail">/usr/local/bin/adb</span>
+            </li>
+            <li class="doctor-check" data-status="skip">
+              <span class="doctor-check__icon">○</span>
+              <span class="doctor-check__name">picocom</span>
+              <span class="doctor-check__detail">(optional)</span>
+            </li>
+            <li class="doctor-check" data-status="skip">
+              <span class="doctor-check__icon">○</span>
+              <span class="doctor-check__name">socat</span>
+              <span class="doctor-check__detail">(optional)</span>
+            </li>
+          </ul>
+        </article>
+
+        <article class="doctor-layer-card" data-status="ok">
+          <header class="doctor-layer-card__header">
+            <h2 class="doctor-layer-card__title">config</h2>
+            <span class="doctor-layer-card__status">✓ ok</span>
+          </header>
+          <ul class="doctor-checks">
+            <li class="doctor-check" data-status="ok">
+              <span class="doctor-check__icon">✓</span>
+              <span class="doctor-check__name">global config</span>
+              <span class="doctor-check__detail">~/.config/alb/config.toml</span>
+            </li>
+            <li class="doctor-check" data-status="ok">
+              <span class="doctor-check__icon">✓</span>
+              <span class="doctor-check__name">profile</span>
+              <span class="doctor-check__detail">default (0 device(s))</span>
+            </li>
+          </ul>
+        </article>
+
+        <article class="doctor-layer-card" data-status="ok">
+          <header class="doctor-layer-card__header">
+            <h2 class="doctor-layer-card__title">adb</h2>
+            <span class="doctor-layer-card__status">✓ ok</span>
+          </header>
+          <ul class="doctor-checks">
+            <li class="doctor-check" data-status="ok">
+              <span class="doctor-check__icon">✓</span>
+              <span class="doctor-check__name">server reachable</span>
+              <span class="doctor-check__detail"></span>
+            </li>
+            <li class="doctor-check" data-status="ok">
+              <span class="doctor-check__icon">✓</span>
+              <span class="doctor-check__name">1 device(s) visible</span>
+              <span class="doctor-check__detail">b1f59f008d7ab06f(device)</span>
+            </li>
+          </ul>
+        </article>
+
+        <article class="doctor-layer-card" data-status="warn">
+          <header class="doctor-layer-card__header">
+            <h2 class="doctor-layer-card__title">serial</h2>
+            <span class="doctor-layer-card__status">! warn</span>
+          </header>
+          <ul class="doctor-checks">
+            <li class="doctor-check" data-status="warn">
+              <span class="doctor-check__icon">!</span>
+              <span class="doctor-check__name">tcp localhost:19001 listening</span>
+              <span class="doctor-check__detail">ser2net not running, or tunnel inactive</span>
+            </li>
+          </ul>
+        </article>
+
+        <article class="doctor-layer-card" data-status="skip">
+          <header class="doctor-layer-card__header">
+            <h2 class="doctor-layer-card__title">ssh</h2>
+            <span class="doctor-layer-card__status">○ skip</span>
+          </header>
+          <ul class="doctor-checks">
+            <li class="doctor-check" data-status="skip">
+              <span class="doctor-check__icon">○</span>
+              <span class="doctor-check__name">ssh</span>
+              <span class="doctor-check__detail">(ALB_SSH_HOST unset; skipping)</span>
+            </li>
+          </ul>
+        </article>
+
+      </div>
+    </main>
+    </div>
+  </body>
+</html>

@@ -12,15 +12,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from alb.cli.doctor_cli import (
+from alb.capabilities.doctor import (
     Layer,
-    _exit_code,
-    _probe_binaries,
-    _probe_config,
-    _probe_env,
-    _probe_serial,
-    _probe_ssh,
+    compute_exit_code,
+    probe_binaries,
+    probe_config,
+    probe_env,
+    probe_serial_async,
+    probe_ssh,
 )
+
+
+def _run(coro):
+    """Tiny helper: run an async probe from a sync test."""
+    import asyncio
+    return asyncio.run(coro)
 
 
 # ─── Layer.worst aggregator ────────────────────────────────────────
@@ -61,7 +67,7 @@ def test_probe_env_marks_set_vs_unset(monkeypatch) -> None:
     monkeypatch.delenv("ADB_SERVER_SOCKET", raising=False)
     monkeypatch.delenv("ALB_CONFIG", raising=False)
     monkeypatch.delenv("ALB_PROFILE", raising=False)
-    layer = _probe_env()
+    layer = probe_env()
     by_name = {c.name: c for c in layer.checks}
     assert by_name["ALB_WORKSPACE"].status == "ok"
     assert by_name["ADB_SERVER_SOCKET"].status == "skip"
@@ -79,7 +85,7 @@ def test_probe_binaries_adb_required(monkeypatch) -> None:
 
     import shutil
     monkeypatch.setattr(shutil, "which", fake_which)
-    layer = _probe_binaries()
+    layer = probe_binaries()
     by_name = {c.name: c for c in layer.checks}
     assert by_name["adb"].status == "err"
     assert by_name["picocom"].status == "skip"
@@ -93,7 +99,7 @@ def test_probe_binaries_adb_present(monkeypatch) -> None:
         return f"/usr/local/bin/{name}" if name == "adb" else None
 
     monkeypatch.setattr(shutil, "which", fake_which)
-    layer = _probe_binaries()
+    layer = probe_binaries()
     by_name = {c.name: c for c in layer.checks}
     assert by_name["adb"].status == "ok"
     assert by_name["picocom"].status == "skip"
@@ -107,7 +113,7 @@ def test_probe_config_missing_file_is_skip(monkeypatch, tmp_path: Path) -> None:
     """Missing config.toml → skip (defaults), not error."""
     monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "absent.toml"))
     monkeypatch.setenv("ALB_PROFILE", "default")
-    layer = _probe_config()
+    layer = probe_config()
     by_name = {c.name: c for c in layer.checks}
     assert by_name["global config"].status == "skip"
     assert by_name["profile"].status == "ok"
@@ -117,7 +123,7 @@ def test_probe_config_present_file(monkeypatch, tmp_path: Path) -> None:
     cfg = tmp_path / "config.toml"
     cfg.write_text('default_profile = "default"\n')
     monkeypatch.setenv("ALB_CONFIG", str(cfg))
-    layer = _probe_config()
+    layer = probe_config()
     by_name = {c.name: c for c in layer.checks}
     assert by_name["global config"].status == "ok"
     assert str(cfg) in by_name["global config"].detail
@@ -131,9 +137,9 @@ def test_probe_serial_endpoint_not_listening(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "absent.toml"))
     # Force check_tcp_listen → False without actually opening sockets
     monkeypatch.setattr(
-        "alb.cli.doctor_cli.check_tcp_listen", lambda *a, **kw: False
+        "alb.capabilities.doctor.check_tcp_listen", lambda *a, **kw: False
     )
-    layer = _probe_serial()
+    layer = _run(probe_serial_async())
     assert any(c.status == "warn" for c in layer.checks)
     assert layer.worst == "warn"
 
@@ -141,15 +147,15 @@ def test_probe_serial_endpoint_not_listening(monkeypatch, tmp_path: Path) -> Non
 def test_probe_serial_endpoint_listening_and_open(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "absent.toml"))
     monkeypatch.setattr(
-        "alb.cli.doctor_cli.check_tcp_listen", lambda *a, **kw: True
+        "alb.capabilities.doctor.check_tcp_listen", lambda *a, **kw: True
     )
     # Mock SerialTransport.health() to claim connected
     fake_health = AsyncMock(return_value={"connected": True})
     monkeypatch.setattr(
-        "alb.cli.doctor_cli.SerialTransport",
+        "alb.capabilities.doctor.SerialTransport",
         lambda **kw: type("FakeT", (), {"health": fake_health})(),
     )
-    layer = _probe_serial()
+    layer = _run(probe_serial_async())
     by_name = {c.name: c for c in layer.checks}
     listening = next(k for k in by_name if "listening" in k)
     assert by_name[listening].status == "ok"
@@ -162,7 +168,7 @@ def test_probe_serial_endpoint_listening_and_open(monkeypatch, tmp_path: Path) -
 
 def test_probe_ssh_unset_is_skip(monkeypatch) -> None:
     monkeypatch.delenv("ALB_SSH_HOST", raising=False)
-    layer = _probe_ssh()
+    layer = probe_ssh()
     assert layer.worst == "skip"
 
 
@@ -170,9 +176,9 @@ def test_probe_ssh_set_and_unreachable(monkeypatch) -> None:
     monkeypatch.setenv("ALB_SSH_HOST", "example-host.invalid")
     monkeypatch.setenv("ALB_SSH_PORT", "22")
     monkeypatch.setattr(
-        "alb.cli.doctor_cli.check_tcp_listen", lambda *a, **kw: False
+        "alb.capabilities.doctor.check_tcp_listen", lambda *a, **kw: False
     )
-    layer = _probe_ssh()
+    layer = probe_ssh()
     assert layer.worst == "err"
 
 
@@ -184,7 +190,7 @@ def test_exit_code_no_err_returns_zero() -> None:
     a.add("x", "ok")
     b = Layer("b")
     b.add("y", "warn")
-    assert _exit_code([a, b]) == 0
+    assert compute_exit_code([a, b]) == 0
 
 
 def test_exit_code_err_returns_one() -> None:
@@ -192,7 +198,7 @@ def test_exit_code_err_returns_one() -> None:
     a.add("x", "ok")
     b = Layer("b")
     b.add("y", "err")
-    assert _exit_code([a, b]) == 1
+    assert compute_exit_code([a, b]) == 1
 
 
 # ─── End-to-end via CliRunner ──────────────────────────────────────
@@ -211,7 +217,7 @@ def test_alb_doctor_json_smoke(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("ALB_SSH_HOST", raising=False)
     # Avoid real TCP sockets
     monkeypatch.setattr(
-        "alb.cli.doctor_cli.check_tcp_listen", lambda *a, **kw: False
+        "alb.capabilities.doctor.check_tcp_listen", lambda *a, **kw: False
     )
 
     runner = CliRunner()

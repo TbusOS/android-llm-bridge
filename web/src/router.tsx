@@ -20,6 +20,7 @@ import {
 } from "@tanstack/react-router";
 import { ChatPage } from "./features/chat/ChatPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
+import { DoctorPage } from "./features/doctor/DoctorPage";
 import { InspectPage } from "./features/inspect/InspectPage";
 import { RootLayout } from "./layouts/RootLayout";
 import { StubPage } from "./routes/stub";
@@ -144,6 +145,12 @@ const filesRoute = createRoute({
   ),
 });
 
+const doctorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/doctor",
+  component: DoctorPage,
+});
+
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/audit",
@@ -167,6 +174,7 @@ const routeTree = rootRoute.addChildren([
   playgroundRoute,
   sessionsRoute,
   filesRoute,
+  doctorRoute,
   auditRoute,
 ]);
 

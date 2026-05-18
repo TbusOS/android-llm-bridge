@@ -803,3 +803,36 @@ export async function previewWorkspaceFile(
   }
   return (await r.json()) as WorkspaceFilePreview;
 }
+
+/* ─── Doctor (env health snapshot) ─────────────────────────────── */
+
+export type DoctorStatus = "ok" | "warn" | "err" | "skip";
+
+export interface DoctorCheck {
+  name: string;
+  status: DoctorStatus;
+  detail: string;
+}
+
+export interface DoctorLayer {
+  name: string;
+  status: DoctorStatus;
+  checks: DoctorCheck[];
+}
+
+export interface DoctorPayload {
+  layers: DoctorLayer[];
+  summary: Record<DoctorStatus, number>;
+}
+
+export async function fetchDoctor(signal?: AbortSignal): Promise<DoctorPayload> {
+  const r = await fetch("/api/doctor", { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /api/doctor returned ${r.status}`,
+      r.status,
+      "DOCTOR_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as DoctorPayload;
+}

@@ -10,6 +10,7 @@
 import { Link } from "@tanstack/react-router";
 import {
   Camera,
+  HeartPulse,
   type LucideIcon,
   MessageSquare,
   ScrollText,
@@ -37,6 +38,7 @@ const ACTIONS: Record<string, { Icon: LucideIcon; target: ActionTarget }> = {
     Icon: Camera,
     target: { kind: "inspect", tab: "screenshot" },
   },
+  doctor: { Icon: HeartPulse, target: { kind: "plain", to: "/doctor" } },
 };
 
 const FALLBACK = ACTIONS["new-chat"]!;

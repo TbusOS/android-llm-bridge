@@ -260,4 +260,11 @@ export const MOCK_QUICK_ACTIONS: QuickActionData[] = [
     sub: "save to workspace",
     subZh: "保存到 workspace",
   },
+  {
+    key: "doctor",
+    title: "Health check",
+    titleZh: "环境检查",
+    sub: "six-layer doctor probe",
+    subZh: "六层 doctor 探测",
+  },
 ];
