@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Diag tab — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect Diag tab — bugreport / ANR / tombstone triggers + collected artifact list.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .diag-tab-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+
+      .diag-tab {
+        max-width: 1100px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+      }
+
+      .diag-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: var(--space-3);
+      }
+
+      .diag-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+
+      .diag-card__head {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-2);
+      }
+
+      .diag-card__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .diag-card__cost {
+        font-size: 11px;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+      }
+
+      .diag-card__hint {
+        margin: 0;
+        font-size: 12.5px;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+        line-height: 1.5;
+      }
+
+      .diag-card__row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+      }
+
+      .diag-card__row label {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .diag-card__row input[type="number"] {
+        font: inherit;
+        font-size: 13px;
+        padding: 4px 8px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 6px;
+        background: #ffffff;
+        width: 64px;
+      }
+
+      .diag-btn {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        background: #a85a26;
+        color: #ffffff;
+        font: inherit;
+        font-size: 13.5px;
+        font-weight: 600;
+        padding: 7px 16px;
+        cursor: pointer;
+      }
+      .diag-btn:hover { background: #8e4a1f; }
+      .diag-btn[disabled] { opacity: 0.55; cursor: progress; }
+
+      .diag-result {
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: var(--anth-bg-subtle);
+        border: 1px dashed var(--anth-mid-gray);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        color: var(--anth-text-secondary);
+        word-break: break-all;
+      }
+      .diag-result[data-status="err"] {
+        color: #b54b3d;
+        border-color: #b54b3d;
+      }
+
+      /* ---- Archive section ---- */
+      .diag-archive {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+      }
+
+      .diag-archive__head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: var(--space-3);
+      }
+
+      .diag-archive__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .diag-archive__refresh {
+        font: inherit;
+        font-size: 12px;
+        color: #a85a26;
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+      }
+
+      .diag-archive__section {
+        margin-top: var(--space-3);
+      }
+
+      .diag-archive__section + .diag-archive__section {
+        border-top: 1px solid var(--anth-light-gray);
+        padding-top: var(--space-3);
+      }
+
+      .diag-archive__section-title {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--anth-text);
+        margin: 0 0 6px;
+      }
+
+      .diag-archive__list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .diag-archive__item {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: baseline;
+        font-size: 13px;
+        padding: 4px 0;
+      }
+
+      .diag-archive__item-name {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        color: var(--anth-text);
+      }
+
+      .diag-archive__item-meta {
+        font-size: 11px;
+        color: var(--anth-text-secondary);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+      }
+
+      .diag-archive__empty {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        font-style: italic;
+        padding: 4px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="diag-tab-wrap">
+      <h1 style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">Diag tab</h1>
+      <main class="diag-tab" role="region" aria-label="Diag tab">
+
+        <div class="diag-actions">
+
+          <section class="diag-card">
+            <header class="diag-card__head">
+              <h2 class="diag-card__title">bugreport</h2>
+              <span class="diag-card__cost">~60-180s</span>
+            </header>
+            <p class="diag-card__hint">
+              <span class="lang-en">Pulls a full bugreportz zip — system + logcat + dumpsys + tombstones in one archive.</span>
+              <span class="lang-zh">触发 bugreportz · 系统 + logcat + dumpsys + tombstones 全装一个 zip。</span>
+            </p>
+            <div class="diag-card__row">
+              <button type="button" class="diag-btn">collect</button>
+            </div>
+            <div class="diag-result">
+              ok · workspace/devices/abc/bugreports/2026-05-18-bugreport.zip · 12 412 ms
+            </div>
+          </section>
+
+          <section class="diag-card">
+            <header class="diag-card__head">
+              <h2 class="diag-card__title">anr</h2>
+              <span class="diag-card__cost">fast</span>
+            </header>
+            <p class="diag-card__hint">
+              <span class="lang-en">Pulls /data/anr/*.txt trace files into a timestamped bundle.</span>
+              <span class="lang-zh">从 /data/anr/ 拉所有 trace_*.txt 到时间戳目录。</span>
+            </p>
+            <div class="diag-card__row">
+              <label><input type="checkbox"> clear after pull</label>
+              <button type="button" class="diag-btn">pull</button>
+            </div>
+            <div class="diag-result">
+              ok · 3 file(s) · /workspace/devices/abc/anr/2026-05-18T10/
+            </div>
+          </section>
+
+          <section class="diag-card">
+            <header class="diag-card__head">
+              <h2 class="diag-card__title">tombstone</h2>
+              <span class="diag-card__cost">fast</span>
+            </header>
+            <p class="diag-card__hint">
+              <span class="lang-en">Pulls newest N tombstones (native crash dumps) from /data/tombstones/.</span>
+              <span class="lang-zh">从 /data/tombstones/ 拉最新 N 个 native crash dump。</span>
+            </p>
+            <div class="diag-card__row">
+              <label>limit <input type="number" value="10" min="1" max="200"></label>
+              <button type="button" class="diag-btn">pull</button>
+            </div>
+            <div class="diag-result">
+              ok · 4 file(s) · /workspace/devices/abc/tombstones/2026-05-18T11/
+            </div>
+          </section>
+
+        </div>
+
+        <section class="diag-archive">
+          <header class="diag-archive__head">
+            <h2 class="diag-archive__title">collected</h2>
+            <button type="button" class="diag-archive__refresh">refresh</button>
+          </header>
+
+          <div class="diag-archive__section">
+            <h3 class="diag-archive__section-title">bugreports (1)</h3>
+            <ul class="diag-archive__list">
+              <li class="diag-archive__item">
+                <span class="diag-archive__item-name">2026-05-18-bugreport.zip</span>
+                <span class="diag-archive__item-meta">8.4 MB · 10:24</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="diag-archive__section">
+            <h3 class="diag-archive__section-title">anr bundles (1)</h3>
+            <ul class="diag-archive__list">
+              <li class="diag-archive__item">
+                <span class="diag-archive__item-name">2026-05-18T10 — 3 trace(s)</span>
+                <span class="diag-archive__item-meta">trace_a.txt · trace_b.txt · trace_c.txt</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="diag-archive__section">
+            <h3 class="diag-archive__section-title">tombstone bundles (2)</h3>
+            <ul class="diag-archive__list">
+              <li class="diag-archive__item">
+                <span class="diag-archive__item-name">2026-05-18T11 — 4 dump(s)</span>
+                <span class="diag-archive__item-meta">tombstone_00 … tombstone_03</span>
+              </li>
+              <li class="diag-archive__item">
+                <span class="diag-archive__item-name">2026-05-17T16 — 2 dump(s)</span>
+                <span class="diag-archive__item-meta">tombstone_00 · tombstone_01</span>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </body>
+</html>

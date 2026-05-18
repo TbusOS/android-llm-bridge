@@ -843,6 +843,122 @@ export async function previewWorkspaceFile(
   return (await r.json()) as WorkspaceFilePreview;
 }
 
+/* ─── Diag (bugreport / anr / tombstone) ───────────────────────── */
+
+export interface DiagBugreportResult {
+  zip_path: string;
+  txt_path: string | null;
+  duration_ms: number;
+}
+
+export interface DiagPullBundleResult {
+  kind: string;
+  count: number;
+  files: string[];
+}
+
+export interface DiagEnvelope<T> {
+  ok: boolean;
+  data?: T;
+  error?: { code: string; message: string; suggestion?: string };
+  timing_ms?: number;
+}
+
+export interface DiagArtifactFile {
+  path: string;
+  name: string;
+  size_bytes: number;
+  mtime: number;
+}
+
+export interface DiagArtifactBundle {
+  bundle: string;
+  path: string;
+  files: DiagArtifactFile[];
+  count: number;
+}
+
+export interface DiagArtifactsResponse {
+  ok: boolean;
+  data: {
+    bugreports: DiagArtifactFile[];
+    anr: DiagArtifactBundle[];
+    tombstones: DiagArtifactBundle[];
+  };
+}
+
+export async function postDiagBugreport(
+  device: string | null | undefined,
+): Promise<DiagEnvelope<DiagBugreportResult>> {
+  const r = await fetch(`/api/diag/bugreport${_qDevice(device)}`, {
+    method: "POST",
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /api/diag/bugreport returned ${r.status}`,
+      r.status,
+      "BUGREPORT_FAILED",
+    );
+  }
+  return (await r.json()) as DiagEnvelope<DiagBugreportResult>;
+}
+
+export async function postDiagAnr(
+  device: string | null | undefined,
+  body: { clear_after: boolean },
+): Promise<DiagEnvelope<DiagPullBundleResult>> {
+  const r = await fetch(`/api/diag/anr${_qDevice(device)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /api/diag/anr returned ${r.status}`,
+      r.status,
+      "ANR_FAILED",
+    );
+  }
+  return (await r.json()) as DiagEnvelope<DiagPullBundleResult>;
+}
+
+export async function postDiagTombstone(
+  device: string | null | undefined,
+  body: { limit: number },
+): Promise<DiagEnvelope<DiagPullBundleResult>> {
+  const r = await fetch(`/api/diag/tombstone${_qDevice(device)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /api/diag/tombstone returned ${r.status}`,
+      r.status,
+      "TOMBSTONE_FAILED",
+    );
+  }
+  return (await r.json()) as DiagEnvelope<DiagPullBundleResult>;
+}
+
+export async function fetchDiagArtifacts(
+  device: string,
+  signal?: AbortSignal,
+): Promise<DiagArtifactsResponse> {
+  const r = await fetch(
+    `/api/diag/artifacts?device=${encodeURIComponent(device)}`,
+    { signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /api/diag/artifacts returned ${r.status}`,
+      r.status,
+      "DIAG_ARTIFACTS_FAILED",
+    );
+  }
+  return (await r.json()) as DiagArtifactsResponse;
+}
+
 /* ─── Log search (regex over workspace logs) ────────────────────── */
 
 export interface LogSearchMatch {

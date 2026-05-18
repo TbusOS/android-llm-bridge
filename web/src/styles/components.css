@@ -3590,3 +3590,213 @@ html[lang^="zh"] h3 {
   font-family: "Lora", Georgia, serif;
   font-style: italic;
 }
+
+/* ==========================================================
+   Diag tab (Inspect sub-tab)
+   baseline: docs/webui-preview-v2-diag.html
+   ========================================================== */
+
+.diag-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.diag-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.diag-card {
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 12px;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.diag-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.diag-card__title {
+  margin: 0;
+  font-family: "Poppins", system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.diag-card__cost {
+  font-size: 11px;
+  color: var(--anth-text-secondary);
+  font-family: "Lora", Georgia, serif;
+}
+
+.diag-card__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--anth-text-secondary);
+  font-family: "Lora", Georgia, serif;
+  line-height: 1.5;
+}
+
+.diag-card__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.diag-card__row label {
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diag-card__row input[type="number"] {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 6px;
+  background: #ffffff;
+  width: 64px;
+}
+
+.diag-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: #a85a26;
+  color: #ffffff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+.diag-btn:hover {
+  background: #8e4a1f;
+}
+
+.diag-btn[disabled] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.diag-result {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--anth-bg-subtle);
+  border: 1px dashed var(--anth-mid-gray);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--anth-text-secondary);
+  word-break: break-all;
+}
+
+.diag-result[data-status="err"] {
+  color: #b54b3d;
+  border-color: #b54b3d;
+}
+
+.diag-archive {
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 12px;
+  padding: var(--space-4);
+}
+
+.diag-archive__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--space-3);
+}
+
+.diag-archive__title {
+  margin: 0;
+  font-family: "Poppins", system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.diag-archive__refresh {
+  font: inherit;
+  font-size: 12px;
+  color: #a85a26;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.diag-archive__refresh:hover {
+  text-decoration: underline;
+}
+
+.diag-archive__section {
+  margin-top: var(--space-3);
+}
+
+.diag-archive__section + .diag-archive__section {
+  border-top: 1px solid var(--anth-light-gray);
+  padding-top: var(--space-3);
+}
+
+.diag-archive__section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--anth-text);
+  margin: 0 0 6px;
+}
+
+.diag-archive__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diag-archive__item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.diag-archive__item-name {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--anth-text);
+}
+
+.diag-archive__item-meta {
+  font-size: 11px;
+  color: var(--anth-text-secondary);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.diag-archive__empty {
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+  font-style: italic;
+  padding: 4px 0;
+}

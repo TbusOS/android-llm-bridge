@@ -51,6 +51,9 @@ const PowerTab = lazy(() =>
 const LogSearchTab = lazy(() =>
   import("./LogSearchTab").then((m) => ({ default: m.LogSearchTab })),
 );
+const DiagTab = lazy(() =>
+  import("./DiagTab").then((m) => ({ default: m.DiagTab })),
+);
 
 type TabKey =
   | "system"
@@ -62,7 +65,8 @@ type TabKey =
   | "ui-dump"
   | "files"
   | "power"
-  | "log-search";
+  | "log-search"
+  | "diag";
 
 export function InspectPage() {
   const lang = useApp((s) => s.lang);
@@ -113,6 +117,7 @@ export function InspectPage() {
       key: "log-search" as TabKey,
       label: lang === "zh" ? "日志搜索" : "Log Search",
     },
+    { key: "diag" as TabKey, label: lang === "zh" ? "诊断" : "Diag" },
   ];
 
   return (
@@ -168,6 +173,7 @@ export function InspectPage() {
         {tab === "files" ? <FilesTab /> : null}
         {tab === "power" ? <PowerTab /> : null}
         {tab === "log-search" ? <LogSearchTab /> : null}
+        {tab === "diag" ? <DiagTab /> : null}
       </Suspense>
     </section>
   );
