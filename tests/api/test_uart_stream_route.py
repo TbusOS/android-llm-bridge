@@ -571,6 +571,88 @@ def test_oversized_write_frame_publishes_audit_event(
     assert drop_event["data"]["reason"] == "frame_too_large"
 
 
+# ─── PR-C.c idle-EOF reconnect regression ─────────────────────────
+class _EofReader:
+    """StreamReader stand-in that yields its chunks then EOFs (returns
+    b'' from read). Used to simulate a TCP UART bridge that closes the
+    client connection when the COM port goes idle."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._queue = list(chunks)
+
+    async def read(self, n: int) -> bytes:
+        if self._queue:
+            return self._queue.pop(0)
+        return b""  # EOF — outer pump treats as link_eof
+
+
+def test_bidirectional_reconnects_on_link_eof(monkeypatch, tmp_path) -> None:
+    """PR-C.c idle-EOF: when the bridge EOFs the link mid-session, the
+    server must close the dead link, open a fresh one, and re-spawn both
+    pump + recv tasks. Verified by a fake transport where session-0's
+    reader EOFs after 2 chunks and session-1's reader yields 2 more.
+    The client should see 4 chunks before closing with client_close."""
+    monkeypatch.chdir(tmp_path)
+
+    t = _FakeBidirectionalTransport()
+
+    session_idx = {"v": 0}
+
+    async def _open() -> _FakeLink:
+        idx = session_idx["v"]
+        session_idx["v"] += 1
+        link = _FakeLink([])
+        if idx == 0:
+            # First link: yields 2 chunks then EOFs (idle bridge).
+            link.reader = _EofReader([b"early-1\n", b"early-2\n"])
+        else:
+            # Second link: yields 2 more chunks, then blocks so we can
+            # close cleanly from the client side.
+            link.reader = _FakeReader([b"late-1\n", b"late-2\n"])
+        t.last_link = link
+        return link
+
+    t.open_session = _open  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "alb.api.uart_stream_route.build_transport", lambda **kw: t,
+    )
+
+    app = create_app()
+    received: list[bytes] = []
+    with TestClient(app) as c:
+        with c.websocket_connect("/uart/stream") as ws:
+            ws.send_json({"write": True})
+            ready = ws.receive_json()
+            assert ready["write"] is True
+            # Drain 4 chunks across the reconnect. Allow interleaving with
+            # potential text frames by checking each receive.
+            for _ in range(40):
+                if len(received) >= 4:
+                    break
+                msg = ws.receive()
+                data = msg.get("bytes")
+                if data:
+                    received.append(data)
+            assert len(received) == 4, (
+                f"expected 4 chunks across 2 sessions, got {len(received)}: "
+                f"{received!r}"
+            )
+            assert received[:2] == [b"early-1\n", b"early-2\n"]
+            assert received[2:] == [b"late-1\n", b"late-2\n"]
+            ws.send_text(json.dumps({"type": "close"}))
+            closed = ws.receive_json()
+            assert closed["type"] == "closed"
+            assert closed["reason"] == "client_close"
+
+    assert session_idx["v"] >= 2, (
+        f"expected ≥2 open_session calls (reconnect), got {session_idx['v']}"
+    )
+    # Both links should have been closed via close_session.
+    assert len(t.closed_links) >= 2, (
+        f"both links must be closed cleanly, got {len(t.closed_links)}"
+    )
+
+
 def test_reader_oserror_yields_single_stream_error_close(
     monkeypatch, tmp_path
 ) -> None:

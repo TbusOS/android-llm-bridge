@@ -86,6 +86,12 @@ router = APIRouter()
 # (DEBT-026 / security audit 2026-05-02 LOW 4)
 _MAX_WRITE_FRAME_BYTES = 64 * 1024
 
+# Backoff between PR-C.c bidirectional link reconnects on idle EOF.
+# Mirrors `_reconnecting_serial_stream`'s 0.5 s constant (no exponential
+# growth — we want responsiveness when the bridge starts flowing again,
+# and the client closing the WS is the hard cap regardless).
+_LINK_RECONNECT_BACKOFF_S = 0.5
+
 
 @dataclass
 class _CloseState:
@@ -181,7 +187,24 @@ async def _run_read_only(
 async def _run_bidirectional(
     ws: WebSocket, transport: Any, *, device: str | None = None,
 ) -> None:
-    """PR-C.c path — single shared link; writer used for client→UART."""
+    """PR-C.c path — single shared link; writer used for client→UART.
+
+    Reconnect-on-EOF: TCP UART bridges close the client connection when
+    the COM port goes idle. Instead of tearing the WS down on the first
+    EOF, we close the dead link, open a fresh session, and re-spawn
+    both pump + recv tasks. The loop exits when:
+
+    * recv side finishes (client sent ``{"type":"close"}`` or
+      disconnected) — those tag ``cs.reason`` with ``client_close`` /
+      ``client_disconnect``;
+    * either side reports a non-EOF transport error (``stream_error`` /
+      ``write_error`` from the read / write paths);
+    * ``open_session`` fails on the very first attempt — we surface
+      ``init_failed`` and bail.
+
+    Only ``link_eof`` (set by ``_pump_link_to_ws`` on empty read) is
+    treated as "soft" and triggers reconnect.
+    """
     try:
         link = await transport.open_session()
     except Exception as e:  # noqa: BLE001
@@ -197,19 +220,46 @@ async def _run_bidirectional(
         return
 
     cs = _CloseState()
-    pump_task = asyncio.create_task(_pump_link_to_ws(ws, link, cs))
-    recv_task = asyncio.create_task(
-        _recv_loop(ws, link=link, close_state=cs, device=device)
-    )
     try:
-        _, pending = await asyncio.wait(
-            {pump_task, recv_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for t in pending:
-            t.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await t
+        while True:
+            pump_task = asyncio.create_task(_pump_link_to_ws(ws, link, cs))
+            recv_task = asyncio.create_task(
+                _recv_loop(ws, link=link, close_state=cs, device=device)
+            )
+            done, pending = await asyncio.wait(
+                {pump_task, recv_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+
+            # Reconnect only when the pump side died of a pure link EOF
+            # AND the recv side was still alive (i.e. user hasn't asked
+            # to close). Any other combo = terminate the session.
+            if (
+                cs.reason == "link_eof"
+                and pump_task in done
+                and recv_task in pending
+            ):
+                with contextlib.suppress(Exception):
+                    await transport.close_session(link)
+                # Reset the soft signal before the next attempt so a
+                # subsequent client_close / write_error isn't shadowed.
+                cs.reason = "ended"
+                cs.error = None
+                try:
+                    await asyncio.sleep(_LINK_RECONNECT_BACKOFF_S)
+                    link = await transport.open_session()
+                except (asyncio.CancelledError, Exception) as e:  # noqa: BLE001
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
+                    cs.reason = "reconnect_failed"
+                    cs.error = f"{type(e).__name__}: {e}"
+                    break
+                continue
+            break
     finally:
         with contextlib.suppress(Exception):
             await transport.close_session(link)
@@ -268,7 +318,12 @@ async def _pump_link_to_ws(
 
     On error sets `close_state.{reason,error}` and returns — outer
     finally is the only place that emits a close frame (avoids the
-    double-frame race fixed in PR-C.c review HIGH 1)."""
+    double-frame race fixed in PR-C.c review HIGH 1).
+
+    On link EOF (idle bridge closing the connection) sets
+    ``close_state.reason = "link_eof"`` so the outer reconnect loop in
+    ``_run_bidirectional`` can distinguish a soft EOF (reopen) from a
+    hard error (terminate)."""
     while True:
         try:
             chunk = await link.reader.read(4096)
@@ -277,7 +332,8 @@ async def _pump_link_to_ws(
             close_state.error = f"{type(e).__name__}: {e}"
             return
         if not chunk:
-            return  # EOF — UART closed at the other end
+            close_state.reason = "link_eof"
+            return  # EOF — outer reconnect loop decides whether to reopen
         try:
             await ws.send_bytes(chunk)
         except (WebSocketDisconnect, RuntimeError):
@@ -307,6 +363,8 @@ async def _recv_loop(
         while True:
             msg = await ws.receive()
             if msg.get("type") == "websocket.disconnect":
+                if close_state is not None:
+                    close_state.reason = "client_disconnect"
                 return
             # Binary frame — UART input from client (PR-C.c).
             data = msg.get("bytes")
@@ -366,8 +424,12 @@ async def _recv_loop(
                 with contextlib.suppress(json.JSONDecodeError):
                     obj = json.loads(text)
                     if isinstance(obj, dict) and obj.get("type") == "close":
+                        if close_state is not None:
+                            close_state.reason = "client_close"
                         return
     except WebSocketDisconnect:
+        if close_state is not None:
+            close_state.reason = "client_disconnect"
         return
 
 
