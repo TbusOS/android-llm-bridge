@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Power tab — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect Power tab — battery card + reboot + sleep-wake controls. React class names must mirror this baseline.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .power-tab-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+
+      .power-tab {
+        max-width: 980px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(280px, 360px) 1fr;
+        gap: var(--space-4);
+      }
+
+      /* ---- Battery card (left column) ---- */
+      .power-battery-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+      .power-battery-card__head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: var(--space-2);
+      }
+      .power-battery-card__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--anth-text);
+      }
+      .power-battery-card__refresh {
+        font: inherit;
+        font-size: 12px;
+        color: #a85a26;
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+        padding: 0;
+      }
+      .power-battery-card__refresh:hover { text-decoration: underline; }
+
+      .power-battery-card__level {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .power-battery-card__level-value {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 40px;
+        font-weight: 600;
+        line-height: 1;
+        color: var(--anth-text);
+      }
+      .power-battery-card__level-unit {
+        font-size: 16px;
+        color: var(--anth-text-secondary);
+      }
+
+      .power-battery-card__bar {
+        position: relative;
+        height: 6px;
+        background: var(--anth-bg-subtle);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .power-battery-card__bar-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        background: var(--anth-green);
+      }
+
+      .power-battery-card__grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 12px;
+        font-size: 12.5px;
+        margin-top: 4px;
+      }
+      .power-battery-card__field {
+        display: flex;
+        flex-direction: column;
+      }
+      .power-battery-card__field-label {
+        color: var(--anth-text-secondary);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .power-battery-card__field-value {
+        color: var(--anth-text);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 13px;
+      }
+
+      /* ---- Actions column (right) ---- */
+      .power-actions {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+      }
+
+      .power-action-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+      }
+      .power-action-card__head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: var(--space-2);
+      }
+      .power-action-card__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .power-action-card__hint {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+        margin: 0 0 var(--space-3);
+      }
+      .power-action-card__row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        flex-wrap: wrap;
+      }
+      .power-action-card__row label {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .power-action-card__row select,
+      .power-action-card__row input {
+        font: inherit;
+        font-size: 13px;
+        padding: 6px 10px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 6px;
+        background: #ffffff;
+        min-width: 100px;
+      }
+
+      .power-btn {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        background: #a85a26;
+        color: #ffffff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 8px 18px;
+        cursor: pointer;
+      }
+      .power-btn:hover { background: #8e4a1f; }
+      .power-btn[disabled] { opacity: 0.55; cursor: progress; }
+
+      .power-btn--danger {
+        background: #b54b3d;
+      }
+      .power-btn--danger:hover { background: #993e32; }
+
+      .power-result {
+        margin-top: var(--space-3);
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: var(--anth-bg-subtle);
+        border: 1px dashed var(--anth-mid-gray);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        color: var(--anth-text-secondary);
+        white-space: pre-wrap;
+      }
+      .power-result[data-status="err"] {
+        color: #b54b3d;
+        border-color: #b54b3d;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="power-tab-wrap">
+      <h1 class="visually-hidden" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
+        <span class="lang-en">Power tab — Inspect</span>
+        <span class="lang-zh">Power 操作面板 — Inspect</span>
+      </h1>
+      <main class="power-tab" role="region" aria-label="Power tab">
+
+        <!-- Battery card -->
+        <section class="power-battery-card">
+          <header class="power-battery-card__head">
+            <h2 class="power-battery-card__title">battery</h2>
+            <button type="button" class="power-battery-card__refresh">refresh</button>
+          </header>
+          <div class="power-battery-card__level">
+            <span class="power-battery-card__level-value">85</span>
+            <span class="power-battery-card__level-unit">/ 100</span>
+          </div>
+          <div class="power-battery-card__bar">
+            <div class="power-battery-card__bar-fill" style="width: 85%"></div>
+          </div>
+          <div class="power-battery-card__grid">
+            <div class="power-battery-card__field">
+              <span class="power-battery-card__field-label">status</span>
+              <span class="power-battery-card__field-value">Charging</span>
+            </div>
+            <div class="power-battery-card__field">
+              <span class="power-battery-card__field-label">health</span>
+              <span class="power-battery-card__field-value">Good</span>
+            </div>
+            <div class="power-battery-card__field">
+              <span class="power-battery-card__field-label">plugged</span>
+              <span class="power-battery-card__field-value">AC</span>
+            </div>
+            <div class="power-battery-card__field">
+              <span class="power-battery-card__field-label">temp</span>
+              <span class="power-battery-card__field-value">27.5 °C</span>
+            </div>
+            <div class="power-battery-card__field">
+              <span class="power-battery-card__field-label">voltage</span>
+              <span class="power-battery-card__field-value">4123 mV</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Actions column -->
+        <div class="power-actions">
+          <section class="power-action-card">
+            <header class="power-action-card__head">
+              <h2 class="power-action-card__title">reboot</h2>
+            </header>
+            <p class="power-action-card__hint">
+              <span class="lang-en">Normal reboot waits for sys.boot_completed=1. Other modes need explicit confirmation.</span>
+              <span class="lang-zh">普通重启会等 sys.boot_completed=1。其它模式需要再点一次确认。</span>
+            </p>
+            <div class="power-action-card__row">
+              <label>
+                mode
+                <select>
+                  <option value="normal" selected>normal</option>
+                  <option value="recovery">recovery</option>
+                  <option value="bootloader">bootloader</option>
+                  <option value="fastboot">fastboot</option>
+                  <option value="sideload">sideload</option>
+                </select>
+              </label>
+              <label>
+                timeout
+                <input type="number" value="180" min="1" max="900">
+              </label>
+              <button type="button" class="power-btn">reboot</button>
+            </div>
+            <div class="power-result">
+              ok · mode=normal · wait_boot_ms=2412
+            </div>
+          </section>
+
+          <section class="power-action-card">
+            <header class="power-action-card__head">
+              <h2 class="power-action-card__title">sleep · wake</h2>
+            </header>
+            <p class="power-action-card__hint">
+              <span class="lang-en">Send N rounds of KEYCODE_POWER → KEYCODE_WAKEUP. Useful for thermal / wakelock soak tests.</span>
+              <span class="lang-zh">N 轮 KEYCODE_POWER → KEYCODE_WAKEUP。常用于热 / wakelock 压测。</span>
+            </p>
+            <div class="power-action-card__row">
+              <label>
+                cycles
+                <input type="number" value="1" min="1" max="1000">
+              </label>
+              <label>
+                hold (s)
+                <input type="number" value="5" min="1" max="60">
+              </label>
+              <button type="button" class="power-btn">run</button>
+            </div>
+          </section>
+        </div>
+
+      </main>
+    </div>
+  </body>
+</html>

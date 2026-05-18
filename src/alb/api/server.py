@@ -27,6 +27,7 @@ from alb.api.metrics_route import router as metrics_router
 from alb.api.metrics_summary_route import router as metrics_summary_router
 from alb.api.playground_route import router as playground_router
 from alb.api.meta_route import router as meta_router
+from alb.api.power_route import router as power_router
 from alb.api.sessions_route import router as sessions_router
 from alb.api.terminal_route import router as terminal_router
 from alb.api.tools_route import router as tools_router
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(metrics_summary_router)
     app.include_router(playground_router)
+    app.include_router(power_router)
     app.include_router(screenshots_router)
     app.include_router(sessions_router)
     app.include_router(terminal_router)

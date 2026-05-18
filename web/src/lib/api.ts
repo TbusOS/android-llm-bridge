@@ -843,6 +843,105 @@ export async function previewWorkspaceFile(
   return (await r.json()) as WorkspaceFilePreview;
 }
 
+/* ─── Power (battery / reboot / sleep-wake) ────────────────────── */
+
+export interface BatteryData {
+  level: number;
+  scale: number;
+  health: string;
+  status: string;
+  plugged: string;
+  temperature_celsius: number;
+  voltage_mv: number;
+}
+
+export interface PowerEnvelope<T> {
+  ok: boolean;
+  data?: T;
+  error?: { code: string; message: string; suggestion?: string };
+  timing_ms?: number;
+}
+
+function _qDevice(device: string | null | undefined): string {
+  return device ? `?device=${encodeURIComponent(device)}` : "";
+}
+
+export async function fetchBattery(
+  device: string | null | undefined,
+  signal?: AbortSignal,
+): Promise<PowerEnvelope<BatteryData>> {
+  const r = await fetch(`/api/power/battery${_qDevice(device)}`, { signal });
+  if (!r.ok && r.status !== 400) {
+    throw new AlbApiError(
+      `GET /api/power/battery returned ${r.status}`,
+      r.status,
+      "BATTERY_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as PowerEnvelope<BatteryData>;
+}
+
+export interface RebootRequest {
+  mode: "normal" | "recovery" | "bootloader" | "fastboot" | "sideload";
+  wait_boot?: boolean;
+  timeout?: number;
+  allow_dangerous?: boolean;
+}
+
+export interface RebootResult {
+  mode: string;
+  wait_boot_ms: number | null;
+}
+
+export async function postReboot(
+  device: string | null | undefined,
+  body: RebootRequest,
+): Promise<PowerEnvelope<RebootResult>> {
+  const r = await fetch(`/api/power/reboot${_qDevice(device)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400) {
+    throw new AlbApiError(
+      `POST /api/power/reboot returned ${r.status}`,
+      r.status,
+      "REBOOT_FAILED",
+    );
+  }
+  return (await r.json()) as PowerEnvelope<RebootResult>;
+}
+
+export interface SleepWakeRequest {
+  cycles: number;
+  hold_sec: number;
+}
+
+export interface SleepWakeResult {
+  cycles: number;
+  records: Array<{ cycle: number; duration_ms: number }>;
+  total_ms: number;
+}
+
+export async function postSleepWake(
+  device: string | null | undefined,
+  body: SleepWakeRequest,
+): Promise<PowerEnvelope<SleepWakeResult>> {
+  const r = await fetch(`/api/power/sleep-wake${_qDevice(device)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400) {
+    throw new AlbApiError(
+      `POST /api/power/sleep-wake returned ${r.status}`,
+      r.status,
+      "SLEEP_WAKE_FAILED",
+    );
+  }
+  return (await r.json()) as PowerEnvelope<SleepWakeResult>;
+}
+
 /* ─── Doctor (env health snapshot) ─────────────────────────────── */
 
 export type DoctorStatus = "ok" | "warn" | "err" | "skip";
