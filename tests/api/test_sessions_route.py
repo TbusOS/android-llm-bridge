@@ -152,3 +152,94 @@ def test_scan_runs_in_worker_thread_l033(monkeypatch, client, workspace) -> None
     r = client.get("/sessions")
     assert r.status_code == 200
     assert "_scan_sessions_in_thread" in seen
+
+
+# ─── GET /sessions/{session_id} ──────────────────────────────────────
+def test_detail_returns_meta_and_messages(client, workspace) -> None:
+    sid = "20260518-detail0"
+    _make_session(workspace, sid, created="2026-05-18T00:00:00+00:00", turns=3)
+    r = client.get(f"/sessions/{sid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["session_id"] == sid
+    assert body["backend"] == "ollama"
+    assert body["model"] == "qwen2.5:7b"
+    assert body["turns"] == 3
+    assert len(body["messages"]) == 3
+    for i, m in enumerate(body["messages"]):
+        assert m["role"] == "user"
+        assert m["content"] == f"line {i}"
+
+
+def test_detail_no_messages_returns_empty_list(client, workspace) -> None:
+    sid = "20260518-empty"
+    _make_session(workspace, sid, created="2026-05-18T00:00:00+00:00")
+    r = client.get(f"/sessions/{sid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["messages"] == []
+    assert body["turns"] == 0
+
+
+def test_detail_missing_returns_404(client) -> None:
+    r = client.get("/sessions/20260518-doesnotexist")
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"]
+
+
+def test_detail_path_traversal_rejected_400(client) -> None:
+    """L-035: ../etc should be rejected at the route layer, not reach FS."""
+    r = client.get("/sessions/..%2Fetc")
+    # FastAPI url-decodes path params, so ..%2Fetc → ../etc → is_safe_session_id rejects
+    assert r.status_code in (400, 404)  # 404 if FastAPI 404s before route handler
+
+
+def test_detail_bad_chars_rejected_400(client) -> None:
+    """L-035: session id with space / special chars rejected at root layer."""
+    r = client.get("/sessions/has space")
+    assert r.status_code == 400
+    assert "invalid" in r.json()["detail"].lower()
+
+
+def test_detail_tolerates_malformed_jsonl_lines(client, workspace) -> None:
+    """One bad jsonl line shouldn't 500 the whole detail fetch."""
+    sid = "20260518-badline"
+    sdir = workspace / "sessions" / sid
+    sdir.mkdir(parents=True)
+    (sdir / "meta.json").write_text(
+        json.dumps({"session_id": sid, "created": "x"})
+    )
+    (sdir / "messages.jsonl").write_text(
+        '{"role":"user","content":"ok"}\n'
+        "not json at all\n"
+        '{"role":"assistant","content":"hi"}\n'
+    )
+    r = client.get(f"/sessions/{sid}")
+    assert r.status_code == 200
+    msgs = r.json()["messages"]
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[1]["role"] == "assistant"
+
+
+def test_detail_scan_runs_in_worker_thread_l033(monkeypatch, client, workspace) -> None:
+    """L-033: detail load also runs through asyncio.to_thread."""
+    seen: list[str] = []
+    import asyncio as _asyncio
+
+    real_to_thread = _asyncio.to_thread
+
+    async def tracking_to_thread(fn, /, *args, **kwargs):
+        seen.append(getattr(fn, "__name__", repr(fn)))
+        return await real_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "alb.api.sessions_route.asyncio.to_thread", tracking_to_thread
+    )
+
+    sid = "20260518-thread"
+    _make_session(workspace, sid, created="2026-05-18T00:00:00+00:00", turns=1)
+    r = client.get(f"/sessions/{sid}")
+    assert r.status_code == 200
+    assert "_load_detail_in_thread" in seen

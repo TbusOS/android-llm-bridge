@@ -1,7 +1,12 @@
 /**
  * Recent sessions list — sess-card + sess-row grid (24px / 1fr / 90 /
  * 80 / 80).  Status pill at the right (live / ok / err).
+ *
+ * Each row is a `<Link>` to `/sessions/$sessionId` so the user can
+ * drill into the chat replay (SessionDetailPage).
  */
+import { Link } from "@tanstack/react-router";
+
 import { useApp } from "../../stores/app";
 import type { RecentSessionData } from "./types";
 
@@ -15,7 +20,12 @@ export function RecentSessions({ sessions }: Props) {
   return (
     <div className="sess-card">
       {sessions.map((s) => (
-        <div key={s.id} className="sess-row">
+        <Link
+          key={s.id}
+          to="/sessions/$sessionId"
+          params={{ sessionId: s.id }}
+          className="sess-row"
+        >
           <div className="sess-icon">{s.glyph}</div>
           <div className="sess-msg">
             {lang === "zh" ? s.messageZh : s.message}
@@ -27,7 +37,7 @@ export function RecentSessions({ sessions }: Props) {
           <div className={`sess-status sess-status--${s.status}`}>
             {labelStatus(s.status, lang)}
           </div>
-        </div>
+        </Link>
       ))}
     </div>
   );

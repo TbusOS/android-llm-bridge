@@ -63,6 +63,45 @@ export interface SessionsResponse {
   sessions: SessionSummary[];
 }
 
+export interface SessionMessage {
+  role: "user" | "assistant" | "tool" | string;
+  content?: string;
+  tool_calls?: Array<{
+    id?: string;
+    name?: string;
+    arguments?: Record<string, unknown> | string;
+  }>;
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface SessionDetailResponse {
+  ok: boolean;
+  session_id: string;
+  created: string | null;
+  backend: string;
+  model: string;
+  device: string | null;
+  turns: number;
+  last_event_ts: string | null;
+  messages: SessionMessage[];
+}
+
+export async function fetchSessionDetail(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionDetailResponse> {
+  const r = await fetch(`/sessions/${encodeURIComponent(sessionId)}`, { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /sessions/${sessionId} returned ${r.status}`,
+      r.status,
+      r.status === 404 ? "SESSION_NOT_FOUND" : "SESSION_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as SessionDetailResponse;
+}
+
 export async function fetchSessions(
   limit = 20,
   signal?: AbortSignal,

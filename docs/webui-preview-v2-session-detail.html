@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Session detail — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Session detail route — chat replay with role-based bubbles. React implementation must mirror this class structure.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .session-page-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      html[lang^="zh"] body, html[lang^="zh"] h1, html[lang^="zh"] h2, html[lang^="zh"] p {
+        font-family: "Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+      }
+
+      .session-page { max-width: 880px; margin: 0 auto; }
+
+      .session-page__nav {
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        margin-bottom: var(--space-3);
+      }
+      .session-page__nav a {
+        color: #a85a26;
+        font-weight: 500;
+        text-decoration: none;
+      }
+      .session-page__nav a:hover { text-decoration: underline; }
+
+      .session-page__heading h1 {
+        margin: 0 0 var(--space-2);
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 26px;
+        letter-spacing: -0.01em;
+      }
+      .session-page__heading code {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 18px;
+        color: var(--anth-text);
+        background: var(--anth-bg-subtle);
+        padding: 2px 10px;
+        border-radius: 6px;
+      }
+      .session-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+        margin: var(--space-2) 0 var(--space-5);
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+      }
+      .session-meta__item { display: inline-flex; gap: 4px; }
+      .session-meta__label {
+        font-weight: 500;
+        color: var(--anth-text);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 11px;
+      }
+
+      /* ----- Message stream ----- */
+      .session-stream {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+
+      /* user bubble — orange-tinted on the right (mirrors chat panel) */
+      .session-bubble {
+        max-width: 92%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        font-size: 14.5px;
+        line-height: 1.55;
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .session-bubble--user {
+        align-self: flex-end;
+        background: #fef0e8;
+        border-color: #f3d5c2;
+      }
+      .session-bubble--assistant {
+        align-self: flex-start;
+      }
+      .session-bubble--tool {
+        align-self: flex-start;
+        background: var(--anth-bg-subtle);
+        border-style: dashed;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        color: var(--anth-text-secondary);
+      }
+      .session-bubble__role {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+        color: var(--anth-text-secondary);
+      }
+      .session-bubble--user .session-bubble__role { color: #a85a26; }
+
+      /* tool call (assistant emits arguments to a tool) */
+      .session-tool-call {
+        align-self: flex-start;
+        max-width: 92%;
+        padding: 10px 12px;
+        border: 1px dashed var(--anth-mid-gray);
+        border-radius: 12px;
+        background: var(--anth-bg-subtle);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12.5px;
+        color: var(--anth-text);
+      }
+      .session-tool-call__head {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        margin-bottom: 4px;
+      }
+      .session-tool-call__name {
+        font-weight: 600;
+        color: var(--anth-orange);
+      }
+      .session-tool-call__id {
+        color: var(--anth-text-secondary);
+        font-size: 11px;
+      }
+      .session-tool-call__args {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .session-empty {
+        text-align: center;
+        padding: var(--space-6);
+        color: var(--anth-text-secondary);
+        font-family: "Lora", Georgia, serif;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="session-page-wrap">
+    <main class="session-page" role="main">
+      <nav class="session-page__nav" aria-label="breadcrumb">
+        <a href="#">← <span class="lang-en">Back to Dashboard</span><span class="lang-zh">返回 Dashboard</span></a>
+      </nav>
+
+      <header class="session-page__heading">
+        <h1>
+          <span class="lang-en">Session</span>
+          <span class="lang-zh">会话</span>
+          <code>20260518-a1b2c3d4</code>
+        </h1>
+        <div class="session-meta">
+          <span class="session-meta__item">
+            <span class="session-meta__label">created</span>
+            2026-05-18 13:42
+          </span>
+          <span class="session-meta__item">
+            <span class="session-meta__label">backend</span>
+            ollama
+          </span>
+          <span class="session-meta__item">
+            <span class="session-meta__label">model</span>
+            qwen2.5:7b
+          </span>
+          <span class="session-meta__item">
+            <span class="session-meta__label">device</span>
+            b1f59f008d7ab06f
+          </span>
+          <span class="session-meta__item">
+            <span class="session-meta__label">turns</span>
+            5
+          </span>
+        </div>
+      </header>
+
+      <section class="session-stream" aria-label="messages">
+
+        <div class="session-bubble session-bubble--user">
+          <span class="session-bubble__role">User</span>
+          Check what's using CPU on the device right now.
+        </div>
+
+        <div class="session-tool-call">
+          <div class="session-tool-call__head">
+            <span class="session-tool-call__name">alb_top</span>
+            <span class="session-tool-call__id">call_srofj0i2</span>
+          </div>
+          <pre class="session-tool-call__args">{"sort": "cpu", "n": 10}</pre>
+        </div>
+
+        <div class="session-bubble session-bubble--tool">
+          <span class="session-bubble__role">Tool · alb_top</span>
+          PID    USER       CPU%   COMMAND
+1234   system     38.2   system_server
+1567   u0_a142    12.4   com.android.app
+2018   root        6.1   surfaceflinger
+        </div>
+
+        <div class="session-bubble session-bubble--assistant">
+          <span class="session-bubble__role">Assistant</span>
+          system_server is the top CPU consumer at 38%. Common causes: a misbehaving app forwarding intents, or the policy daemon spinning on permission denials. Want me to pull the last 30s of logcat to see what it's doing?
+        </div>
+
+        <div class="session-bubble session-bubble--user">
+          <span class="session-bubble__role">User</span>
+          Yes, just the warnings and above.
+        </div>
+
+      </section>
+    </main>
+    </div>
+  </body>
+</html>

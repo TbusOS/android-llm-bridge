@@ -23,9 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Path as FPath, Query
 
-from alb.infra.workspace import workspace_root
+from alb.infra.workspace import (
+    is_safe_session_id,
+    workspace_root,
+)
 
 router = APIRouter()
 
@@ -106,3 +109,81 @@ async def list_sessions(
         _scan_sessions_in_thread, sessions_root, limit
     )
     return {"ok": True, "sessions": sessions}
+
+
+def _load_messages_in_thread(messages_file: Path) -> list[dict[str, Any]]:
+    """Sync helper: parse messages.jsonl into a list of message dicts.
+
+    Lines that fail to parse are skipped (don't 500 the whole detail
+    fetch for one bad line). Pure sync — async callers must wrap in
+    `asyncio.to_thread` per L-033.
+    """
+    if not messages_file.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with messages_file.open("rb") as f:
+        for raw in f:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                out.append(obj)
+    return out
+
+
+def _load_detail_in_thread(
+    sessions_root: Path, session_id: str
+) -> dict[str, Any] | None:
+    """Sync helper: build the full session detail payload (meta + messages).
+
+    Returns ``None`` if the session directory doesn't exist so the
+    caller can surface a clean 404 instead of an empty payload.
+    """
+    session_dir = sessions_root / session_id
+    if not session_dir.is_dir():
+        return None
+    meta = _load_meta(session_dir / "meta.json")
+    messages_file = session_dir / "messages.jsonl"
+    messages = _load_messages_in_thread(messages_file)
+    return {
+        "session_id": meta.get("session_id") or session_id,
+        "created": meta.get("created"),
+        "backend": meta.get("backend") or "",
+        "model": meta.get("model") or "",
+        "device": meta.get("device"),
+        "turns": len(messages),
+        "last_event_ts": _mtime_iso(messages_file),
+        "messages": messages,
+    }
+
+
+@router.get("/sessions/{session_id}")
+async def get_session_detail(
+    session_id: str = FPath(..., min_length=1, max_length=128),
+) -> dict[str, Any]:
+    """Return full session detail (meta + every message) for ``session_id``.
+
+    Used by the Web SessionDetailPage to render a chat replay. Path-traversal
+    is rejected at the root layer via :func:`is_safe_session_id` (L-035);
+    a missing session yields ``404`` so the front-end can show a clean
+    "not found" state.
+    """
+    if not is_safe_session_id(session_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid session id: {session_id!r}",
+        )
+    sessions_root = workspace_root() / "sessions"
+    detail = await asyncio.to_thread(
+        _load_detail_in_thread, sessions_root, session_id
+    )
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"session not found: {session_id}",
+        )
+    return {"ok": True, **detail}

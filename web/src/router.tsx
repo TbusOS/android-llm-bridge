@@ -22,6 +22,7 @@ import { ChatPage } from "./features/chat/ChatPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
 import { InspectPage } from "./features/inspect/InspectPage";
+import { SessionDetailPage } from "./features/session/SessionDetailPage";
 import { RootLayout } from "./layouts/RootLayout";
 import { StubPage } from "./routes/stub";
 
@@ -131,6 +132,15 @@ const sessionsRoute = createRoute({
   ),
 });
 
+// /sessions/$sessionId — drill-in chat replay for a single ChatSession.
+// Wired from the Dashboard RecentSessions card today; eventually the
+// /sessions list route will link here too.
+const sessionDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/sessions/$sessionId",
+  component: SessionDetailPage,
+});
+
 const filesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/files",
@@ -173,6 +183,7 @@ const routeTree = rootRoute.addChildren([
   inspectRoute,
   playgroundRoute,
   sessionsRoute,
+  sessionDetailRoute,
   filesRoute,
   doctorRoute,
   auditRoute,
