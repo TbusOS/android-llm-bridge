@@ -11,25 +11,20 @@
  * here must mirror it (L-028).
  */
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { useApp } from "../../stores/app";
-import {
-  fetchAppInfo,
-  fetchAppList,
-  postAppClearData,
-  postAppInstall,
-  postAppStart,
-  postAppStop,
-  postAppUninstall,
-  type AppEnvelope,
-} from "../../lib/api";
+import { type AppEnvelope } from "../../lib/api";
 import { useArmedAction } from "../../lib/useArmedAction";
+import {
+  useAppClearDataMutation,
+  useAppInfo,
+  useAppInstallMutation,
+  useAppList,
+  useAppStartMutation,
+  useAppStopMutation,
+  useAppUninstallMutation,
+} from "./useAppActions";
 
 function envText(env: AppEnvelope<unknown> | undefined, okText: string): {
   text: string;
@@ -47,22 +42,17 @@ function envText(env: AppEnvelope<unknown> | undefined, okText: string): {
 
 function InstallCard({ device }: { device: string | null }) {
   const lang = useApp((s) => s.lang);
-  const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [replace, setReplace] = useState(true);
   const [grantRuntime, setGrantRuntime] = useState(false);
   const [downgrade, setDowngrade] = useState(false);
 
-  const mut = useMutation({
-    mutationFn: (file: File) =>
-      postAppInstall(device, file, { replace, grant_runtime: grantRuntime, downgrade }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-list", device] }),
-  });
+  const mut = useAppInstallMutation(device);
 
   const onInstall = () => {
     const f = fileRef.current?.files?.[0];
     if (!f) return;
-    mut.mutate(f);
+    mut.mutate({ file: f, replace, grantRuntime, downgrade });
   };
   const env = envText(mut.data, "");
 
@@ -141,15 +131,9 @@ function InstallCard({ device }: { device: string | null }) {
 function NameOpsCard({ device }: { device: string | null }) {
   const lang = useApp((s) => s.lang);
   const [name, setName] = useState("");
-  const startM = useMutation({
-    mutationFn: (c: string) => postAppStart(device, c),
-  });
-  const stopM = useMutation({
-    mutationFn: (p: string) => postAppStop(device, p),
-  });
-  const clearM = useMutation({
-    mutationFn: (p: string) => postAppClearData(device, p),
-  });
+  const startM = useAppStartMutation(device);
+  const stopM = useAppStopMutation(device);
+  const clearM = useAppClearDataMutation(device);
   const last = [startM.data, stopM.data, clearM.data].find((d) => d);
   const env = envText(last, "");
   const pending = startM.isPending || stopM.isPending || clearM.isPending;
@@ -218,30 +202,13 @@ function PackageDetail({
   pkg: string | null;
 }) {
   const lang = useApp((s) => s.lang);
-  const qc = useQueryClient();
-  const info = useQuery({
-    queryKey: ["app-info", device, pkg],
-    enabled: !!device && !!pkg,
-    staleTime: 60_000,
-    queryFn: ({ signal }) => fetchAppInfo(pkg!, device, signal),
-  });
-  const startM = useMutation({
-    mutationFn: () => postAppStart(device, pkg!),
-  });
-  const stopM = useMutation({
-    mutationFn: () => postAppStop(device, pkg!),
-  });
-  const clearM = useMutation({
-    mutationFn: () => postAppClearData(device, pkg!),
-  });
-  const uninstallM = useMutation({
-    mutationFn: () => postAppUninstall(device, pkg!, { allow_dangerous: true }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["app-list", device] });
-    },
-  });
+  const info = useAppInfo(device, pkg);
+  const startM = useAppStartMutation(device);
+  const stopM = useAppStopMutation(device);
+  const clearM = useAppClearDataMutation(device);
+  const uninstallM = useAppUninstallMutation(device);
 
-  const uninstall = useArmedAction(() => uninstallM.mutate());
+  const uninstall = useArmedAction(() => uninstallM.mutate(pkg!));
 
   useEffect(() => {
     uninstall.disarm();
@@ -323,7 +290,7 @@ function PackageDetail({
           type="button"
           className="app-btn"
           disabled={pending}
-          onClick={() => startM.mutate()}
+          onClick={() => startM.mutate(pkg)}
         >
           start
         </button>
@@ -331,7 +298,7 @@ function PackageDetail({
           type="button"
           className="app-btn"
           disabled={pending}
-          onClick={() => stopM.mutate()}
+          onClick={() => stopM.mutate(pkg)}
         >
           stop
         </button>
@@ -339,7 +306,7 @@ function PackageDetail({
           type="button"
           className="app-btn app-btn--danger"
           disabled={pending}
-          onClick={() => clearM.mutate()}
+          onClick={() => clearM.mutate(pkg)}
         >
           clear data
         </button>
@@ -404,17 +371,7 @@ function PackageList({
   // perf HIGH#7: filter is now CLIENT-side — each keystroke only
   // re-derives via useMemo, no /api/app/list refetch.  The query
   // re-fires only when device / includeSystem actually changes.
-  const list = useQuery({
-    queryKey: ["app-list", device, includeSystem],
-    enabled: !!device,
-    staleTime: 30_000,
-    queryFn: ({ signal }) =>
-      fetchAppList(
-        device,
-        { include_system: includeSystem },
-        signal,
-      ),
-  });
+  const list = useAppList(device, includeSystem);
 
   const allPackages = list.data?.ok ? list.data.data?.packages ?? [] : [];
   const visiblePackages = useMemo(() => {
