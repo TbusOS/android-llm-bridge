@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from alb.capabilities import app as app_cap
@@ -159,8 +159,22 @@ async def post_uninstall(
 _APK_MAX_BYTES = 500 * 1024 * 1024
 
 
+def _too_large_envelope() -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": {
+            "code": "APK_TOO_LARGE",
+            "message": (
+                f"APK exceeds {_APK_MAX_BYTES // (1024 * 1024)} MB cap"
+            ),
+            "suggestion": "Compress, split, or push manually",
+        },
+    }
+
+
 @router.post("/install")
 async def post_install(
+    request: Request,
     apk: UploadFile = File(...),
     device: str | None = Query(None, max_length=128),
     replace: bool = Query(True),
@@ -173,6 +187,22 @@ async def post_install(
     transport, err = _resolve_transport(device)
     if err is not None:
         return err
+
+    # Pre-flight Content-Length check: rejects multi-GB uploads at the
+    # door rather than streaming them all the way to the per-chunk cap.
+    # Multipart envelope adds ~200 bytes overhead, so the header may be
+    # marginally larger than the actual APK — comparing directly to the
+    # cap is conservative enough (we accept a small slack). The
+    # post-write check below stays as the authoritative guard for
+    # clients that lie or omit Content-Length.
+    cl_header = request.headers.get("content-length")
+    if cl_header:
+        try:
+            if int(cl_header) > _APK_MAX_BYTES:
+                return _too_large_envelope()
+        except ValueError:
+            # Malformed header → fall through to streaming check.
+            pass
 
     # Validate filename to prevent path-traversal even on the temp side.
     name = apk.filename or "upload.apk"
@@ -196,16 +226,7 @@ async def post_install(
             while chunk := await apk.read(1 << 20):  # 1 MiB chunks
                 written += len(chunk)
                 if written > _APK_MAX_BYTES:
-                    return {
-                        "ok": False,
-                        "error": {
-                            "code": "APK_TOO_LARGE",
-                            "message": (
-                                f"APK exceeds {_APK_MAX_BYTES // (1024 * 1024)} MB cap"
-                            ),
-                            "suggestion": "Compress, split, or push manually",
-                        },
-                    }
+                    return _too_large_envelope()
                 f.write(chunk)
         r = await app_cap.install(
             transport,

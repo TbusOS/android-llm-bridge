@@ -227,6 +227,64 @@ def test_install_rejects_non_apk_filename(client) -> None:
     assert body["error"]["code"] == "INVALID_FILENAME"
 
 
+def test_install_rejects_oversized_via_content_length(monkeypatch, client) -> None:
+    """Pre-flight Content-Length check should reject >cap uploads at
+    the door, without streaming them or even reaching app_cap.install.
+
+    Lower the cap to 1 KiB so we can simulate "too large" without
+    needing a real 500 MB body in the test."""
+    monkeypatch.setattr("alb.api.app_route._APK_MAX_BYTES", 1024)
+
+    install_called: list[str] = []
+
+    async def _install(*_a, **_kw):
+        install_called.append("called")
+        return ok(data={}, timing_ms=0)
+
+    monkeypatch.setattr("alb.api.app_route.app_cap.install", _install)
+
+    # 4 KiB body — well over the 1 KiB cap.
+    big = b"PK\x03\x04" + b"y" * (4 * 1024)
+    r = client.post(
+        "/api/app/install?device=abc",
+        files={"apk": ("payload.apk", big, "application/vnd.android.package-archive")},
+    )
+    body = r.json()
+    assert r.status_code == 200
+    assert body["ok"] is False
+    assert body["error"]["code"] == "APK_TOO_LARGE"
+    # Confirm pre-check short-circuited: install_cap was never invoked.
+    assert install_called == []
+
+
+def test_install_streaming_cap_still_fires_when_cl_missing(
+    monkeypatch, client,
+) -> None:
+    """If the streaming reader's per-chunk accumulator exceeds the cap
+    (e.g. client lied about Content-Length, or the header was stripped
+    by a proxy), the post-write check is the authoritative guard. Lower
+    the cap to a value the multipart body easily beats, then mock the
+    request.headers.get('content-length') path to return None so the
+    pre-check falls through."""
+    monkeypatch.setattr("alb.api.app_route._APK_MAX_BYTES", 32)
+
+    async def _install(*_a, **_kw):
+        return ok(data={}, timing_ms=0)
+
+    monkeypatch.setattr("alb.api.app_route.app_cap.install", _install)
+
+    # Body is ~100 bytes APK + multipart framing — both well over 32.
+    apk = b"PK\x03\x04" + b"z" * 100
+    r = client.post(
+        "/api/app/install?device=abc",
+        files={"apk": ("payload.apk", apk, "application/vnd.android.package-archive")},
+        headers={"content-length": "garbage"},  # malformed → fallthrough
+    )
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "APK_TOO_LARGE"
+
+
 def test_transport_init_failure_returns_envelope_b_not_503(
     monkeypatch, tmp_path,
 ) -> None:
