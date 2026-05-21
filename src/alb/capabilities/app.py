@@ -44,6 +44,16 @@ class AppListResult:
 
 
 _PACKAGE_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$")
+# `am start -n` component is `pkg/activity` where activity is either an
+# absolute class (`com.x.MyActivity`) or short-form (`.MyActivity`,
+# resolved against pkg). We whitelist both forms — anything else
+# (whitespace, `&&`, `--user 0`, etc.) is refused before it reaches the
+# shell. The pkg half reuses `_PACKAGE_NAME_RE`.
+_COMPONENT_RE = re.compile(
+    r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+"  # pkg
+    r"/"
+    r"(\.?[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)*)$"  # activity
+)
 
 
 # ─── install / uninstall ───────────────────────────────────────────
@@ -191,6 +201,16 @@ async def uninstall(
 # ─── start / stop ──────────────────────────────────────────────────
 async def start(transport: Transport, component: str) -> Result[dict[str, Any]]:
     if "/" in component:
+        # Strict whitelist for pkg/activity — without this the route
+        # would shell out `am start -n <anything>`, including spaces
+        # and `&&`. Reject anything that isn't a clean component spec.
+        if not _COMPONENT_RE.match(component):
+            return fail(
+                code="COMPONENT_INVALID",
+                message=f"Invalid component spec: {component}",
+                suggestion="Use pkg/Activity or pkg/.ShortActivity (no shell metachars)",
+                category="input",
+            )
         cmd = f"am start -n {component}"
     else:
         if not _PACKAGE_NAME_RE.match(component):

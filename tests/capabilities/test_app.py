@@ -140,6 +140,25 @@ async def test_start_with_package_invalid() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_rejects_shell_metachar_in_component() -> None:
+    """`am start -n <component>` shells out; any whitespace / `&&`
+    / `--user 0 && touch x` MUST be refused before reaching the shell.
+    The pkg/activity whitelist regex enforces that."""
+    t = _mk_transport()
+    for bad in (
+        "com.x.y/.Main && touch /tmp/pwn",
+        "com.x.y/.Main --user 0",
+        "com.x.y/$(reboot)",
+        "com.x/ Main",  # space
+        "com.x/.Main;ls",
+    ):
+        r = await start(t, bad)
+        assert not r.ok, f"component should be rejected: {bad!r}"
+        assert r.error is not None
+        assert r.error.code == "COMPONENT_INVALID", bad
+
+
+@pytest.mark.asyncio
 async def test_stop_happy() -> None:
     t = _mk_transport(shell_responses={
         "am force-stop": ShellResult(

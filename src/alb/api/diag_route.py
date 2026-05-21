@@ -122,15 +122,19 @@ def _scan_artifacts_in_thread(
     br = base / "bugreports"
     if br.exists():
         for p in sorted(br.iterdir(), reverse=True):
-            if not p.is_file() or not p.name.endswith(".zip"):
+            # is_symlink() short-circuits before is_file() so we refuse
+            # to follow any link that may point outside the device's
+            # artifact dir (defence-in-depth even though the dir is
+            # ours).
+            if p.is_symlink() or not p.is_file() or not p.name.endswith(".zip"):
                 continue
-            stat = p.stat()
+            st = p.stat()
             out["bugreports"].append(
                 {
                     "path": str(p),
                     "name": p.name,
-                    "size_bytes": stat.st_size,
-                    "mtime": stat.st_mtime,
+                    "size_bytes": st.st_size,
+                    "mtime": st.st_mtime,
                 }
             )
             if len(out["bugreports"]) >= limit_per_kind:
@@ -140,18 +144,23 @@ def _scan_artifacts_in_thread(
         if not kdir.exists():
             continue
         for tdir in sorted(kdir.iterdir(), reverse=True):
-            if not tdir.is_dir():
+            if tdir.is_symlink() or not tdir.is_dir():
                 continue
-            files = [
-                {
-                    "path": str(f),
-                    "name": f.name,
-                    "size_bytes": f.stat().st_size,
-                    "mtime": f.stat().st_mtime,
-                }
-                for f in sorted(tdir.iterdir())
-                if f.is_file()
-            ]
+            files: list[dict[str, Any]] = []
+            for f in sorted(tdir.iterdir()):
+                if f.is_symlink() or not f.is_file():
+                    continue
+                # Cache stat() — previously called twice per file
+                # (.st_size and .st_mtime).
+                st = f.stat()
+                files.append(
+                    {
+                        "path": str(f),
+                        "name": f.name,
+                        "size_bytes": st.st_size,
+                        "mtime": st.st_mtime,
+                    }
+                )
             out[kind].append(
                 {
                     "bundle": tdir.name,
