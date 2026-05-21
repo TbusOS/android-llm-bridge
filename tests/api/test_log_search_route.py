@@ -89,3 +89,64 @@ def test_search_no_matches_returns_empty(client, workspace) -> None:
     assert data["match_count"] == 0
     assert data["matches"] == []
     assert data["truncated"] is False
+
+
+def test_search_returns_pattern_timeout_envelope(
+    client, workspace, monkeypatch,
+) -> None:
+    """Security HIGH#8: when the scanner reports ``timed_out=True`` (or
+    the outer ``asyncio.wait_for`` fires), the route returns a
+    ``PATTERN_TIMEOUT`` envelope rather than hanging the request.
+
+    Forces the deadline branch by stubbing ``_scan_files_for_pattern``
+    to return ``(matches=[], truncated=False, timed_out=True)`` —
+    avoids depending on real wall-clock timing inside the unit suite.
+    A separate slow integration test exercises the real ``asyncio.
+    wait_for`` cancellation path against a true ReDoS payload."""
+    _put_log(workspace, "abc123", "x.txt", "anything\n")
+
+    def _stub_scan(*_a, **_kw):
+        return [], False, True  # matches, truncated, timed_out
+
+    monkeypatch.setattr(
+        "alb.capabilities.logging._scan_files_for_pattern", _stub_scan
+    )
+    r = client.get("/api/log/search?pattern=anything&device=abc123")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "PATTERN_TIMEOUT"
+    assert body["error"]["category"] == "timeout"
+
+
+def test_search_outer_wait_for_timeout_returns_envelope(
+    client, workspace, monkeypatch,
+) -> None:
+    """Belt-and-suspenders: if ``asyncio.wait_for`` itself fires (the
+    inner deadline check missed because of a single hanging
+    ``re.search`` C-call), the route still returns PATTERN_TIMEOUT
+    rather than 500."""
+    import asyncio
+
+    _put_log(workspace, "abc123", "x.txt", "anything\n")
+
+    async def _hang(*_a, **_kw):
+        # Simulate a stuck C-call: never returns.  asyncio.wait_for
+        # raises TimeoutError after _SEARCH_TIMEOUT_S + 0.5s slack.
+        await asyncio.sleep(60)
+        return [], False, False
+
+    # Make the search loop hang inside to_thread so wait_for trips.
+    monkeypatch.setattr(
+        "alb.capabilities.logging.asyncio.to_thread",
+        lambda fn, *a, **kw: _hang(),
+    )
+    monkeypatch.setattr(
+        "alb.capabilities.logging._SEARCH_TIMEOUT_S", 0.05,
+    )
+    r = client.get("/api/log/search?pattern=anything&device=abc123")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "PATTERN_TIMEOUT"
+    assert body["error"]["category"] == "timeout"

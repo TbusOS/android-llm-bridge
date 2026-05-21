@@ -312,6 +312,61 @@ async def collect_dmesg(
 
 
 # ─── Search / tail ─────────────────────────────────────────────────
+# Hard cap on the wall-clock time `search_logs` can spend in the scan
+# loop.  ``re.search`` against an attacker-controlled pattern is a known
+# ReDoS vector (e.g. ``(a+)+$``); we can't reliably cancel a single
+# `re.search` C-call mid-execution from Python, but we can:
+#   - run the scan in a worker thread (event loop stays responsive)
+#   - bound the async wait via `asyncio.wait_for`
+#   - check a deadline between lines to short-circuit non-pathological
+#     slow scans (millions of lines)
+# Worst-case: a single ReDoS line leaks one thread per malicious request
+# until the regex C-call finishes.  Acceptable for a dev tool; revisit
+# if we ever expose this endpoint without auth on a public network.
+_SEARCH_TIMEOUT_S = 2.0
+
+
+def _scan_files_for_pattern(
+    regex: re.Pattern[str],
+    files: list[Path],
+    max_matches: int,
+    deadline: float,
+) -> tuple[list[SearchMatch], bool, bool]:
+    """Sync scan helper run via ``asyncio.to_thread``.
+
+    Returns ``(matches, truncated, timed_out)``. The deadline check
+    between lines short-circuits long scans; a single pathological
+    ``regex.search()`` line is still bounded only by the outer
+    ``asyncio.wait_for`` (thread may leak).
+    """
+    matches: list[SearchMatch] = []
+    truncated = False
+    for fp in files:
+        if perf_counter() > deadline:
+            return matches, truncated, True
+        try:
+            with fp.open("r", encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f, start=1):
+                    if perf_counter() > deadline:
+                        return matches, truncated, True
+                    if regex.search(line):
+                        matches.append(
+                            SearchMatch(
+                                path=str(fp),
+                                line_number=i,
+                                content=line.rstrip("\n"),
+                            )
+                        )
+                        if len(matches) >= max_matches:
+                            truncated = True
+                            break
+        except OSError:
+            continue
+        if truncated:
+            break
+    return matches, truncated, False
+
+
 async def search_logs(
     pattern: str,
     *,
@@ -323,6 +378,11 @@ async def search_logs(
 
     If `path` is None, searches all files under workspace/devices/<serial>/logs/
     (or all devices if `device` is None).
+
+    ReDoS guard: the actual scan runs in a worker thread with a hard
+    ``_SEARCH_TIMEOUT_S`` cap via :func:`asyncio.wait_for`.  Pathological
+    patterns ``(a+)+$`` against a 1 KB line still bound the request to
+    ``_SEARCH_TIMEOUT_S`` from the caller's perspective.
     """
     try:
         regex = re.compile(pattern)
@@ -343,28 +403,35 @@ async def search_logs(
             suggestion="Use a valid device serial (alnum + . : - _; <= 64 chars)",
             category="input",
         )
-    matches: list[SearchMatch] = []
-    truncated = False
 
-    for fp in files:
-        try:
-            with fp.open("r", encoding="utf-8", errors="replace") as f:
-                for i, line in enumerate(f, start=1):
-                    if regex.search(line):
-                        matches.append(
-                            SearchMatch(
-                                path=str(fp),
-                                line_number=i,
-                                content=line.rstrip("\n"),
-                            )
-                        )
-                        if len(matches) >= max_matches:
-                            truncated = True
-                            break
-        except OSError:
-            continue
-        if truncated:
-            break
+    deadline = perf_counter() + _SEARCH_TIMEOUT_S
+    try:
+        matches, truncated, timed_out = await asyncio.wait_for(
+            asyncio.to_thread(
+                _scan_files_for_pattern, regex, files, max_matches, deadline
+            ),
+            timeout=_SEARCH_TIMEOUT_S + 0.5,  # +0.5s slack for thread join
+        )
+    except asyncio.TimeoutError:
+        return fail(
+            code="PATTERN_TIMEOUT",
+            message=(
+                f"regex search exceeded {_SEARCH_TIMEOUT_S}s — pattern may be "
+                f"pathological (ReDoS) or workspace is too large"
+            ),
+            suggestion="Simplify the regex or narrow with --device / --path",
+            category="timeout",
+        )
+
+    if timed_out:
+        return fail(
+            code="PATTERN_TIMEOUT",
+            message=(
+                f"regex search exceeded {_SEARCH_TIMEOUT_S}s during scan"
+            ),
+            suggestion="Simplify the regex or narrow with --device / --path",
+            category="timeout",
+        )
 
     return ok(
         data=SearchResults(pattern=pattern, matches=matches, truncated=truncated)
