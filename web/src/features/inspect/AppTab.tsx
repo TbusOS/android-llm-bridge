@@ -29,6 +29,7 @@ import {
   postAppUninstall,
   type AppEnvelope,
 } from "../../lib/api";
+import { useArmedAction } from "../../lib/useArmedAction";
 
 function envText(env: AppEnvelope<unknown> | undefined, okText: string): {
   text: string;
@@ -224,7 +225,6 @@ function PackageDetail({
     staleTime: 60_000,
     queryFn: ({ signal }) => fetchAppInfo(pkg!, device, signal),
   });
-  const [armedUninstall, setArmedUninstall] = useState(false);
   const startM = useMutation({
     mutationFn: () => postAppStart(device, pkg!),
   });
@@ -238,12 +238,13 @@ function PackageDetail({
     mutationFn: () => postAppUninstall(device, pkg!, { allow_dangerous: true }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["app-list", device] });
-      setArmedUninstall(false);
     },
   });
 
+  const uninstall = useArmedAction(() => uninstallM.mutate());
+
   useEffect(() => {
-    setArmedUninstall(false);
+    uninstall.disarm();
     [startM, stopM, clearM, uninstallM].forEach((m) => m.reset());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg]);
@@ -344,26 +345,29 @@ function PackageDetail({
         </button>
         <button
           type="button"
-          className="app-btn app-btn--danger"
+          className={`app-btn app-btn--danger${uninstall.armed ? " is-armed" : ""}`}
           disabled={pending}
-          onClick={() => {
-            if (!armedUninstall) {
-              setArmedUninstall(true);
-              return;
-            }
-            uninstallM.mutate();
-          }}
+          onClick={uninstall.trigger}
         >
           {uninstallM.isPending
             ? lang === "zh"
               ? "卸载中…"
               : "uninstalling…"
-            : armedUninstall
+            : uninstall.armed
               ? lang === "zh"
-                ? "再点确认"
-                : "click again to confirm"
+                ? "⚠ 再点确认（8 秒）"
+                : "⚠ click again to confirm (8 s)"
               : "uninstall"}
         </button>
+        {uninstall.armed && (
+          <button
+            type="button"
+            className="app-btn app-btn--ghost"
+            onClick={uninstall.disarm}
+          >
+            {lang === "zh" ? "取消" : "cancel"}
+          </button>
+        )}
       </div>
       {lastOp?.ok && (
         <div className="app-result" data-status="ok">
@@ -483,7 +487,37 @@ function PackageList({
       </header>
 
       <div className="app-list-card__body">
-        <div className="app-pkg-list" ref={listRef}>
+        <div
+          className="app-pkg-list"
+          ref={listRef}
+          role="listbox"
+          aria-label={lang === "zh" ? "已安装的包" : "Installed packages"}
+          onKeyDown={(e) => {
+            // ui-fluency HIGH#5: keyboard nav for the package list.
+            //   ↓ / ↑  — move selection
+            //   Home / End — jump to ends
+            //   Enter — re-trigger select (no-op if same package)
+            if (visiblePackages.length === 0) return;
+            const curIdx = selected
+              ? visiblePackages.indexOf(selected)
+              : -1;
+            let next = curIdx;
+            if (e.key === "ArrowDown") next = Math.min(
+              visiblePackages.length - 1, curIdx + 1,
+            );
+            else if (e.key === "ArrowUp") next = Math.max(0, curIdx - 1);
+            else if (e.key === "Home") next = 0;
+            else if (e.key === "End") next = visiblePackages.length - 1;
+            else return;
+            e.preventDefault();
+            const pkg = visiblePackages[next];
+            if (pkg) {
+              onSelect(pkg);
+              rowVirtualizer.scrollToIndex(next, { align: "auto" });
+            }
+          }}
+          tabIndex={0}
+        >
           {list.isLoading && (
             <div className="app-pkg" style={{ cursor: "default" }}>
               {lang === "zh" ? "读取中…" : "loading…"}
@@ -493,6 +527,7 @@ function PackageList({
             <div
               className="app-pkg"
               style={{ cursor: "default", color: "#b54b3d" }}
+              role="alert"
             >
               {list.data.error?.code}: {list.data.error?.message}
             </div>
@@ -521,10 +556,14 @@ function PackageList({
               {rowVirtualizer.getVirtualItems().map((vRow) => {
                 const p = visiblePackages[vRow.index];
                 if (!p) return null;
+                const isActive = selected === p;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={p}
-                    className={`app-pkg${selected === p ? " is-active" : ""}`}
+                    className={`app-pkg${isActive ? " is-active" : ""}`}
+                    role="option"
+                    aria-selected={isActive}
                     style={{
                       position: "absolute",
                       top: 0,
@@ -535,7 +574,7 @@ function PackageList({
                     onClick={() => onSelect(p)}
                   >
                     {p}
-                  </div>
+                  </button>
                 );
               })}
             </div>

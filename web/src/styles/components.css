@@ -3437,6 +3437,34 @@ html[lang^="zh"] h3 {
   background: #993e32;
 }
 
+/* Armed danger button — pulses + outlined to flag "second click fires"
+   for both PowerTab reboot and AppTab uninstall.  Pairs with the
+   `useArmedAction` hook (auto-disarms after 8 s). */
+.power-btn.is-armed,
+.app-btn.is-armed {
+  background: #8e2d1f;
+  outline: 2px solid #ffd7b3;
+  outline-offset: 2px;
+  animation: alb-armed-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes alb-armed-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(181, 75, 61, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(181, 75, 61, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .power-btn.is-armed,
+  .app-btn.is-armed {
+    animation: none;
+  }
+}
+
 .power-result {
   margin-top: var(--space-3);
   padding: 10px 12px;
@@ -3998,7 +4026,22 @@ html[lang^="zh"] h3 {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 12.5px;
   cursor: pointer;
+  border: 0;
   border-bottom: 1px solid var(--anth-light-gray);
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+}
+
+.app-pkg-list:focus {
+  outline: 2px solid var(--anth-orange);
+  outline-offset: -2px;
+}
+
+.app-pkg:focus-visible {
+  outline: 2px solid var(--anth-orange);
+  outline-offset: -2px;
 }
 
 .app-pkg:hover {

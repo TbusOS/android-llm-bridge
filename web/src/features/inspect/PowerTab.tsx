@@ -18,6 +18,7 @@ import { useState } from "react";
 
 import { useApp } from "../../stores/app";
 import type { RebootRequest } from "../../lib/api";
+import { useArmedAction } from "../../lib/useArmedAction";
 import { useBattery, useRebootMutation, useSleepWakeMutation } from "./usePower";
 
 type RebootMode = RebootRequest["mode"];
@@ -153,12 +154,22 @@ function RebootCard({ device }: { device: string | null }) {
   const lang = useApp((s) => s.lang);
   const [mode, setMode] = useState<RebootMode>("normal");
   const [timeout, setTimeoutS] = useState(180);
-  const [armed, setArmed] = useState(false);
   const mut = useRebootMutation(device);
   const isDanger = DANGEROUS_MODES.has(mode);
 
+  const { armed, trigger, disarm } = useArmedAction(
+    () =>
+      mut.mutate({
+        mode,
+        wait_boot: mode === "normal",
+        timeout,
+        allow_dangerous: isDanger,
+      }),
+    { requiresArm: isDanger },
+  );
+
   const reset = () => {
-    setArmed(false);
+    disarm();
     mut.reset();
   };
 
@@ -170,12 +181,13 @@ function RebootCard({ device }: { device: string | null }) {
       <p className="power-action-card__hint">
         {lang === "zh" ? (
           <>
-            普通重启会等 sys.boot_completed=1。其它模式需要再点一次确认。
+            普通重启会等 sys.boot_completed=1。其它模式需要再点一次确认
+            （8 秒内确认或自动取消）。
           </>
         ) : (
           <>
             Normal reboot waits for sys.boot_completed=1. Other modes need
-            explicit confirmation.
+            explicit confirmation (auto-cancel after 8 s).
           </>
         )}
       </p>
@@ -187,7 +199,7 @@ function RebootCard({ device }: { device: string | null }) {
             disabled={mut.isPending}
             onChange={(e) => {
               setMode(e.target.value as RebootMode);
-              setArmed(false);
+              disarm();
               mut.reset();
             }}
           >
@@ -211,34 +223,42 @@ function RebootCard({ device }: { device: string | null }) {
         </label>
         <button
           type="button"
-          className={`power-btn${isDanger ? " power-btn--danger" : ""}`}
+          className={[
+            "power-btn",
+            isDanger ? "power-btn--danger" : "",
+            armed ? "is-armed" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           disabled={!device || mut.isPending}
-          onClick={() => {
-            if (isDanger && !armed) {
-              setArmed(true);
-              return;
-            }
-            mut.mutate({
-              mode,
-              wait_boot: mode === "normal",
-              timeout,
-              allow_dangerous: isDanger,
-            });
-          }}
+          onClick={trigger}
         >
           {mut.isPending
             ? lang === "zh"
               ? "执行中…"
               : "rebooting…"
-            : isDanger && !armed
+            : armed
               ? lang === "zh"
-                ? `点 2 次确认 ${mode}`
-                : `click again to ${mode}`
-              : lang === "zh"
-                ? "重启"
-                : "reboot"}
+                ? `⚠ 再点确认 ${mode}`
+                : `⚠ click again to ${mode}`
+              : isDanger
+                ? lang === "zh"
+                  ? `${mode}…`
+                  : mode
+                : lang === "zh"
+                  ? "重启"
+                  : "reboot"}
         </button>
-        {(mut.isSuccess || mut.isError || armed) && (
+        {armed && (
+          <button
+            type="button"
+            className="power-battery-card__refresh"
+            onClick={disarm}
+          >
+            {lang === "zh" ? "取消" : "cancel"}
+          </button>
+        )}
+        {(mut.isSuccess || mut.isError) && (
           <button
             type="button"
             className="power-battery-card__refresh"
