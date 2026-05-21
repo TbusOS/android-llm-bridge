@@ -10,7 +10,7 @@
  * Mockup baseline: `docs/webui-preview-v2-app.html` — BEM class names
  * here must mirror it (L-028).
  */
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { useApp } from "../../stores/app";
@@ -128,13 +128,45 @@ function InstallCard({ device }: { device: string | null }) {
   );
 }
 
+type NameOpKey = "start" | "stop" | "clear";
+
 function NameOpsCard({ device }: { device: string | null }) {
   const lang = useApp((s) => s.lang);
   const [name, setName] = useState("");
   const startM = useAppStartMutation(device);
   const stopM = useAppStopMutation(device);
   const clearM = useAppClearDataMutation(device);
-  const last = [startM.data, stopM.data, clearM.data].find((d) => d);
+  // Track which op fired last so we render that mutation's data, not
+  // whichever `.find(truthy)` returned first.  Without this, clicking
+  // start (ok) then stop (ok) would still display "start ok" because
+  // startM.data is left truthy and `.find` picks the first slot.
+  const [lastOp, setLastOp] = useState<NameOpKey | null>(null);
+  // Device-change reset: previous device's result should not bleed into
+  // the new device's idle state.
+  useEffect(() => {
+    setLastOp(null);
+    startM.reset();
+    stopM.reset();
+    clearM.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device]);
+
+  const fire = useCallback(
+    (op: NameOpKey, fn: () => void) => {
+      setLastOp(op);
+      fn();
+    },
+    [],
+  );
+
+  const last =
+    lastOp === "start"
+      ? startM.data
+      : lastOp === "stop"
+        ? stopM.data
+        : lastOp === "clear"
+          ? clearM.data
+          : undefined;
   const env = envText(last, "");
   const pending = startM.isPending || stopM.isPending || clearM.isPending;
 
@@ -159,7 +191,7 @@ function NameOpsCard({ device }: { device: string | null }) {
           type="button"
           className="app-btn"
           disabled={!device || !name.trim() || pending}
-          onClick={() => startM.mutate(name.trim())}
+          onClick={() => fire("start", () => startM.mutate(name.trim()))}
         >
           start
         </button>
@@ -167,7 +199,7 @@ function NameOpsCard({ device }: { device: string | null }) {
           type="button"
           className="app-btn"
           disabled={!device || !name.trim() || pending}
-          onClick={() => stopM.mutate(name.trim())}
+          onClick={() => fire("stop", () => stopM.mutate(name.trim()))}
         >
           stop
         </button>
@@ -175,14 +207,14 @@ function NameOpsCard({ device }: { device: string | null }) {
           type="button"
           className="app-btn app-btn--danger"
           disabled={!device || !name.trim() || pending}
-          onClick={() => clearM.mutate(name.trim())}
+          onClick={() => fire("clear", () => clearM.mutate(name.trim()))}
         >
           clear data
         </button>
       </div>
       {last?.ok && (
         <div className="app-result" data-status="ok">
-          ok · {JSON.stringify(last.data ?? {})}
+          ok · {lastOp} · {JSON.stringify(last.data ?? {})}
         </div>
       )}
       {env.status === "err" && (
@@ -193,6 +225,8 @@ function NameOpsCard({ device }: { device: string | null }) {
     </section>
   );
 }
+
+type PkgOpKey = "start" | "stop" | "clear" | "uninstall";
 
 function PackageDetail({
   device,
@@ -208,13 +242,32 @@ function PackageDetail({
   const clearM = useAppClearDataMutation(device);
   const uninstallM = useAppUninstallMutation(device);
 
-  const uninstall = useArmedAction(() => uninstallM.mutate(pkg!));
+  // Same lastOp tracking as NameOpsCard — `.find(truthy)` would show
+  // stale "start ok" after a successful stop.
+  const [lastOp, setLastOp] = useState<PkgOpKey | null>(null);
 
+  const uninstall = useArmedAction(() => {
+    setLastOp("uninstall");
+    uninstallM.mutate(pkg!);
+  });
+
+  // Reset everything on pkg OR device change. Without the device leg,
+  // switching device while a package is selected would carry the old
+  // device's pending mutation result into the new device's view.
   useEffect(() => {
+    setLastOp(null);
     uninstall.disarm();
     [startM, stopM, clearM, uninstallM].forEach((m) => m.reset());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pkg]);
+  }, [pkg, device]);
+
+  const fire = useCallback(
+    (op: PkgOpKey, fn: () => void) => {
+      setLastOp(op);
+      fn();
+    },
+    [],
+  );
 
   if (!pkg) {
     return (
@@ -234,9 +287,16 @@ function PackageDetail({
     stopM.isPending ||
     clearM.isPending ||
     uninstallM.isPending;
-  const lastOp = [startM.data, stopM.data, clearM.data, uninstallM.data].find(
-    (x) => x,
-  );
+  const lastOpData =
+    lastOp === "start"
+      ? startM.data
+      : lastOp === "stop"
+        ? stopM.data
+        : lastOp === "clear"
+          ? clearM.data
+          : lastOp === "uninstall"
+            ? uninstallM.data
+            : undefined;
 
   return (
     <div className="app-detail">
@@ -290,7 +350,7 @@ function PackageDetail({
           type="button"
           className="app-btn"
           disabled={pending}
-          onClick={() => startM.mutate(pkg)}
+          onClick={() => fire("start", () => startM.mutate(pkg))}
         >
           start
         </button>
@@ -298,7 +358,7 @@ function PackageDetail({
           type="button"
           className="app-btn"
           disabled={pending}
-          onClick={() => stopM.mutate(pkg)}
+          onClick={() => fire("stop", () => stopM.mutate(pkg))}
         >
           stop
         </button>
@@ -306,7 +366,7 @@ function PackageDetail({
           type="button"
           className="app-btn app-btn--danger"
           disabled={pending}
-          onClick={() => clearM.mutate(pkg)}
+          onClick={() => fire("clear", () => clearM.mutate(pkg))}
         >
           clear data
         </button>
@@ -336,14 +396,14 @@ function PackageDetail({
           </button>
         )}
       </div>
-      {lastOp?.ok && (
+      {lastOpData?.ok && (
         <div className="app-result" data-status="ok">
-          ok · {JSON.stringify(lastOp.data ?? {})}
+          ok · {lastOp} · {JSON.stringify(lastOpData.data ?? {})}
         </div>
       )}
-      {lastOp && !lastOp.ok && (
+      {lastOpData && !lastOpData.ok && (
         <div className="app-result" data-status="err">
-          {lastOp.error?.code}: {lastOp.error?.message}
+          {lastOpData.error?.code}: {lastOpData.error?.message}
         </div>
       )}
     </div>

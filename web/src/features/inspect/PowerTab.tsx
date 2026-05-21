@@ -14,7 +14,7 @@
  * "allow dangerous" — the capability layer ALSO enforces this, so the
  * UI flag is a usability nicety, not the security boundary.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useApp } from "../../stores/app";
 import type { RebootRequest } from "../../lib/api";
@@ -173,6 +173,14 @@ function RebootCard({ device }: { device: string | null }) {
     mut.reset();
   };
 
+  // Device-change reset — previous device's reboot result shouldn't
+  // bleed into the new device's idle state.
+  useEffect(() => {
+    disarm();
+    mut.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device]);
+
   return (
     <section className="power-action-card">
       <header className="power-action-card__head">
@@ -295,6 +303,11 @@ function SleepWakeCard({ device }: { device: string | null }) {
   const [cycles, setCycles] = useState(1);
   const [holdSec, setHoldSec] = useState(5);
   const mut = useSleepWakeMutation(device);
+  // Device-change reset — see RebootCard.
+  useEffect(() => {
+    mut.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device]);
 
   return (
     <section className="power-action-card">
