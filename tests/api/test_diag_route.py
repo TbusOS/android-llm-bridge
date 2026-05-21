@@ -168,3 +168,23 @@ def test_artifacts_empty_when_no_workspace_dir(client) -> None:
     assert data["bugreports"] == []
     assert data["anr"] == []
     assert data["tombstones"] == []
+
+
+def test_transport_init_failure_returns_envelope_b_not_503(monkeypatch, tmp_path) -> None:
+    """Architecture ADR (REST envelope 三态约定 b): build_transport
+    failure → 200 + ok=false envelope, NOT HTTPException(503)."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+
+    def _boom(**_kw: Any):
+        raise RuntimeError("adb server unreachable")
+
+    monkeypatch.setattr("alb.api.diag_route.build_transport", _boom)
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.post("/api/diag/bugreport?device=abc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["transport"] is None
+    assert body["error"]["code"] == "TRANSPORT_INIT_FAILED"
+    assert body["device"] == "abc"

@@ -219,3 +219,21 @@ def test_sleep_wake_validates_cycles_range() -> None:
             json={"cycles": 99999, "hold_sec": 1},
         )
     assert r.status_code == 422
+
+
+def test_transport_init_failure_returns_envelope_b_not_503(monkeypatch) -> None:
+    """Architecture ADR (REST envelope 三态约定 b): build_transport
+    failure → 200 + ok=false envelope, NOT HTTPException(503)."""
+    def _boom(**_kw: Any):
+        raise RuntimeError("adb server unreachable")
+
+    monkeypatch.setattr("alb.api.power_route.build_transport", _boom)
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.get("/api/power/battery?device=abc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["transport"] is None
+    assert body["error"]["code"] == "TRANSPORT_INIT_FAILED"
+    assert body["device"] == "abc"

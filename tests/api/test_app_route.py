@@ -225,3 +225,31 @@ def test_install_rejects_non_apk_filename(client) -> None:
     body = r.json()
     assert body["ok"] is False
     assert body["error"]["code"] == "INVALID_FILENAME"
+
+
+def test_transport_init_failure_returns_envelope_b_not_503(
+    monkeypatch, tmp_path,
+) -> None:
+    """build_transport failure must NOT raise HTTPException(503).
+
+    Per architecture.md "REST envelope 三态约定" (b), transport init
+    is device-side / upstream failure — surface as 200 + ok=false so
+    the front-end renders an inline error in the same panel rather
+    than triggering its global onError handler.
+    """
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+
+    def _boom(**_kw: Any):
+        raise RuntimeError("adb server unreachable")
+
+    monkeypatch.setattr("alb.api.app_route.build_transport", _boom)
+    app = create_app()
+    with TestClient(app) as c:
+        r = c.get("/api/app/list?device=abc")
+    assert r.status_code == 200, f"expected 200 envelope, got {r.status_code}"
+    body = r.json()
+    assert body["ok"] is False
+    assert body["transport"] is None
+    assert body["error"]["code"] == "TRANSPORT_INIT_FAILED"
+    assert "RuntimeError" in body["error"]["message"]
+    assert body["device"] == "abc"

@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from alb.capabilities.logging import search_logs
+from alb.infra.result import envelope_dict
 from alb.infra.workspace import is_safe_device
 
 router = APIRouter(prefix="/api/log", tags=["log"])
@@ -45,10 +46,4 @@ async def get_log_search(
             status_code=400, detail=f"invalid device serial: {device!r}"
         )
     r = await search_logs(pattern, device=device, max_matches=max)
-    if not r.ok:
-        return {
-            "ok": False,
-            "error": r.error.to_dict() if r.error else None,
-        }
-    data = r.data.to_dict() if r.data else {}
-    return {"ok": True, "data": data, "timing_ms": r.timing_ms}
+    return envelope_dict(r)

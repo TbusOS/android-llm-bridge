@@ -111,3 +111,65 @@ def fail(
         artifacts=[],
         timing_ms=timing_ms,
     )
+
+
+# ─── REST envelope helpers (architecture.md "REST envelope 三态约定") ──
+def envelope_dict(r: Result[Any]) -> dict[str, Any]:
+    """Build a REST envelope from a :class:`Result`.
+
+    Returned shape (matches the inline pattern that grew across
+    ``power_route`` / ``app_route`` / ``diag_route`` / ``log_search_route``
+    — extracted here to keep all 5 new routes on one source of truth):
+
+    * ok branch:  ``{"ok": True,  "data": <to_dict()ed>, "timing_ms": N}``
+    * err branch: ``{"ok": False, "error": <ErrorInfo dict>, "timing_ms": N}``
+
+    ``artifacts`` is intentionally omitted (the routes that produce
+    artefacts already encode the path inside ``data``).  Use
+    :meth:`Result.to_dict` directly when ``artifacts`` matters.
+    """
+    if not r.ok:
+        return {
+            "ok": False,
+            "error": r.error.to_dict() if r.error else None,
+            "timing_ms": r.timing_ms,
+        }
+    data: Any
+    if r.data is None:
+        data = None
+    elif hasattr(r.data, "to_dict"):
+        data = r.data.to_dict()
+    else:
+        data = r.data
+    return {"ok": True, "data": data, "timing_ms": r.timing_ms}
+
+
+def envelope_transport_init_error(
+    exc: BaseException, **extra: Any
+) -> dict[str, Any]:
+    """200 + ``ok=false`` envelope for a ``build_transport`` failure.
+
+    Per ``architecture.md`` "REST envelope 三态约定" (b), transport init
+    failure is **device-side** / upstream — it must surface as an
+    envelope, NOT as ``HTTPException(503)``.  Routes that need to
+    short-circuit on transport init failure use this helper plus a
+    tuple-return ``_resolve_transport`` so the front-end sees the
+    canonical envelope shape on both ``isSuccess`` and ``ok=false``.
+
+    Extra fields (``serial=``, ``device=``, etc.) propagate to the
+    envelope for parity with ``devices_route.device_screenshot``.
+    """
+    return {
+        "ok": False,
+        "transport": None,
+        "error": {
+            "code": "TRANSPORT_INIT_FAILED",
+            "message": f"{type(exc).__name__}: {exc}",
+            "suggestion": (
+                "Check device connectivity / adb server / serial bridge"
+            ),
+            "category": "transport",
+            "details": {},
+        },
+        **extra,
+    }

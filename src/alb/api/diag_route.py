@@ -35,24 +35,26 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from alb.capabilities import diagnose as diag_cap
+from alb.infra.result import envelope_dict, envelope_transport_init_error
 from alb.infra.workspace import is_safe_device, workspace_root
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter(prefix="/api/diag", tags=["diag"])
 
 
-def _resolve_transport(device: str | None) -> Any:
+def _resolve_transport(
+    device: str | None,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """See ``power_route._resolve_transport``: tuple-return so handlers
+    surface ``build_transport`` failure as envelope shape (b)."""
     if device and not is_safe_device(device):
         raise HTTPException(
             status_code=400, detail=f"invalid device serial: {device!r}"
         )
     try:
-        return build_transport(device_serial=device)
+        return build_transport(device_serial=device), None
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status_code=503,
-            detail=f"transport init failed: {type(e).__name__}: {e}",
-        ) from e
+        return None, envelope_transport_init_error(e, device=device)
 
 
 class AnrRequest(BaseModel):
@@ -63,27 +65,15 @@ class TombstoneRequest(BaseModel):
     limit: int = Field(10, ge=1, le=200)
 
 
-def _envelope(r: Any) -> dict[str, Any]:
-    if not r.ok:
-        return {
-            "ok": False,
-            "error": r.error.to_dict() if r.error else None,
-            "timing_ms": r.timing_ms,
-        }
-    return {
-        "ok": True,
-        "data": r.data.to_dict() if r.data else {},
-        "timing_ms": r.timing_ms,
-    }
-
-
 @router.post("/bugreport")
 async def post_bugreport(
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await diag_cap.bugreport(transport, device=device)
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.post("/anr")
@@ -91,11 +81,13 @@ async def post_anr(
     body: AnrRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await diag_cap.anr_pull(
         transport, clear_after=body.clear_after, device=device
     )
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.post("/tombstone")
@@ -103,11 +95,13 @@ async def post_tombstone(
     body: TombstoneRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await diag_cap.tombstone_pull(
         transport, limit=body.limit, device=device
     )
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 def _scan_artifacts_in_thread(

@@ -27,42 +27,37 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from alb.capabilities import app as app_cap
+from alb.infra.result import envelope_dict, envelope_transport_init_error
 from alb.infra.workspace import is_safe_device
 from alb.mcp.transport_factory import build_transport
 
 router = APIRouter(prefix="/api/app", tags=["app"])
 
 
-def _resolve_transport(device: str | None) -> Any:
+def _resolve_transport(
+    device: str | None,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Return ``(transport, None)`` on success or ``(None, envelope_b)``
+    on a ``build_transport`` failure.  The route handler should
+    ``return envelope_b`` verbatim if it's non-None.
+
+    Bad ``device`` (regex reject) still raises ``HTTPException(400)`` —
+    that's envelope shape (c): "input invalid".  Transport init failure
+    is envelope shape (b): "device-side / upstream failure", per
+    ``architecture.md`` "REST envelope 三态约定".
+    """
     if device and not is_safe_device(device):
         raise HTTPException(
             status_code=400, detail=f"invalid device serial: {device!r}"
         )
     try:
-        return build_transport(device_serial=device)
+        return build_transport(device_serial=device), None
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status_code=503,
-            detail=f"transport init failed: {type(e).__name__}: {e}",
-        ) from e
-
-
-def _envelope(r: Any) -> dict[str, Any]:
-    if not r.ok:
-        return {
-            "ok": False,
-            "error": r.error.to_dict() if r.error else None,
-            "timing_ms": r.timing_ms,
-        }
-    if hasattr(r.data, "to_dict"):
-        data = r.data.to_dict()
-    else:
-        data = r.data
-    return {"ok": True, "data": data, "timing_ms": r.timing_ms}
+        return None, envelope_transport_init_error(e, device=device)
 
 
 class PackageRequest(BaseModel):
@@ -85,11 +80,13 @@ async def get_list(
     filter: str | None = Query(None, max_length=128),  # noqa: A002
     include_system: bool = Query(False),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await app_cap.list_apps(
         transport, filter=filter, include_system=include_system
     )
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.get("/info")
@@ -97,9 +94,11 @@ async def get_info(
     package: str = Query(..., max_length=256),
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await app_cap.info(transport, package)
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.post("/start")
@@ -107,9 +106,11 @@ async def post_start(
     body: StartRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await app_cap.start(transport, body.component)
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.post("/stop")
@@ -117,9 +118,11 @@ async def post_stop(
     body: PackageRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await app_cap.stop(transport, body.package)
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.post("/clear-data")
@@ -127,9 +130,11 @@ async def post_clear_data(
     body: PackageRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await app_cap.clear_data(transport, body.package)
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 @router.post("/uninstall")
@@ -137,14 +142,16 @@ async def post_uninstall(
     body: UninstallRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
     r = await app_cap.uninstall(
         transport,
         body.package,
         keep_data=body.keep_data,
         allow_dangerous=body.allow_dangerous,
     )
-    return _envelope(r)
+    return envelope_dict(r)
 
 
 # Hard ceiling for apk size — protects the server from accidental 500MB
@@ -163,7 +170,9 @@ async def post_install(
     """Install an APK by streaming the upload to a tempfile then
     delegating to ``app_cap.install``. The tempfile is unlinked in
     ``finally``."""
-    transport = _resolve_transport(device)
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
 
     # Validate filename to prevent path-traversal even on the temp side.
     name = apk.filename or "upload.apk"
@@ -205,7 +214,7 @@ async def post_install(
             grant_runtime=grant_runtime,
             downgrade=downgrade,
         )
-        return _envelope(r)
+        return envelope_dict(r)
     finally:
         try:
             os.unlink(tmp_path)
