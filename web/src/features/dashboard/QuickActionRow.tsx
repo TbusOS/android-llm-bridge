@@ -3,9 +3,9 @@
  * card has a 36-px rounded square icon (orange on subtle bg) + title +
  * sub-line.  Routes to the matching module.
  *
- * Inspect-tab actions deep-link via `?tab=<key>` (see
- * `router.tsx` validateSearch) so a tap on "Tail Logcat" lands the
- * user on the Logcat tab, not the default System Info.
+ * Inspect-tab actions deep-link to `/inspect/<tabKey>` (nested routes,
+ * see `router.tsx` `inspectTabRoutes`) so a tap on "Tail Logcat" lands
+ * the user on the Logcat tab, not the default System Info.
  */
 import { Link } from "@tanstack/react-router";
 import {
@@ -57,7 +57,10 @@ export function QuickActionRow({ actions }: Props) {
         const Icon = def.Icon;
         const linkProps =
           def.target.kind === "inspect"
-            ? ({ to: "/inspect", search: { tab: def.target.tab } } as const)
+            ? ({
+                to: "/inspect/$tabKey",
+                params: { tabKey: def.target.tab },
+              } as const)
             : ({ to: def.target.to } as const);
         return (
           <Link key={a.key} {...linkProps} className="qa-card">

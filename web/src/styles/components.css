@@ -1355,6 +1355,27 @@ html[lang^="zh"] h3 {
   gap: 4px;
   border-bottom: 1px solid var(--anth-light-gray);
   margin-bottom: var(--space-4);
+  /* 12 inspect tabs overflow on viewports < ~1100 px. Horizontal
+     scroll with a thin custom-styled scrollbar instead of wrapping,
+     so the underline-active visual stays a single row. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+  scrollbar-color: var(--anth-light-gray) transparent;
+}
+
+.subnav::-webkit-scrollbar {
+  height: 6px;
+}
+
+.subnav::-webkit-scrollbar-thumb {
+  background: var(--anth-light-gray);
+  border-radius: 3px;
+}
+
+.subnav::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .subnav a,
@@ -1370,6 +1391,10 @@ html[lang^="zh"] h3 {
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   cursor: pointer;
+  /* Prevent label wrap inside a single tab (e.g. "Log Search" must
+     stay on one line) so horizontal scrolling can do its job. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .subnav a:hover,
