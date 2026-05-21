@@ -10,12 +10,13 @@
  * Mockup baseline: `docs/webui-preview-v2-app.html` — BEM class names
  * here must mirror it (L-028).
  */
-import { useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { useApp } from "../../stores/app";
 import {
@@ -378,6 +379,10 @@ function PackageDetail({
   );
 }
 
+// Single row height (px) — used for virtualizer estimateSize.  Lines
+// are 12.5px monospace + 6px vertical padding × 2 ≈ 28 px total.
+const _PKG_ROW_HEIGHT = 28;
+
 function PackageList({
   device,
   selected,
@@ -389,18 +394,40 @@ function PackageList({
 }) {
   const lang = useApp((s) => s.lang);
   const [filter, setFilter] = useState("");
+  const deferredFilter = useDeferredValue(filter);
   const [includeSystem, setIncludeSystem] = useState(false);
 
+  // perf HIGH#7: filter is now CLIENT-side — each keystroke only
+  // re-derives via useMemo, no /api/app/list refetch.  The query
+  // re-fires only when device / includeSystem actually changes.
   const list = useQuery({
-    queryKey: ["app-list", device, filter, includeSystem],
+    queryKey: ["app-list", device, includeSystem],
     enabled: !!device,
     staleTime: 30_000,
     queryFn: ({ signal }) =>
       fetchAppList(
         device,
-        { filter: filter || undefined, include_system: includeSystem },
+        { include_system: includeSystem },
         signal,
       ),
+  });
+
+  const allPackages = list.data?.ok ? list.data.data?.packages ?? [] : [];
+  const visiblePackages = useMemo(() => {
+    if (!deferredFilter) return allPackages;
+    const q = deferredFilter.toLowerCase();
+    return allPackages.filter((p) => p.toLowerCase().includes(q));
+  }, [allPackages, deferredFilter]);
+
+  // perf HIGH#7: virtualize the list.  Device with 500+ packages
+  // previously rendered every <li> and paid layout cost on each
+  // keystroke; only render visible rows now (mirrors UiDumpTab pattern).
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visiblePackages.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => _PKG_ROW_HEIGHT,
+    overscan: 12,
   });
 
   return (
@@ -424,6 +451,18 @@ function PackageList({
             />{" "}
             {lang === "zh" ? "含系统" : "system"}
           </label>
+          {filter && allPackages.length > 0 && (
+            <span
+              className="app-card__hint"
+              style={{ margin: 0 }}
+              role="status"
+              aria-live="polite"
+            >
+              {lang === "zh"
+                ? `${visiblePackages.length} / ${allPackages.length} 匹配`
+                : `${visiblePackages.length} of ${allPackages.length} matches`}
+            </span>
+          )}
           <button
             type="button"
             className="app-btn app-btn--ghost"
@@ -444,38 +483,64 @@ function PackageList({
       </header>
 
       <div className="app-list-card__body">
-        <ul className="app-pkg-list">
+        <div className="app-pkg-list" ref={listRef}>
           {list.isLoading && (
-            <li className="app-pkg" style={{ cursor: "default" }}>
+            <div className="app-pkg" style={{ cursor: "default" }}>
               {lang === "zh" ? "读取中…" : "loading…"}
-            </li>
+            </div>
           )}
           {list.data && !list.data.ok && (
-            <li
+            <div
               className="app-pkg"
               style={{ cursor: "default", color: "#b54b3d" }}
             >
               {list.data.error?.code}: {list.data.error?.message}
-            </li>
+            </div>
           )}
           {list.data?.ok &&
-            list.data.data &&
-            (list.data.data.packages.length === 0 ? (
-              <li className="app-pkg" style={{ cursor: "default" }}>
+            allPackages.length === 0 && (
+              <div className="app-pkg" style={{ cursor: "default" }}>
                 {lang === "zh" ? "没有匹配的包" : "no matching packages"}
-              </li>
-            ) : (
-              list.data.data.packages.map((p) => (
-                <li
-                  key={p}
-                  className={`app-pkg${selected === p ? " is-active" : ""}`}
-                  onClick={() => onSelect(p)}
-                >
-                  {p}
-                </li>
-              ))
-            ))}
-        </ul>
+              </div>
+            )}
+          {list.data?.ok && allPackages.length > 0 && visiblePackages.length === 0 && (
+            <div className="app-pkg" style={{ cursor: "default" }}>
+              {lang === "zh"
+                ? `没有包匹配 "${filter}"`
+                : `No packages match "${filter}"`}
+            </div>
+          )}
+          {visiblePackages.length > 0 && (
+            <div
+              className="app-pkg-list__virt"
+              style={{
+                height: rowVirtualizer.getTotalSize(),
+                position: "relative",
+              }}
+            >
+              {rowVirtualizer.getVirtualItems().map((vRow) => {
+                const p = visiblePackages[vRow.index];
+                if (!p) return null;
+                return (
+                  <div
+                    key={p}
+                    className={`app-pkg${selected === p ? " is-active" : ""}`}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      transform: `translateY(${vRow.start}px)`,
+                    }}
+                    onClick={() => onSelect(p)}
+                  >
+                    {p}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <PackageDetail device={device} pkg={selected} />
       </div>
     </section>
