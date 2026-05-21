@@ -26,6 +26,7 @@ import {
   type DiagArtifactBundle,
   type DiagArtifactFile,
 } from "../../lib/api";
+import { useElapsedSeconds } from "../../lib/useElapsedSeconds";
 
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -64,6 +65,10 @@ function BugreportCard({ device }: { device: string | null }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["diag-artifacts", device] }),
   });
   const env = formatEnv(mut.data);
+  // Bugreport runs 60-180s. Without an elapsed counter the user can't
+  // tell "stuck" from "still running" — the button just says
+  // "collecting…" for two minutes. Show seconds so they know it's alive.
+  const elapsed = useElapsedSeconds(mut.isPending);
 
   return (
     <section className="diag-card">
@@ -85,8 +90,8 @@ function BugreportCard({ device }: { device: string | null }) {
         >
           {mut.isPending
             ? lang === "zh"
-              ? "采集中…"
-              : "collecting…"
+              ? `采集中… ${elapsed}s`
+              : `collecting… ${elapsed}s`
             : lang === "zh"
               ? "采集"
               : "collect"}
@@ -262,7 +267,7 @@ function FileRow({ file }: { file: DiagArtifactFile }) {
 
 function ArchiveSection({ device }: { device: string | null }) {
   const lang = useApp((s) => s.lang);
-  const { data, isFetching, refetch } = useQuery({
+  const { data, isLoading, isError, error, isFetching, refetch } = useQuery({
     queryKey: ["diag-artifacts", device],
     enabled: !!device,
     staleTime: 15_000,
@@ -279,6 +284,49 @@ function ArchiveSection({ device }: { device: string | null }) {
           {lang === "zh"
             ? "未选设备 —— 先在顶栏选一个设备。"
             : "No device selected — pick one from the top-bar."}
+        </div>
+      </section>
+    );
+  }
+
+  // Three-state pre-empt: loading / error / data. Without this, while
+  // the first /api/diag/artifacts call is in flight the page paints
+  // 3 sections each titled "(0)" + "none yet" — looks like the device
+  // genuinely has no artefacts. And on a fetch error the page silently
+  // showed the same "none yet" three times — there was no surface for
+  // "the server failed".
+  if (isLoading) {
+    return (
+      <section className="diag-archive">
+        <header className="diag-archive__head">
+          <h2 className="diag-archive__title">collected</h2>
+        </header>
+        <div className="diag-archive__empty" role="status" aria-live="polite">
+          {lang === "zh" ? "正在读取…" : "Loading…"}
+        </div>
+      </section>
+    );
+  }
+  if (isError) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return (
+      <section className="diag-archive">
+        <header className="diag-archive__head">
+          <h2 className="diag-archive__title">collected</h2>
+          <button
+            type="button"
+            className="diag-archive__refresh"
+            disabled={isFetching}
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            {isFetching ? (lang === "zh" ? "刷新中…" : "refreshing…") : "retry"}
+          </button>
+        </header>
+        <div className="diag-archive__empty" role="alert">
+          {lang === "zh" ? "读取失败：" : "Failed: "}
+          {msg}
         </div>
       </section>
     );

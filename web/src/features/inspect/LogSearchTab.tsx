@@ -82,10 +82,25 @@ export function LogSearchTab() {
     search.mutate({ p: pattern.trim(), max: maxMatches });
   };
 
+  // perf MID: splitHighlights used to run inline inside the .map() of
+  // every row, recomputed on every render (e.g. user types in another
+  // input). 200 matches × heavy regex × frequent renders = wasted CPU.
+  // Pre-split once when grouped + pattern changes, render the cached
+  // segments. The pattern dep is captured at search-submit time
+  // (search.data is what's on-screen), so we use the pattern from the
+  // matching response — but search.mutate doesn't echo the pattern
+  // back in the envelope, so we capture it via state below.
   const grouped = useMemo(() => {
     if (!search.data?.ok || !search.data.data) return [];
-    return groupByPath(search.data.data.matches);
-  }, [search.data]);
+    const groups = groupByPath(search.data.data.matches);
+    return groups.map((g) => ({
+      path: g.path,
+      hits: g.hits.map((h) => ({
+        ...h,
+        segments: splitHighlights(h.content, pattern),
+      })),
+    }));
+  }, [search.data, pattern]);
 
   const statusText = (() => {
     if (search.isPending) return lang === "zh" ? "搜索中…" : "searching…";
@@ -193,7 +208,7 @@ export function LogSearchTab() {
                 >
                   <span className="log-search__line">{m.line_number}</span>
                   <span>
-                    {splitHighlights(m.content, pattern).map((seg, i) =>
+                    {m.segments.map((seg, i) =>
                       seg.hit ? (
                         <span
                           key={i}

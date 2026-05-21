@@ -40,17 +40,29 @@ function envText(env: AppEnvelope<unknown> | undefined, okText: string): {
   return { text: okText, status: "ok" };
 }
 
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
 function InstallCard({ device }: { device: string | null }) {
   const lang = useApp((s) => s.lang);
   const fileRef = useRef<HTMLInputElement>(null);
   const [replace, setReplace] = useState(true);
   const [grantRuntime, setGrantRuntime] = useState(false);
   const [downgrade, setDowngrade] = useState(false);
+  // Selected file preview — the native <input type=file> shows the
+  // file name in a browser-styled chip whose text colour / truncation
+  // we can't fully control, so we mirror name + size in our own DOM
+  // and show ".apk too big" / unsupported-extension hints if needed.
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const mut = useAppInstallMutation(device);
 
   const onInstall = () => {
-    const f = fileRef.current?.files?.[0];
+    const f = fileRef.current?.files?.[0] ?? selectedFile;
     if (!f) return;
     mut.mutate({ file: f, replace, grantRuntime, downgrade });
   };
@@ -67,8 +79,34 @@ function InstallCard({ device }: { device: string | null }) {
           : "Push an APK file and run `pm install` on the device."}
       </p>
       <div className="app-card__row">
-        <input ref={fileRef} type="file" accept=".apk" disabled={mut.isPending} />
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".apk"
+          disabled={mut.isPending}
+          onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+        />
       </div>
+      {selectedFile && (
+        <div
+          className="app-card__hint"
+          style={{ margin: 0 }}
+          role="status"
+          aria-live="polite"
+        >
+          {selectedFile.name} · {humanSize(selectedFile.size)}
+          {selectedFile.name.toLowerCase().endsWith(".apk") ? (
+            ""
+          ) : (
+            <>
+              {" · "}
+              <span style={{ color: "#b54b3d" }}>
+                {lang === "zh" ? "不是 .apk?" : "not .apk?"}
+              </span>
+            </>
+          )}
+        </div>
+      )}
       <div className="app-card__row">
         <label>
           <input
