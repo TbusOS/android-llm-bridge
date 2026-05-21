@@ -14,6 +14,11 @@ import { useApp } from "../../stores/app";
 import type { DoctorCheck, DoctorLayer, DoctorStatus } from "../../lib/api";
 import { useDoctor } from "./useDoctor";
 
+// CLS reserve — the data block is a 600+ px grid of layer cards, so
+// while loading/error renders a slim banner the page would otherwise
+// jump ~600 px when data lands. Reserve that height up front.
+const DATA_BLOCK_MIN_HEIGHT = 600;
+
 const STATUS_ICON: Record<DoctorStatus, string> = {
   ok: "✓",
   warn: "!",
@@ -37,6 +42,43 @@ function formatRelativeSeconds(ms: number, lang: "en" | "zh"): string {
     return lang === "zh" ? `${s} 秒前刷新` : `Updated ${s} s ago`;
   const m = Math.floor(s / 60);
   return lang === "zh" ? `${m} 分钟前刷新` : `Updated ${m} min ago`;
+}
+
+/**
+ * UpdatedLabel — self-contained "Updated N s ago" label.
+ *
+ * Owns its own 1 Hz setInterval so the rest of DoctorPage doesn't
+ * re-render every second just to refresh this 20-char string. Mounts
+ * the timer only when there is a real timestamp to count from.
+ */
+function UpdatedLabel({
+  dataUpdatedAt,
+  lang,
+}: {
+  dataUpdatedAt: number;
+  lang: "en" | "zh";
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!dataUpdatedAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [dataUpdatedAt]);
+
+  if (!dataUpdatedAt) {
+    return (
+      <span className="doctor-page__updated">
+        {lang === "zh" ? "尚未加载" : "Not loaded yet"}
+      </span>
+    );
+  }
+  return (
+    <span className="doctor-page__updated">
+      {formatRelativeSeconds(now - dataUpdatedAt, lang)}
+    </span>
+  );
 }
 
 function CheckRow({ check }: { check: DoctorCheck }) {
@@ -72,14 +114,6 @@ export function DoctorPage() {
   const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } =
     useDoctor();
 
-  // Tick once per second so the "Updated N s ago" label stays fresh
-  // without invalidating the cached doctor payload.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
   return (
     <main className="doctor-page" role="main">
       <header className="doctor-page__header">
@@ -102,13 +136,7 @@ export function DoctorPage() {
           </p>
         </div>
         <div className="doctor-page__actions">
-          <span className="doctor-page__updated">
-            {dataUpdatedAt
-              ? formatRelativeSeconds(now - dataUpdatedAt, lang)
-              : lang === "zh"
-                ? "尚未加载"
-                : "Not loaded yet"}
-          </span>
+          <UpdatedLabel dataUpdatedAt={dataUpdatedAt} lang={lang} />
           <button
             type="button"
             className="doctor-page__refresh"
@@ -128,43 +156,45 @@ export function DoctorPage() {
         </div>
       </header>
 
-      {isLoading && (
-        <div className="doctor-state-banner">
-          {lang === "zh" ? "正在加载六层探测…" : "Probing six layers…"}
-        </div>
-      )}
+      <div style={{ minHeight: DATA_BLOCK_MIN_HEIGHT }}>
+        {isLoading && (
+          <div className="doctor-state-banner">
+            {lang === "zh" ? "正在加载六层探测…" : "Probing six layers…"}
+          </div>
+        )}
 
-      {isError && (
-        <div className="doctor-state-banner" role="alert">
-          {lang === "zh" ? "加载失败：" : "Failed to load: "}
-          {error instanceof Error ? error.message : String(error)}
-        </div>
-      )}
+        {isError && (
+          <div className="doctor-state-banner" role="alert">
+            {lang === "zh" ? "加载失败：" : "Failed to load: "}
+            {error instanceof Error ? error.message : String(error)}
+          </div>
+        )}
 
-      {data && (
-        <>
-          <div className="doctor-summary" role="status">
-            {SUMMARY_ORDER.map((status) => (
-              <span
-                key={status}
-                className="doctor-summary__chip"
-                data-status={status}
-              >
-                <span className="doctor-summary__icon">{STATUS_ICON[status]}</span>
-                <span>
-                  {data.summary[status] ?? 0} {STATUS_LABEL[status]}
+        {data && (
+          <>
+            <div className="doctor-summary" role="status">
+              {SUMMARY_ORDER.map((status) => (
+                <span
+                  key={status}
+                  className="doctor-summary__chip"
+                  data-status={status}
+                >
+                  <span className="doctor-summary__icon">{STATUS_ICON[status]}</span>
+                  <span>
+                    {data.summary[status] ?? 0} {STATUS_LABEL[status]}
+                  </span>
                 </span>
-              </span>
-            ))}
-          </div>
+              ))}
+            </div>
 
-          <div className="doctor-layers">
-            {data.layers.map((layer) => (
-              <LayerCard key={layer.name} layer={layer} />
-            ))}
-          </div>
-        </>
-      )}
+            <div className="doctor-layers">
+              {data.layers.map((layer) => (
+                <LayerCard key={layer.name} layer={layer} />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </main>
   );
 }

@@ -133,7 +133,7 @@ def probe_ssh() -> Layer:
         return layer
     user = os.environ.get("ALB_SSH_USER", "root")
     port = int(os.environ.get("ALB_SSH_PORT", "22"))
-    listening = check_tcp_listen(host, port, timeout=1.5)
+    listening = check_tcp_listen(host, port, timeout=0.5)
     layer.add(
         f"tcp {host}:{port} listening",
         "ok" if listening else "err",
@@ -195,7 +195,7 @@ async def probe_serial_async() -> Layer:
         return layer
     cfg = settings.config.serial
     host, port = cfg.default_tcp_host, cfg.default_tcp_port
-    listening = check_tcp_listen(host, port, timeout=1.5)
+    listening = check_tcp_listen(host, port, timeout=0.5)
     layer.add(
         f"tcp {host}:{port} listening",
         "ok" if listening else "warn",
