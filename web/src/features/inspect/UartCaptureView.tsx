@@ -133,7 +133,8 @@ export function UartCaptureView() {
           type="button"
           className="btn btn--primary"
           onClick={onCapture}
-          disabled={trigger.isPending}
+          disabled={!device || trigger.isPending}
+          title={!device ? "no device selected" : undefined}
         >
           <Play size={12} className="icon-inline" />{" "}
           {trigger.isPending

@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleStop, Eraser, Play } from "lucide-react";
+import { CircleStop, Eraser, Pause, Play } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -25,10 +25,29 @@ import { useLogcatStream } from "./useLogcatStream";
 const FILTER_DEBOUNCE_MS = 600;
 const APPLIED_PILL_MS = 1500;
 
+// Single-letter logcat severity threshold. "" means no level constraint
+// (full filter input is authoritative); any other value composes
+// `*:<LEVEL>` on top of (or in lieu of) the freeform filter.
+const LEVELS = ["", "V", "D", "I", "W", "E", "F"] as const;
+type Level = (typeof LEVELS)[number];
+
+function composeFilter(level: Level, freeform: string): string {
+  const f = freeform.trim();
+  if (!level) return f;
+  // If user wrote their own filter, prepend the level — `*:<LEVEL>` is
+  // documented to combine with per-tag specs sanely.
+  return f ? `${f} *:${level}` : `*:${level}`;
+}
+
 export function LogcatTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const [filter, setFilter] = useState("");
+  const [level, setLevel] = useState<Level>("");
+  // Pause = stop writing to xterm. Bytes continue flowing on the WS and
+  // are dropped (no buffer) — matches user expectation of "freeze the
+  // screen so I can read", not "give me the full backlog later".
+  const [paused, setPaused] = useState(false);
   const { state, error, connect, disconnect, onBytes } = useLogcatStream();
   // Tracks the filter spec the current live stream was started with.
   // Used to skip reconnect when the effect re-runs purely because of
@@ -90,17 +109,18 @@ export function LogcatTab() {
 
   useEffect(() => {
     return onBytes((chunk) => {
+      if (paused) return;
       const term = termRef.current;
       if (!term) return;
       term.write(new Uint8Array(chunk));
     });
-  }, [onBytes]);
+  }, [onBytes, paused]);
 
   const onConnect = useCallback(() => {
-    const f = filter.trim();
+    const f = composeFilter(level, filter);
     lastAppliedFilter.current = f;
     connect({ device, filter: f || null });
-  }, [connect, device, filter]);
+  }, [connect, device, filter, level]);
   const onClear = () => termRef.current?.clear();
 
   // Debounced auto-reconnect: when the user edits filter while a stream
@@ -110,15 +130,15 @@ export function LogcatTab() {
   // recover from errors manually).
   useEffect(() => {
     if (state !== "ready") return;
-    const trimmed = filter.trim();
-    if (trimmed === lastAppliedFilter.current) return;
+    const composed = composeFilter(level, filter);
+    if (composed === lastAppliedFilter.current) return;
     const t = window.setTimeout(() => {
-      lastAppliedFilter.current = trimmed;
-      connect({ device, filter: trimmed || null });
+      lastAppliedFilter.current = composed;
+      connect({ device, filter: composed || null });
       setAppliedAt(Date.now());
     }, FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [filter, state, device, connect]);
+  }, [filter, level, state, device, connect]);
 
   // Show "applied" pill for APPLIED_PILL_MS after a successful debounce
   // reconnect, then fade. Tied to appliedAt so each reconnect resets the
@@ -154,17 +174,32 @@ export function LogcatTab() {
   return (
     <div className="uart-tab">
       <div className="uart-tab__bar">
+        <label className="uart-tab__duration">
+          {lang === "zh" ? "Level" : "Level"}
+          <select
+            value={level}
+            onChange={(e) => setLevel(e.target.value as Level)}
+          >
+            <option value="">{lang === "zh" ? "(全部)" : "(all)"}</option>
+            <option value="V">V verbose</option>
+            <option value="D">D debug</option>
+            <option value="I">I info</option>
+            <option value="W">W warn</option>
+            <option value="E">E error</option>
+            <option value="F">F fatal</option>
+          </select>
+        </label>
         <label className="uart-tab__duration" style={{ minWidth: 220 }}>
           {lang === "zh" ? "Filter" : "Filter"}
           <input
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="*:E  /  MyTag:V *:S"
+            placeholder="MyTag:V  /  Foo:* Bar:S"
             style={{ width: 200 }}
           />
         </label>
-        {state === "ready" && filter.trim() !== lastAppliedFilter.current && (
+        {state === "ready" && composeFilter(level, filter) !== lastAppliedFilter.current && (
           <span
             className="uart-tab__last"
             role="status"
@@ -173,7 +208,7 @@ export function LogcatTab() {
             {lang === "zh" ? "应用中…" : "applying…"}
           </span>
         )}
-        {justApplied && filter.trim() === lastAppliedFilter.current && (
+        {justApplied && composeFilter(level, filter) === lastAppliedFilter.current && (
           <span
             className="uart-tab__last uart-tab__last--ok"
             role="status"
@@ -196,6 +231,27 @@ export function LogcatTab() {
           <button type="button" className="btn" onClick={disconnect}>
             <CircleStop size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "断开" : "Disconnect"}
+          </button>
+        )}
+        {isLive && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setPaused((p) => !p)}
+            aria-pressed={paused}
+            title={paused ? "resume rendering" : "freeze the screen"}
+          >
+            {paused ? (
+              <>
+                <Play size={12} className="icon-inline" />{" "}
+                {lang === "zh" ? "继续" : "Resume"}
+              </>
+            ) : (
+              <>
+                <Pause size={12} className="icon-inline" />{" "}
+                {lang === "zh" ? "暂停" : "Pause"}
+              </>
+            )}
           </button>
         )}
         <button type="button" className="btn" onClick={onClear}>
