@@ -2561,6 +2561,30 @@ html[lang^="zh"] h3 {
   border-bottom: 0;
 }
 
+.uidump-tab__chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-right: 2px;
+  width: 14px;
+  height: 14px;
+  color: var(--anth-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.uidump-tab__chev:hover {
+  color: var(--anth-text);
+}
+
+.uidump-tab__chev--leaf {
+  cursor: default;
+  visibility: hidden;
+}
+
 .uidump-tab__cls {
   color: var(--anth-text);
   font-weight: 600;
