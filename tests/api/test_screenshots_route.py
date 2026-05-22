@@ -238,3 +238,45 @@ def test_endpoints_listed_in_schema(client) -> None:
     paths = [(e["method"], e["path"]) for e in body["rest"]]
     assert ("GET", "/devices/{serial}/screenshots") in paths
     assert ("GET", "/devices/{serial}/screenshots/{name}") in paths
+    assert ("DELETE", "/devices/{serial}/screenshots/{name}") in paths
+
+
+def test_delete_removes_file_and_is_idempotent(client, workspace) -> None:
+    """DELETE removes the file and returns removed=True; a second
+    delete returns ok=true / removed=False (idempotent · UI can swallow
+    stale double-clicks)."""
+    d = _shots_dir(workspace)
+    (d / "shot.png").write_bytes(_make_png(width=10, height=10))
+
+    r1 = client.delete(f"/devices/{SERIAL}/screenshots/shot.png")
+    assert r1.status_code == 200
+    body1 = r1.json()
+    assert body1["ok"] is True
+    assert body1["removed"] is True
+    assert not (d / "shot.png").exists()
+
+    r2 = client.delete(f"/devices/{SERIAL}/screenshots/shot.png")
+    assert r2.status_code == 200
+    body2 = r2.json()
+    assert body2["ok"] is True
+    assert body2["removed"] is False
+
+
+def test_delete_rejects_non_png_suffix(client, workspace) -> None:
+    d = _shots_dir(workspace)
+    (d / "notes.txt").write_text("hi")
+    r = client.delete(f"/devices/{SERIAL}/screenshots/notes.txt")
+    assert r.status_code == 400
+
+
+def test_delete_rejects_symlink_inside_workspace(client, workspace) -> None:
+    d = _shots_dir(workspace)
+    secret = workspace / "secret.txt"
+    secret.write_text("not yours")
+    link = d / "evil.png"
+    link.symlink_to(secret)
+    r = client.delete(f"/devices/{SERIAL}/screenshots/evil.png")
+    # _safe_resolve_screenshot refuses symlinks via resolve_under;
+    # the linked file should remain.
+    assert r.status_code == 400
+    assert secret.exists()

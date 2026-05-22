@@ -69,6 +69,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "List past screenshots (newest first), with PNG dims"},
     {"method": "GET",  "path": "/devices/{serial}/screenshots/{name}",
      "description": "Stream one screenshot's PNG bytes (image/png)"},
+    {"method": "DELETE", "path": "/devices/{serial}/screenshots/{name}",
+     "description": "Remove one captured screenshot (idempotent)"},
     {"method": "POST", "path": "/devices/{serial}/ui-dump",
      "description": "Dump current view hierarchy as JSON tree (PR-G)"},
     {"method": "POST", "path": "/uart/capture",

@@ -14,6 +14,7 @@ import {
 
 import {
   captureScreenshot,
+  deleteScreenshot,
   fetchScreenshots,
   type ScreenshotResponse,
 } from "../../lib/api";
@@ -53,5 +54,16 @@ export function useTriggerScreenshot(
       qc.invalidateQueries({ queryKey: LIST_KEY(device) });
       onSuccess?.(data);
     },
+  });
+}
+
+export function useDeleteScreenshotMutation(device?: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => {
+      if (!device) throw new Error("missing device");
+      return deleteScreenshot(device, name);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: LIST_KEY(device) }),
   });
 }

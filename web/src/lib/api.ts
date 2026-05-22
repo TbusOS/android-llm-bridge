@@ -412,6 +412,33 @@ export function screenshotImageUrl(serial: string, name: string): string {
   return `/devices/${encodeURIComponent(serial)}/screenshots/${encodeURIComponent(name)}`;
 }
 
+export interface DeleteScreenshotResponse {
+  ok: boolean;
+  serial: string;
+  name: string;
+  /** False when the file was already gone (idempotent). */
+  removed: boolean;
+}
+
+export async function deleteScreenshot(
+  serial: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<DeleteScreenshotResponse> {
+  const r = await fetch(
+    `/devices/${encodeURIComponent(serial)}/screenshots/${encodeURIComponent(name)}`,
+    { method: "DELETE", signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `DELETE /devices/${serial}/screenshots/${name} returned ${r.status}`,
+      r.status,
+      "SCREENSHOT_DELETE_FAILED",
+    );
+  }
+  return (await r.json()) as DeleteScreenshotResponse;
+}
+
 export interface UiNode {
   index: number;
   class: string;

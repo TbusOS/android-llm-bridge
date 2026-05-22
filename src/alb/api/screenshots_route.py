@@ -155,3 +155,36 @@ async def read_screenshot(serial: str, name: str) -> FileResponse:
         filename=name,
         media_type="image/png",
     )
+
+
+def _delete_one(f: Path) -> bool:
+    """Sync unlink — returns True iff the file existed and was removed.
+    Anything other than FileNotFoundError propagates so the endpoint can
+    distinguish "already gone" (idempotent ok) from "permission failed"
+    (500-class)."""
+    try:
+        f.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+@router.delete("/devices/{serial}/screenshots/{name}")
+async def delete_screenshot(serial: str, name: str) -> dict[str, Any]:
+    """Remove one captured screenshot from the workspace.
+
+    Uses the same `_safe_resolve_screenshot` path validation as
+    `read_screenshot` (refuses `..` / non-png / non-existent name with
+    HTTPException). The actual unlink is `removed=False` when the file
+    is already gone so duplicate deletes don't error (idempotent).
+    """
+    try:
+        f = await asyncio.to_thread(_safe_resolve_screenshot, serial, name)
+    except HTTPException as e:
+        # Treat "screenshot not found" (resolve_under 404) as a no-op
+        # success so the UI can blindly retry without surfacing an error.
+        if e.status_code == 404:
+            return {"ok": True, "serial": serial, "name": name, "removed": False}
+        raise
+    removed = await asyncio.to_thread(_delete_one, f)
+    return {"ok": True, "serial": serial, "name": name, "removed": removed}

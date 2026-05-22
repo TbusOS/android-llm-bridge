@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Camera, Download, RefreshCw } from "lucide-react";
+import { Camera, Download, RefreshCw, Trash2 } from "lucide-react";
 
 import { useApp } from "../../stores/app";
 import {
@@ -34,7 +34,82 @@ import {
 import { formatBytes } from "../../lib/format";
 import { NoDeviceCard } from "../../components/NoDeviceCard";
 import { SectionPlaceholder } from "../../components/SectionPlaceholder";
-import { useScreenshots, useTriggerScreenshot } from "./useScreenshots";
+import { useArmedAction } from "../../lib/useArmedAction";
+import {
+  useDeleteScreenshotMutation,
+  useScreenshots,
+  useTriggerScreenshot,
+} from "./useScreenshots";
+
+interface ScreenshotRowProps {
+  name: string;
+  width: number | null;
+  height: number | null;
+  size: number;
+  mtime: number;
+  lang: "zh" | "en";
+  isActive: boolean;
+  deleting: boolean;
+  onSelect: () => void;
+  onConfirmDelete: () => void;
+}
+
+function ScreenshotRow({
+  name,
+  width,
+  height,
+  size,
+  mtime,
+  lang,
+  isActive,
+  deleting,
+  onSelect,
+  onConfirmDelete,
+}: ScreenshotRowProps) {
+  // Each row owns its own armed state; the 8s auto-disarm timer caps
+  // the "two armed at once" window so we don't need a parent-level
+  // single-armed coordinator.
+  const armed = useArmedAction(onConfirmDelete);
+
+  return (
+    <li className={isActive ? "is-active" : undefined}>
+      <div className="screenshot-row">
+        <button
+          type="button"
+          className="screenshot-row__select"
+          onClick={onSelect}
+          aria-current={isActive ? "true" : undefined}
+        >
+          <div className="uart-tab__cap-name">{name}</div>
+          <div className="uart-tab__cap-meta">
+            {width && height ? `${width}×${height} · ` : ""}
+            {formatBytes(size)} · {relativeTime(mtime, lang)}
+          </div>
+        </button>
+        <button
+          type="button"
+          className={`screenshot-row__del${
+            armed.armed ? " is-armed" : ""
+          }`}
+          aria-label={
+            armed.armed
+              ? lang === "zh"
+                ? "再点一次确认删除"
+                : "click again to confirm delete"
+              : lang === "zh"
+                ? "删除"
+                : "delete"
+          }
+          title={armed.armed ? "click again to confirm" : "delete"}
+          disabled={deleting}
+          onClick={armed.trigger}
+        >
+          <Trash2 size={12} aria-hidden={true} />
+        </button>
+      </div>
+    </li>
+  );
+}
 
 function relativeTime(mtimeSec: number, lang: "zh" | "en"): string {
   const diffSec = Math.max(0, Date.now() / 1000 - mtimeSec);
@@ -80,6 +155,7 @@ export function ScreenshotTab() {
       setSelected(data.screenshot.filename);
     }
   });
+  const remove = useDeleteScreenshotMutation(device);
 
   // First-mount auto-select: if user opens the tab and there's already
   // history, show the newest. Skip if user already picked something.
@@ -183,22 +259,28 @@ export function ScreenshotTab() {
           )}
           <ul>
             {list.data?.screenshots?.map((s) => (
-              <li
+              <ScreenshotRow
                 key={s.name}
-                className={selected === s.name ? "is-active" : undefined}
-              >
-                <button
-                  type="button"
-                  onClick={() => setSelected(s.name)}
-                  aria-current={selected === s.name ? "true" : undefined}
-                >
-                  <div className="uart-tab__cap-name">{s.name}</div>
-                  <div className="uart-tab__cap-meta">
-                    {s.width && s.height ? `${s.width}×${s.height} · ` : ""}
-                    {formatBytes(s.size_bytes)} · {relativeTime(s.mtime, lang)}
-                  </div>
-                </button>
-              </li>
+                name={s.name}
+                width={s.width ?? null}
+                height={s.height ?? null}
+                size={s.size_bytes}
+                mtime={s.mtime}
+                lang={lang}
+                isActive={selected === s.name}
+                deleting={
+                  remove.isPending && remove.variables === s.name
+                }
+                onSelect={() => setSelected(s.name)}
+                onConfirmDelete={() => {
+                  remove.mutate(s.name, {
+                    onSuccess: () => {
+                      if (selected === s.name) setSelected(null);
+                      if (last?.screenshot?.filename === s.name) setLast(null);
+                    },
+                  });
+                }}
+              />
             ))}
           </ul>
         </aside>
