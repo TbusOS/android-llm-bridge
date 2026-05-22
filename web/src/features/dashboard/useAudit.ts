@@ -17,14 +17,9 @@ import type { TimelineEventData } from "./types";
 
 const REFETCH_MS = 10_000;
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+// HTML escaping is no longer needed — ActivityTimeline renders parts
+// as React nodes (no dangerouslySetInnerHTML). React escapes string
+// children automatically.
 
 export function dotFor(
   source: AuditEvent["source"],
@@ -60,15 +55,19 @@ function shortSid(sid: string): string {
 }
 
 export function mapAuditToTimeline(e: AuditEvent): TimelineEventData {
-  const safe = escapeHtml(e.summary || "(empty)");
-  const sid = escapeHtml(shortSid(e.session_id));
+  const summary = e.summary || "(empty)";
+  const sid = shortSid(e.session_id);
   const approx = e.ts_approx ? "~" : "";
-  const text = `${safe} · <em>${sid}</em>${approx}`;
+  const parts: TimelineEventData["parts"] = [
+    { kind: "text", value: `${summary} · ` },
+    { kind: "em", value: sid },
+    ...(approx ? [{ kind: "text" as const, value: approx }] : []),
+  ];
   return {
     time: timeOf(e.ts),
     dot: dotFor(e.source, e.kind),
-    text,
-    textZh: text,
+    parts,
+    partsZh: parts,
   };
 }
 

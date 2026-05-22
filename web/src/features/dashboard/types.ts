@@ -112,11 +112,24 @@ export interface RecentSessionData {
   status: "live" | "ok" | "err";
 }
 
+/**
+ * One renderable text segment in a timeline row.
+ *
+ * Using a discriminated union (text / code / em) lets ActivityTimeline
+ * render through React (no `dangerouslySetInnerHTML`), which makes
+ * unconditional HTML escape free — any future producer of timeline
+ * events can't accidentally inject markup.
+ */
+export type TimelineTextPart =
+  | { kind: "text"; value: string }
+  | { kind: "code"; value: string }
+  | { kind: "em"; value: string };
+
 export interface TimelineEventData {
   time: string; // "16:42:08"
   dot: "ok" | "orange" | "err" | "muted";
-  text: string;
-  textZh: string;
+  parts: TimelineTextPart[];
+  partsZh: TimelineTextPart[];
 }
 
 export interface QuickActionData {

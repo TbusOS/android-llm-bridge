@@ -11,7 +11,6 @@ import type {
   LiveSessionData,
   QuickActionData,
   RecentSessionData,
-  TimelineEventData,
 } from "./types";
 
 export const MOCK_LIVE: LiveSessionData = {
@@ -195,39 +194,6 @@ export const MOCK_SESSIONS: RecentSessionData[] = [
     turns: 2,
     model: "qwen2.5",
     status: "err",
-  },
-];
-
-export const MOCK_TIMELINE: TimelineEventData[] = [
-  {
-    time: "16:42:08",
-    dot: "ok",
-    text: "tool call <code>alb_logcat</code> completed · 618 lines · <em>aosp-emu-01</em>",
-    textZh: "工具 <code>alb_logcat</code> 完成 · 618 行 · <em>aosp-emu-01</em>",
-  },
-  {
-    time: "16:41:47",
-    dot: "orange",
-    text: "HITL approved · <code>rm /data/cache/*.tmp</code> on <em>aosp-emu-01</em>",
-    textZh: "HITL 放行 · <code>rm /data/cache/*.tmp</code> · <em>aosp-emu-01</em>",
-  },
-  {
-    time: "16:39:12",
-    dot: "err",
-    text: "build-bot-09 ssh tunnel dropped · <em>retrying in 30 s</em>",
-    textZh: "build-bot-09 ssh 隧道断开 · <em>30 秒后重试</em>",
-  },
-  {
-    time: "16:35:22",
-    dot: "ok",
-    text: "screenshot saved · <code>workspace/aosp-emu-01/2026-04-24T16-35-22.png</code>",
-    textZh: "截图已保存 · <code>workspace/aosp-emu-01/2026-04-24T16-35-22.png</code>",
-  },
-  {
-    time: "16:33:02",
-    dot: "ok",
-    text: "session <code>20260424-c4e2…</code> resumed · <em>3 turns added</em>",
-    textZh: "会话 <code>20260424-c4e2…</code> 续接 · <em>新增 3 轮</em>",
   },
 ];
 
