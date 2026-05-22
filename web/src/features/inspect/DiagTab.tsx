@@ -23,6 +23,7 @@ import {
   postDiagAnr,
   postDiagBugreport,
   postDiagTombstone,
+  workspaceDownloadUrl,
   type DiagArtifactBundle,
   type DiagArtifactFile,
 } from "../../lib/api";
@@ -250,6 +251,21 @@ function BundleRow({ bundle }: { bundle: DiagArtifactBundle }) {
         {bundle.count === 1 ? "file" : "files"}
       </span>
       <span className="diag-archive__item-meta">{previewNames}{more}</span>
+      {bundle.files.length > 0 && (
+        <span className="diag-archive__item-actions">
+          {bundle.files.map((f) => (
+            <a
+              key={f.path}
+              href={workspaceDownloadUrl(f.path)}
+              download={f.name}
+              className="diag-archive__dl"
+              title={`${f.name} · ${humanSize(f.size_bytes)}`}
+            >
+              {f.name}
+            </a>
+          ))}
+        </span>
+      )}
     </li>
   );
 }
@@ -257,7 +273,13 @@ function BundleRow({ bundle }: { bundle: DiagArtifactBundle }) {
 function FileRow({ file }: { file: DiagArtifactFile }) {
   return (
     <li className="diag-archive__item">
-      <span className="diag-archive__item-name">{file.name}</span>
+      <a
+        className="diag-archive__item-name diag-archive__dl"
+        href={workspaceDownloadUrl(file.path)}
+        download={file.name}
+      >
+        {file.name}
+      </a>
       <span className="diag-archive__item-meta">
         {humanSize(file.size_bytes)} · {shortTime(file.mtime)}
       </span>

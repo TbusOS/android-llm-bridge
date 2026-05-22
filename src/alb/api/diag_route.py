@@ -119,6 +119,20 @@ def _scan_artifacts_in_thread(
         "anr": [],
         "tombstones": [],
     }
+
+    def _rel(p: Path) -> str:
+        """Return path relative to workspace root with forward slashes.
+
+        The frontend's `workspaceDownloadUrl()` builds
+        `/workspace/files/download/<rel>` so anchors point straight at
+        the streaming endpoint. Exposing the absolute filesystem path
+        also leaked server layout (information disclosure MID).
+        """
+        try:
+            return p.relative_to(root).as_posix()
+        except ValueError:
+            return p.as_posix()
+
     br = base / "bugreports"
     if br.exists():
         for p in sorted(br.iterdir(), reverse=True):
@@ -131,7 +145,7 @@ def _scan_artifacts_in_thread(
             st = p.stat()
             out["bugreports"].append(
                 {
-                    "path": str(p),
+                    "path": _rel(p),
                     "name": p.name,
                     "size_bytes": st.st_size,
                     "mtime": st.st_mtime,
@@ -155,7 +169,7 @@ def _scan_artifacts_in_thread(
                 st = f.stat()
                 files.append(
                     {
-                        "path": str(f),
+                        "path": _rel(f),
                         "name": f.name,
                         "size_bytes": st.st_size,
                         "mtime": st.st_mtime,
@@ -164,7 +178,7 @@ def _scan_artifacts_in_thread(
             out[kind].append(
                 {
                     "bundle": tdir.name,
-                    "path": str(tdir),
+                    "path": _rel(tdir),
                     "files": files,
                     "count": len(files),
                 }

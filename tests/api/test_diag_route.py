@@ -155,8 +155,18 @@ def test_artifacts_lists_existing_bundles(client, workspace) -> None:
     data = r.json()["data"]
     assert len(data["bugreports"]) == 1
     assert data["bugreports"][0]["name"] == "2026-05-18-bugreport.zip"
+    # `path` must be workspace-relative (POSIX) so the frontend can
+    # build /workspace/files/download/<path> anchors. Absolute server
+    # paths would leak filesystem layout and break the download URL.
+    assert data["bugreports"][0]["path"] == (
+        "devices/abc/bugreports/2026-05-18-bugreport.zip"
+    )
     assert len(data["anr"]) == 1
     assert data["anr"][0]["count"] == 2
+    assert data["anr"][0]["path"] == "devices/abc/anr/2026-05-18T10"
+    assert data["anr"][0]["files"][0]["path"].startswith(
+        "devices/abc/anr/2026-05-18T10/trace_"
+    )
     assert len(data["tombstones"]) == 1
     assert data["tombstones"][0]["count"] == 1
 

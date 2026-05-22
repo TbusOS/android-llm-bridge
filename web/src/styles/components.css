@@ -3970,6 +3970,29 @@ html[lang^="zh"] h3 {
   padding: 4px 0;
 }
 
+/* Download anchor for bugreport / anr / tombstone files — kept low-key
+   (not a button), matches the mono name treatment so the row still
+   reads as a list, just clickable. */
+.diag-archive__dl {
+  color: var(--anth-orange);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.diag-archive__dl:hover {
+  text-decoration: underline;
+}
+
+.diag-archive__item-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 2px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
 /* ==========================================================
    App tab (Inspect sub-tab)
    baseline: docs/webui-preview-v2-app.html
