@@ -24,6 +24,7 @@ import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
 import { InspectLayout } from "./features/inspect/InspectLayout";
 import { SessionDetailPage } from "./features/session/SessionDetailPage";
+import { SessionsListPage } from "./features/session/SessionsListPage";
 import { RootLayout } from "./layouts/RootLayout";
 import { StubPage } from "./routes/stub";
 
@@ -238,15 +239,7 @@ const playgroundRoute = createRoute({
 const sessionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sessions",
-  component: () => (
-    <StubPage
-      title="Sessions"
-      titleZh="会话历史"
-      summary="Browse / search / replay every JSONL agent session.  Resume an old turn, fork a session, export to share."
-      summaryZh="所有 JSONL agent session 的浏览 / 搜索 / 回放。可续接旧轮、fork、导出。"
-      consumes={["GET /sessions", "GET /sessions/{id}", "POST /sessions/{id}/resume"]}
-    />
-  ),
+  component: SessionsListPage,
 });
 
 // /sessions/$sessionId — drill-in chat replay for a single ChatSession.

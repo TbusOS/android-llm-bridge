@@ -4278,3 +4278,120 @@ html[lang^="zh"] h3 {
   flex-wrap: wrap;
   margin-top: 4px;
 }
+
+/* ==========================================================
+   Sessions list page
+   ========================================================== */
+
+.sessions-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.sessions-page__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sessions-page__filter {
+  min-width: 280px;
+  padding: 6px 10px;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.sessions-page__refresh,
+.sessions-page__more {
+  padding: 6px 12px;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sessions-page__refresh:hover,
+.sessions-page__more:hover {
+  background: var(--anth-bg-subtle);
+}
+
+.sessions-page__empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--anth-text-secondary);
+  font-style: italic;
+  background: var(--anth-bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.sessions-page__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-4);
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+}
+
+.sessions-table {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.sessions-table__head,
+.sessions-table__row {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 1.6fr 1fr 0.6fr 1fr;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  align-items: center;
+}
+
+.sessions-table__head {
+  background: var(--anth-bg-subtle);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  color: var(--anth-text-secondary);
+  text-transform: lowercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.sessions-table__row {
+  border-top: 1px solid var(--anth-light-gray);
+  text-decoration: none;
+  color: var(--anth-text);
+  cursor: pointer;
+}
+
+.sessions-table__row:hover {
+  background: var(--anth-bg-subtle);
+}
+
+.sessions-table__id {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--anth-orange);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessions-table__cell {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--anth-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
