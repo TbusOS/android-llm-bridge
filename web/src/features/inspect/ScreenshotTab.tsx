@@ -35,6 +35,7 @@ import { formatBytes } from "../../lib/format";
 import { NoDeviceCard } from "../../components/NoDeviceCard";
 import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useArmedAction } from "../../lib/useArmedAction";
+import { ScreenshotZoom } from "./ScreenshotZoom";
 import {
   useDeleteScreenshotMutation,
   useScreenshots,
@@ -147,6 +148,8 @@ export function ScreenshotTab() {
   // so we can fade-in the new image; the same <img> element is reused
   // (no key) so the browser keeps the old pixels until onLoad fires.
   const [imgLoaded, setImgLoaded] = useState(false);
+  // Click image → fullscreen zoom modal (DEBT-042 first slice).
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   const list = useScreenshots(device);
   const trigger = useTriggerScreenshot(device, (data) => {
@@ -294,8 +297,11 @@ export function ScreenshotTab() {
               style={{
                 opacity: imgLoaded ? 1 : 0.4,
                 transition: "opacity 180ms ease",
+                cursor: "zoom-in",
               }}
               onLoad={() => setImgLoaded(true)}
+              onClick={() => setZoomOpen(true)}
+              title={lang === "zh" ? "点击放大查看" : "click to zoom"}
             />
           ) : (
             <SectionPlaceholder styleKey="be-card" kind="empty">
@@ -306,6 +312,14 @@ export function ScreenshotTab() {
           )}
         </main>
       </div>
+      {zoomOpen && imgSrc && (
+        <ScreenshotZoom
+          src={imgSrc}
+          alt={imgAlt}
+          lang={lang}
+          onClose={() => setZoomOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -4812,3 +4812,61 @@ li:hover .screenshot-row__del,
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ==========================================================
+   ScreenshotZoom — fullscreen modal
+   ========================================================== */
+
+.screenshot-zoom {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.screenshot-zoom:focus {
+  outline: none;
+}
+
+.screenshot-zoom__img {
+  max-width: 96vw;
+  max-height: 92vh;
+  user-select: none;
+  -webkit-user-drag: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.screenshot-zoom__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  padding: 6px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.screenshot-zoom__close:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.screenshot-zoom__hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  pointer-events: none;
+}
