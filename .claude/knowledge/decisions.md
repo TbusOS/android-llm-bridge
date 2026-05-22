@@ -1061,4 +1061,80 @@ constants**。
 
 ---
 
+## ADR-038 (seed) · 每个 Inspect tab 配 use<TabName>.ts hook · 数据层与 view 强制分层
+
+**Date**: 2026-05-21（commit F `244111a` AppTab 抽 useAppActions.ts ·
+对齐 PowerTab/usePower.ts 双实例论证）
+
+**Decision**: 每个 Inspect sub-tab 的数据层（query / mutation /
+mutation invalidation）**必须**抽到独立 `use<TabName>.ts` /
+`use<TabName>Actions.ts` hook 文件。tab component 只 import 这些 hook
+加 UI 组合，**不直接**调 `useQuery` / `useMutation` /
+`useQueryClient` / `fetch*` / `post*`。
+
+**Rationale**: N=2 时（PowerTab/usePower + AppTab/useAppActions）已
+观察到:
+
+- 数据层与 UI 强分层 → 单元测试可以单独 mock fetch* 跑 hook
+- mutation invalidation 集中（如 `useAppInstallMutation` 自带
+  `onSuccess: invalidate ["app-list"]`），不再在 component 里重复
+- 抽出来后 useEffect 依赖能稳定（hook 返回的 mutation 对象 stable
+  across re-render）
+- 跨 tab 复用（如 DoctorPage / SessionsList 也可以引同一 hook）
+
+**Counter-argument**: 单 mutation / 单 query 抽 hook 是过度抽象。但
+inspect tab 平均 3-6 mutation + 1-2 query, 不抽就 ~500 行平铺。
+
+**Status**: seed · 12 tab 中只 PowerTab + AppTab 用了模式，其余 10 tab
+部分 inline 部分有同名 hook 但不一致。当下一个 tab 改动 / 新增时主
+对话拍是否升 ADR-038 → 正式。
+
+**Reverses if**：某 tab 只有 1 query + 0 mutation（如 SystemInfo），
+抽 hook 反而增重。届时按 case 决策, 不强制。
+
+**关联**：
+
+- L-020（ABC 第 1 个非首例消费者 = 抽象设计的免费检验 · N=2 不抽象）
+  —— 本 ADR 是 N=2 拐点的反面（2 个就抽了, 因模式已稳定）
+- L-025（新 useQuery hook 必 sweep refetchInterval/OnWindowFocus 两 flag）
+- commit F `244111a` (AppTab) · usePower.ts (PowerTab 原型)
+
+---
+
+## ADR-039 (seed) · 危险 / 长操作通用 UX hook 三件套 · useArmedAction + useElapsedSeconds + useDeviceReset
+
+**Date**: 2026-05-21（commit D `f887198` useArmedAction · commit H
+`aacf691` useElapsedSeconds · commit G `0f6f439` device reset 模式
+未抽 hook 但模式重复 4 处）
+
+**Decision**: 危险或长操作的 UX 用通用 hook 三件套表达，不每个 card
+inline:
+
+1. **useArmedAction(onFire, opts)** — 两步确认（first click 武装 ·
+   8s timeout / 二次 click 真触发）· `{ armed, trigger, disarm }`
+2. **useElapsedSeconds(active)** — 任何 30s+ 长 op 的实时 elapsed
+   counter（防"静默 spinner"）
+3. **useDeviceReset(device, ...mutations)** —（**待抽** · 当前 4 处
+   inline `useEffect(() => mutations.forEach(m=>m.reset()), [device])`）
+   切设备 reset 之前的 mutation 结果
+
+**Rationale**:
+
+- "危险 op 需 HITL / 长 op 需进度反馈 / 切设备需 reset" 这三类问题
+  在 ar7 之外的项目（Doctor / Sessions / Files / Playground）也
+  会遇到, 抽 hook 防衰减
+- L-029（共享 modal 三件套基线）+ 本 ADR 共同构成"危险/长操作"完整模式
+
+**Status**: seed · #1 #2 已实现 · #3 待抽（part L 入档但代码留给后续
+commit, 4 处 inline 模式稳定后再抽）。当用户触发"加新 mutation
+忘 device reset"事故时升级为强制 ADR。
+
+**关联**：
+
+- L-029（destructive op a11y 三件套）· 本 ADR 是其行为补集
+- L-037（elapsed timer 必要性）· #2 的根因
+- commit D / H / G · 三个 hook 的实操
+
+---
+
 （后续 ADR 在主对话决策时按此格式追加）

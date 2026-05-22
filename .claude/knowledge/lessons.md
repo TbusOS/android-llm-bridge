@@ -1928,4 +1928,258 @@ agent definition（grep checklist 段） · 5/08 part 113 commit
 
 ---
 
+## L-036 · REST 三态 envelope `_resolve_transport` 必走 tuple-return · 抛 HTTPException 违反约定
+
+**Date**: 2026-05-21（5/18 batch architecture-reviewer 找到 HIGH#1 ·
+5 路由 `_resolve_transport` 抛 503 违 REST 三态 ADR · 修复 commit
+`4c718fc` · part 145）
+
+**规则**：所有"按 device 解析 transport"的 endpoint helper，**必须**
+返 `tuple[Transport, None] | tuple[None, envelope-b dict]`，**不能**
+抛 `HTTPException(503)`。否则 device-side 失败（adb server down /
+serial unreachable）会变成"全局 onError handler 接住"，前端不能
+inline 渲染在原 panel 里。
+
+```python
+# ❌ 错（违反 REST envelope 三态 ADR）
+def _resolve_transport(device: str | None) -> Transport:
+    try:
+        return build_transport(device=device)
+    except Exception as e:
+        raise HTTPException(503, str(e))  # 全局 fallback 接管
+
+# ✅ 对（三态 b：200 + ok=false device-side error）
+def _resolve_transport(
+    device: str | None,
+) -> tuple[Transport, None] | tuple[None, dict[str, Any]]:
+    try:
+        return build_transport(device=device), None
+    except Exception as e:
+        return None, envelope_transport_init_error(e)
+
+# endpoint 改成
+@router.post("/foo")
+async def post_foo(...):
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
+    ...
+```
+
+**触发条件**：任何 `_resolve_*` / `build_*` helper, 接 device / 接
+profile / 接 backend, 失败可能源自 device-side / config 端 / network。
+全部走 tuple-return 模式。
+
+**关联**：[[ADR · REST envelope 三态]] · `infra/result.py`
+`envelope_transport_init_error()` helper · 5 路由 power/diag/app/log_search
+统一过 · commit `4c718fc` (Phase 1 A)
+
+---
+
+## L-037 · 长操作（30s+）必加 elapsed timer + cancel · 静默 spinner ≠ 反馈
+
+**Date**: 2026-05-21（5/18 batch ui-fluency-reviewer 找到 MID ·
+bugreport / log search / install 等 30-180s op 只显示静态
+"collecting…" · 修复 commit `aacf691` part H · 抽 useElapsedSeconds hook）
+
+**规则**：任何**运行时 > 30 秒**的 op，UI 必须显示**实时 elapsed
+计数**。仅显示"loading…" / "collecting…" 用户分不清"卡死"还是"还在
+跑"，看 2 分钟没动反应等于事故。
+
+```ts
+// 通用 hook（web/src/lib/useElapsedSeconds.ts）
+export function useElapsedSeconds(active: boolean): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    setElapsed(0);
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return elapsed;
+}
+
+// 消费方
+const elapsed = useElapsedSeconds(mut.isPending);
+<button>{mut.isPending ? `collecting… ${elapsed}s` : "collect"}</button>
+```
+
+**触发条件**：
+
+- bugreport / fullsnap / large-pull / install / model-download
+- 任何 transport.shell 带 timeout > 30s 的 mutation
+- 任何 streaming op 但首字节到达延迟 > 5s
+
+**关联**：[[L-029]]（HITL 三件套 — 涉及 destructive op）·
+[[useArmedAction]] · [[useElapsedSeconds]] · commit `aacf691`
+
+---
+
+## L-038 · ship 后必跑多 agent audit · mockup 三道闸 ≠ React 实现审
+
+**Date**: 2026-05-21（5/18 batch 8 commit 只跑 mockup-baseline-checker
+三道闸 · 用户 5/21 用浏览器看出问题 · 跑 5 agent audit 出 8 HIGH /
+15 MID / 6 LOW · 修复 Phase 1-4 11 commit）
+
+**规则**：**任何"实现新 React 模块 / 新路由 / 新 endpoint"** 的 ship
+**必须**触发 5 reviewer 并行 audit (code-reviewer / ui-fluency /
+security / perf / architecture)。**mockup-baseline-checker** 只查
+"class 名 / 容器结构是否照搬 mockup"，**不查 React 行为**（mutation
+反馈正确性 / a11y 键盘 / 路由设计 / regex DoS / .find(truthy) bug 等
+全部漏审）。
+
+**反面教材**：5/18 ship 8 batch（doctor panel / QuickAction wire /
+session detail / power / log search / diag / app / PR-C.c）只跑
+mockup 三道闸全过 → 用户 5/21 浏览器一开发现 8 HIGH 全是 mockup
+能过但实现错的类型（.find(truthy) 永远拿第一个 truthy / Inspect 12
+tab 单文件 conditional / SubNav 不滚 / PackageList 不虚拟化 / ReDoS
+无 timeout / a11y li onClick / armed 操作无 8s timeout / envelope
+HTTPException 违三态约定）。
+
+**触发条件**：
+
+- ship 任何新 React 模块（route / page / tab / panel）
+- ship 任何 REST endpoint
+- ship 任何 mutation / 长操作 / 危险操作
+- ship 后 batch ≥ 3 commit 就必须触发（单 commit 可省）
+
+**审查者团队** 6 个 agent 全要跑（mockup-baseline-checker 仍是 visual
+gate，但**不能替代**实现层审）:
+- code-reviewer
+- ui-fluency-auditor
+- security-and-neutrality-auditor
+- performance-auditor
+- architecture-reviewer
+- mockup-baseline-checker（第六个 · visual gate · 不替代上面 5 个）
+
+**关联**：[[5-18-batch-audit-phase-1-4]] memory · agents/* 6 个
+agent definition · L-meta-001（reviewer 新增类规则四件套）·
+sky-skills design-review 三道闸（visual 盲区）
+
+---
+
+## L-039 · 用户输入 regex 必走 thread + asyncio.wait_for · 单 C-call 不能 mid-cancel
+
+**Date**: 2026-05-21（5/18 batch security-reviewer 找到 HIGH#8 ·
+LogSearchTab 接 `/api/log/search?pattern=...` 直传给 `re.compile` /
+`re.search` · 恶意 ReDoS payload 例 `(a+)+$` × 长字符串 = CPU 飙满
+事件循环 freeze · 修复 commit `139e117` part B）
+
+**规则**：任何"接用户输入的正则 → server 端编译 / 搜索"必须满足两
+条之一：
+
+1. **(首选) 走 `asyncio.wait_for(asyncio.to_thread(...), timeout=N)`
+   双保险**（外层 wait_for 截事件循环 / 内层 to_thread 防 sync re
+   block）
+2. 拒 `re` 切 `re2` / 引擎层支持时间预算
+
+```python
+# ❌ 错（同步 re 在 async endpoint · ReDoS 时无救）
+async def search(pattern: str, lines: list[str]) -> list[Match]:
+    rx = re.compile(pattern)  # 编译也可能 ReDoS
+    return [m for line in lines if (m := rx.search(line))]
+
+# ✅ 对（外层 wait_for + 内层 to_thread + per-line deadline）
+_SEARCH_TIMEOUT_S = 2.0
+
+async def search(pattern: str, ...) -> Result[...]:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_scan_files_for_pattern, pattern, ...),
+            timeout=_SEARCH_TIMEOUT_S + 0.5,  # 0.5s slack 给 thread teardown
+        )
+    except asyncio.TimeoutError:
+        return fail(code="PATTERN_TIMEOUT", ...)
+```
+
+**已知 limitation**：Python `re` 单 C-call 不能 mid-cancel · 真 ReDoS
+payload 会 leak 一个 thread 跑到自然完成（最坏几秒到几十秒）。
+事件循环已经被 wait_for 解放回来 · 不影响其他请求 · 仅 thread pool
+泄一格容量。可接受。
+
+**关联**：[[L-033]]（async FastAPI sync FS → to_thread sweep · 同根）
+· commit `139e117` · `capabilities/logging.py` `_scan_files_for_pattern`
+
+---
+
+## L-040 · bash tool cwd 在内部仓 · 文件操作必 cd 公开仓 / Edit 走绝对路径
+
+**Date**: 2026-05-21（用户 4/29 给内部仓做真机测 · bash tool 启动
+cwd 锁在内部仓 · Edit/Write/Read 用绝对路径仍走对的 · 但 bash 里
+跑 `grep` / `cat` / `sed` / `npm` 走相对路径就读内部仓的 stale 副本 ·
+画面与 Read tool 视图分裂 · 5/21 实战踩两次）
+
+**规则**：内部仓 + 公开仓双副本场景下:
+
+1. **Edit / Write / Read 一律走绝对路径**指向公开仓（`~/
+   android-llm-bridge/...`），不依赖 cwd
+2. **bash 跑命令时必须显式 `cd ~/android-llm-bridge && ...`**
+   或用绝对路径 · 否则 `grep -rn ...` / `npm` / `pytest` 全在内部仓跑
+3. **验证命令** （`./scripts/check_sensitive_words.sh` / `npm run
+   typecheck` 等）必须 cd 进公开仓再跑
+
+**反面教材**（5/21 实战 commit E）:
+- Edit 改公开仓 router.tsx 成功（绝对路径）
+- 紧跟 `grep -n InspectPage web/src/...` 在内部仓跑，read 到旧
+  InspectPage 还在 → 误判 Edit 失败
+- 一段对话内多次确认 cwd 后才理清
+
+**触发条件**：
+
+- 任何 vendor/PXX 内部仓 + 开源公开仓双副本工作流
+- 任何 worktree / submodule / vendor copy 场景
+- 任何 `~/...` 别名指向不固定时
+
+**关联**：commit E `14279e4` ·
+[[feedback_repo_collaboration_rules]] memory · `CLAUDE.md` 公开仓
++ 内部仓协作规则段
+
+---
+
+## L-041 · TanStack Router code-based `addChildren` 必须 inline 链式 · 拆 statement 类型丢
+
+**Date**: 2026-05-21（commit E `14279e4` Inspect 12 tab 嵌套路由
+refactor · 拆 `inspectRoute.addChildren([...])` 到单独 statement 后
+TS 报 `"/inspect/$tabKey"` not in `to` union · inline chain 才修好）
+
+**规则**：TanStack Router code-based routing 用 `addChildren` 注册
+子路由时，**必须 inline 链式调用**在 `rootRoute.addChildren([...])`
+里。**拆成单独的 statement runtime 仍正确，但类型推导丢 children**
+（routeTree 的 `to` union 不包含子路径，所有 `<Link to="/parent/$child">`
+TS 报错）。
+
+```tsx
+// ❌ 错（runtime OK · 类型丢）
+inspectRoute.addChildren([
+  inspectIndexRoute,
+  ...inspectTabRoutes,
+]);
+const routeTree = rootRoute.addChildren([dashboardRoute, inspectRoute, ...]);
+//                                                       ^^^^^^^^^^^^
+//                                                       类型里 inspectRoute 无 children
+
+// ✅ 对（inline · 类型链贯通）
+const routeTree = rootRoute.addChildren([
+  dashboardRoute,
+  inspectRoute.addChildren([
+    inspectIndexRoute,
+    ...inspectTabRoutes,
+    inspectTabFallbackRoute,
+  ]),
+  ...
+]);
+```
+
+**触发条件**：
+
+- 任何 TanStack Router code-based routing 的多级嵌套
+- 任何 `<Route>.addChildren()` 用法
+- 跨 file 抽 helper 时尤其要小心（helper 返回 `Route<...>` 没 children 类型）
+
+**关联**：commit E `14279e4` · [[ADR-035 / ADR-036]] 路由层决策 ·
+TanStack Router doc "Code-Based Routing"
+
+---
+
 （新教训按此格式追加）

@@ -988,4 +988,71 @@
 
 ---
 
+## DEBT-038 · mockup v2 主基线落后 React 12 tab
+
+- **现象**：`docs/webui-preview-v2*.html` 系列 mockup 是 v2 时代（dashboard
+  + 4 tab：System / Charts / UART / Logcat），React 实际已扩展到 12 tab
+  （+Shell/Screenshot/UiDump/Files/Power/LogSearch/Diag/App）+ activity
+  bar Doctor。mockup-baseline-checker 现在审 React 时找不到对应 mockup,
+  漏掉视觉一致性检查。
+- **影响**：
+  - L-028 规则（class 名照搬 mockup）失去校准源
+  - 新 tab 视觉风格全靠 reviewer 现场拍 · 没基线
+  - 用户改设计想从 mockup 看效果, 拿不到完整图
+- **建议方案**：mockup v3 sweep —
+  - 起新文件 `docs/webui-preview-v3-inspect-{shell,screenshot,ui-dump,
+    files,power,log-search,diag,app}.html`
+  - 复用 anthropic.css design tokens
+  - 跑 sky-skills 三道闸（verify.py / visual-audit.mjs / screenshot.mjs）
+  - 用 mockup-baseline-checker 重审 React 与新 mockup 的一致性
+- **触发关闭**（任一）：
+  - 主对话单批 sweep · 估 1-2 天
+  - 下一个 visual audit batch 命中"无 mockup baseline"
+- **来源**：5/18 batch 8 agent audit 间接发现（mockup-baseline-checker
+  没找对应 v2 文件）· 2026-05-21
+
+---
+
+## DEBT-039 · `/sessions/{id}` 全 load `messages.jsonl` · 长 session 内存峰值高
+
+- **现象**：`SessionDetailPage` 当前一次 fetch 整个 `messages.jsonl`,
+  长 session（>1000 turn / 数十 MB）会让 endpoint 一次性 read + parse
+  全部, 然后前端一次性 render 全部 `<MessageNode>`。
+- **影响**：
+  - 后端: O(N) 内存 + O(N) JSON parse · 100 MB jsonl 跑 OOM 风险
+  - 前端: VirtualScroller 没用, 渲染 1k+ message 元素的 layout 慢
+- **建议方案**：
+  - 后端 add `GET /sessions/{id}?offset=N&limit=M` (cursor / line offset)
+  - 前端 SessionDetailPage 改用 `@tanstack/react-virtual`（同 PackageList
+    模式 commit C `1d18299`）+ 增量 fetch
+  - 拿 `match_count` / `total_turns` 作 pagination 元数据
+- **触发关闭**（任一）：
+  - 实测某 session > 50 MB 触发 endpoint 慢 / 浏览器卡
+  - 用户报告"打开会话卡很久"
+  - 下次 perf-audit batch
+- **来源**：5/18 batch architecture-reviewer LOW finding · 2026-05-21
+
+---
+
+## DEBT-040 · activity bar 缺 Doctor / Power 顶层入口
+
+- **现象**：`ActivityBar.tsx` 8 个顶层入口 `Dashboard / Chat / Terminal
+  / Inspect / Playground / Sessions / Files / Audit`, Doctor 只能从
+  Dashboard quick-action 进, Power 只能 `/inspect/power` 嵌套两层进。
+  常用功能埋深, 操作冷启动慢。
+- **影响**：
+  - 用户首次想看 doctor / power 找不到
+  - 快捷键 / URL 直跳路径不直观
+- **建议方案**：activity bar 重排:
+  - 把 Doctor 升顶层（已有 `/doctor` route, 只缺图标 + 排序）
+  - Power 因属于 device-scoped 操作, 保留 Inspect 子 tab, 但 Dashboard
+    quick-action 新增 "Reboot device"
+  - 顺手考虑 SubNav-style "secondary nav" 让常用 inspect tab 也能挂顶
+- **触发关闭**（任一）：
+  - 用户实际反馈 "找不到 Doctor"
+  - 下次 ui-fluency-audit batch
+- **来源**：5/18 batch ui-fluency MID + 2026-05-21 实战
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）
