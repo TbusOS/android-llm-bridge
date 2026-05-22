@@ -5,11 +5,23 @@
  * `DeviceCardData` shape that `<DeviceStripCompact>` already
  * understands. CPU / temp series are intentionally empty here — those
  * come from the `/metrics/stream` WS in a later step.
+ *
+ * Layering note (arch finding HIGH 5/22): moved out of
+ * `features/dashboard/` because DevicePicker (`components/`) needs to
+ * read the device list too. The hook still projects to
+ * `DeviceCardData` which is a dashboard view-model type — this is a
+ * residual type-only dep, not a runtime one. Future split: drop the
+ * dashboard mapping back into a `features/dashboard/useDeviceCards.ts`
+ * wrapper and expose only raw `ApiDevice[]` here.
  */
-import { useDashboardQuery } from "../../lib/dashboardQuery";
+import { useDashboardQuery } from "../dashboardQuery";
 
-import { fetchDevices, type ApiDevice, type DevicesResponse } from "../../lib/api";
-import type { DeviceCardData, DeviceStatus, Transport } from "./types";
+import { fetchDevices, type ApiDevice, type DevicesResponse } from "../api";
+import type {
+  DeviceCardData,
+  DeviceStatus,
+  Transport,
+} from "../../features/dashboard/types";
 
 const REFETCH_MS = 5_000;
 

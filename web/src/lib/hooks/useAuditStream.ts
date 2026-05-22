@@ -21,10 +21,17 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AuditEvent } from "../../lib/api";
-import { connect, type WsClient } from "../../lib/ws";
-import type { TimelineEventData } from "./types";
-import { mapAuditToTimeline } from "./useAudit";
+// Layering note (arch finding HIGH 5/22): hook moved out of
+// `features/dashboard/` because AuditPage (`features/audit/`) also
+// consumes it. The TimelineEventData mapping + mapAuditToTimeline
+// helper still live in dashboard/, so this hook reverse-imports them
+// — a type-only dep, not runtime. Future split: keep this hook
+// raw-only and move the mapping to a `useAuditTimeline` wrapper inside
+// `features/dashboard/`.
+import type { AuditEvent } from "../api";
+import { connect, type WsClient } from "../ws";
+import type { TimelineEventData } from "../../features/dashboard/types";
+import { mapAuditToTimeline } from "../../features/dashboard/useAudit";
 
 export type AuditStreamStatus = "connecting" | "open" | "closed" | "error";
 

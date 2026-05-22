@@ -17,7 +17,7 @@
 import { ChevronDown } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
-import { useDevices } from "../features/dashboard/useDevices";
+import { useDevices } from "../lib/hooks/useDevices";
 import { useApp } from "../stores/app";
 
 interface Props {

@@ -20,7 +20,7 @@
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { useApp } from "../../stores/app";
-import { useAuditStream } from "../dashboard/useAuditStream";
+import { useAuditStream } from "../../lib/hooks/useAuditStream";
 
 const SOURCE_OPTIONS = ["all", "chat", "terminal"] as const;
 type SourceFilter = (typeof SOURCE_OPTIONS)[number];
