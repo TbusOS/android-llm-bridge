@@ -21,6 +21,7 @@ import {
 import { lazy } from "react";
 import { ChatPage } from "./features/chat/ChatPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
+import { AuditPage } from "./features/audit/AuditPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
 import { InspectLayout } from "./features/inspect/InspectLayout";
 import { SessionDetailPage } from "./features/session/SessionDetailPage";
@@ -274,15 +275,7 @@ const doctorRoute = createRoute({
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/audit",
-  component: () => (
-    <StubPage
-      title="Audit"
-      titleZh="审计日志"
-      summary="Append-only log of every tool call, HITL decision, and session boundary.  Filter by device / actor / verdict."
-      summaryZh="所有工具调用、HITL 决策、session 边界的 append-only 日志；按设备 / 操作者 / 结果筛。"
-      consumes={["GET /audit", "WS /audit/stream"]}
-    />
-  ),
+  component: AuditPage,
 });
 
 // `addChildren` must be chained inline so the route-tree TYPE picks
