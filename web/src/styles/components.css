@@ -4378,6 +4378,12 @@ html[lang^="zh"] h3 {
   background: #ffffff;
 }
 
+.sessions-table__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .sessions-table__head,
 .sessions-table__row {
   display: grid;

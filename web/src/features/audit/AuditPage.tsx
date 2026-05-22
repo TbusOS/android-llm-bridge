@@ -123,7 +123,16 @@ export function AuditPage() {
         </div>
         <div className="sessions-page__actions">
           <span className={`audit-page__status ${badge.klass}`} role="status">
-            ● {badge.label}
+            {vm.status === "open" && !vm.paused ? (
+              // Live dot pulses to give a motion signal that we're
+              // actually receiving deltas, not just connected-and-idle.
+              // `.live-pulse` already has `prefers-reduced-motion`
+              // fallback (commit Z).
+              <span className="live-pulse" aria-hidden="true" />
+            ) : (
+              <span aria-hidden="true">●</span>
+            )}{" "}
+            {badge.label}
           </span>
           <button
             type="button"

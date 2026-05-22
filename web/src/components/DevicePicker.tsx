@@ -33,7 +33,26 @@ export function DevicePicker({ lang }: Props) {
   const [open, setOpen] = useState(false);
   const [focusIdx, setFocusIdx] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const listId = useId();
+
+  // Focus management — guarded by a ref so the initial-mount (open=
+  // false) doesn't auto-focus the trigger on page load. After the
+  // first true→false transition we treat close as "user dismissed the
+  // menu" and return focus to the trigger (L-029 a11y baseline).
+  // Opening: focus the listbox ONCE (mount-time). The previous
+  // `ref={(el) => el?.focus()}` callback ran on every re-render and
+  // re-stole focus from children, causing visible flicker.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      listRef.current?.focus();
+    } else if (wasOpenRef.current) {
+      triggerRef.current?.focus();
+    }
+  }, [open]);
 
   // Click-outside closes the menu.
   useEffect(() => {
@@ -99,6 +118,7 @@ export function DevicePicker({ lang }: Props) {
   return (
     <div className="device-picker-wrap" ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={device ? "device-picker" : "device-picker is-empty"}
         role="combobox"
@@ -123,16 +143,12 @@ export function DevicePicker({ lang }: Props) {
       {open && (
         <ul
           id={listId}
+          ref={listRef}
           className="device-picker-menu"
           role="listbox"
           aria-label={lang === "zh" ? "可用设备" : "Available devices"}
           tabIndex={-1}
           onKeyDown={onListKey}
-          ref={(el) => {
-            // Focus the listbox when it opens so keyboard nav works
-            // immediately without an extra Tab.
-            if (el && open) el.focus();
-          }}
         >
           {isLoading && (
             <li className="device-picker-menu__hint">

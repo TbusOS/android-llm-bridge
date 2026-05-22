@@ -129,63 +129,73 @@ export function SessionsListPage() {
       )}
 
       {visible.length > 0 && (
-        <div className="sessions-table" role="table">
-          <div className="sessions-table__head" role="row">
-            <span role="columnheader">
-              {lang === "zh" ? "会话" : "session"}
-            </span>
-            <span role="columnheader">
-              {lang === "zh" ? "创建时间" : "created"}
-            </span>
-            <span role="columnheader">backend · model</span>
-            <span role="columnheader">device</span>
-            <span role="columnheader">
-              {lang === "zh" ? "轮次" : "turns"}
-            </span>
-            <span role="columnheader">
-              {lang === "zh" ? "最近活动" : "last event"}
-            </span>
+        // Originally `role="table" / "row" / "cell"` plus `<Link>`
+        // wrapping each row — that fights screen reader semantics
+        // (NVDA / VoiceOver hear "link, row" simultaneously, and table
+        // nav doesn't work because rows aren't <tr>). Pure semantic
+        // list: <ul role="list"> + <li> > <Link>. The CSS grid layout
+        // is unchanged, only the roles. The header row is a sibling
+        // of the list and explicitly labelled so AT users hear column
+        // names before tabbing through links.
+        <div className="sessions-table">
+          <div
+            className="sessions-table__head"
+            aria-hidden="true"
+          >
+            <span>{lang === "zh" ? "会话" : "session"}</span>
+            <span>{lang === "zh" ? "创建时间" : "created"}</span>
+            <span>backend · model</span>
+            <span>device</span>
+            <span>{lang === "zh" ? "轮次" : "turns"}</span>
+            <span>{lang === "zh" ? "最近活动" : "last event"}</span>
           </div>
-          {visible.map((s) => (
-            <Link
-              key={s.session_id}
-              to="/sessions/$sessionId"
-              params={{ sessionId: s.session_id }}
-              className="sessions-table__row"
-              role="row"
-            >
-              <span className="sessions-table__id" role="cell">
-                {s.session_id}
-              </span>
-              <span className="sessions-table__cell" role="cell">
-                {s.created
-                  ? new Date(s.created).toLocaleString(
-                      lang === "zh" ? "zh-CN" : "en-US",
-                      {
-                        year: "numeric",
-                        month: "2-digit",
-                        day: "2-digit",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        hour12: false,
-                      },
-                    )
-                  : "—"}
-              </span>
-              <span className="sessions-table__cell" role="cell">
-                {s.backend} · {s.model}
-              </span>
-              <span className="sessions-table__cell" role="cell">
-                {s.device ?? "—"}
-              </span>
-              <span className="sessions-table__cell" role="cell">
-                {s.turns}
-              </span>
-              <span className="sessions-table__cell" role="cell">
-                {formatRel(s.last_event_ts, lang)}
-              </span>
-            </Link>
-          ))}
+          <ul
+            className="sessions-table__list"
+            role="list"
+            aria-label={lang === "zh" ? "会话列表" : "Sessions"}
+          >
+            {visible.map((s) => (
+              <li key={s.session_id}>
+                <Link
+                  to="/sessions/$sessionId"
+                  params={{ sessionId: s.session_id }}
+                  className="sessions-table__row"
+                  aria-label={
+                    lang === "zh"
+                      ? `会话 ${s.session_id} · ${s.backend} ${s.model} · ${s.turns} 轮`
+                      : `Session ${s.session_id} · ${s.backend} ${s.model} · ${s.turns} turns`
+                  }
+                >
+                  <span className="sessions-table__id">{s.session_id}</span>
+                  <span className="sessions-table__cell">
+                    {s.created
+                      ? new Date(s.created).toLocaleString(
+                          lang === "zh" ? "zh-CN" : "en-US",
+                          {
+                            year: "numeric",
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false,
+                          },
+                        )
+                      : "—"}
+                  </span>
+                  <span className="sessions-table__cell">
+                    {s.backend} · {s.model}
+                  </span>
+                  <span className="sessions-table__cell">
+                    {s.device ?? "—"}
+                  </span>
+                  <span className="sessions-table__cell">{s.turns}</span>
+                  <span className="sessions-table__cell">
+                    {formatRel(s.last_event_ts, lang)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
