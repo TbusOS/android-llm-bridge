@@ -23,6 +23,7 @@ import { ChatPage } from "./features/chat/ChatPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { AuditPage } from "./features/audit/AuditPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
+import { PlaygroundPage } from "./features/playground/PlaygroundPage";
 import { InspectLayout } from "./features/inspect/InspectLayout";
 import { SessionDetailPage } from "./features/session/SessionDetailPage";
 import { SessionsListPage } from "./features/session/SessionsListPage";
@@ -221,20 +222,7 @@ const inspectTabFallbackRoute = createRoute({
 const playgroundRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/playground",
-  component: () => (
-    <StubPage
-      title="Model Playground"
-      titleZh="模型调试台"
-      summary="Raw LLM chat bypassing the agent loop, with every sampling knob and live metrics."
-      summaryZh="绕过 agent loop 的直聊 —— 所有采样参数可调、实时 tokens/s 指标。"
-      consumes={[
-        "GET /playground/backends",
-        "GET /playground/backends/{backend}/models",
-        "POST /playground/chat",
-        "WS /playground/chat/ws",
-      ]}
-    />
-  ),
+  component: PlaygroundPage,
 });
 
 const sessionsRoute = createRoute({

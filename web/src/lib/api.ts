@@ -639,6 +639,29 @@ export interface BackendHealth {
   error?: string | null;
 }
 
+export interface BackendModelsResponse {
+  backend: string;
+  models: string[];
+}
+
+export async function fetchBackendModels(
+  backend: string,
+  signal?: AbortSignal,
+): Promise<BackendModelsResponse> {
+  const r = await fetch(
+    `/playground/backends/${encodeURIComponent(backend)}/models`,
+    { signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /playground/backends/${backend}/models returned ${r.status}`,
+      r.status,
+      "BACKEND_MODELS_FAILED",
+    );
+  }
+  return (await r.json()) as BackendModelsResponse;
+}
+
 export async function fetchBackendHealth(
   name: string,
   signal?: AbortSignal,
