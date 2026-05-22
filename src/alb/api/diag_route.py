@@ -120,18 +120,25 @@ def _scan_artifacts_in_thread(
         "tombstones": [],
     }
 
-    def _rel(p: Path) -> str:
+    def _rel(p: Path) -> str | None:
         """Return path relative to workspace root with forward slashes.
 
         The frontend's `workspaceDownloadUrl()` builds
         `/workspace/files/download/<rel>` so anchors point straight at
         the streaming endpoint. Exposing the absolute filesystem path
-        also leaked server layout (information disclosure MID).
+        would leak server layout (information disclosure MID, fixed in
+        commit 4618600).
+
+        Security finding (5/22 audit MID): originally returned
+        `p.as_posix()` on ValueError, re-leaking the very abs path the
+        refactor was hiding. Now returns None and callers SKIP the
+        entry — defence-in-depth against the symlink-pre-filter ever
+        missing one.
         """
         try:
             return p.relative_to(root).as_posix()
         except ValueError:
-            return p.as_posix()
+            return None
 
     br = base / "bugreports"
     if br.exists():
@@ -142,10 +149,18 @@ def _scan_artifacts_in_thread(
             # ours).
             if p.is_symlink() or not p.is_file() or not p.name.endswith(".zip"):
                 continue
-            st = p.stat()
+            # TOCTOU + filesystem race: between is_symlink/is_file and
+            # stat, the entry could be unlinked. Skip rather than 500.
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            rel = _rel(p)
+            if rel is None:
+                continue
             out["bugreports"].append(
                 {
-                    "path": _rel(p),
+                    "path": rel,
                     "name": p.name,
                     "size_bytes": st.st_size,
                     "mtime": st.st_mtime,
@@ -160,16 +175,25 @@ def _scan_artifacts_in_thread(
         for tdir in sorted(kdir.iterdir(), reverse=True):
             if tdir.is_symlink() or not tdir.is_dir():
                 continue
+            tdir_rel = _rel(tdir)
+            if tdir_rel is None:
+                continue
             files: list[dict[str, Any]] = []
             for f in sorted(tdir.iterdir()):
                 if f.is_symlink() or not f.is_file():
                     continue
                 # Cache stat() — previously called twice per file
-                # (.st_size and .st_mtime).
-                st = f.stat()
+                # (.st_size and .st_mtime). Same TOCTOU guard as above.
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                rel = _rel(f)
+                if rel is None:
+                    continue
                 files.append(
                     {
-                        "path": _rel(f),
+                        "path": rel,
                         "name": f.name,
                         "size_bytes": st.st_size,
                         "mtime": st.st_mtime,
@@ -178,7 +202,7 @@ def _scan_artifacts_in_thread(
             out[kind].append(
                 {
                     "bundle": tdir.name,
-                    "path": _rel(tdir),
+                    "path": tdir_rel,
                     "files": files,
                     "count": len(files),
                 }

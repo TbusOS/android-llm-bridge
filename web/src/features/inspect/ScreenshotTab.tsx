@@ -276,10 +276,18 @@ export function ScreenshotTab() {
                 }
                 onSelect={() => setSelected(s.name)}
                 onConfirmDelete={() => {
+                  // Functional updates — onSuccess fires asynchronously
+                  // (8 s after armed click possible), by then `selected`
+                  // and `last` in this closure may be stale (user may
+                  // have selected another entry). Read latest via
+                  // setter callbacks to compare against the row name
+                  // we captured at map-time.
                   remove.mutate(s.name, {
                     onSuccess: () => {
-                      if (selected === s.name) setSelected(null);
-                      if (last?.screenshot?.filename === s.name) setLast(null);
+                      setSelected((cur) => (cur === s.name ? null : cur));
+                      setLast((cur) =>
+                        cur?.screenshot?.filename === s.name ? null : cur,
+                      );
                     },
                   });
                 }}
