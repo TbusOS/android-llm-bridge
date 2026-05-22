@@ -1061,43 +1061,60 @@ constants**。
 
 ---
 
-## ADR-038 (seed) · 每个 Inspect tab 配 use<TabName>.ts hook · 数据层与 view 强制分层
+## ADR-038 · 每个 feature page / inspect sub-tab 配 use<X>.ts hook · 数据层与 view 强制分层
 
-**Date**: 2026-05-21（commit F `244111a` AppTab 抽 useAppActions.ts ·
-对齐 PowerTab/usePower.ts 双实例论证）
+**Date**: 2026-05-21 seed (`244111a` AppTab) · 2026-05-22 promoted to
+formal ADR after Playground (commit R `8a61c3e`) implemented the same
+shape as a third independent instance — 5/22 arch audit LOW#6 confirms
+the pattern.
 
-**Decision**: 每个 Inspect sub-tab 的数据层（query / mutation /
-mutation invalidation）**必须**抽到独立 `use<TabName>.ts` /
-`use<TabName>Actions.ts` hook 文件。tab component 只 import 这些 hook
-加 UI 组合，**不直接**调 `useQuery` / `useMutation` /
-`useQueryClient` / `fetch*` / `post*`。
+**Decision**: 每个 feature page (top-level activity-bar 入口) **或**
+inspect sub-tab 的数据层（query / mutation / mutation invalidation）
+**必须**抽到独立 `use<X>.ts` / `use<X>Actions.ts` / `use<X>Chat.ts`
+hook 文件。Component 只 import 这些 hook 加 UI 组合，**不直接**调
+`useQuery` / `useMutation` / `useQueryClient` / `fetch*` / `post*` /
+`connect()`。
 
-**Rationale**: N=2 时（PowerTab/usePower + AppTab/useAppActions）已
-观察到:
+**Rationale**: N=3 (PowerTab/usePower + AppTab/useAppActions +
+Playground/usePlayground + usePlaygroundChat) 已稳定:
 
-- 数据层与 UI 强分层 → 单元测试可以单独 mock fetch* 跑 hook
+- 数据层与 UI 强分层 → 单元测试可以单独 mock fetch* / connect() 跑 hook
 - mutation invalidation 集中（如 `useAppInstallMutation` 自带
   `onSuccess: invalidate ["app-list"]`），不再在 component 里重复
 - 抽出来后 useEffect 依赖能稳定（hook 返回的 mutation 对象 stable
-  across re-render）
-- 跨 tab 复用（如 DoctorPage / SessionsList 也可以引同一 hook）
+  across re-render）—— 配合 hook 内 `useCallback([])` 写法
+- 跨 feature 复用（如 DevicePicker 引 lib/hooks/useDevices · AuditPage
+  引 lib/hooks/useAuditStream · 见 AA `6e2c40f` layering 修）
 
 **Counter-argument**: 单 mutation / 单 query 抽 hook 是过度抽象。但
-inspect tab 平均 3-6 mutation + 1-2 query, 不抽就 ~500 行平铺。
+feature page / inspect tab 平均 3-6 mutation + 1-2 query, 不抽就
+500+ 行平铺。**单 query/0 mutation 例外**: 如 SystemInfo,
+ChartsTab — inline useQuery 即可。
 
-**Status**: seed · 12 tab 中只 PowerTab + AppTab 用了模式，其余 10 tab
-部分 inline 部分有同名 hook 但不一致。当下一个 tab 改动 / 新增时主
-对话拍是否升 ADR-038 → 正式。
+**变种**:
+- Chat 类长流: 主 hook + 同名 `Chat.ts` 拆 WS lifecycle (usePlayground
+  + usePlaygroundChat)
+- Shared 跨 feature: 升到 `lib/hooks/` 而不是 `features/<X>/`
+  (见 AA `6e2c40f` · arch HIGH#6 修)
 
-**Reverses if**：某 tab 只有 1 query + 0 mutation（如 SystemInfo），
-抽 hook 反而增重。届时按 case 决策, 不强制。
+**Status**: formal · 14 feature 中:
+- 用模式: Power / App / Playground (主+chat) / Devices (lib/hooks) /
+  AuditStream (lib/hooks) / Files / Sessions
+- 单 query 例外: SystemInfo / Charts / UART / Logcat / Shell /
+  Screenshot / UiDump / LogSearch / Diag (其中部分有同名 use*.ts 但
+  形态不一致 · 下次改动时同款重构)
+
+**Reverses if**：某 feature 演化成纯 view-only (只读 single endpoint
+poll), 抽 hook 反而增重 — 案例提交 ADR override 本 ADR。
 
 **关联**：
 
 - L-020（ABC 第 1 个非首例消费者 = 抽象设计的免费检验 · N=2 不抽象）
-  —— 本 ADR 是 N=2 拐点的反面（2 个就抽了, 因模式已稳定）
+  —— 本 ADR 在 N=3 升正式
 - L-025（新 useQuery hook 必 sweep refetchInterval/OnWindowFocus 两 flag）
-- commit F `244111a` (AppTab) · usePower.ts (PowerTab 原型)
+- commit F `244111a` (AppTab) · usePower.ts (PowerTab 原型) ·
+  commit R `8a61c3e` (Playground 双 hook) · commit AA `6e2c40f` (lib
+  共享层抽出)
 
 ---
 

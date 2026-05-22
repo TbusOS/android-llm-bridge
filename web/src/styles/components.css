@@ -4583,6 +4583,20 @@ html[lang^="zh"] h3 {
   min-height: 500px;
 }
 
+/* <900 px (split-view code editors / narrow window): rail stacks on
+   top of chat. Original v1 docstring promised 3-column but only
+   implemented 2; right metrics rail still TODO (see DEBT-046). */
+@media (max-width: 900px) {
+  .playground-page {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+  .playground-rail {
+    max-height: 280px;
+  }
+}
+
 .playground-rail {
   background: #ffffff;
   border: 1px solid var(--anth-light-gray);

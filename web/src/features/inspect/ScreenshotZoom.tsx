@@ -12,7 +12,7 @@
  * override default touch behaviour beyond preventDefault on wheel so
  * scroll doesn't bleed to background).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 const MIN_SCALE = 0.25;
@@ -50,18 +50,28 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
     };
   }, [onClose]);
 
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const dir = e.deltaY > 0 ? -1 : 1;
-    setScale((s) => {
-      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s + dir * WHEEL_STEP));
-      // Reset pan when zooming back to 1× so the image re-centres.
-      if (next <= 1) {
-        setTx(0);
-        setTy(0);
-      }
-      return next;
-    });
+  // React JSX `onWheel` is registered as a PASSIVE listener — calling
+  // `e.preventDefault()` inside silently fails (Chrome warns) and the
+  // page behind the modal scrolls while the user zooms. Attach the
+  // wheel handler imperatively with `{ passive: false }` so the
+  // preventDefault actually fires.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const dir = e.deltaY > 0 ? -1 : 1;
+      setScale((s) => {
+        const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s + dir * WHEEL_STEP));
+        if (next <= 1) {
+          setTx(0);
+          setTy(0);
+        }
+        return next;
+      });
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
   }, []);
 
   const onMouseDown = (e: React.MouseEvent) => {
@@ -103,7 +113,6 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
       ref={wrapRef}
       tabIndex={-1}
       onClick={onBackdropClick}
-      onWheel={onWheel}
     >
       <button
         type="button"

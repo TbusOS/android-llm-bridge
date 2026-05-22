@@ -1144,4 +1144,128 @@
 
 ---
 
+## DEBT-045 · `_terminal /files` activity-bar redirect 长期归宿
+
+- **现象**：commit S `c829895` 把 `/terminal` `/files` 改成 redirect
+  到 `/inspect/$tab`, activity bar 两栏成"幽灵路由"。点完 URL swap
+  到嵌套路径; 浏览器后退键 + redirect 可能死循环。
+- **影响**：当前可用, 但 URL 体验奇怪 (用户点 "Terminal" → URL 变
+  `/inspect/shell` 后退按钮把人弹回 `/terminal` 又 redirect)。
+- **建议方案** (二选一明确入档):
+  - (a) 删 `/terminal` `/files` 路由本身, activity bar 两栏直接指
+    `/inspect/shell` `/inspect/files`
+  - (b) 接受 redirect 是临时态; 触发条件 = Terminal 要 multi-tab /
+    Files 要拖拽上传时拆独立页
+- **触发关闭**：用户报告后退键 bug / 主对话决策拆独立页
+- **来源**：5/22 audit arch MID#2
+
+---
+
+## DEBT-046 · PlaygroundPage 右 metrics column 待落地
+
+- **现象**：commit R 落 Playground 时 docstring 承诺 3-column 实际
+  实现 2-column · 右 metrics rail (累计 tokens/s / 耗时 / 错误率
+  实时 chart) 缺。当前 metrics 内嵌 done message 下方, 看不到累计
+  趋势。
+- **影响**：调采样参数 (temp / top_p) 对吞吐影响不直观; 多 turn 后
+  看不到 per-backend 累计 metrics。
+- **建议方案**：grid-template-columns 加第 3 列 (~240px), 内嵌
+  `<MiniSparkline>` 显近 60 次 done 事件的 tokens/s 趋势。Backend
+  health 也在这里 (调 useBackendHealth)。
+- **触发关闭**：用户实际 Playground 多 turn 调参时反馈 / 下次 Playground
+  feature 改动
+- **来源**：5/22 ui-fluency LOW#6 (注释 vs 实现)。commit AE 改了
+  docstring 但 UI 没补
+
+---
+
+## DEBT-047 · lib/ws.ts path-keyed dedup + late-joiner snapshot replay
+
+- **现象**：注释撒谎 (commit Y 已订正), 真问题: AuditPage + Dashboard
+  同屏开 2-3 条 `/audit/stream` socket · snapshot bandwidth ×N · 服务
+  端 bus fan-out N 次。
+- **影响**：localhost / LAN 下不阻塞 (snapshot ~40 KB/socket), 但
+  setState 频率 N 倍, 50+ event/s deltas 时浪费 CPU。
+- **建议方案**：
+  - `lib/ws.ts` 加 `Map<path+shareKey, SharedEntry>` pool
+  - `connect(path, { shareKey })` 复用相同 (path, shareKey) 的现有
+    socket, refcount 到 0 才真 close
+  - 协议层: SharedEntry 缓存最近一次 snapshot · 新 subscribe 时立
+    回放给 listener · 不需要再 send config
+  - useAuditStream 改 `connect("/audit/stream", { shareKey:
+    JSON.stringify({minutes, includeMetrics}) })`
+- **触发关闭**：实测多 page 同屏 setState 风暴 / 下次 perf audit
+- **来源**：5/22 audit code-r MID#3 + perf HIGH#1
+
+---
+
+## DEBT-048 · usePlaygroundChat / DevicePicker / useElapsedSeconds / ScreenshotZoom 缺测试
+
+- **现象**：5/22 batch 新增 4 个新 hook + 1 个新 modal 组件, 全没单测。
+  特别 usePlaygroundChat 含 WS lifecycle + done/error/close race +
+  之前 commit Y 修了 stale closure bug, 没测覆盖 = 下次复发只能靠
+  audit。
+- **影响**：再修同款 bug 时无回归保护; 重构 connect/usePlaygroundChat
+  风险高。
+- **建议方案**：先起 vitest + @testing-library/react · 然后:
+  - `usePlaygroundChat`: mock connect → emit token×3 + done → 验
+    delta/done/status · close-before-done → status=error
+  - `useArmedAction`: arm → trigger fire / 8s auto-disarm / disarm
+    timer cleanup
+  - `useElapsedSeconds`: active true → tick 0,1,2... · false 停
+  - `DevicePicker`: keyboard ArrowDown 改 focusIdx · Enter setDevice
+  - `ScreenshotZoom`: wheel zoom 钳位 · Esc close
+- **触发关闭**：vitest setup 完成 + 至少 usePlaygroundChat 测覆盖
+- **来源**：5/22 audit code-r MID#6 + arch 间接
+
+---
+
+## DEBT-049 · /api/diag/artifacts API_VERSION / docs note 漏
+
+- **现象**：commit O 改 diag `path` 字段从绝对路径变 workspace-rel
+  POSIX, 是 web API breaking · 没 bump API version 也没在
+  `docs/api/` 写 changelog。
+- **影响**：任何外部脚本 / Web UI 早期版本 / 第三方集成读
+  `data.bugreports[0].path` 当绝对路径用的会找不到文件。MCP /
+  CLI 不走该端点 (确认)。
+- **建议方案**：
+  - (a) `docs/api/diag.md` (或类似入口) 加 "since 2026-05-22:
+    `path` is workspace-relative POSIX" 注释
+  - (b) 若项目有 API_VERSION 字段, bump minor
+  - (c) `schema.py` REST 列表 `/diag/artifacts` 的 description 加
+    "path field is workspace-rel"
+- **触发关闭**：docs 入档 / 下次 API breaking change 一起做
+- **来源**：5/22 audit code-r MID#4 + arch MID#4
+
+---
+
+## DEBT-050 · DELETE pattern N=2/3 抽 `idempotent_delete` helper
+
+- **现象**：screenshots DELETE (commit V) 显式 try/except 走 idempotent;
+  uart `DELETE /uart/captures/{name}` (`uart_route.py`) 不 catch
+  FileNotFoundError, 抛 500。第 3 处 DELETE 出现时立刻抽。
+- **影响**：API 语义不一致; 用户双击 delete uart capture 会得 500,
+  delete screenshot 得 ok。
+- **建议方案**：`infra/safe_path.py` 加 `idempotent_delete(base,
+  name, name_validator) -> bool`:
+  - 复用 `resolve_under` 的路径校验
+  - FileNotFoundError → return False (removed=False)
+  - 其它 OSError → 500
+- **触发关闭**：N=3 DELETE 端 (logcat captures / 任意 third 端) 出现
+- **来源**：5/22 audit arch MID#3
+
+---
+
+## DEBT-051 · ScreenshotZoom promotion to `components/`
+
+- **现象**：commit W ScreenshotZoom 留 `features/inspect/`, N=1。
+  DEBT-043 二档 (UiDumpTab screenshot overlay) 需要复用 zoom modal,
+  那时 N=2 → 抽 `components/ImageZoom.tsx`。
+- **影响**：当前 N=1 不抽是对的 (避免 premature abstraction)。
+- **建议方案**：等 UiDumpTab overlay 落地时一起 `git mv` + sed
+- **触发关闭**：DEBT-043 二档 (overlay) 开工时同步
+- **来源**：5/22 audit arch LOW#5
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）

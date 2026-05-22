@@ -2254,4 +2254,134 @@ const terminalRoute = createRoute({
 
 ---
 
+## L-043 · 任何 @keyframes 必须同建 `prefers-reduced-motion` 兜底
+
+**Date**: 2026-05-22（commit Z `822560e` 补齐 live-pulse + pg-cursor-blink
+两个 keyframe 漏的 prefers-reduced-motion 段 · ui-fluency audit HIGH#1）
+
+**规则**：新增任何 CSS `@keyframes` 时, **同 PR / 同文件内必加一段**
+`@media (prefers-reduced-motion: reduce) { .target { animation: none }
+}`。前庭功能障碍 / 癫痫敏感用户系统级开 "减少动效", 没兜底就被强制
+看 1Hz strobe / 持续 pulse。
+
+```css
+/* ❌ 错（无兜底） */
+.live-pulse {
+  animation: live-pulse 1.6s ease-out infinite;
+}
+@keyframes live-pulse { ... }
+
+/* ✅ 对（同段加兜底） */
+.live-pulse {
+  animation: live-pulse 1.6s ease-out infinite;
+}
+@keyframes live-pulse { ... }
+@media (prefers-reduced-motion: reduce) {
+  .live-pulse { animation: none; }
+}
+```
+
+**触发条件**：任何新 `@keyframes` 名出现; 任何 `animation: name ...
+infinite` 出现。
+
+**grep checklist** (reviewer 自动加进 ui-fluency-auditor agent):
+- 每个 PR `git diff | grep "^+.*@keyframes"` 拿到所有新 keyframe 名
+- 每个名字 `grep -A6 "$NAME" file.css | grep -q "prefers-reduced-motion"`
+- 0 命中 → finding。
+
+**反面教材记录**（同款规则已 3 次复发）:
+- 5/06 live-pulse 漏 (Dashboard hero card 初版)
+- 5/07 alb-armed-pulse 漏 → commit D 补
+- 5/22 pg-cursor-blink + live-pulse 又漏 (Playground 上线时 cursor /
+  live-pulse 两个一起跌进同坑) → commit Z 补
+
+**关联**: L-029 destructive op a11y 三件套 · ADR-039 危险/长操作通用
+hook 模式 · commit Z `822560e`
+
+---
+
+## L-044 · 长操作 / 长任务 UI 用 readOnly 不用 disabled · disabled 吞 focus 键盘锁死
+
+**Date**: 2026-05-22（commit Z `822560e` Playground textarea 修 · ui-fluency
+audit HIGH#5）
+
+**规则**：长操作 (streaming chat / 长上传 / 长查询) 期间需要"防止用户
+改输入" 时**禁止**用 `disabled={true}`, 改 `readOnly={true}` (+
+`aria-readonly`)。原因: `disabled` 立即把 focus 移到 body, 用户按 ESC
+不进 textarea 的 onKeyDown, 键盘用户无法 cancel 长操作。
+
+```tsx
+// ❌ 错（disabled 吞焦点 · 键盘用户无法 ESC cancel）
+<textarea
+  disabled={streaming}
+  onKeyDown={(e) => {
+    if (e.key === "Escape") cancelLongOp();  // 永不触发
+  }}
+/>
+
+// ✅ 对（readOnly 保焦点 · ESC 进 onKeyDown · 同步 aria-readonly 给 AT）
+<textarea
+  readOnly={streaming}
+  aria-readonly={streaming}
+  onKeyDown={(e) => {
+    if (e.key === "Escape" && streaming) {
+      e.preventDefault();
+      cancelLongOp();
+    }
+  }}
+  placeholder={streaming ? "生成中 · Esc 取消" : "Message…"}
+/>
+```
+
+**触发条件**：
+
+- streaming chat / long-running mutation 期间需要"防改输入"
+- 任何 `disabled={isPending}` 在表单输入元素上
+- 配合 ESC 键 cancel 操作的场景
+
+**关联**: L-029 destructive op a11y 三件套 · commit Z `822560e` ·
+L-037 长操作 elapsed timer + cancel
+
+---
+
+## L-045 · 注释声称"X 共享 / dedup"必须用 grep 验证, 否则就是事实错误
+
+**Date**: 2026-05-22（commit Y `bf9d1dc` 订正 AuditPage 撒谎注释 · 跨
+agent 共识 code-r MID#3 + perf HIGH#1）
+
+**规则**：任何代码注释或 docstring 声称"X 共享 / dedup / cache / 复用
+N 个消费者"必须先 grep 验证。N 个消费者的 import 路径里都能找到同一
+个符号才算共享; 同一个**调用名**不代表共享 — `connect(path)` 在 lib/
+ws.ts 里每次都 `new WebSocket(url)`, 这是事实, 注释说"by path dedup"
+是事实错误。
+
+```tsx
+// ❌ 错（注释撒谎）
+/**
+ * Why reuse useAuditStream rather than fetching /audit on a timer:
+ *   - Dashboard already pays the WS cost, second consumer on the same
+ *     hook is essentially free (lib/ws.ts dedupes connect by path)
+ *                                  ^^^^^^^^ 实际并没 dedup
+ */
+
+// ✅ 对（注释准确)
+/**
+ * Caveat — NOT free yet: lib/ws.ts does NOT dedup `connect()` by path
+ * today, so opening AuditPage while Dashboard is mounted creates a
+ * second socket. Tracking in DEBT-047.
+ */
+```
+
+**触发条件**：
+
+- 写 / 改任何 "shared" / "deduped" / "cached" / "reused" 性质的注释
+- review 时 grep 验证：claim 涉及 `connect(`, 实际有几次 `new WebSocket(`?
+- reviewer agent 需建 grep checklist: 注释里包含 dedup/cache/share
+  关键词 → 自动跑反向调用计数
+
+**关联**: L-035 path-traversal 实测验证文化 · commit Y `bf9d1dc` ·
+DEBT-047 (该 dedup 真做的工作)
+
+---
+
 （新教训按此格式追加）

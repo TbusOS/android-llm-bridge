@@ -1,12 +1,15 @@
 /**
  * PlaygroundPage — replaces the v1 StubPage at `/playground`.
  *
- * Three-column layout:
+ * Two-column layout (DEBT-046 to add right metrics rail later):
  *   LEFT  — backend / model selector + sampling knobs (temp / top_p /
  *           num_predict / system prompt)
- *   MAIN  — chat panel: messages list + input box + send/cancel
- *   (right column reserved for metrics; currently inline under the
- *    streaming message)
+ *   MAIN  — chat panel: messages list + input box + send/cancel.
+ *           Per-turn metrics (tokens/s, finish_reason) currently
+ *           render inline under the done message.
+ *
+ * Narrow viewports (<900 px): rail stacks above the chat (see CSS
+ * `.playground-page` media query).
  *
  * Wires `usePlayground` for catalog data and `usePlaygroundChat` for
  * the WS streaming protocol. Multi-turn: the parent keeps the message
