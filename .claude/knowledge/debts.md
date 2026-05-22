@@ -1055,4 +1055,93 @@
 
 ---
 
+## DEBT-041 · ScreenshotTab 缺 delete · 服务端缺 DELETE endpoint
+
+- **现象**：`/inspect/screenshot` 截图历史 sidebar 只能查看 / 下载, 没
+  删除按钮。同行 UartCaptureView 早就有 2-step delete 模式 (commit
+  D `f887198` 的 useArmedAction 抽象用上了)。
+- **影响**：
+  - 抓久了一台设备能堆几百张, sidebar 翻页慢
+  - 用户没法清理失败 / 老旧截图, 只能 ssh 进 workspace 手 rm
+  - workspace 占盘没上限 (PNG ~MB 级)
+- **建议方案**：
+  1. server 加 `DELETE /devices/{serial}/screenshots/{name}` (走
+     `is_safe_device` + `_resolve_screenshot_path` 复用现有 validation)
+  2. `lib/api.ts` 加 `deleteScreenshot(serial, name)` helper
+  3. `useScreenshots.ts` 加 `useDeleteScreenshotMutation` (成功后
+     invalidate ["screenshots", device])
+  4. ScreenshotTab sidebar 每行加 useArmedAction 2-step delete 按钮
+     (与 UartCaptureView 同模式 · DRY 复用)
+- **触发关闭**（任一）：
+  - 用户报告 workspace 占盘 / sidebar 慢
+  - 下次 ui-fluency-audit batch
+- **来源**：5/22 audit Web/UART/ADB 盘点 MINOR · 服务端无 endpoint
+  是阻塞原因 (commit T 时点放弃)
+
+---
+
+## DEBT-042 · ScreenshotTab 缺 tap-zoom / crop / annotate
+
+- **现象**：截图 viewer 是固定 `<img>`, 既不 click-to-zoom (无法看
+  细节像素), 也无 crop 工具 (无法只截图中关键 UI 元素), 也无 annotate
+  (无法画框标注 bug)。
+- **影响**：
+  - 调 UI bug 时为了看清像素得 ssh download + 本地查看
+  - 团队协作分享时手机截图 + 标注是基操, UI 没给
+- **建议方案**：
+  - tap-zoom: 第一档 `<img>` 加 onClick → modal 显原图 + 滚轮 zoom
+  - crop: 加 lasso select + "save crop as new entry" (POST 新文件)
+  - annotate: tldraw / Excalidraw 嵌入式画板, save 成 SVG overlay
+- **触发关闭**（任一）：
+  - 用户主动 ask (低优 hold)
+  - 团队跨人协作场景需求
+- **来源**：5/22 audit · 优先级低于 D-041 因不影响阻塞场景
+
+---
+
+## DEBT-043 · UiDumpTab 平 list · 无 tree 展开 · 无截图叠加
+
+- **现象**：UI dump 服务端返结构化 view hierarchy, 客户端只显平铺
+  node list, 没 tree 展开/折叠, 也不在 screenshot 上叠加边框可视
+  化。doc 自己写 "Bounds-on-screenshot overlay 留 v2"。
+- **影响**：
+  - 大 UI 树 (几百 node) 全列出来翻不动
+  - 找 button 的 bounds 时, 用户拿坐标手算, 看不到 "这是哪个矩形"
+  - 与 Android Studio Layout Inspector 体验差太多
+- **建议方案**：
+  - 第一档: tree expand/collapse + 当前 node 高亮父链 (类似
+    DevTools elements panel)
+  - 第二档: 在 screenshot 上叠 SVG `<rect>` 边框, 点 rect 跳 tree
+    节点 (双向同步)
+  - 第三档: click-node-to-tap (右键发 `input tap x y` shell command)
+- **触发关闭**（任一）：
+  - 用户调真机 UI bug 时痛点反馈
+  - Files 重构后顺手 attack
+- **来源**：5/22 audit · UI 已可用但远未达 Layout Inspector 水准
+
+---
+
+## DEBT-044 · FilesTab no rsync · server 也无 rsync endpoint
+
+- **现象**：FilesTab 当前只 push / pull (per-file). v1 router stub
+  描述说 "push / pull / rsync", 但 rsync **不在 server 实现**, 是
+  doc 口误 / 未来 promise。
+- **影响**：
+  - 大目录批量传输只能 N×push / N×pull, 慢 + 无 resume
+  - 跨设备 sync (镜像 /sdcard 到主机) 走 adb rsync 是常用模式, web
+    没接
+- **建议方案**：
+  - server 加 `POST /devices/{serial}/rsync` (subprocess wrap adb +
+    rsync · 或纯 Python paramiko_rsync 实现 · 注意 path-traversal)
+  - WS `/devices/{serial}/rsync/stream` 流 stderr/stats 给前端
+  - 客户端 FilesTab 加 rsync tab/section · 选 src/dst + dry-run /
+    delete / preserve flags + 实时进度
+- **触发关闭**（任一）：
+  - 用户跨多 GB workspace sync 需求
+  - 团队"我要镜像我手机 /sdcard 整个 DCIM" 类型场景
+- **来源**：5/22 audit · v1 stub doc 撒谎 (router 写有但 server 没有)
+  是 audit 翻出来的
+
+---
+
 （新债由主对话评估后追加；agents 不直接写）

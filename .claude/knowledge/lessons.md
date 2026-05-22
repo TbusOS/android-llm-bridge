@@ -2182,4 +2182,76 @@ TanStack Router doc "Code-Based Routing"
 
 ---
 
+## L-042 · stub page 不写 stub 占位 · 改写 redirect 到已有实现
+
+**Date**: 2026-05-22（commit S `c829895` 收尾 Terminal/Files 两个 stub
+入口 · activity bar 8 个全可用化）
+
+**规则**：当 activity bar / 主导航顶层入口对应的内容**已有实现**只是
+"在别处"（嵌套 tab / inspect sub-route / 历史路径）时，**禁止**用
+stub page 写占位介绍, **改写成 redirect** 直接送用户到真实页。stub
+page 只在"功能完全没实现且短期不会做"的边界场景留。
+
+**Why**：
+
+- 用户从 activity bar 点 "Terminal" 期待落到 terminal 功能, 不期待
+  看 stub 解释 "Terminal 是什么", **打开 stub 是反 UX**
+- redirect 一行代码 (`beforeLoad: () => throw redirect(...)`),
+  比 stub 文案 + consumes 列表的成本低十倍
+- stub 文案有衰减风险, 实现挪了一处 stub 文案没改 → 谎言 / 误导用户
+  (commit S 实测: `<StubPage consumes=["GET /devices/.../fs"]>` 但
+  server 是 `/workspace/files`, 误)
+- 跨 N 个 stub 时, stub page 自己也有维护成本 (component import +
+  consumes 列表 + i18n)
+
+**How to apply**：
+
+1. 任何 createRoute 想用 StubPage 时先问: "这功能现在在哪里能用?"
+2. 若已实现在嵌套 / 别处: `beforeLoad: () => throw redirect({...})`
+3. 若完全无实现: 先检查 server 是否已有 endpoint 等接 (audit 翻出来
+   的 orphan endpoint 模式) · 有的话立刻接, 没的话才写 stub
+4. 真要写 stub 也加 TODO + 关联 issue / DEBT 编号, 不写漂亮废话
+
+```tsx
+// ❌ 错（写占位 stub, 用户点了不能用功能）
+const terminalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/terminal",
+  component: () => (
+    <StubPage
+      title="Terminal"
+      summary="Interactive adb / serial shell..."
+      consumes={["WS /terminal/ws"]}
+    />
+  ),
+});
+
+// ✅ 对（redirect 到已实现的嵌套 tab）
+const terminalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/terminal",
+  beforeLoad: () => {
+    throw redirect({
+      to: "/inspect/$tabKey",
+      params: { tabKey: "shell" },
+      replace: true,
+    });
+  },
+});
+```
+
+**触发条件**：
+
+- 任何 stub page 上线超过 1 周
+- 任何 activity bar / 顶层 nav 入口对应的内容已在子路由可用
+- audit 发现 stub 文案与实际 endpoint / 实现脱节
+
+**关联**：
+
+- commit S `c829895` 实战
+- [[L-038]]（ship 后多 agent audit · audit 模式发现 5 stub 都该收尾）
+- audit_findings_5_18_batch memory · 5 stub MAJOR finding 全 close
+
+---
+
 （新教训按此格式追加）
