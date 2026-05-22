@@ -7,8 +7,15 @@
  *
  * Why reuse useAuditStream rather than fetching /audit on a timer:
  *   - server emits deltas; polling would race
- *   - Dashboard already pays the WS cost, second consumer on the same
- *     hook is essentially free (lib/ws.ts dedupes connect by path)
+ *   - Dashboard already pays a WS for the audit stream, so the visual
+ *     model is consistent across pages
+ *
+ * Caveat — NOT free yet: lib/ws.ts does NOT dedup `connect()` by path
+ * today, so opening AuditPage while Dashboard is mounted creates a
+ * second socket to `/audit/stream` with its own snapshot replay.
+ * Tracking in DEBT-047 (path-keyed dedup + late-joiner snapshot
+ * replay). The wire cost is small (one ~40 KB snapshot per page-open),
+ * so this is a perf hardening, not a blocker.
  */
 import { useDeferredValue, useMemo, useState } from "react";
 

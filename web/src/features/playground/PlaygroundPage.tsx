@@ -74,8 +74,14 @@ export function PlaygroundPage() {
   };
 
   // When the stream finishes, append the assistant message to the log
-  // and reset the chat hook. Effect so multi-turn state stays in one
-  // place (parent) without firing setState during render.
+  // and reset the chat hook. deps capture only what we actually read:
+  // - chat.status (primitive transition trigger)
+  // - chat.done (the payload we read on done)
+  // Using the full `chat` object would refire the effect every render
+  // because the hook returns a fresh object each call (state + new
+  // useCallback identity on send/cancel/reset). `chat.reset` is stable
+  // because the hook builds it with useCallback([]) — safe to call
+  // without including in deps.
   useEffect(() => {
     if (chat.status !== "done" || !chat.done || !chat.done.ok) return;
     const content = chat.done.content;
@@ -89,7 +95,8 @@ export function PlaygroundPage() {
       return [...l, { role: "assistant", content }];
     });
     chat.reset();
-  }, [chat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.status, chat.done]);
 
   const onClear = () => {
     setLog([]);
