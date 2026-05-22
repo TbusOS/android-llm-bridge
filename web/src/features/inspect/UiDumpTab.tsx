@@ -30,19 +30,29 @@ import { NoDeviceCard } from "../../components/NoDeviceCard";
 // `measureElement`, so this estimate is a hint not a hard cap.
 const _UIDUMP_ROW_ESTIMATE = 24;
 
-/** Synthetic id for tree state: the node's flatten-index path is unique
- *  per dump. Using a global counter on each (re)dump avoids collisions
- *  when the same uiautomator class repeats. */
-function assignIds(root: UiNode): Map<UiNode, string> {
+/** Synthetic id for tree state + flat parent index, built in one walk.
+ *  Per-dump, so used to be O(N) every render — now memoised against
+ *  `dump.root` reference identity. The flat `parents` map lets the
+ *  filter ancestor-chain walk be O(matches × depth) instead of the
+ *  previous O(N × depth) full-tree scan with per-node array alloc. */
+function buildTreeIndex(root: UiNode): {
+  ids: Map<UiNode, string>;
+  parents: Map<UiNode, UiNode | null>;
+  all: UiNode[];
+} {
   const ids = new Map<UiNode, string>();
+  const parents = new Map<UiNode, UiNode | null>();
+  const all: UiNode[] = [];
   let n = 0;
-  const walk = (node: UiNode, prefix: string) => {
+  const walk = (node: UiNode, parent: UiNode | null, prefix: string) => {
     const id = `${prefix}${n++}`;
     ids.set(node, id);
-    node.children.forEach((c, i) => walk(c, `${id}.${i}.`));
+    parents.set(node, parent);
+    all.push(node);
+    node.children.forEach((c, i) => walk(c, node, `${id}.${i}.`));
   };
-  walk(root, "");
-  return ids;
+  walk(root, null, "");
+  return { ids, parents, all };
 }
 
 export function UiDumpTab() {
@@ -64,7 +74,7 @@ export function UiDumpTab() {
       setLast(data);
       // Reset expansion: open root + its direct children only.
       if (data.ui_dump?.root) {
-        const ids = assignIds(data.ui_dump.root);
+        const { ids } = buildTreeIndex(data.ui_dump.root);
         const next = new Set<string>();
         const rootId = ids.get(data.ui_dump.root);
         if (rootId) next.add(rootId);
@@ -82,44 +92,47 @@ export function UiDumpTab() {
   }
 
   const dump = last?.ui_dump;
-  // Assign stable ids once per dump payload (memo by root identity).
-  const idMap = useMemo(
-    () => (dump?.root ? assignIds(dump.root) : new Map<UiNode, string>()),
+  // Single tree-index pass per dump: id map + parent map + flat array.
+  // Memoised by `dump.root` reference; only walks once per uiautomator
+  // call.
+  const treeIndex = useMemo(
+    () =>
+      dump?.root
+        ? buildTreeIndex(dump.root)
+        : {
+            ids: new Map<UiNode, string>(),
+            parents: new Map<UiNode, UiNode | null>(),
+            all: [] as UiNode[],
+          },
     [dump?.root],
   );
-  // Cache the flattened tree so the keystroke path doesn't re-walk a
-  // 2000-node tree on every input character. flattenNodes is pure
-  // over `dump.root`, so memo by reference identity.
-  const allNodes = useMemo(
-    () => (dump?.root ? flattenNodes(dump.root, 0) : []),
-    [dump?.root],
-  );
+  const { ids: idMap, parents: parentMap, all: allFlat } = treeIndex;
+  const allNodesCount = allFlat.length;
   // Deferred filter: input updates are eager (typing stays snappy),
   // the actual list filter runs at lower priority — React 18 will
   // skip intermediate frames if the user is still typing.
   const deferredFilter = useDeferredValue(filter);
-  // Active expansion set: when filtering, the visible set widens to
-  // include every match's ancestor chain so the match is reachable.
+  // perf MID (5/22 audit M6): previously walked the entire tree per
+  // keystroke + alloc'd a new ancestors array at every depth (O(N×D)
+  // per filter character). Now iterate the flat all[] once to find
+  // matches, then for each match climb the parent chain via parentMap
+  // (O(M×D) where M = match count ≪ N). Total per keystroke
+  // O(N + M×D) vs O(N×D).
   const effectiveExpanded = useMemo(() => {
     if (!deferredFilter) return expanded;
     const q = deferredFilter.toLowerCase();
     const widened = new Set(expanded);
-    // Walk the tree, marking ancestors of any matching node as expanded.
-    const walk = (n: UiNode, ancestors: string[]): boolean => {
-      const id = idMap.get(n)!;
-      let hasMatch = nodeMatch(n, q);
-      for (const c of n.children) {
-        if (walk(c, [...ancestors, id])) hasMatch = true;
+    for (const node of allFlat) {
+      if (!nodeMatch(node, q)) continue;
+      let cur: UiNode | null = node;
+      while (cur) {
+        const id = idMap.get(cur);
+        if (id) widened.add(id);
+        cur = parentMap.get(cur) ?? null;
       }
-      if (hasMatch) {
-        for (const a of ancestors) widened.add(a);
-        widened.add(id);
-      }
-      return hasMatch;
-    };
-    if (dump?.root) walk(dump.root, []);
+    }
     return widened;
-  }, [expanded, deferredFilter, dump?.root, idMap]);
+  }, [expanded, deferredFilter, allFlat, idMap, parentMap]);
 
   // Build the visible list by walking the tree and pruning collapsed
   // subtrees. Combines tree-walk + filter in one pass so we don't pay
@@ -199,15 +212,15 @@ export function UiDumpTab() {
             </button>
           )}
         </div>
-        {filter && allNodes.length > 0 && (
+        {filter && allNodesCount > 0 && (
           <span
             className="uart-tab__last"
             role="status"
             aria-live="polite"
           >
             {lang === "zh"
-              ? `${visibleNodes.length} / ${allNodes.length} 显 (含 ancestor 链)`
-              : `${visibleNodes.length} of ${allNodes.length} shown`}
+              ? `${visibleNodes.length} / ${allNodesCount} 显 (含 ancestor 链)`
+              : `${visibleNodes.length} of ${allNodesCount} shown`}
           </span>
         )}
         {dump && (
@@ -221,12 +234,12 @@ export function UiDumpTab() {
       </div>
 
       <div className="uidump-tab__list" ref={listRef}>
-        {allNodes.length === 0 && (
+        {allNodesCount === 0 && (
           <div className="uart-tab__empty">
             {lang === "zh" ? "点上方「抓 UI」按钮" : "Press Dump above"}
           </div>
         )}
-        {allNodes.length > 0 && visibleNodes.length === 0 && filter && (
+        {allNodesCount > 0 && visibleNodes.length === 0 && filter && (
           <div className="uart-tab__empty">
             {lang === "zh"
               ? `没有节点匹配 "${filter}"`
@@ -313,15 +326,6 @@ export function UiDumpTab() {
       </div>
     </div>
   );
-}
-
-function flattenNodes(
-  node: UiNode,
-  depth: number,
-): { node: UiNode; depth: number }[] {
-  const out: { node: UiNode; depth: number }[] = [{ node, depth }];
-  for (const c of node.children) out.push(...flattenNodes(c, depth + 1));
-  return out;
 }
 
 function shortClass(cls: string): string {
