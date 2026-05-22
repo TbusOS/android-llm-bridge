@@ -4,8 +4,9 @@
  * + total-tokens corner caption.  Lifted from
  * docs/webui-preview-v2.html .live-card.
  *
- * Data is currently MOCK_LIVE; TODO: subscribe to /chat/ws for the
- * active session and stream events into a Zustand slice.
+ * Data flows in via `useLiveSession`, which reduces the audit WS
+ * stream (kept business + metric in the same buffer) into the live
+ * card's view model.
  */
 import { Loader2 } from "lucide-react";
 import { useApp } from "../../stores/app";

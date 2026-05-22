@@ -2,8 +2,8 @@
  * Router assembly — code-based TanStack Router setup with the
  * RootLayout wrapping every route.  v2 module map (8 entries on the
  * activity bar): Dashboard / Chat / Terminal / Inspect / Playground /
- * Sessions / Files / Audit.  Only Dashboard and Chat are real today;
- * the rest render StubPage.
+ * Sessions / Files / Audit.  All 8 are real now; Terminal and Files
+ * are thin redirects to the matching Inspect tab.
  *
  * Cross-repo invariant (DEBT-014, 2026-04-29): every `path:` value
  * below MUST NOT contain `.` in any segment. The backend SPA fallback
@@ -28,7 +28,6 @@ import { InspectLayout } from "./features/inspect/InspectLayout";
 import { SessionDetailPage } from "./features/session/SessionDetailPage";
 import { SessionsListPage } from "./features/session/SessionsListPage";
 import { RootLayout } from "./layouts/RootLayout";
-import { StubPage } from "./routes/stub";
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -52,18 +51,19 @@ const chatRoute = createRoute({
   component: ChatPage,
 });
 
+// Terminal & Files: top-level redirects to the matching Inspect tab.
+// Until they get their own pages, the activity-bar entries should at
+// least land users on the existing implementation, not a stub.
 const terminalRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/terminal",
-  component: () => (
-    <StubPage
-      title="Terminal"
-      titleZh="Terminal 终端"
-      summary="Interactive adb / serial shell via xterm.js with HITL command guard and optional read-only mode."
-      summaryZh="xterm.js 直通 adb / 串口 shell；危险命令 HITL 拦截；可切只读模式。"
-      consumes={["WS /terminal/ws"]}
-    />
-  ),
+  beforeLoad: () => {
+    throw redirect({
+      to: "/inspect/$tabKey",
+      params: { tabKey: "shell" },
+      replace: true,
+    });
+  },
 });
 
 // Inspect is a nested-route subtree: `/inspect/<tabKey>` per tab. The
@@ -243,15 +243,13 @@ const sessionDetailRoute = createRoute({
 const filesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/files",
-  component: () => (
-    <StubPage
-      title="Files"
-      titleZh="文件浏览"
-      summary="Push / pull / rsync between host and device with HITL on path changes outside /sdcard."
-      summaryZh="主机 ↔ 设备 文件 push / pull / rsync；非 /sdcard 路径走 HITL。"
-      consumes={["GET /devices/{id}/fs", "POST /devices/{id}/push", "POST /devices/{id}/pull"]}
-    />
-  ),
+  beforeLoad: () => {
+    throw redirect({
+      to: "/inspect/$tabKey",
+      params: { tabKey: "files" },
+      replace: true,
+    });
+  },
 });
 
 const doctorRoute = createRoute({
