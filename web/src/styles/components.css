@@ -651,6 +651,12 @@ html[lang^="zh"] h3 {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .live-pulse {
+    animation: none;
+  }
+}
+
 .live-label {
   font-family: var(--font-heading);
   font-weight: 600;
@@ -4716,6 +4722,12 @@ html[lang^="zh"] h3 {
 @keyframes pg-cursor-blink {
   to {
     opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playground-msg__cursor {
+    animation: none;
   }
 }
 

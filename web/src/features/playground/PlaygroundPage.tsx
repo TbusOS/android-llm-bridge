@@ -302,15 +302,30 @@ export function PlaygroundPage() {
               // Ctrl/⌘+Enter → send. Plain Enter inserts newline.
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                 e.preventDefault();
-                onSend();
+                if (chat.status !== "streaming") onSend();
+                return;
+              }
+              // ESC during streaming → cancel. Keyboard users would
+              // otherwise be locked out (textarea was previously
+              // `disabled` which dropped focus, so ESC never fired).
+              if (e.key === "Escape" && chat.status === "streaming") {
+                e.preventDefault();
+                chat.cancel();
               }
             }}
             placeholder={
-              lang === "zh"
-                ? "输入消息 · ⌘+Enter 发送"
-                : "Message… · ⌘+Enter to send"
+              chat.status === "streaming"
+                ? lang === "zh"
+                  ? "生成中 · Esc 取消"
+                  : "Streaming… · Esc to cancel"
+                : lang === "zh"
+                  ? "输入消息 · ⌘+Enter 发送"
+                  : "Message… · ⌘+Enter to send"
             }
-            disabled={chat.status === "streaming"}
+            // readOnly instead of disabled — keeps focus on the input
+            // so Esc can fire (disabled drops focus to body, dead).
+            readOnly={chat.status === "streaming"}
+            aria-readonly={chat.status === "streaming"}
           />
           {chat.status === "streaming" ? (
             <button
