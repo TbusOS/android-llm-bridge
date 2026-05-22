@@ -4,13 +4,14 @@
  * (docs/webui-preview-v2.html).
  *
  * The device picker is the single source of truth for "active device";
- * panels read it via useApp().device.  Real picker dropdown is TODO —
- * for now the chevron is decorative and the value comes from the store.
+ * panels read it via useApp().device. The dropdown UI lives in
+ * `DevicePicker.tsx` so this file stays focused on layout.
  */
 import { useRouterState } from "@tanstack/react-router";
-import { ChevronDown, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApp } from "../stores/app";
+import { DevicePicker } from "./DevicePicker";
 
 interface CrumbDef {
   /** Path prefix (longest prefix wins). */
@@ -38,7 +39,6 @@ const CRUMBS: CrumbDef[] = [
 
 export function TopBar() {
   const lang = useApp((s) => s.lang);
-  const device = useApp((s) => s.device);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const now = useNow();
 
@@ -52,23 +52,7 @@ export function TopBar() {
         <span className="leaf">{lang === "zh" ? leaf.zh : leaf.en}</span>
       </span>
 
-      <span
-        className={device ? "device-picker" : "device-picker is-empty"}
-        tabIndex={0}
-        role="combobox"
-        aria-haspopup="listbox"
-        aria-expanded={false}
-        aria-label={lang === "zh" ? "当前设备" : "Active device"}
-      >
-        <span className="dot" />
-        <span className="label">
-          {device ?? (lang === "zh" ? "未选择设备" : "no device")}
-        </span>
-        {device ? (
-          <span className="meta">adb · usb · 1500000 baud</span>
-        ) : null}
-        <ChevronDown size={12} aria-hidden={true} />
-      </span>
+      <DevicePicker lang={lang} />
 
       <span className="cmd-search" tabIndex={0} role="searchbox">
         <Search size={14} aria-hidden={true} />

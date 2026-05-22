@@ -208,6 +208,11 @@ html[lang^="zh"] h3 {
   font-weight: 600;
 }
 
+.device-picker-wrap {
+  position: relative;
+  display: inline-block;
+}
+
 .device-picker {
   display: inline-flex;
   align-items: center;
@@ -221,11 +226,32 @@ html[lang^="zh"] h3 {
   cursor: pointer;
 }
 
+.device-picker:hover {
+  border-color: var(--anth-mid-gray);
+}
+
+.device-picker:focus-visible {
+  outline: 2px solid var(--anth-orange);
+  outline-offset: 2px;
+}
+
 .device-picker .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--anth-green);
+}
+
+.device-picker .dot[data-status="offline"] {
+  background: #b54b3d;
+}
+
+.device-picker .dot[data-status="warn"] {
+  background: #b46c2c;
+}
+
+.device-picker .dot[data-status="empty"] {
+  background: var(--anth-mid-gray);
 }
 
 .device-picker .label {
@@ -246,6 +272,96 @@ html[lang^="zh"] h3 {
 
 .device-picker.is-empty .dot {
   background: var(--anth-mid-gray);
+}
+
+/* Dropdown menu — anchored under the trigger pill */
+.device-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 280px;
+  max-width: 480px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  z-index: 100;
+}
+
+.device-picker-menu:focus {
+  outline: none;
+}
+
+.device-picker-menu__hint {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-picker-menu__retry {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.device-picker-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.device-picker-menu__item.is-focus,
+.device-picker-menu__item:hover {
+  background: var(--anth-bg-subtle);
+}
+
+.device-picker-menu__item.is-active {
+  background: rgba(217, 119, 87, 0.12);
+}
+
+.device-picker-menu__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--anth-green);
+  flex-shrink: 0;
+}
+
+.device-picker-menu__dot[data-status="offline"] {
+  background: #b54b3d;
+}
+
+.device-picker-menu__dot[data-status="warn"] {
+  background: #b46c2c;
+}
+
+.device-picker-menu__serial {
+  font-family: var(--font-mono);
+  color: var(--anth-text);
+  font-weight: 500;
+}
+
+.device-picker-menu__meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--anth-text-secondary);
 }
 
 .cmd-search {
