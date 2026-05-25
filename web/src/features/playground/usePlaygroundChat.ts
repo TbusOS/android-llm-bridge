@@ -81,8 +81,16 @@ export function usePlaygroundChat() {
       // ws-close / ws-error need WS_DISCONNECTED so the user sees
       // why the bubble froze.
       if (info.cause === "ws-close" || info.cause === "ws-error") {
-        const reasonText =
+        // 5/25 AM-2 (sec MID-13): close.reason is server-supplied · a
+        // custom-built proxy / debug tool can put arbitrary bytes
+        // there. Clamp the rendered message so it doesn't blow up
+        // layout. (Browser already enforces 123-byte limit on real
+        // WebSocket close frames; this is defence-in-depth for
+        // synthetic / hostile producers.)
+        const raw =
           info.reasonText || `WebSocket closed (code ${info.code ?? "?"})`;
+        const reasonText =
+          raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
         setDone({
           ok: false,
           content: "",

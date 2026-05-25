@@ -163,7 +163,13 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
         return;
       }
 
-      // ws-close / ws-error → CONNECTION_LOST
+      // ws-close / ws-error → CONNECTION_LOST.
+      // sec MID-13: clamp server-supplied reason at 200 chars so
+      // hostile / over-long reason text doesn't blow up turn UI.
+      const rawReason =
+        info.reasonText || `socket closed (code ${info.code ?? "?"})`;
+      const safeReason =
+        rawReason.length > 200 ? `${rawReason.slice(0, 200)}…` : rawReason;
       updateTurn(aid, (t) => ({
         ...t,
         status:
@@ -172,7 +178,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
             : t.status,
         error: t.error ?? {
           code: "CONNECTION_LOST",
-          message: info.reasonText || `socket closed (code ${info.code ?? "?"})`,
+          message: safeReason,
         },
       }));
     },

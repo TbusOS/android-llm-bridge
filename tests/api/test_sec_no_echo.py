@@ -39,6 +39,16 @@ def client(workspace):
 SNEAKY_QUERY = "<script>alert(1)</script>"
 SNEAKY_PATH = "<scriptx>"
 
+# 5/25 AM-2 (code MID-8): expand fuzz beyond just `<script>` so we
+# catch any future regression that lets unicode RTL override / NUL /
+# CRLF (HTTP header injection) ride into HTTPException detail.
+EXTRA_SNEAKY_PAYLOADS = [
+    "abc‮exe.png",          # unicode RTL override (filename spoof)
+    "abc\x00.zip",                # NUL byte
+    "abc\r\nSet-Cookie: x=1",     # CR/LF header injection
+    "‮‭‬mix",      # bidi format-controls cluster
+]
+
 
 @pytest.mark.parametrize(
     "method, url, body, expected_detail",
@@ -133,3 +143,23 @@ def test_files_path_traversal_reject_does_not_echo_rel(client, workspace) -> Non
     body = r.json()
     assert body["detail"] == "path escapes workspace"
     assert "<script" not in r.text
+
+
+@pytest.mark.parametrize("payload", EXTRA_SNEAKY_PAYLOADS)
+def test_extra_sneaky_payloads_not_echoed(client, payload) -> None:
+    """5/25 AM-2 (code MID-8): broaden coverage beyond the basic
+    `<script>` payload — verify RTL / NUL / CRLF byte sequences also
+    don't leak into the detail body. Picks a representative endpoint
+    (diag bugreport) since all sibling endpoints share the same
+    is_safe_device gate."""
+    import urllib.parse
+
+    encoded = urllib.parse.quote(payload, safe="")
+    r = client.post(f"/api/diag/bugreport?device={encoded}")
+    assert r.status_code == 400, (
+        f"payload {payload!r} expected 400, got {r.status_code} · {r.text}"
+    )
+    assert r.json()["detail"] == "invalid device serial"
+    assert payload not in r.text, (
+        f"payload {payload!r} leaked into response body: {r.text}"
+    )

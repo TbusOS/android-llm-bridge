@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -65,22 +65,46 @@ def _resolve_transport(
 
 def _safe_iterdir(p: Path) -> list[Path]:
     """Sorted iterdir that survives the dir being unlinked / replaced
-    mid-scan. Returns [] on OSError instead of bubbling to 500.
+    mid-scan. Returns partial results on mid-iteration OSError instead
+    of bubbling to 500 OR throwing away everything already collected.
 
     5/25 code audit HIGH-2: AC commit (TOCTOU stat guard) protected
     `p.stat()` but `p.iterdir()` / `is_symlink()` / `is_file()` /
     `is_dir()` still raised. Same race window, same defence required.
+
+    5/25 second-round code MID-7: previous one-liner `sorted(p.iterdir())`
+    discarded already-iterated entries when scandir hit EIO mid-stream
+    (e.g. networked mount flaking on the Nth entry). Iterate manually
+    so a mid-stream OSError truncates the result instead of zeroing it.
     """
+    out: list[Path] = []
     try:
-        return sorted(p.iterdir(), reverse=True)
+        it = iter(p.iterdir())
     except OSError:
         return []
+    while True:
+        try:
+            entry = next(it)
+        except StopIteration:
+            break
+        except OSError:
+            # Truncate at the failure point — anything collected so far
+            # is valid; we just stop here instead of returning [].
+            break
+        out.append(entry)
+    out.sort(reverse=True)
+    return out
 
 
-def _safe_entry(p: Path, *, want: str) -> bool:
+def _safe_entry(p: Path, *, want: Literal["file", "dir"]) -> bool:
     """True if `p` is a real (non-symlink) entry of the requested
-    kind. `want` is "file" or "dir". Any OSError (concurrent unlink,
-    permission flip, EIO) collapses to False so callers can `continue`.
+    kind. `want` is a `Literal["file","dir"]` so a callsite typo fails
+    at type-check (5/25 second-round code MID-6 fix — the previous
+    `str` typing silently swallowed `want="files"` and returned False
+    for all entries, dropping the entire listing).
+
+    Any OSError (concurrent unlink, permission flip, EIO) collapses
+    to False so callers can `continue`.
     """
     try:
         if p.is_symlink():
@@ -89,7 +113,9 @@ def _safe_entry(p: Path, *, want: str) -> bool:
             return p.is_file()
         if want == "dir":
             return p.is_dir()
-        return False
+        # Unreachable under Literal typing; defence-in-depth assert so
+        # runtime caller of e.g. `want=cast(Any, "files")` fails loud.
+        raise AssertionError(f"unknown want={want!r}")
     except OSError:
         return False
 
