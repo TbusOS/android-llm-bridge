@@ -26,6 +26,19 @@ interface Options {
   maxBackoffMs?: number;
   /** Disable auto-reconnect (default false — we do reconnect). */
   noReconnect?: boolean;
+  /** Reserved for DEBT-047 (WS dedup / shared pool). When the pool
+   *  lands, callers requesting the same `path + shareKey` will share
+   *  a single underlying socket and snapshot-replay buffer. Today this
+   *  field is accepted but ignored — every `connect()` still returns
+   *  its own client. Caller contract:
+   *    - Pass the SAME `shareKey` whenever two callers can share a
+   *      socket (identical config / window / filters).
+   *    - Pass DIFFERENT `shareKey` (or omit) when configs diverge
+   *      (e.g. useAuditStream({includeMetrics:false}) MUST NOT share
+   *      with useAuditStream({includeMetrics:true}) — ADR-022).
+   *  Pre-wiring callers now keeps the DEBT-047 implementation a
+   *  pool-only change instead of a fan-out caller change. */
+  shareKey?: string;
 }
 
 /** Build an absolute ws:// / wss:// URL for a path relative to the
@@ -40,6 +53,9 @@ export function wsUrl(path: string): string {
 
 export function connect(path: string, opts: Options = {}): WsClient {
   const { maxBackoffMs = 30_000, noReconnect = false } = opts;
+  // `opts.shareKey` is reserved for DEBT-047 pool lookup. Ignored
+  // today — every call still mints a fresh client. See Options.shareKey.
+  void opts.shareKey;
   const url = wsUrl(path);
   const listeners = new Set<(ev: WsEvent) => void>();
   let ws: WebSocket | null = null;

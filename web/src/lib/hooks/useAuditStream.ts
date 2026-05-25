@@ -134,7 +134,13 @@ export function useAuditStream(
   const clientRef = useRef<WsClient | null>(null);
 
   useEffect(() => {
-    const client = connect("/audit/stream");
+    // shareKey reserved for DEBT-047 pool. Encode the config knobs
+    // that change socket contents: two callers with different
+    // includeMetrics MUST NOT share (ADR-022 — metric streams
+    // follow device lifetime, not user pause). Today ignored by
+    // lib/ws.connect; pre-wired so the pool change is a one-file diff.
+    const shareKey = JSON.stringify({ minutes, includeMetrics });
+    const client = connect("/audit/stream", { shareKey });
     clientRef.current = client;
 
     const unsubscribe = client.subscribe((wsEv) => {
