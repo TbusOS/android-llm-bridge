@@ -1155,3 +1155,58 @@ commit, 4 处 inline 模式稳定后再抽）。当用户触发"加新 mutation
 ---
 
 （后续 ADR 在主对话决策时按此格式追加）
+
+---
+
+## ADR-040 · vitest config 和 vite config 拆双文件 · 实测真因 + 维护契约
+
+**Status**: accepted · 关 5/25 arch audit MID-5 + DEBT-053
+
+**Context**:
+
+5/25 arch audit 怀疑双 config 是误诊（"vitest 的 defineConfig 也是从
+vite re-export，应该可单 config 解决"）。AH-5 实测验证：
+
+- vite 的 `defineConfig`（from `"vite"`）的 `UserConfigExport` 类型
+  **不包含 `test` 字段**。加 `/// <reference types="vitest" />` 三斜
+  线指令也不行 —— 它只 augment 周围环境声明，不 augment
+  `UserConfigExport` 联合。直接写 `test: { ... }` 报 TS2769。
+
+- vitest 的 `defineConfig`（from `"vitest/config"`）**确实** 暴露
+  `test` 字段，但其 `UserConfig` 中
+  `build.rollupOptions.output.manualChunks` 类型 **narrow 成 array-
+  of-output 形式**，拒绝我们生产构建用的
+  `{ xterm: [...] }` record 形式。
+
+两个都是真错。单 config 任何一种写法都要在生产构建侧（manualChunks
+易读形式）或测试侧（test 段无法识别）牺牲一个。
+
+**Decision**:
+
+保持双 config：
+- `vite.config.ts` 用 `defineConfig from "vite"` · 写 build / server /
+  resolve / plugins · **不写 test 段**
+- `vitest.config.ts` 用 `defineConfig from "vitest/config"` · 写
+  plugins + resolve + test 段 · **不写 build 段**
+
+**Maintenance contract**:
+
+任何 plugins / alias / resolve / 任何 spec 也需要的 vite-side 配置
+**必须**在两个文件里同步写。今天两份文件共享：
+- `react()` plugin
+- `@` → `./src` alias
+
+新加任何条件时检查两边。
+
+**Rationale**:
+
+- 单 config 试过（AH-5 临时合并）· 实测 build 失败 · 已删验证分支
+- 替代方案"as any 强转 test 字段"或"魔改 vite 类型"都更脏
+- 双 config 显式 · 维护契约清晰 · 类型完全正确
+
+**关联**：
+
+- 5/25 audit arch MID-5（vitest 双 config 真因误诊）· 本 ADR 是对那
+  条 finding 的"实测后反驳"
+- DEBT-053（hook test mock pattern · vi.hoisted N=2 抽 helper）
+- 任何升级 vite / vitest 主版本时重测：可能未来某个版本两边类型趋同

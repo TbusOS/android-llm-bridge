@@ -6,10 +6,29 @@ import path from "node:path";
 // and by GitHub Pages). During dev, Vite proxies /chat, /playground,
 // /metrics, /terminal, /api, /health to a running `alb-api` on localhost.
 //
-// Vitest config lives in `vitest.config.ts` so the strict rollup types
-// in `vitest/config` don't conflict with our `manualChunks` setup
-// (vite's defineConfig accepts both function + record form; vitest's
-// re-export narrows it).
+// Vitest config lives in `vitest.config.ts` (deliberately split). The
+// reason — verified 2026-05-25 (AH-5):
+//
+//   - vite's `defineConfig` (from "vite") has no `test` field in its
+//     `UserConfigExport` type. A `/// <reference types="vitest" />`
+//     triple-slash does NOT augment the UserConfigExport union, only
+//     the surrounding ambient declarations, so `test: { ... }` still
+//     errors with TS2769.
+//   - vitest's `defineConfig` (from "vitest/config") DOES expose
+//     `test`, but its `UserConfig` type for `build.rollupOptions.output
+//     .manualChunks` rejects our `{ xterm: [...] }` record form — it
+//     only accepts the array-of-output form.
+//
+// So either the prod build's manualChunks loses its readable form or
+// the test config can't carry the `test` field. Two configs is the
+// non-ugly resolution. The earlier comment here ("strict rollup typings
+// in vitest/config rejecting manualChunks") was directionally right
+// but wasn't a misdiagnosis — single-config attempt confirmed both
+// errors are real (see AH-5 commit message + DEBT-053).
+//
+// Maintainer responsibility: when adding plugins / alias / server
+// proxy / resolve config that test files also need, mirror the change
+// into vitest.config.ts. The two configs share an alias on `@` today.
 export default defineConfig({
   plugins: [react()],
   resolve: {

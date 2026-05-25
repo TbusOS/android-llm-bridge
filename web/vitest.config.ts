@@ -1,10 +1,20 @@
 /**
- * Vitest config — kept separate from vite.config.ts so the strict
- * rollup output typings in `vitest/config`'s re-exported `defineConfig`
- * don't reject our `manualChunks: { xterm: [...] }` record form.
+ * Vitest config — deliberately separate from `vite.config.ts`.
  *
- * Pulls in the same plugins as the production build (React) so jsx /
- * fast-refresh / `.tsx` handling works inside specs.
+ * Why two configs (verified 2026-05-25 via single-config attempt):
+ *   - `defineConfig` from "vite" has no `test` field on its
+ *     UserConfigExport; adding `test: { ... }` errors with TS2769.
+ *   - `defineConfig` from "vitest/config" exposes `test` but narrows
+ *     `build.rollupOptions.output.manualChunks` to the array-of-output
+ *     form, rejecting our `{ xterm: [...] }` record form (prod build's
+ *     chunk-split config).
+ *
+ * Split keeps both configs typed correctly. Maintenance contract: any
+ * plugin / alias / resolve-config change that specs also need MUST be
+ * mirrored here. Today we share `react()` plugin + `@` alias.
+ *
+ * See AH-5 commit message for the single-config attempt and the
+ * concrete errors that ruled it out.
  */
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
