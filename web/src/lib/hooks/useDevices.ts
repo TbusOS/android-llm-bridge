@@ -1,85 +1,32 @@
 /**
- * Devices hook + mapping.
+ * Devices hook (raw).
  *
- * Wraps `GET /devices` and projects the backend payload into the
- * `DeviceCardData` shape that `<DeviceStripCompact>` already
- * understands. CPU / temp series are intentionally empty here — those
- * come from the `/metrics/stream` WS in a later step.
+ * Wraps `GET /devices` and exposes the raw `ApiDevice[]` payload plus
+ * the transport class name + loading/error metadata. **No view-model
+ * projection here** — feature consumers do their own shaping:
  *
- * Layering note (arch finding HIGH 5/22): moved out of
- * `features/dashboard/` because DevicePicker (`components/`) needs to
- * read the device list too. The hook still projects to
- * `DeviceCardData` which is a dashboard view-model type — this is a
- * residual type-only dep, not a runtime one. Future split: drop the
- * dashboard mapping back into a `features/dashboard/useDeviceCards.ts`
- * wrapper and expose only raw `ApiDevice[]` here.
+ *   - `features/dashboard/useDeviceCards.ts` wraps this + projects to
+ *     `DeviceCardData` for `<DeviceStripCompact>`
+ *   - `components/DevicePicker.tsx` reads raw + uses
+ *     `lib/deviceFormat.ts` utilities for transport/status labels
+ *
+ * Layering invariant: lib/hooks/ MUST NOT import features/. The earlier
+ * version of this file imported `DeviceCardData` + `mapToDeviceCard`
+ * (5/22 arch H6 fix that proved incomplete); 5/25 arch HIGH-4 surfaced
+ * the residual reverse-dep, fixed here.
  */
 import { useDashboardQuery } from "../dashboardQuery";
-
 import { fetchDevices, type ApiDevice, type DevicesResponse } from "../api";
-import type {
-  DeviceCardData,
-  DeviceStatus,
-  Transport,
-} from "../../features/dashboard/types";
 
 const REFETCH_MS = 5_000;
 
-/** Map a Transport class name to the UI's `Transport` union. */
-export function transportFromName(name: string | null | undefined): Transport {
-  if (!name) return "adb-usb";
-  if (name.includes("Ssh")) return "ssh";
-  if (name.includes("Serial")) return "uart";
-  return "adb-usb";
-}
-
-function transportLabel(t: Transport): string {
-  switch (t) {
-    case "adb-usb":
-      return "adb";
-    case "adb-wifi":
-      return "adb wifi";
-    case "adb-tcp":
-      return "adb tcp";
-    case "uart":
-      return "uart";
-    case "ssh":
-      return "ssh";
-  }
-}
-
-function statusFrom(state: string): DeviceStatus {
-  if (state === "device") return "online";
-  if (state === "offline" || state === "unauthorized") return "offline";
-  return "warn";
-}
-
-export function mapToDeviceCard(
-  transportName: string | null,
-  d: ApiDevice,
-): DeviceCardData {
-  const transport = transportFromName(transportName);
-  const status = statusFrom(d.state);
-  const modelLine = [d.product, d.model].filter(Boolean).join(" · ");
-  return {
-    id: d.serial,
-    name: d.serial,
-    modelLine,
-    transport,
-    transportLabel: transportLabel(transport),
-    status,
-    cpu: null,
-    cpuTrend: [],
-    cpuColor: "blue",
-    tempC: null,
-    tempTrend: [],
-    tempColor: "blue",
-    offlineNote: status === "offline" ? d.state : undefined,
-  };
-}
-
-export interface DevicesViewModel {
-  devices: DeviceCardData[];
+export interface DevicesRawViewModel {
+  /** Raw devices as returned by `GET /devices`. Empty array when the
+   *  backend has no transport / probe failed (see backendError). */
+  devices: ApiDevice[];
+  /** Server-side Transport class name (e.g. "AdbUsbTransport") or null
+   *  when the backend returned ok=false. Used by lib/deviceFormat
+   *  utilities to derive a UI transport label. */
   transportName: string | null;
   /** Backend returned ok=false (transport build / probe failure). */
   backendError: string | null;
@@ -89,7 +36,7 @@ export interface DevicesViewModel {
   refetch: () => void;
 }
 
-export function useDevices(): DevicesViewModel {
+export function useDevices(): DevicesRawViewModel {
   const q = useDashboardQuery<DevicesResponse>({
     queryKey: ["devices"],
     queryFn: ({ signal }) => fetchDevices(signal),
@@ -97,7 +44,7 @@ export function useDevices(): DevicesViewModel {
   });
   const data = q.data;
   return {
-    devices: data?.devices.map((d) => mapToDeviceCard(data.transport, d)) ?? [],
+    devices: data?.devices ?? [],
     transportName: data?.transport ?? null,
     backendError: data && !data.ok ? data.error ?? "transport unavailable" : null,
     isLoading: q.isLoading,

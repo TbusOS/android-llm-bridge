@@ -5,8 +5,10 @@
  * each card.
  */
 
-export type DeviceStatus = "online" | "warn" | "offline";
-export type Transport = "adb-usb" | "adb-wifi" | "adb-tcp" | "uart" | "ssh";
+// `DeviceStatus` / `Transport` live in `lib/deviceFormat.ts` (the lib
+// layer can't reverse-depend on a feature). Re-export here so existing
+// dashboard consumers don't need to know where the unions moved.
+export type { DeviceStatus, Transport } from "../../lib/deviceFormat";
 
 export interface DeviceCardData {
   id: string;

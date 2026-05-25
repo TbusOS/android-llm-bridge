@@ -15,8 +15,14 @@
  * (BEM `.device-picker`) so mockup baseline stays.
  */
 import { ChevronDown } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import {
+  statusFrom,
+  transportFromName,
+  transportLabel,
+  type DeviceStatus,
+} from "../lib/deviceFormat";
 import { useDevices } from "../lib/hooks/useDevices";
 import { useApp } from "../stores/app";
 
@@ -25,10 +31,35 @@ interface Props {
   lang: "en" | "zh";
 }
 
+interface PickerDevice {
+  id: string;
+  status: DeviceStatus;
+  transportLabelStr: string;
+  modelLine: string;
+}
+
 export function DevicePicker({ lang }: Props) {
   const device = useApp((s) => s.device);
   const setDevice = useApp((s) => s.setDevice);
-  const { devices, isLoading, isError, refetch } = useDevices();
+  const {
+    devices: rawDevices,
+    transportName,
+    isLoading,
+    isError,
+    refetch,
+  } = useDevices();
+  // Minimal projection — picker only needs serial / status / transport
+  // label / model line. The dashboard's richer `DeviceCardData` (with
+  // cpu/temp trends) lives in `features/dashboard/useDeviceCards`.
+  const devices = useMemo<PickerDevice[]>(() => {
+    const transportLabelStr = transportLabel(transportFromName(transportName));
+    return rawDevices.map((d) => ({
+      id: d.serial,
+      status: statusFrom(d.state),
+      transportLabelStr,
+      modelLine: [d.product, d.model].filter(Boolean).join(" · "),
+    }));
+  }, [rawDevices, transportName]);
 
   const [open, setOpen] = useState(false);
   const [focusIdx, setFocusIdx] = useState(0);
@@ -119,7 +150,7 @@ export function DevicePicker({ lang }: Props) {
 
   const selected = devices.find((d) => d.id === device);
   const meta = selected
-    ? `${selected.transportLabel} · ${selected.status}`
+    ? `${selected.transportLabelStr} · ${selected.status}`
     : "adb · usb";
 
   return (
@@ -212,7 +243,7 @@ export function DevicePicker({ lang }: Props) {
                 />
                 <span className="device-picker-menu__serial">{d.id}</span>
                 <span className="device-picker-menu__meta">
-                  {d.transportLabel}
+                  {d.transportLabelStr}
                   {d.modelLine ? ` · ${d.modelLine}` : ""}
                   {d.status !== "online" ? ` · ${d.status}` : ""}
                 </span>

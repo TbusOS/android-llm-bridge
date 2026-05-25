@@ -4,19 +4,22 @@
  *
  * Both `useDevices` and the zustand `useApp` store are mocked so
  * specs drive the rendered list and selected-device state directly,
- * without spinning up the real `/devices` fetcher.
+ * without spinning up the real `/devices` fetcher. Mock returns the
+ * raw `ApiDevice` shape (DevicePicker projects its own picker view-
+ * model from raw — arch HIGH-4 fix 5/25).
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DeviceCardData } from "../features/dashboard/types";
+import type { ApiDevice } from "../lib/api";
 
 // ─── mocks ─────────────────────────────────────────────────────────
 
 const { mockUseDevices, mockUseApp, setDeviceFn, setActiveDevice } = vi.hoisted(
   () => {
     let activeDevice: string | null = null;
-    let devicesList: DeviceCardData[] = [];
+    let devicesList: ApiDevice[] = [];
+    let transportName: string | null = "AdbUsbTransport";
     let isLoading = false;
     let isError = false;
     const refetch = vi.fn();
@@ -26,7 +29,7 @@ const { mockUseDevices, mockUseApp, setDeviceFn, setActiveDevice } = vi.hoisted(
     const setActiveDevice = (d: string | null) => {
       activeDevice = d;
     };
-    const setDevicesList = (l: DeviceCardData[]) => {
+    const setDevicesList = (l: ApiDevice[]) => {
       devicesList = l;
     };
     const setLoading = (v: boolean) => {
@@ -35,9 +38,12 @@ const { mockUseDevices, mockUseApp, setDeviceFn, setActiveDevice } = vi.hoisted(
     const setError = (v: boolean) => {
       isError = v;
     };
+    const setTransport = (n: string | null) => {
+      transportName = n;
+    };
     const mockUseDevices = vi.fn(() => ({
       devices: devicesList,
-      transportName: null,
+      transportName,
       backendError: null,
       isLoading,
       isError,
@@ -56,7 +62,7 @@ const { mockUseDevices, mockUseApp, setDeviceFn, setActiveDevice } = vi.hoisted(
       setActiveDevice,
       // Test helpers (export but unused outside; vi.hoisted requires
       // returned values to be the only inter-spec channel).
-      __ctl: { setDevicesList, setLoading, setError },
+      __ctl: { setDevicesList, setLoading, setError, setTransport },
     } as const;
   },
 );
@@ -68,22 +74,14 @@ vi.mock("../stores/app", () => ({ useApp: mockUseApp }));
 import { DevicePicker } from "./DevicePicker";
 
 function mkDevice(
-  id: string,
-  status: "online" | "offline" | "warn" = "online",
-): DeviceCardData {
+  serial: string,
+  state: "device" | "offline" | "unauthorized" = "device",
+): ApiDevice {
   return {
-    id,
-    name: id,
-    modelLine: "Test device",
-    transport: "adb-usb",
-    transportLabel: "adb",
-    status,
-    cpu: null,
-    cpuTrend: [],
-    cpuColor: "blue",
-    tempC: null,
-    tempTrend: [],
-    tempColor: "blue",
+    serial,
+    state,
+    product: "test",
+    model: "TestDevice",
   };
 }
 
@@ -91,8 +89,12 @@ beforeEach(() => {
   setDeviceFn.mockClear();
   setActiveDevice(null);
   mockUseDevices.mockImplementation(() => ({
-    devices: [mkDevice("abc123"), mkDevice("def456"), mkDevice("offline7", "offline")],
-    transportName: null,
+    devices: [
+      mkDevice("abc123"),
+      mkDevice("def456"),
+      mkDevice("offline7", "offline"),
+    ],
+    transportName: "AdbUsbTransport",
     backendError: null,
     isLoading: false,
     isError: false,
@@ -182,7 +184,7 @@ describe("DevicePicker", () => {
   it("empty list shows actionable hint", () => {
     mockUseDevices.mockImplementation(() => ({
       devices: [],
-      transportName: null,
+      transportName: "AdbUsbTransport",
       backendError: null,
       isLoading: false,
       isError: false,

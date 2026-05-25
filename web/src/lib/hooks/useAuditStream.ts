@@ -1,14 +1,21 @@
 /**
- * Audit live-stream hook.
+ * Audit live-stream hook (raw).
  *
  * Connects to `WS /audit/stream`, which delivers a one-shot snapshot
  * followed by live increments. Auto-reconnect is handled by the
  * shared `lib/ws.ts` client; the server resends the snapshot on
  * every reconnect so React state always converges.
  *
- * Replaces the polling `useAudit` for the dashboard timeline. The
- * old hook is kept around for any future page that prefers a paged
- * HTTP read.
+ * Exposes raw `AuditEvent[]` (split into business + metric buffers
+ * to honour DEBT-011 isolation). **No view-model projection here** —
+ * feature consumers do their own shaping:
+ *
+ *   - `features/dashboard/useAuditTimeline.ts` wraps this + maps
+ *     `businessRaw` into `TimelineEventData` for `<ActivityTimeline>`
+ *   - `features/dashboard/useLiveSession.ts` folds `metricRaw` into
+ *     a live-session spark
+ *   - `features/audit/AuditPage.tsx` reads `rawEvents` (merged) and
+ *     does its own table projection
  *
  * Why DashboardPage opens TWO instances of this hook (one with
  * includeMetrics=false for the timeline, one with =true for the
@@ -18,20 +25,15 @@
  * Hook contract: options must contain only **primitive** values
  * (boolean / number / string). Passing functions or arrays will
  * trigger unbounded reconnects via the useEffect deps array.
+ *
+ * Layering invariant: lib/hooks/ MUST NOT import features/. The earlier
+ * version imported `TimelineEventData` + `mapAuditToTimeline` — 5/25
+ * arch HIGH-4 surfaced the residual reverse-dep, fixed here.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// Layering note (arch finding HIGH 5/22): hook moved out of
-// `features/dashboard/` because AuditPage (`features/audit/`) also
-// consumes it. The TimelineEventData mapping + mapAuditToTimeline
-// helper still live in dashboard/, so this hook reverse-imports them
-// — a type-only dep, not runtime. Future split: keep this hook
-// raw-only and move the mapping to a `useAuditTimeline` wrapper inside
-// `features/dashboard/`.
 import type { AuditEvent } from "../api";
 import { connect, type WsClient } from "../ws";
-import type { TimelineEventData } from "../../features/dashboard/types";
-import { mapAuditToTimeline } from "../../features/dashboard/useAudit";
 
 export type AuditStreamStatus = "connecting" | "open" | "closed" | "error";
 
@@ -43,12 +45,13 @@ const BUSINESS_CAP = 200;
  *  events out of the buffer (DEBT-011 fix, F.7). */
 const METRIC_CAP = 60;
 
-/** Server-side authoritative set is `audit_route._DEFAULT_METRIC_KINDS`.
- *  When ADR-021 grows to add cmd_rate / push_rate, **double-write here**
- *  — missing it makes server treat the new kind as metric (filtered)
- *  while client treats it as business (eats into business cap, evicting
- *  real user/done events under sustained load). DEBT-013 candidate
- *  tracks pushing this list down from the server when `|kinds| ≥ 3`. */
+/** Server-side authoritative set is `audit_route.METRIC_KINDS`
+ *  (src/alb/api/audit_route.py — verified 2026-05-25). When ADR-021
+ *  grows to add cmd_rate / push_rate, **double-write here** — missing
+ *  it makes server treat the new kind as metric (filtered) while client
+ *  treats it as business (eats into business cap, evicting real
+ *  user/done events under sustained load). DEBT-013 candidate tracks
+ *  pushing this list down from the server when `|kinds| ≥ 3`. */
 const METRIC_KINDS: ReadonlySet<string> = new Set(["tps_sample"]);
 
 function isMetricKind(kind: string): boolean {
@@ -95,11 +98,14 @@ export interface UseAuditStreamOptions {
   minutes?: number;
 }
 
-export interface AuditStreamViewModel {
-  /** Mapped, ready-to-render timeline rows (newest first, capped). */
-  events: TimelineEventData[];
-  /** The same buffer as `events` but in raw form, for reducers like
-   *  `useLiveSession` that need access to `data` payloads. */
+export interface AuditStreamRawViewModel {
+  /** Business-only buffer (newest first, capped at BUSINESS_CAP). The
+   *  timeline wrapper maps this to `TimelineEventData[]`. */
+  businessRaw: AuditEvent[];
+  /** Metric-only buffer (newest first, capped at METRIC_CAP). The
+   *  live-session reducer fold this to tps spark + tool-call state. */
+  metricRaw: AuditEvent[];
+  /** Merged buffer (business + metric), newest first by ts. */
   rawEvents: AuditEvent[];
   since: string | null;
   until: string | null;
@@ -111,7 +117,7 @@ export interface AuditStreamViewModel {
 
 export function useAuditStream(
   options: UseAuditStreamOptions = {},
-): AuditStreamViewModel {
+): AuditStreamRawViewModel {
   const { includeMetrics = false, minutes = 30 } = options;
 
   // Two parallel buffers so a high-rate metric stream cannot evict
@@ -217,12 +223,6 @@ export function useAuditStream(
     clientRef.current?.send({ type: "control", action: "resume" });
   }, [includeMetrics]);
 
-  // Timeline rows: business only. `useMemo` so identity is stable for
-  // child memo'd components.
-  const events = useMemo(
-    () => businessRaw.map(mapAuditToTimeline),
-    [businessRaw],
-  );
   // Reducer-friendly merged list (newest first by ts). With caps 200 +
   // 60 the merged array is ≤ 260 entries — sort cost is negligible.
   const rawEvents = useMemo(() => {
@@ -233,5 +233,15 @@ export function useAuditStream(
     return merged;
   }, [businessRaw, metricRaw]);
 
-  return { events, rawEvents, since, until, status, paused, pause, resume };
+  return {
+    businessRaw,
+    metricRaw,
+    rawEvents,
+    since,
+    until,
+    status,
+    paused,
+    pause,
+    resume,
+  };
 }
