@@ -7,15 +7,17 @@
  *   - a streaming `delta` buffer for the in-flight assistant message
  *   - the terminal `done` event with metrics + finish_reason + error
  *
- * Message log is held by the parent (PlaygroundPage) so multiple sends
- * append cleanly; this hook is per-request.
+ * Maps the underlying 3-phase hook (`idle | streaming | settled`) to
+ * the 4-state surface PlaygroundPage already uses
+ * (`idle | streaming | done | error`). Cancelled folds to idle —
+ * PlaygroundPage doesn't need to distinguish, it just wants the input
+ * usable again.
  *
- * H1 fix (5/25 audit): close-before-done now produces a synthetic
- * `done` payload with code=WS_DISCONNECTED so the error UI renders
- * ("status === 'error' && done" pattern in PlaygroundPage) — without
- * the synthetic, the assistant bubble silently froze with no signal.
- * Cancel-then-late-close race is fixed inside useWsChatStream (it
- * suppresses the closing socket's close event after cancel).
+ * H1 fix (5/25 audit) preserved: close-before-settled / cancel paths
+ * write a synthetic `done` with code=WS_DISCONNECTED so the
+ * `status === "error" && done` UI block always renders something. The
+ * synthetic write moved into the `onSettled` callback after AL-1's
+ * API redesign — single terminal entry instead of dual paths.
  */
 import { useCallback, useState } from "react";
 
@@ -58,7 +60,7 @@ export function usePlaygroundChat() {
 
   const stream = useWsChatStream<PlaygroundRequest>({
     path: "/playground/chat/ws",
-    onJson: (raw) => {
+    onJson: (raw, { markSettled }) => {
       const msg = raw as ServerMessage & Partial<DoneEvent>;
       if (msg.type === "token" && typeof msg.delta === "string") {
         setDelta((d) => d + msg.delta);
@@ -66,27 +68,33 @@ export function usePlaygroundChat() {
       }
       if (msg.type === "done") {
         setDone(msg as DoneEvent);
-        return msg.ok === false ? "error" : "done";
+        markSettled(msg.ok === false ? "error" : "done");
       }
     },
-    onCloseBeforeDone: (info) => {
-      // H1 fix: PlaygroundPage's error block renders on
-      // `status === "error" && chat.done` — without a synthetic done
-      // here, the user sees a truncated assistant bubble + idle input
-      // with no signal that the connection dropped.
-      const reasonText =
-        info.reason || `WebSocket closed (code ${info.code ?? "?"})`;
-      setDone({
-        ok: false,
-        content: "",
-        finish_reason: "disconnected",
-        model: "",
-        backend: "",
-        error: {
-          code: "WS_DISCONNECTED",
-          message: reasonText,
-        },
-      });
+    onSettled: (info) => {
+      // Only need synthetic done payload for the disconnect paths.
+      // server-done already wrote a real done via onJson above.
+      // user-cancel + ws-close + ws-error all benefit from the
+      // synthetic so PlaygroundPage's `status === "error" && done`
+      // block can render *something*. For cancelled we fold to idle
+      // (status mapping below), so no synthetic is needed — but
+      // ws-close / ws-error need WS_DISCONNECTED so the user sees
+      // why the bubble froze.
+      if (info.cause === "ws-close" || info.cause === "ws-error") {
+        const reasonText =
+          info.reasonText || `WebSocket closed (code ${info.code ?? "?"})`;
+        setDone({
+          ok: false,
+          content: "",
+          finish_reason: "disconnected",
+          model: "",
+          backend: "",
+          error: {
+            code: "WS_DISCONNECTED",
+            message: reasonText,
+          },
+        });
+      }
     },
   });
 
@@ -105,17 +113,19 @@ export function usePlaygroundChat() {
     stream.reset();
   }, [stream]);
 
-  // Map the 5-phase hook state to the page's 4-state surface. cancelled
-  // collapses to idle (PlaygroundPage doesn't need to distinguish — it
-  // just wants the input usable again).
-  const status: Status =
-    stream.phase === "streaming"
-      ? "streaming"
-      : stream.phase === "done"
-        ? "done"
-        : stream.phase === "error"
-          ? "error"
-          : "idle";
+  // Map the 3-phase hook + settledReason to the page's 4-state surface.
+  // cancelled collapses to idle (PlaygroundPage doesn't distinguish —
+  // it just wants the input usable again). done.ok=false → error too.
+  let status: Status;
+  if (stream.phase === "streaming") {
+    status = "streaming";
+  } else if (stream.phase === "settled" && stream.settledReason === "done") {
+    status = "done";
+  } else if (stream.phase === "settled" && stream.settledReason === "error") {
+    status = "error";
+  } else {
+    status = "idle";
+  }
 
   return { delta, done, status, send, cancel: stream.cancel, reset };
 }

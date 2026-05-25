@@ -12,10 +12,15 @@
  *
  * Streaming model: we open a fresh WebSocket per turn (chat is a
  * request/stream/done cycle). Auto-reconnect is disabled — a closed
- * socket means "this turn is over". The lifecycle (open / done /
- * close-before-done / cancel race suppression) lives in
+ * socket means "this turn is over". The lifecycle (open / settled /
+ * close-before-settled / cancel race suppression) lives in
  * `lib/hooks/useWsChatStream`; this hook only owns turn-list
  * projection.
+ *
+ * AL-1 redesign: uses the unified `onSettled` callback (replaces the
+ * pre-existing `onCloseBeforeDone` split). Turn state side-effects on
+ * settle (mark error on ws-close / mark cancelled on user-cancel)
+ * live in this one callback, no duplication with cancel() body.
  */
 import { useCallback, useRef, useState } from "react";
 
@@ -69,7 +74,10 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
   );
 
   const handleEvent = useCallback(
-    (ev: StreamEvent): "done" | "error" | void => {
+    (
+      ev: StreamEvent,
+      helpers: { markSettled: (reason: "done" | "error") => void },
+    ): void => {
       const aid = activeAssistantIdRef.current;
       if (!aid) return;
 
@@ -125,7 +133,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
           model: ev.model ?? t.model,
         }));
         activeAssistantIdRef.current = null;
-        return ev.ok ? "done" : "error";
+        helpers.markSettled(ev.ok ? "done" : "error");
       }
     },
     [updateTurn],
@@ -133,16 +141,29 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
 
   const stream = useWsChatStream<ChatRequestPayload>({
     path: "/chat/ws",
-    onJson: (raw) => handleEvent(raw as StreamEvent),
-    onCloseBeforeDone: (info) => {
-      // Same shape as the pre-extract close-before-done branch:
-      // if a turn is in flight when the socket dropped, mark it
-      // errored with CONNECTION_LOST. useWsChatStream has already
-      // flipped phase to "error" → isStreaming flips false via the
-      // derived value below.
+    onJson: (raw, helpers) => handleEvent(raw as StreamEvent, helpers),
+    onSettled: (info) => {
+      // Single terminal entry point — handles every reason. Server-done
+      // already updated the turn via handleEvent above (activeAssistant
+      // is null), so we no-op for reason="done"/"error" with cause=
+      // "server-done". ws-close / ws-error / user-cancel still have a
+      // turn in flight — write the appropriate terminal status.
+      if (info.cause === "server-done") return;
+
       const aid = activeAssistantIdRef.current;
       if (!aid) return;
       activeAssistantIdRef.current = null;
+
+      if (info.cause === "user-cancel") {
+        updateTurn(aid, (t) => ({
+          ...t,
+          status: "cancelled",
+          error: { code: "CANCELLED", message: "已取消" },
+        }));
+        return;
+      }
+
+      // ws-close / ws-error → CONNECTION_LOST
       updateTurn(aid, (t) => ({
         ...t,
         status:
@@ -151,7 +172,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
             : t.status,
         error: t.error ?? {
           code: "CONNECTION_LOST",
-          message: info.reason || `socket closed (code ${info.code ?? "?"})`,
+          message: info.reasonText || `socket closed (code ${info.code ?? "?"})`,
         },
       }));
     },
@@ -203,18 +224,13 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
     [startStream],
   );
 
+  // cancel() is single-call now: onSettled callback in the hook will
+  // be invoked with cause="user-cancel" and the turn-side updateTurn
+  // happens there. No need for two-step (turn mark + stream.cancel)
+  // dance the previous version had.
   const cancel = useCallback(() => {
-    const aid = activeAssistantIdRef.current;
-    if (aid) {
-      activeAssistantIdRef.current = null;
-      updateTurn(aid, (t) => ({
-        ...t,
-        status: "cancelled",
-        error: { code: "CANCELLED", message: "已取消" },
-      }));
-    }
     stream.cancel();
-  }, [updateTurn, stream]);
+  }, [stream]);
 
   const retry = useCallback(() => {
     if (stream.phase === "streaming") return;
@@ -233,7 +249,6 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
     sessionIdRef.current = null;
     setTurns([]);
     setSessionId(null);
-    stream.cancel();
     stream.reset();
   }, [stream]);
 
