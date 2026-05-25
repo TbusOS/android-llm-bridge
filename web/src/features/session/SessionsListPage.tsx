@@ -160,10 +160,37 @@ export function SessionsListPage() {
                   to="/sessions/$sessionId"
                   params={{ sessionId: s.session_id }}
                   className="sessions-table__row"
+                  // 5/25 ui-f MID-4: aria-label was missing 3 of the
+                  // 6 visible columns (device / created / last_event).
+                  // AT users hear "Session abc · ollama qwen · 5
+                  // turns" with no clue when it ran or which device —
+                  // exactly the fields they most need. Re-state every
+                  // visible column so the audible row matches the
+                  // visual row 1:1.
                   aria-label={
                     lang === "zh"
-                      ? `会话 ${s.session_id} · ${s.backend} ${s.model} · ${s.turns} 轮`
-                      : `Session ${s.session_id} · ${s.backend} ${s.model} · ${s.turns} turns`
+                      ? `会话 ${s.session_id} · 创建 ${
+                          s.created
+                            ? new Date(s.created).toLocaleString("zh-CN", {
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: false,
+                              })
+                            : "未知"
+                        } · ${s.backend} ${s.model} · 设备 ${s.device ?? "未指定"} · ${s.turns} 轮 · 最近 ${formatRel(s.last_event_ts, lang)}`
+                      : `Session ${s.session_id} · created ${
+                          s.created
+                            ? new Date(s.created).toLocaleString("en-US", {
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: false,
+                              })
+                            : "unknown"
+                        } · ${s.backend} ${s.model} · device ${s.device ?? "none"} · ${s.turns} turns · last ${formatRel(s.last_event_ts, lang)}`
                   }
                 >
                   <span className="sessions-table__id">{s.session_id}</span>

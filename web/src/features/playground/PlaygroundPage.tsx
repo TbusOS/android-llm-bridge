@@ -15,7 +15,7 @@
  * the WS streaming protocol. Multi-turn: the parent keeps the message
  * log; the hook owns only the in-flight request.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useApp } from "../../stores/app";
 import {
@@ -58,12 +58,46 @@ export function PlaygroundPage() {
 
   const chat = usePlaygroundChat();
 
+  // 5/25 ui-f MID-2: chat log was a `.playground-chat__log` with
+  // `overflow-y:auto` but no scroll-follow — long replies pushed new
+  // tokens below the viewport while the user stared at the top. Now
+  // we track a `stickToBottom` flag:
+  //   - default true → every render scrolls to bottom
+  //   - user scrolls up (more than 40 px above bottom) → stick=false,
+  //     stops auto-scrolling so reading isn't interrupted
+  //   - user scrolls back to bottom → stick=true again
+  //   - sending a new prompt → force stick=true so the next reply
+  //     starts from a known anchor
+  const logRef = useRef<HTMLDivElement>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
+
+  const SCROLL_THRESHOLD_PX = 40;
+
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    if (!stickToBottom) return;
+    // jump to the bottom on every render where we're in stick mode
+    el.scrollTop = el.scrollHeight;
+  });
+
+  const onLogScroll = () => {
+    const el = logRef.current;
+    if (!el) return;
+    const distanceFromBottom =
+      el.scrollHeight - el.clientHeight - el.scrollTop;
+    setStickToBottom(distanceFromBottom <= SCROLL_THRESHOLD_PX);
+  };
+
   const onSend = () => {
     const text = input.trim();
     if (!text || chat.status === "streaming") return;
     const next: ChatMessage[] = [...log, { role: "user", content: text }];
     setLog(next);
     setInput("");
+    // Re-anchor to bottom: user is sending a new prompt, they want to
+    // see the reply from the start.
+    setStickToBottom(true);
     const req: PlaygroundRequest = {
       backend,
       model: model || null,
@@ -104,6 +138,16 @@ export function PlaygroundPage() {
   const onClear = () => {
     setLog([]);
     chat.reset();
+    setStickToBottom(true);
+  };
+
+  const onJumpToBottom = () => {
+    setStickToBottom(true);
+    // Force the layout effect — without this the user can be parked
+    // at a steady scroll position and clicking the button doesn't
+    // trigger a render (state already true).
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
   return (
@@ -238,7 +282,11 @@ export function PlaygroundPage() {
           </button>
         </header>
 
-        <div className="playground-chat__log">
+        <div
+          ref={logRef}
+          className="playground-chat__log"
+          onScroll={onLogScroll}
+        >
           {log.length === 0 && chat.status === "idle" && (
             <div className="playground-chat__empty">
               {lang === "zh"
@@ -288,6 +336,19 @@ export function PlaygroundPage() {
             </div>
           )}
         </div>
+
+        {!stickToBottom && (log.length > 0 || chat.status === "streaming") && (
+          <button
+            type="button"
+            className="playground-chat__jump"
+            onClick={onJumpToBottom}
+            aria-label={
+              lang === "zh" ? "回到最新消息" : "Jump to latest message"
+            }
+          >
+            {lang === "zh" ? "回到最新 ↓" : "Latest ↓"}
+          </button>
+        )}
 
         <form
           className="playground-chat__bar"

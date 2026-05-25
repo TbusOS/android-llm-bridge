@@ -4654,12 +4654,42 @@ html[lang^="zh"] h3 {
 }
 
 .playground-chat {
+  position: relative; /* anchor for .playground-chat__jump */
   display: flex;
   flex-direction: column;
   background: #ffffff;
   border: 1px solid var(--anth-light-gray);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+
+/* "Jump to latest" floating button (5/25 ui-f MID-2): shown only when
+ * the user has scrolled away from the bottom while content is live.
+ * Anchored to the bottom-right of the chat container so it doesn't
+ * push reflows or overlap the input bar. */
+.playground-chat__jump {
+  position: absolute;
+  right: 16px;
+  bottom: 76px; /* clear the .playground-chat__bar (input + buttons) */
+  z-index: 2;
+  background: var(--anth-orange);
+  color: #ffffff;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-family: var(--font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.playground-chat__jump:hover {
+  background: color-mix(in srgb, var(--anth-orange) 88%, black);
+}
+.playground-chat__jump:focus-visible {
+  outline: 2px solid var(--anth-orange);
+  outline-offset: 2px;
 }
 
 .playground-chat__head {
