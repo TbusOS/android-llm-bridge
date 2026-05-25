@@ -70,6 +70,11 @@ export function PlaygroundPage() {
   //     starts from a known anchor
   const logRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+  // Snapshot of the most recently sent prompt — used to repopulate
+  // the input on error (5/25 ui-f LOW-2). Cleared by user typing
+  // anything (we only restore when input is empty), so retry doesn't
+  // clobber a follow-up edit.
+  const lastPromptRef = useRef<string>("");
 
   const SCROLL_THRESHOLD_PX = 40;
 
@@ -94,6 +99,7 @@ export function PlaygroundPage() {
     if (!text || chat.status === "streaming") return;
     const next: ChatMessage[] = [...log, { role: "user", content: text }];
     setLog(next);
+    lastPromptRef.current = text;
     setInput("");
     // Re-anchor to bottom: user is sending a new prompt, they want to
     // see the reply from the start.
@@ -111,14 +117,19 @@ export function PlaygroundPage() {
   };
 
   // When the stream finishes, append the assistant message to the log
-  // and reset the chat hook. deps capture only what we actually read:
-  // - chat.status (primitive transition trigger)
-  // - chat.done (the payload we read on done)
-  // Using the full `chat` object would refire the effect every render
-  // because the hook returns a fresh object each call (state + new
-  // useCallback identity on send/cancel/reset). `chat.reset` is stable
-  // because the hook builds it with useCallback([]) — safe to call
-  // without including in deps.
+  // and reset the chat hook. Effect deps cover both ends of the
+  // stream lifecycle:
+  //   - chat.status: primitive transition trigger (idle → streaming
+  //     → done | error). Effect runs once per terminal hop.
+  //   - chat.done: only mutated on terminal events (setDone in the
+  //     hook's onJson + onCloseBeforeDone branches), so the object
+  //     identity is stable during streaming. Including it covers the
+  //     done payload read inside the effect.
+  // chat.reset is intentionally NOT in deps — useCallback([]) keeps
+  // its identity stable so we don't need to track it. The exhaustive-
+  // deps disable below silences the lint about chat.reset; the alt
+  // would be capturing the whole `chat` object which fires the effect
+  // on every render (it's a fresh return object each call).
   useEffect(() => {
     if (chat.status !== "done" || !chat.done || !chat.done.ok) return;
     const content = chat.done.content;
@@ -134,6 +145,17 @@ export function PlaygroundPage() {
     chat.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.status, chat.done]);
+
+  // 5/25 ui-f LOW-2: on error, restore the user's prompt in the
+  // input box so retry is one click instead of "scroll up, copy
+  // from log, paste, edit". Only runs once per error transition
+  // (chat.status as the trigger).
+  useEffect(() => {
+    if (chat.status === "error" && lastPromptRef.current) {
+      setInput((cur) => (cur ? cur : lastPromptRef.current));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.status]);
 
   const onClear = () => {
     setLog([]);

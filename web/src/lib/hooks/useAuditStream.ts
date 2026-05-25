@@ -29,6 +29,16 @@
  * Layering invariant: lib/hooks/ MUST NOT import features/. The earlier
  * version imported `TimelineEventData` + `mapAuditToTimeline` — 5/25
  * arch HIGH-4 surfaced the residual reverse-dep, fixed here.
+ *
+ * Security contract (5/25 sec LOW-3): events returned by this hook
+ * pass through to `ActivityTimeline` / consumer view models which
+ * render via React string children — React auto-escapes, so the
+ * `summary` / `data` fields are safe even if the producer emits raw
+ * shell command lines / model output. If any future consumer wants to
+ * render HTML / Markdown, escape at the mapping layer
+ * (e.g. `mapAuditToTimeline` in `features/dashboard/useAudit.ts`).
+ * DO NOT assume downstream sanitizes — the hook is the trust
+ * boundary because it's the WS edge.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 

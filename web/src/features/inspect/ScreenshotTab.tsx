@@ -195,7 +195,17 @@ export function ScreenshotTab() {
   }
 
   const downloadHref = imgSrc;
-  const downloadName = selected ?? "screenshot.png";
+  // 5/25 sec LOW-2: server-supplied filename used as `download` attr.
+  // POSIX filenames allow control chars / unicode RTL override
+  // (‮) which can visually spoof the extension in browser save
+  // dialogs (e.g. "screenshotgnp.exe" appearing as
+  // "screenshotexe.png"). Sanitize to a strict ASCII whitelist.
+  // Today the workspace is maintainer-controlled so the practical
+  // risk is low; this is defence-in-depth for any future multi-tenant
+  // / shared-workspace deployment.
+  const downloadName = selected
+    ? selected.replace(/[^A-Za-z0-9._-]/g, "_")
+    : "screenshot.png";
   const captureFailed = trigger.data?.ok === false ? trigger.data.error : null;
 
   return (

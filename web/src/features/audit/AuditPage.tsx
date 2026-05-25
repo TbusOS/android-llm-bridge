@@ -204,7 +204,12 @@ export function AuditPage() {
           />{" "}
           {lang === "zh" ? "含 metric" : "include metrics"}
         </label>
-        <span className="audit-page__count" role="status">
+        {/* 5/25 ui-f LOW-1: this is a constantly-ticking counter, not
+         *   a state notification — `role="status"` would make SR
+         *   announce every "51 events, 52 events, ..." as the stream
+         *   advances. Drop the role; it remains a visible counter for
+         *   sighted users. */}
+        <span className="audit-page__count">
           {kindFilter || sourceFilter !== "all"
             ? lang === "zh"
               ? `${visible.length} / ${allEvents.length} 匹配`
