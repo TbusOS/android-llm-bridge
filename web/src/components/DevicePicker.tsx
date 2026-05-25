@@ -67,11 +67,18 @@ export function DevicePicker({ lang }: Props) {
   }, [open]);
 
   // Sync focusIdx to the currently-selected device when opening.
+  // deps intentionally exclude `devices` — react-query returns stable
+  // refs when payload is unchanged in prod, but any consumer (or test
+  // mock) that returns a new array per render would otherwise re-fire
+  // this effect on every render and clobber focusIdx → 0 mid-keyboard
+  // nav. We re-sync only when the menu opens or the actively-selected
+  // serial changes; the user's manual focus moves win after that.
   useEffect(() => {
     if (!open) return;
     const i = devices.findIndex((d) => d.id === device);
     setFocusIdx(i >= 0 ? i : 0);
-  }, [open, device, devices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, device]);
 
   const onTriggerKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
