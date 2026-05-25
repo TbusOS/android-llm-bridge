@@ -61,6 +61,10 @@ export function DashboardPage() {
   // dashboard components want. Inline `useMemo` per ADR-043 (N=1
   // consumer → no wrapper hook). `devices` carries all metadata
   // (loading / error / refetch) plus the projected `cards` array.
+  // Field-level deps (not `[devicesRaw]` whole-object) so refetch
+  // ticks where data hasn't actually changed don't bust the memo.
+  // useDevices internally useMemo-wraps its return (AM-2), so each
+  // primitive / array reference is stable when underlying state is.
   const devices: DeviceVm = useMemo(
     () => ({
       cards: devicesRaw.devices.map((d) =>
@@ -73,7 +77,15 @@ export function DashboardPage() {
       error: devicesRaw.error,
       refetch: devicesRaw.refetch,
     }),
-    [devicesRaw],
+    [
+      devicesRaw.devices,
+      devicesRaw.transportName,
+      devicesRaw.backendError,
+      devicesRaw.isLoading,
+      devicesRaw.isError,
+      devicesRaw.error,
+      devicesRaw.refetch,
+    ],
   );
   const onRefreshDevices = () => {
     devices.refetch?.();
@@ -94,6 +106,9 @@ export function DashboardPage() {
     () => auditStream.businessRaw.map(mapAuditToTimeline),
     [auditStream.businessRaw],
   );
+  // useAuditStream now (AO-2) returns a useMemo-wrapped object —
+  // `auditStream` reference is stable while state is unchanged. So
+  // `[auditStream, auditEvents]` IS field-level enough.
   const audit: AuditVm = useMemo(
     () => ({ ...auditStream, events: auditEvents }),
     [auditStream, auditEvents],

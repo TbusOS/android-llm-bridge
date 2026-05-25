@@ -251,15 +251,36 @@ export function useAuditStream(
     return merged;
   }, [businessRaw, metricRaw]);
 
-  return {
-    businessRaw,
-    metricRaw,
-    rawEvents,
-    since,
-    until,
-    status,
-    paused,
-    pause,
-    resume,
-  };
+  // 5/25 第三轮 arch HIGH-1: previously returned a raw object literal
+  // which made every render a new reference. DashboardPage was
+  // wrapping the return in `useMemo([auditStream])` — that memo never
+  // hit cache. Wrap here so all consumers (DashboardPage useMemo /
+  // AuditPage destructure / useLiveSession reducer deps) see a stable
+  // ref while the underlying state hasn't changed.
+  // Deps mirror exactly what the return object reads. pause / resume
+  // are useCallback already (line 217 / 230), stable.
+  return useMemo<AuditStreamRawViewModel>(
+    () => ({
+      businessRaw,
+      metricRaw,
+      rawEvents,
+      since,
+      until,
+      status,
+      paused,
+      pause,
+      resume,
+    }),
+    [
+      businessRaw,
+      metricRaw,
+      rawEvents,
+      since,
+      until,
+      status,
+      paused,
+      pause,
+      resume,
+    ],
+  );
 }
