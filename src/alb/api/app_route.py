@@ -51,9 +51,8 @@ def _resolve_transport(
     ``architecture.md`` "REST envelope 三态约定".
     """
     if device and not is_safe_device(device):
-        raise HTTPException(
-            status_code=400, detail=f"invalid device serial: {device!r}"
-        )
+        # L-051: no-echo on reject (sec MID-1). See diag_route._resolve_transport.
+        raise HTTPException(status_code=400, detail="invalid device serial")
     try:
         return build_transport(device_serial=device), None
     except Exception as e:  # noqa: BLE001

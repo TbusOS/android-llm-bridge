@@ -55,10 +55,8 @@ def _logs_dir(device: str | None) -> Path:
     root = workspace_root()
     if device:
         if not is_safe_device(device):
-            raise HTTPException(
-                status_code=400,
-                detail=f"invalid device serial: {device!r}",
-            )
+            # L-051: no-echo on reject (sec MID-1). See diag_route._resolve_transport.
+            raise HTTPException(status_code=400, detail="invalid device serial")
         return root / "devices" / device / "logs"
     return root / "logs"
 

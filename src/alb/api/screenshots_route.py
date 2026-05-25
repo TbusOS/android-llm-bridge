@@ -48,10 +48,8 @@ def _screenshots_dir(serial: str) -> Path:
     the escaped target.
     """
     if not is_safe_device(serial):
-        raise HTTPException(
-            status_code=400,
-            detail=f"invalid device serial: {serial!r}",
-        )
+        # L-051: no-echo on reject (sec MID-1). See diag_route._resolve_transport.
+        raise HTTPException(status_code=400, detail="invalid device serial")
     return workspace_root() / "devices" / serial / "screenshots"
 
 

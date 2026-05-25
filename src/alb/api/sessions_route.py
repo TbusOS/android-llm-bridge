@@ -173,10 +173,10 @@ async def get_session_detail(
     "not found" state.
     """
     if not is_safe_session_id(session_id):
-        raise HTTPException(
-            status_code=400,
-            detail=f"invalid session id: {session_id!r}",
-        )
+        # L-051: no-echo on reject (sec MID-1). See diag_route._resolve_transport.
+        # `session not found` below intentionally DOES echo session_id —
+        # client already supplied it, the 404 carries no new info.
+        raise HTTPException(status_code=400, detail="invalid session id")
     sessions_root = workspace_root() / "sessions"
     detail = await asyncio.to_thread(
         _load_detail_in_thread, sessions_root, session_id

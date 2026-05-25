@@ -2517,3 +2517,50 @@ boundary) · L-035 (path-traversal 实测验证文化)
 ---
 
 （新教训按此格式追加）
+
+## L-051 · 安全修复必须扫 sibling endpoints 一并修
+
+**症状**: AI-6 commit 修了 `diag_route.py` 两处 `detail=f"invalid device
+serial: {device!r}"` 改成无回显 · 加了 test_diag_route.py regression
+spec · 但 5/25 第二轮 audit 发现 4 个 sibling endpoints (power /
+uart / app / log_search) 同款 detail 回显**全没改** · screenshots /
+sessions / files 也漏。修了 1/7 · 给后续 reviewer 假阳性"安全防护
+已就位"信号。
+
+**根因**: 安全修复是"按 finding 改" · 没"按 helper 扫一遍 sibling
+callsite"。`is_safe_device` / `is_safe_session_id` / `_resolve_workspace
+_path` 这种安全 helper 的所有 caller 应该 hold 同款 detail-不-回显
+契约 · grep 全仓 + 统一修才完整。
+
+**Fix pattern** (commit AK-2):
+1. grep 所有 `detail=f".*{<user-input>!r}"` 或 `detail=f".*{<user-
+   input>}"` pattern 找全 callsite
+2. 全部改 `detail="<reason>"` 不回显原值 · 加注释引用 L-051
+3. 加 `tests/api/test_sec_no_echo.py` cross-route parametrize spec ·
+   一处覆盖所有 reject 路径 · 同款 sneaky `<script>` payload 验
+   detail 不含原值
+4. 例外：404 / not-found 路径回显 client 提供的 ID 是 OK 的（client
+   原本知道这个值 · 不是新信息）· 在代码注释里说清楚
+
+**禁止的写法**:
+- ❌ "我修的是 finding 里点名的那 1 处" → 漏 sibling
+- ❌ "test 只覆盖修过的路由" → reviewer 看到 test 以为全防护
+- ❌ "detail 字符串回显客户端原 query 没风险" → 任何 future consumer
+  用 dangerouslySetInnerHTML 就成 reflected XSS
+
+**触发条件**:
+- 任何安全 finding 涉及 detail / error message 回显
+- 任何 reject helper (is_safe_*) 调用方扫一遍
+- 任何 audit finding 标 "类问题" 时（不是单点 bug）
+
+**关联**:
+- AK-2 commit · sec MID-1 一致性修
+- L-035 (path-traversal 根因层 reject)
+- L-050 (TOCTOU full coverage not pointwise) · 同款"全覆盖 not 局部"思想
+- agent grep checklist 建议加：security-and-neutrality-auditor 在 diff
+  命中 `detail=f"...{<param>[!r]?}"` 时 · 全仓 grep 同 helper · 任一
+  漏修即 MID
+
+---
+
+（新教训按此格式追加）

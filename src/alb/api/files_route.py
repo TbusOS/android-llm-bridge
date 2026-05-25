@@ -147,8 +147,11 @@ def _resolve_workspace_path(rel: str) -> Path:
     try:
         candidate.relative_to(root)
     except ValueError as exc:
+        # L-051: no-echo on reject (sec MID-1). `rel` is user-controlled
+        # bytes (may contain control chars / RTL override) — don't bake
+        # them into the detail. See diag_route._resolve_transport.
         raise HTTPException(
-            status_code=400, detail=f"path escapes workspace: {rel}"
+            status_code=400, detail="path escapes workspace"
         ) from exc
     return candidate
 
