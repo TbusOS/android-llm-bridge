@@ -1343,3 +1343,71 @@
 ---
 
 （新债由主对话评估后追加；agents 不直接写）
+
+## DEBT-056 · SessionsList 改 table semantic + 子链接 button (aria-label 不再 1:1 复述)
+
+- **现象**：5/25 第二轮 ui-f LOW-2 · AI-8 commit 把 6 列内容全编进
+  aria-label · NVDA / VoiceOver 顺序朗读 ~110 字符 = 6s/行 · 30 行
+  = 3 分钟 · SR 用户基本会放弃
+- **影响**：a11y · 信息密度
+- **建议方案**：拆 `<Link>` 包整行 → 用 `<table><tr><th scope="col">
+  / <td>` 语义 + 子链接 button · SR 可独立朗读列名 + 单元格 ·
+  aria-label 简化成 "Open session abc123" 类
+- **触发关闭**：a11y 合规审 / Sessions 列表改大改时
+- **来源**：5/25 第二轮 ui-f audit LOW-2
+
+---
+
+## DEBT-057 · mockup webui-preview-v3 补 Playground / Inspect / Audit / Sessions / Screenshots zoom 全套
+
+- **现象**：5/25 mockup MID-1 · `.playground-chat__*` / `.audit-page__*`
+  / `.screenshot-zoom__*` / `.sessions-table__*` 全套 BEM 都未画进
+  mockup v2 · React 直接 ship 不走 L-React-UI-baseline 流程
+- **影响**：React UI 没有视觉基线锚 · 下次 audit 易因 React 改动
+  漂移 mockup（H2 `.live-pulse` 橙色就是这类）
+- **建议方案**：
+  - 建 docs/webui-preview-v3.html (或 v2 单页扩展 docs/
+    webui-preview-v2-playground.html / -inspect.html / -audit.html
+    / -sessions.html / -screenshots-zoom.html)
+  - 跑 sky-skills/design-review 三闸 (verify / visual-audit / screenshot)
+  - mockup-baseline-checker agent 加 grep checklist 验 React class
+    都在 mockup 出现
+- **触发关闭**：下一个大批 audit cycle 前 / 或新 UI 工作前
+- **来源**：5/25 第二轮 mockup MID-1
+
+---
+
+## DEBT-058 · DevicePicker combobox 模式正式化 (改 Radix Combobox / 标准 ARIA APG combobox-only)
+
+- **现象**：5/25 第二轮 ui-f LOW-4 (arch LOW-2) · 当前 DevicePicker
+  实际 DOM focus 在 `<ul>` + activedescendant 也挂 listbox · 这是
+  ARIA listbox-with-active 模式 · 不是标准 combobox pattern
+- **影响**：对 WAI-ARIA 1.2 合规审查不友好 · 实测 NVDA / VoiceOver
+  能用 · 但下一个 UI 审计可能 flag · 选 Radix Combobox 等成熟库
+  长期更稳
+- **建议方案**：
+  - 评估 Radix UI Combobox / cmdk 等 · 与 anthropic-design 视觉对齐
+  - 或纯手实现 combobox-only：trigger 永远保持 focus · listbox 不
+    tabIndex · 全 keyboard event 在 trigger 处理 + activedescendant
+    挂 trigger
+- **触发关闭**：a11y 合规审 / 第二个 combobox 出现 (model picker 等)
+- **来源**：5/25 第二轮 ui-f LOW-4 + arch LOW-2
+
+---
+
+## DEBT-059 · TestClient + StrictMode wrapper baseline 化 (升 DEBT-052)
+
+- **现象**：5/25 第二轮 code MID 隐含 · 现 7 file/59 spec 都跑普通
+  render / renderHook · prod app 在 main.tsx:32 是 StrictMode 包 ·
+  dev effect 跑两遍 · 任何 cleanup-then-re-effect 副作用 spec 测不到
+- **影响**：DEBT-052 升级版 · 当前测试基础设施层面没强制 StrictMode
+- **建议方案**：
+  - 选项 A：test/setup.ts 全局 wrap StrictMode (所有 renderHook /
+    render 自动套)
+  - 选项 B：每个 effect-heavy hook 加 "survives StrictMode" 单元
+    spec
+  - 选项 C：自定义 customRender utility 默认 StrictMode + 各 spec
+    显式 opt-out
+- **触发关闭**：StrictMode 下任一现有 spec fail / Effect cleanup bug
+  在 prod 被发现
+- **来源**：5/25 第二轮 隐含 + DEBT-052 升级

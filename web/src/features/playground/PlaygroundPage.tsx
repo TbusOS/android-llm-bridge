@@ -102,9 +102,17 @@ export function PlaygroundPage() {
     const el = logRef.current;
     if (!el) return;
     if (!stickToBottom) return;
-    // jump to the bottom on every render where we're in stick mode
     el.scrollTop = el.scrollHeight;
-  });
+    // deps intentionally include the things that grow the log
+    // (chat.delta during streaming · chat.status terminal hop · log
+    // length on send/clear · stickToBottom toggle). Earlier versions
+    // omitted deps entirely so every render wrote scrollTop — fine
+    // functionally but every keystroke in the input box triggered
+    // a DOM write. eslint-disable left in because we deliberately
+    // omit any other React state that PlaygroundPage holds (model /
+    // sampling knobs) since those don't change log height.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.delta, chat.status, log.length, stickToBottom]);
 
   const onLogScroll = () => {
     const el = logRef.current;

@@ -2605,3 +2605,40 @@ N=1 / N≥2 consumer。规则在低 N 时变成 over-design 强制。
 ---
 
 （新教训按此格式追加）
+
+## L-053 · DOM focus 决定 aria-activedescendant 宿主 · 挂错位 = a11y 修了等于没修
+
+**症状**: 5/25 AI-7 commit 把 `aria-activedescendant` 挂在 trigger
+button 上 · 但 DOM focus 在 listbox `<ul>` · NVDA / VoiceOver 从
+focused element 读 activedescendant · 挂错宿主 → SR 完全不读 ·
+ArrowDown/Up 切换 option 仍然沉默 · "修了等于没修"。AK-1 commit 真修
+(改挂 listbox)。
+
+**根因**: WAI-ARIA 1.2 spec 明确：`aria-activedescendant` 必须挂在
+**持有 DOM focus** 的元素上。AT 的 reading cursor 总是从 focused
+element 开始走 activedescendant 链。挂错位的 attribute 不会被读。
+
+**Fix pattern** (commit AK-1):
+- listbox 模式 (DOM focus 在 listbox container)：activedescendant
+  挂 `<ul role="listbox">` 上
+- combobox-only 模式 (DOM focus 在 textbox/trigger · listbox 不抢
+  focus)：activedescendant 挂 `<button role="combobox">` 上
+- 两种模式都不能混 (focus 在 ul · activedescendant 在 trigger 是错)
+
+**禁止的写法**:
+- ❌ `<button role="combobox" aria-activedescendant={..} />` +
+  `<ul ref={r => r?.focus()} />` · activedescendant 写错位置
+- ❌ 改 a11y attribute 不真用 SR 验 · 看 commit message 自承"修了"
+  反而失败
+
+**触发条件**:
+- 任何 combobox / listbox / menu / tree 等 roving-focus 模式
+- 任何加 / 改 `aria-activedescendant` 的 commit · 必须验 focus 位置
+- ui-fluency-auditor agent grep checklist 加：找 activedescendant ·
+  确认所在元素也是 ref.focus() 目标
+
+**关联**:
+- AK-1 commit · ui-f HIGH-1 真修 (AI-7 假修反例)
+- L-051 (安全修复扫 sibling 一并修 · 同款"修了等于没修"主题)
+- WAI-ARIA APG combobox / listbox / Roving tabindex 模式
+- DEBT-058 (DevicePicker combobox 模式正式化)
