@@ -14,6 +14,21 @@
  * Wires `usePlayground` for catalog data and `usePlaygroundChat` for
  * the WS streaming protocol. Multi-turn: the parent keeps the message
  * log; the hook owns only the in-flight request.
+ *
+ * AO-3 redesign (5/25 第三轮 audit HIGH-3 + HIGH-4):
+ *   - `ChatMessage.meta` distinguishes "real assistant content" from
+ *     "cancelled partial" / "error placeholder". `onSend` filters
+ *     meta-tagged messages OUT before building the LLM messages
+ *     payload, so cancelled / errored entries can't pollute the
+ *     conversation context the model sees.
+ *   - Terminal path (cancel / ws-close / ws-error / server error) is
+ *     handled in ONE `useEffect` watching `chat.settled` (the
+ *     discriminated union from useWsChatStream AO-1). Partial delta
+ *     is stashed identically across cancel / error paths — no
+ *     dual-render arm.
+ *   - `.playground-msg__partial` arm and the `chat.status === "error"
+ *     && chat.done` block are gone. `playground-msg--cancelled` /
+ *     `playground-msg--errored` carry the visual difference.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -27,9 +42,29 @@ import {
   type PlaygroundRequest,
 } from "./usePlaygroundChat";
 
-interface ChatMessage {
+/** UI-side message. `meta` tags messages that exist only for user
+ *  display — partial cancel / error markers — so they're stripped
+ *  before being sent to the LLM as conversation history. */
+export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  meta?: { kind: "cancelled" | "errored" };
+}
+
+/** Project a log array down to the {role, content} shape the LLM API
+ *  expects, with cancelled / errored markers removed. The LLM only
+ *  sees real user prompts + real assistant replies.
+ *
+ *  Exported for unit testing in PlaygroundPage.test.ts — this is the
+ *  critical security boundary that keeps cancel/error markers out of
+ *  the model's context (5/25 第三轮 ui-f HIGH-1 fix). */
+export function llmMessagesFrom(log: ChatMessage[]): Array<{
+  role: "user" | "assistant" | "system";
+  content: string;
+}> {
+  return log
+    .filter((m) => !m.meta)
+    .map((m) => ({ role: m.role, content: m.content }));
 }
 
 export function PlaygroundPage() {
@@ -37,7 +72,6 @@ export function PlaygroundPage() {
   const backendsQ = useBackends();
   const backends = backendsQ.data?.backends ?? [];
   const [backend, setBackend] = useState<string>("");
-  // Auto-pick the first registered backend once the list arrives.
   useEffect(() => {
     if (!backend && backends.length > 0) {
       setBackend(backends[0]!.name);
@@ -58,37 +92,28 @@ export function PlaygroundPage() {
 
   const chat = usePlaygroundChat();
 
-  // 5/25 ui-f MID-2: chat log was a `.playground-chat__log` with
-  // `overflow-y:auto` but no scroll-follow — long replies pushed new
-  // tokens below the viewport while the user stared at the top. Now
-  // we track a `stickToBottom` flag:
-  //   - default true → every render scrolls to bottom
-  //   - user scrolls up (more than 40 px above bottom) → stick=false,
-  //     stops auto-scrolling so reading isn't interrupted
-  //   - user scrolls back to bottom → stick=true again
-  //   - sending a new prompt → force stick=true so the next reply
-  //     starts from a known anchor
   const logRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLFormElement>(null);
   const chatRef = useRef<HTMLElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
-  // Snapshot of the most recently sent prompt — used to repopulate
-  // the input on error (5/25 ui-f LOW-2). Cleared by user typing
-  // anything (we only restore when input is empty), so retry doesn't
-  // clobber a follow-up edit.
   const lastPromptRef = useRef<string>("");
+  // Tracks the last `chat.settled` ref we processed in the terminal
+  // effect — guards against the effect re-firing while we're inside
+  // it (e.g. chat.reset() flushes settled→null which triggers another
+  // render before the next start).
+  const handledSettledRef = useRef<typeof chat.settled>(null);
 
-  // 5/25 ui-f MID-11: keep --chat-bar-height in sync with the actual
-  // bar height (textarea has `resize: vertical`, so user-drag changes
-  // it). Reads barRef.offsetHeight via ResizeObserver and writes the
-  // CSS var on the parent so the absolute-positioned jump button
-  // stays clear of the bar.
+  // 5/25 ui-f MID-11 (AM-1): keep --chat-bar-height in sync with the
+  // actual bar height (textarea has `resize: vertical`, so user-drag
+  // changes it). Reads barRef.offsetHeight via ResizeObserver and
+  // writes the CSS var on the parent so the absolute-positioned jump
+  // button stays clear of the bar.
   useEffect(() => {
     const bar = barRef.current;
-    const chat = chatRef.current;
-    if (!bar || !chat) return;
+    const chatEl = chatRef.current;
+    if (!bar || !chatEl) return;
     const apply = () => {
-      chat.style.setProperty("--chat-bar-height", `${bar.offsetHeight}px`);
+      chatEl.style.setProperty("--chat-bar-height", `${bar.offsetHeight}px`);
     };
     apply();
     const ro = new ResizeObserver(apply);
@@ -103,14 +128,8 @@ export function PlaygroundPage() {
     if (!el) return;
     if (!stickToBottom) return;
     el.scrollTop = el.scrollHeight;
-    // deps intentionally include the things that grow the log
-    // (chat.delta during streaming · chat.status terminal hop · log
-    // length on send/clear · stickToBottom toggle). Earlier versions
-    // omitted deps entirely so every render wrote scrollTop — fine
-    // functionally but every keystroke in the input box triggered
-    // a DOM write. eslint-disable left in because we deliberately
-    // omit any other React state that PlaygroundPage holds (model /
-    // sampling knobs) since those don't change log height.
+    // deps cover what grows the log; we omit other PlaygroundPage
+    // state (model / sampling knobs) on purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.delta, chat.status, log.length, stickToBottom]);
 
@@ -129,13 +148,11 @@ export function PlaygroundPage() {
     setLog(next);
     lastPromptRef.current = text;
     setInput("");
-    // Re-anchor to bottom: user is sending a new prompt, they want to
-    // see the reply from the start.
     setStickToBottom(true);
     const req: PlaygroundRequest = {
       backend,
       model: model || null,
-      messages: next,
+      messages: llmMessagesFrom(next),
       ...(system ? { system } : {}),
       temperature,
       top_p: topP,
@@ -144,46 +161,77 @@ export function PlaygroundPage() {
     chat.send(req);
   };
 
-  // When the stream finishes, append the assistant message to the log
-  // and reset the chat hook. Effect deps cover both ends of the
-  // stream lifecycle:
-  //   - chat.status: primitive transition trigger (idle → streaming
-  //     → done | error). Effect runs once per terminal hop.
-  //   - chat.done: only mutated on terminal events (setDone in the
-  //     hook's onJson + onCloseBeforeDone branches), so the object
-  //     identity is stable during streaming. Including it covers the
-  //     done payload read inside the effect.
-  // chat.reset is intentionally NOT in deps — useCallback([]) keeps
-  // its identity stable so we don't need to track it. The exhaustive-
-  // deps disable below silences the lint about chat.reset; the alt
-  // would be capturing the whole `chat` object which fires the effect
-  // on every render (it's a fresh return object each call).
+  // Terminal-path effect (AO-3). Replaces the prior split
+  // [done-only useEffect + onCancel partial stash + .playground-msg
+  // --error render-time branch] with ONE handler keyed on
+  // chat.settled. Pushes meta-tagged log entries for cancelled /
+  // errored paths so they're visible to the user but excluded from
+  // future LLM payloads (HIGH-4 fix).
   useEffect(() => {
-    if (chat.status !== "done" || !chat.done || !chat.done.ok) return;
-    const content = chat.done.content;
-    if (!content) {
+    const info = chat.settled;
+    if (!info) {
+      handledSettledRef.current = null;
+      return;
+    }
+    if (handledSettledRef.current === info) return;
+    handledSettledRef.current = info;
+
+    if (info.kind === "done") {
+      // success — promote the done.content to a real assistant turn.
+      if (chat.done?.ok && chat.done.content) {
+        const content = chat.done.content;
+        setLog((l) => {
+          const last = l[l.length - 1];
+          if (last && last.role === "assistant" && last.content === content) {
+            return l;
+          }
+          return [...l, { role: "assistant", content }];
+        });
+      }
       chat.reset();
       return;
     }
-    setLog((l) => {
-      const last = l[l.length - 1];
-      if (last && last.role === "assistant" && last.content === content) return l;
-      return [...l, { role: "assistant", content }];
-    });
-    chat.reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.status, chat.done]);
 
-  // 5/25 ui-f LOW-2: on error, restore the user's prompt in the
-  // input box so retry is one click instead of "scroll up, copy
-  // from log, paste, edit". Only runs once per error transition
-  // (chat.status as the trigger).
-  useEffect(() => {
-    if (chat.status === "error" && lastPromptRef.current) {
+    if (info.kind === "cancelled") {
+      if (chat.delta) {
+        const partial = chat.delta;
+        setLog((l) => [
+          ...l,
+          { role: "assistant", content: partial, meta: { kind: "cancelled" } },
+        ]);
+      }
+      chat.reset();
+      return;
+    }
+
+    // info.kind === "error" (source: server / ws-close / ws-error)
+    // Stash partial (if any) + the error message as separate meta-
+    // tagged entries. Both stay visible; neither feeds the next
+    // messages payload.
+    if (chat.delta) {
+      const partial = chat.delta;
+      setLog((l) => [
+        ...l,
+        { role: "assistant", content: partial, meta: { kind: "errored" } },
+      ]);
+    }
+    if (chat.done?.error) {
+      const e = chat.done.error;
+      const msg = `${e.code}: ${e.message}`;
+      setLog((l) => [
+        ...l,
+        { role: "assistant", content: msg, meta: { kind: "errored" } },
+      ]);
+    }
+    // On error, restore the user's prompt so retry is one click
+    // (ui-f LOW-2 preserved). Only restore when input is empty so a
+    // follow-up edit isn't clobbered.
+    if (lastPromptRef.current) {
       setInput((cur) => (cur ? cur : lastPromptRef.current));
     }
+    chat.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.status]);
+  }, [chat.settled]);
 
   const onClear = () => {
     setLog([]);
@@ -191,28 +239,8 @@ export function PlaygroundPage() {
     setStickToBottom(true);
   };
 
-  // 5/25 ui-f MID-1: cancel during streaming used to drop the partial
-  // delta silently — user lost the 200+ tokens that had already
-  // arrived. We now stash whatever's accumulated into the log as a
-  // (truncated) assistant message before tearing down the stream so
-  // the output is at least visible / copyable.
-  const onCancel = () => {
-    if (chat.delta) {
-      const trailer = lang === "zh" ? " [已取消]" : " [cancelled]";
-      const partial = chat.delta;
-      setLog((l) => [
-        ...l,
-        { role: "assistant", content: partial + trailer },
-      ]);
-    }
-    chat.cancel();
-  };
-
   const onJumpToBottom = () => {
     setStickToBottom(true);
-    // Force the layout effect — without this the user can be parked
-    // at a steady scroll position and clicking the button doesn't
-    // trigger a render (state already true).
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   };
@@ -361,39 +389,36 @@ export function PlaygroundPage() {
                 : "No messages yet — type below to start."}
             </div>
           )}
-          {log.map((m, i) => (
-            <div
-              key={i}
-              className={`playground-msg playground-msg--${m.role}`}
-            >
-              <span className="playground-msg__role">{m.role}</span>
-              <pre className="playground-msg__body">{m.content}</pre>
-            </div>
-          ))}
+          {log.map((m, i) => {
+            const classes = ["playground-msg", `playground-msg--${m.role}`];
+            if (m.meta?.kind === "cancelled") {
+              classes.push("playground-msg--cancelled");
+            } else if (m.meta?.kind === "errored") {
+              classes.push("playground-msg--errored");
+            }
+            return (
+              <div key={i} className={classes.join(" ")}>
+                <span className="playground-msg__role">
+                  {m.role}
+                  {m.meta?.kind === "cancelled" &&
+                    (lang === "zh"
+                      ? " · 已取消（未发给模型）"
+                      : " · cancelled (not sent to model)")}
+                  {m.meta?.kind === "errored" &&
+                    (lang === "zh"
+                      ? " · 错误（未发给模型）"
+                      : " · error (not sent to model)")}
+                </span>
+                <pre className="playground-msg__body">{m.content}</pre>
+              </div>
+            );
+          })}
           {chat.status === "streaming" && (
             <div className="playground-msg playground-msg--assistant playground-msg--streaming">
               <span className="playground-msg__role">assistant</span>
               <pre className="playground-msg__body">
                 {chat.delta}
                 <span className="playground-msg__cursor">▍</span>
-              </pre>
-            </div>
-          )}
-          {chat.status === "error" && chat.done && (
-            <div className="playground-msg playground-msg--error">
-              <span className="playground-msg__role">error</span>
-              {/* 5/25 ui-f MID-1: 在错误条之前保留已流的 token · 之前
-               *   error 一来 streaming 气泡消失 · 用户失去 200+ token
-               *   的输出 · 也没回放路径。chat.delta 仍有上次终止前的
-               *   累积 · 显示出来让用户至少能复制 / 看到。 */}
-              {chat.delta && (
-                <pre className="playground-msg__body playground-msg__partial">
-                  {chat.delta}
-                </pre>
-              )}
-              <pre className="playground-msg__body">
-                {chat.done.error?.code ?? "ERROR"}:{" "}
-                {chat.done.error?.message ?? "(no message)"}
               </pre>
             </div>
           )}
@@ -440,18 +465,14 @@ export function PlaygroundPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              // Ctrl/⌘+Enter → send. Plain Enter inserts newline.
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                 e.preventDefault();
                 if (chat.status !== "streaming") onSend();
                 return;
               }
-              // ESC during streaming → cancel. Keyboard users would
-              // otherwise be locked out (textarea was previously
-              // `disabled` which dropped focus, so ESC never fired).
               if (e.key === "Escape" && chat.status === "streaming") {
                 e.preventDefault();
-                onCancel();
+                chat.cancel();
               }
             }}
             placeholder={
@@ -463,8 +484,6 @@ export function PlaygroundPage() {
                   ? "输入消息 · ⌘+Enter 发送"
                   : "Message… · ⌘+Enter to send"
             }
-            // readOnly instead of disabled — keeps focus on the input
-            // so Esc can fire (disabled drops focus to body, dead).
             readOnly={chat.status === "streaming"}
             aria-readonly={chat.status === "streaming"}
           />
@@ -472,7 +491,7 @@ export function PlaygroundPage() {
             <button
               type="button"
               className="playground-chat__cancel"
-              onClick={onCancel}
+              onClick={chat.cancel}
             >
               {lang === "zh" ? "取消" : "cancel"}
             </button>

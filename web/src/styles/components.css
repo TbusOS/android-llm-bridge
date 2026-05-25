@@ -4710,14 +4710,34 @@ html[lang^="zh"] h3 {
   outline-offset: 2px;
 }
 
-/* Partial (already-streamed) tokens shown above the error / cancel
- * marker. Slightly muted to differentiate from the final error
- * message but still readable / selectable for copy. */
-.playground-msg__partial {
-  opacity: 0.75;
-  border-bottom: 1px dashed var(--anth-light-gray);
-  padding-bottom: 8px;
-  margin-bottom: 6px;
+/* Cancelled / errored message variants (AO-3 · 5/25 第三轮 ui-f
+ * HIGH-1 + arch HIGH-3). These are log entries that exist only for
+ * the user's reference — the LLM never sees them (PlaygroundPage
+ * filters meta-tagged messages out of the messages payload). Visual
+ * cues:
+ *   - muted body opacity so they sink behind real turns
+ *   - left border in a status color (mid-gray / red) so the kind
+ *     reads at a glance
+ *   - role label has " · cancelled (not sent to model)" appended in
+ *     JSX so screen readers also distinguish them
+ */
+.playground-msg--cancelled {
+  opacity: 0.7;
+  border-left: 3px solid var(--anth-mid-gray);
+  padding-left: 10px;
+}
+
+.playground-msg--errored {
+  opacity: 0.85;
+  border-left: 3px solid #b54b3d;
+  padding-left: 10px;
+  background: rgba(181, 75, 61, 0.05);
+}
+
+.playground-msg--cancelled .playground-msg__role,
+.playground-msg--errored .playground-msg__role {
+  font-size: 11px;
+  letter-spacing: 0.04em;
 }
 
 .playground-chat__head {
