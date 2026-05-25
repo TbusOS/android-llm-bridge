@@ -2564,3 +2564,44 @@ _path` 这种安全 helper 的所有 caller 应该 hold 同款 detail-不-回显
 ---
 
 （新教训按此格式追加）
+
+## L-052 · thin wrapper hook 是规则压力的副产物 · N=1 时该撤
+
+**症状**: AH-2 commit 抽 `useDeviceCards` / `useAuditTimeline` 两个
+thin wrapper hook (每个 10-12 行有效代码) 来消"lib/hooks/ 不准
+import features/" 的反向依赖规则。N=1 consumer 实际只服务
+DashboardPage 1 处 · 反过来引入：render boundary 多一层 · API
+surface 多一层 · 测试 mock 多一层 · 0 复用收益。下一轮 arch
+review (5/25 第二轮) 抓 "wrapper 是为规则的规则"。
+
+**根因**：ADR / lint 把"raw hook 必须配 wrapper"当硬规则·而没区分
+N=1 / N≥2 consumer。规则在低 N 时变成 over-design 强制。
+
+**Fix pattern** (commit AL-2 / ADR-043):
+- N=1 consumer：raw hook + 纯 mapping 函数（放 `features/<x>/
+  mappers.ts`）+ consumer 内 `useMemo`，**不抽 wrapper hook**
+- N=2 consumer：抽 wrapper 到首消费 feature 的 use<Y>.ts，第二
+  消费者 sibling import
+- N ≥ 3 consumer：升 wrapper 到 lib/hooks/<X>.ts
+
+**禁止的写法**:
+- ❌ "提层规则要求 wrapper → 我建一个 10 行 wrapper"
+- ❌ thin wrapper 只是 `useMemo(map)` 一行包装
+- ❌ wrapper hook 0 spec 因为"它太 thin 不需要测"——证明该撤
+
+**触发条件**:
+- 任何"raw hook 提层 / 反向依赖修复"工作 · 评估每个 wrapper 的
+  consumer count
+- arch / code reviewer 看到 thin wrapper hook (useMemo + map 一行)
+  无独立 spec · 该 flag MID
+- 新加 `features/<x>/use<Y>.ts` 文件只是 useMemo + map → 撤回 inline
+
+**关联**:
+- AL-2 commit · arch HIGH-2 fix
+- ADR-043 (wrapper hook 抽取临界)
+- L-048 (提层提一半 = 反向依赖 trap · 正确方向)
+- L-020 (N=2 不抽象 / N=3 抽 · 这是 hook 维度延伸)
+
+---
+
+（新教训按此格式追加）

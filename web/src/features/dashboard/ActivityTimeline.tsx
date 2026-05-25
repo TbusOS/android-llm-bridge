@@ -4,7 +4,7 @@
  *
  * Renders `TimelineEventData.parts` as React nodes — no
  * `dangerouslySetInnerHTML`, no manual escape. Producers (currently
- * `useAudit.mapAuditToTimeline`) supply a list of `{kind, value}`
+ * `mappers.mapAuditToTimeline`) supply a list of `{kind, value}`
  * segments and we map each kind to a `<code>` / `<span class=secondary>`
  * / raw text node. New producers can't accidentally inject markup
  * because the type system requires structured parts, not a string.

@@ -14,6 +14,7 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
+import { useMemo } from "react";
 import type { Lang } from "../../stores/app";
 import { useApp } from "../../stores/app";
 import { ActivityTimeline } from "./ActivityTimeline";
@@ -25,36 +26,78 @@ import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
 import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useAuditStream } from "../../lib/hooks/useAuditStream";
-import { useAuditTimeline } from "./useAuditTimeline";
+import { useDevices } from "../../lib/hooks/useDevices";
 import { useBackends } from "./useBackends";
-import { useDeviceCards } from "./useDeviceCards";
 import { useLiveSession } from "./useLiveSession";
 import { useMetricsSummary } from "./useMetricsSummary";
 import { useRecentSessions } from "./useSessions";
 import { useTools } from "./useTools";
 import { MOCK_QUICK_ACTIONS } from "./mockData";
-import type { KpiCardData } from "./types";
+import { mapAuditToTimeline, mapToDeviceCard } from "./mappers";
+import type { DeviceCardData, KpiCardData, TimelineEventData } from "./types";
+
+/** View-model shape: dashboard sees projected cards plus the lifecycle
+ *  metadata (loading / error / refetch) the raw hook exposes. */
+interface DeviceVm {
+  cards: DeviceCardData[];
+  transportName: string | null;
+  backendError: string | null;
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  refetch: () => void;
+}
+interface AuditVm extends ReturnType<typeof useAuditStream> {
+  events: TimelineEventData[];
+}
 
 export function DashboardPage() {
   const lang = useApp((s) => s.lang);
   const setDevice = useApp((s) => s.setDevice);
   const queryClient = useQueryClient();
   const recent = useRecentSessions();
-  const devices = useDeviceCards();
+  const devicesRaw = useDevices();
+  // Project raw `ApiDevice[]` into the `DeviceCardData[]` view-model
+  // dashboard components want. Inline `useMemo` per ADR-043 (N=1
+  // consumer → no wrapper hook). `devices` carries all metadata
+  // (loading / error / refetch) plus the projected `cards` array.
+  const devices: DeviceVm = useMemo(
+    () => ({
+      cards: devicesRaw.devices.map((d) =>
+        mapToDeviceCard(devicesRaw.transportName, d),
+      ),
+      transportName: devicesRaw.transportName,
+      backendError: devicesRaw.backendError,
+      isLoading: devicesRaw.isLoading,
+      isError: devicesRaw.isError,
+      error: devicesRaw.error,
+      refetch: devicesRaw.refetch,
+    }),
+    [devicesRaw],
+  );
   const onRefreshDevices = () => {
     devices.refetch?.();
     queryClient.invalidateQueries({ queryKey: ["device-details"] });
   };
   // Two separate WS subscriptions on /audit/stream — see ADR-022:
   //   1. timeline view: business events only (tps_sample filtered) →
-  //      `useAuditTimeline` wrapper maps businessRaw into TimelineEventData
+  //      inline `useMemo` projects businessRaw into TimelineEventData
+  //      (ADR-043: N=1 consumer · no wrapper hook)
   //   2. live view: metric events included so LiveSession can drive
   //      a real tps spark.
   // Two connections is acceptable for M2 single-tenant; revisit when
   // M3 adds auth (each WS = handshake + token). On the server side
   // this means the bus fan-out queue count goes 1× → 2×; acceptable
   // while N ≤ 4 connections per page.
-  const audit = useAuditTimeline({ includeMetrics: false });
+  const auditStream = useAuditStream({ includeMetrics: false });
+  const auditEvents = useMemo<TimelineEventData[]>(
+    () => auditStream.businessRaw.map(mapAuditToTimeline),
+    [auditStream.businessRaw],
+  );
+  const audit: AuditVm = useMemo(
+    () => ({ ...auditStream, events: auditEvents }),
+    [auditStream, auditEvents],
+  );
   const liveAudit = useAuditStream({ includeMetrics: true });
   const live = useLiveSession(liveAudit.rawEvents);
   const tools = useTools();
@@ -112,14 +155,14 @@ export function DashboardPage() {
             ? `传输层不可用 · ${devices.backendError}`
             : `Transport unavailable · ${devices.backendError}`}
         </SectionPlaceholder>
-      ) : devices.devices.length === 0 ? (
+      ) : devices.cards.length === 0 ? (
         <SectionPlaceholder styleKey="dev-strip" kind="empty">
           {lang === "zh"
             ? `当前 transport：${devices.transportName ?? "—"} · 无设备`
             : `Active transport: ${devices.transportName ?? "—"} · no devices`}
         </SectionPlaceholder>
       ) : (
-        <DeviceStripCompact devices={devices.devices} onSelect={setDevice} />
+        <DeviceStripCompact devices={devices.cards} onSelect={setDevice} />
       )}
 
       {/* === LLM backends + Recent sessions side-by-side === */}
@@ -232,14 +275,14 @@ export function DashboardPage() {
 
 /** Compose the 4-tile KPI strip from real backend data. */
 function buildKpis(
-  devices: ReturnType<typeof useDeviceCards>,
+  devices: DeviceVm,
   recent: ReturnType<typeof useRecentSessions>,
   tools: ReturnType<typeof useTools>,
   metricsSummary: ReturnType<typeof useMetricsSummary>,
   lang: Lang,
 ): KpiCardData[] {
-  const total = devices.devices.length;
-  const online = devices.devices.filter((d) => d.status === "online").length;
+  const total = devices.cards.length;
+  const online = devices.cards.filter((d) => d.status === "online").length;
   const sessions = recent.sessions.length;
   const live = recent.sessions.filter((s) => s.status === "live").length;
 
@@ -327,7 +370,7 @@ function buildKpis(
 }
 
 function auditMeta(
-  vm: ReturnType<typeof useAuditTimeline>,
+  vm: AuditVm,
   lang: Lang,
 ): string {
   const count = vm.events.length;
@@ -364,14 +407,14 @@ function backendMeta(
 }
 
 function deviceMeta(
-  vm: ReturnType<typeof useDeviceCards>,
+  vm: DeviceVm,
   lang: Lang,
 ): string {
   if (vm.isLoading) return lang === "zh" ? "加载中…" : "Loading…";
   if (vm.isError) return lang === "zh" ? "请求失败" : "request failed";
-  const total = vm.devices.length;
-  const online = vm.devices.filter((d) => d.status === "online").length;
-  const offline = vm.devices.filter((d) => d.status === "offline").length;
+  const total = vm.cards.length;
+  const online = vm.cards.filter((d) => d.status === "online").length;
+  const offline = vm.cards.filter((d) => d.status === "offline").length;
   if (total === 0) {
     return lang === "zh" ? "无设备 · 检查 transport" : "no devices · check transport";
   }

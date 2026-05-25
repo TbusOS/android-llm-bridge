@@ -3,7 +3,7 @@
  *
  * All MOCK_LIVE / MOCK_KPIS / MOCK_DEVICES / MOCK_BACKENDS / MOCK_SESSIONS
  * fixtures have been removed — every dashboard surface now reads from a
- * real fetcher (useDevices / useBackends / useAudit / useSessions /
+ * real fetcher (useDevices / useBackends / useAuditStream / useSessions /
  * useLiveSession / metrics stream). Only the quick-action labels remain
  * here because they're a static manifest mapping → known routes, not
  * data.

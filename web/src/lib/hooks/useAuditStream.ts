@@ -10,8 +10,10 @@
  * to honour DEBT-011 isolation). **No view-model projection here** —
  * feature consumers do their own shaping:
  *
- *   - `features/dashboard/useAuditTimeline.ts` wraps this + maps
- *     `businessRaw` into `TimelineEventData` for `<ActivityTimeline>`
+ *   - `features/dashboard/DashboardPage.tsx` maps `businessRaw` →
+ *     `TimelineEventData` via inline `useMemo` + `features/dashboard/
+ *     mappers.ts::mapAuditToTimeline` (ADR-043 · N=1 consumer · no
+ *     wrapper hook)
  *   - `features/dashboard/useLiveSession.ts` folds `metricRaw` into
  *     a live-session spark
  *   - `features/audit/AuditPage.tsx` reads `rawEvents` (merged) and
@@ -36,7 +38,7 @@
  * `summary` / `data` fields are safe even if the producer emits raw
  * shell command lines / model output. If any future consumer wants to
  * render HTML / Markdown, escape at the mapping layer
- * (e.g. `mapAuditToTimeline` in `features/dashboard/useAudit.ts`).
+ * (e.g. `mapAuditToTimeline` in `features/dashboard/mappers.ts`).
  * DO NOT assume downstream sanitizes — the hook is the trust
  * boundary because it's the WS edge.
  */

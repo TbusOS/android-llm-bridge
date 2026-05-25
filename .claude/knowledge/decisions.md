@@ -1215,7 +1215,8 @@ vite re-export，应该可单 config 解决"）。AH-5 实测验证：
 
 ## ADR-041 · hook 组织规则 · lib/hooks/ vs lib/ vs features/<x>/
 
-**Status**: accepted · 关 5/25 arch HIGH-3
+**Status**: superseded by ADR-043 (wrapper hook 抽取临界) for the
+"raw vs view-model 必须 wrapper hook" 子条款 · 槽位规则其余生效
 
 **Context**:
 
@@ -1234,10 +1235,18 @@ AH-1 commit 把 4 个业务 hook 统一到 lib/hooks/ · useDashboardQuery
   shape) · 不允许 import features/ (反向依赖触发 arch HIGH)
 - `web/src/lib/<utility>.ts` = **非 hook 的纯 utility** · api.ts /
   ws.ts / format.ts / deviceFormat.ts / dashboardQuery.ts (薄封装
-  TanStack Query) 这类 · 不带 React state · 不带 useEffect
+  TanStack Query) / types.ts (跨 feature union) 这类 · 不带 React
+  state · 不带 useEffect
 - `web/src/features/<x>/use<Y>.ts` = **单 feature 专属 hook** · view
   projection wrapper / 业务编排 hook · 可以 import lib/hooks/ +
   features/<x>/types · 不允许跨 feature import (除非通过 lib/hooks/)
+
+**ADR-043 修订**：旧版本要求"raw hook 提层后必须配 wrapper hook 做
+view 投影"——AL-2 commit 发现 N=1 consumer 时 wrapper 是 over-design
+（useDeviceCards / useAuditTimeline 是反例 · 已撤回）。新规则：N=1
+consumer 时直接在 consumer 内 useMemo + 纯映射函数（放
+features/<x>/mappers.ts 或同等），N ≥ 2 consumer 时才抽 wrapper hook。
+槽位本身（lib/hooks/ vs lib/ vs features/）规则不变。
 
 **Why**:
 
@@ -1269,3 +1278,61 @@ AH-1 commit 把 4 个业务 hook 统一到 lib/hooks/ · useDashboardQuery
 - AH-2 commit · arch HIGH-4 fix (raw / wrapper split 实操)
 - L-048 (提层提一半 = 反向依赖 trap)
 - DEBT-053 (test mock helper 抽 · 跟随同一 lib/hooks/ 不变量)
+
+---
+
+## ADR-043 · wrapper hook 抽取临界 = N ≥ 2 consumer · 否则 useMemo inline
+
+**Status**: accepted · 关 5/25 第二轮 arch HIGH-2 · 修订 ADR-041
+
+**Context**:
+
+5/25 第二轮 arch HIGH-2 反例 (`useDeviceCards` / `useAuditTimeline`)：
+ADR-041 第 1 槽规则把 "raw hook 不返 view-model" 当硬约束 · AH-2
+commit 顺应规则建了 2 个 thin wrapper hook (每个 ~10-12 行有效代码 ·
+只服务 DashboardPage 1 个 consumer) · arch reviewer 抓 "wrapper 是为
+规则的规则" + `mapAuditToTimeline` 跨 sibling cross-import (DEBT-055
+也认了 mapper 归宿没定)。
+
+**Decision**:
+
+wrapper hook 抽取的临界数：
+
+- **N=1 consumer**：raw hook + 纯 mapping 函数（放 `features/<x>/
+  mappers.ts` 或 `lib/<thing>Format.ts` 看归属）+ consumer 内
+  `useMemo`。不抽 wrapper hook。
+- **N=2 consumer**：抽 wrapper hook 到首消费 feature (`features/<x>/
+  use<Y>.ts`)，第二消费者从兄弟 feature import 这个 wrapper。
+- **N ≥ 3 跨 feature**：把 wrapper 升到 `lib/hooks/<X>.ts` raw +
+  每个 feature 各自 wrapper · ADR-041 第 1 槽规则适用。
+
+**Why**:
+
+- **N=1 wrapper 是 over-design**：thin wrapper 加 render boundary +
+  API surface + 测试 mock 层 · 但没换来任何复用收益
+- **N=1 用 useMemo inline** 让 consumer 看见完整 view 投影路径 ·
+  reviewer 一眼看清 · 不需要打开 wrapper 文件看里面是不是 thin
+- **mapping 函数** 抽到 mappers.ts 后 N=2 consumer 出现时升 wrapper
+  代价 ~10 行 · 不预先付
+
+**Enforcement**:
+
+- 任何新增 `features/<x>/use<Y>.ts` thin wrapper (只是 useMemo + map)
+  → audit MID · 该考虑撤回 inline
+- mappers.ts 文件命名约定：feature-specific projection functions
+  (mapFooToBar / dotFor / formatRel)
+- lib/types.ts 文件命名约定：跨 feature 共享的 domain union (Transport
+  / DeviceStatus 等 atomic enum)
+
+**Rationale**:
+
+- AL-2 commit 撤回 useDeviceCards / useAuditTimeline 实测：DashboardPage
+  inline `useMemo` 反而比 wrapper 直观 · 行数差不多 · 0 测试要改
+- 关联 N=2 抽象规则（L-020 已有）的 hook 化版本
+
+**关联**:
+
+- AL-2 commit · arch HIGH-2 fix
+- L-052 (thin wrapper hook 是规则压力的副产物)
+- DEBT-055 (mapAuditToTimeline 归宿)  → 关 (mappers.ts 决定下来了)
+- ADR-041 修订 (第 1 槽规则保留 · "必须 wrapper" 条款撤回)

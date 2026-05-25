@@ -1330,21 +1330,15 @@
 
 ---
 
-## DEBT-055 · `mapAuditToTimeline` migration to wrapper
+## DEBT-055 · `mapAuditToTimeline` migration to wrapper · CLOSED 2026-05-25
 
-- **现象**：mapAuditToTimeline 当前在 `features/dashboard/useAudit.ts`
-  · `useAuditTimeline.ts` wrapper 也 import 这个函数 · 形成
-  `features/dashboard/useAudit.ts` → `features/dashboard/useAudit
-  Timeline.ts` 内部 cross-import · 不算违规但说明 mapper 归宿没定
-- **影响**：将来 audit 改 schema 要扫两处 mapper · useAudit (legacy
-  polling) 可能已废 (snapshot WS 取代) 但还没删
-- **建议方案**：
-  - 检查 useAudit() 是否还有 caller · 如果只剩 dashboard fallback ·
-    把 mapAuditToTimeline 搬进 useAuditTimeline.ts · 把 useAudit.ts
-    标 deprecated 或删
-- **触发关闭**：useAudit() caller count = 0 / 下次 dashboard 改 audit
-  view 时
-- **来源**：AH-2 重构 (lib/hooks/ 去反向依赖) 时观察到
+- **关闭于**：AL-2 commit
+- **关闭方式**：useAudit polling hook 0 caller · 直接删除 ·
+  mapAuditToTimeline + dotFor + timeOf 搬到 `features/dashboard/
+  mappers.ts` 纯函数文件 · useAuditTimeline wrapper 同步撤回（ADR-043
+  N=1 consumer 直接 useMemo inline）
+- **原现象**：mapAuditToTimeline 留 useAudit.ts · cross-import 散
+- **关联**：ADR-043 (wrapper hook 抽取临界)
 
 ---
 

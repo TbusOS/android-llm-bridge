@@ -6,12 +6,12 @@
  * without pulling in dashboard's `DeviceCardData` view-model
  * (DevicePicker is the current second consumer).
  *
- * The `Transport` / `DeviceStatus` unions live here (and `features/
- * dashboard/types.ts` re-exports them) so the lib layer doesn't
- * reverse-depend on a feature.
+ * AL-2: `Transport` / `DeviceStatus` unions moved to `lib/types.ts`
+ * so this file can be pure functions only.
  */
-export type DeviceStatus = "online" | "warn" | "offline";
-export type Transport = "adb-usb" | "adb-wifi" | "adb-tcp" | "uart" | "ssh";
+import type { Transport, DeviceStatus } from "./types";
+
+export type { Transport, DeviceStatus };
 
 /** Map a server-side Transport class name (e.g. "AdbUsbTransport") to
  *  the UI's Transport union. Unknown / null falls back to "adb-usb"

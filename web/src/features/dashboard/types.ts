@@ -5,12 +5,12 @@
  * each card.
  */
 
-// `DeviceStatus` / `Transport` live in `lib/deviceFormat.ts` (the lib
-// layer can't reverse-depend on a feature). Import + re-export so
-// existing dashboard consumers don't need to know where the unions
-// moved AND so the references below (DeviceCardData.transport etc.)
-// resolve in this file's scope.
-import type { DeviceStatus, Transport } from "../../lib/deviceFormat";
+// `DeviceStatus` / `Transport` live in `lib/types.ts` (AL-2: domain
+// unions moved out of utility files so neither layer reverse-depends
+// on the other). Import + re-export so existing dashboard consumers
+// don't need to know where the unions moved AND so the references
+// below (DeviceCardData.transport etc.) resolve in this file's scope.
+import type { DeviceStatus, Transport } from "../../lib/types";
 export type { DeviceStatus, Transport };
 
 export interface DeviceCardData {
