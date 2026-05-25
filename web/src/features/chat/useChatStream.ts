@@ -1,7 +1,7 @@
 /**
  * useChatStream — owns the WS /chat/ws connection and the turn list.
  *
- * One hook instance per Chat page mount.  The hook exposes:
+ * One hook instance per Chat page mount. The hook exposes:
  *   - turns:       the rendered conversation
  *   - sessionId:   server-assigned session identifier (persisted in store)
  *   - isStreaming: true while a turn is in flight
@@ -11,11 +11,15 @@
  *   - reset():     clear local state (does not delete the server session)
  *
  * Streaming model: we open a fresh WebSocket per turn (chat is a
- * request/stream/done cycle).  Auto-reconnect is disabled — a closed
- * socket means "this turn is over".
+ * request/stream/done cycle). Auto-reconnect is disabled — a closed
+ * socket means "this turn is over". The lifecycle (open / done /
+ * close-before-done / cancel race suppression) lives in
+ * `lib/hooks/useWsChatStream`; this hook only owns turn-list
+ * projection.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { connect, type WsClient, type WsEvent } from "../../lib/ws";
+import { useCallback, useRef, useState } from "react";
+
+import { useWsChatStream } from "../../lib/hooks/useWsChatStream";
 import type {
   ChatRequestPayload,
   ChatTurn,
@@ -52,14 +56,10 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
 
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
 
   // Mutable refs so handlers don't capture stale closures
-  const wsRef = useRef<WsClient | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-
-  useEffect(() => () => wsRef.current?.close(), []);
 
   const updateTurn = useCallback(
     (id: string, mut: (t: ChatTurn) => ChatTurn) => {
@@ -69,7 +69,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
   );
 
   const handleEvent = useCallback(
-    (ev: StreamEvent) => {
+    (ev: StreamEvent): "done" | "error" | void => {
       const aid = activeAssistantIdRef.current;
       if (!aid) return;
 
@@ -125,17 +125,41 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
           model: ev.model ?? t.model,
         }));
         activeAssistantIdRef.current = null;
-        wsRef.current?.close();
-        wsRef.current = null;
-        setIsStreaming(false);
+        return ev.ok ? "done" : "error";
       }
     },
     [updateTurn],
   );
 
+  const stream = useWsChatStream<ChatRequestPayload>({
+    path: "/chat/ws",
+    onJson: (raw) => handleEvent(raw as StreamEvent),
+    onCloseBeforeDone: (info) => {
+      // Same shape as the pre-extract close-before-done branch:
+      // if a turn is in flight when the socket dropped, mark it
+      // errored with CONNECTION_LOST. useWsChatStream has already
+      // flipped phase to "error" → isStreaming flips false via the
+      // derived value below.
+      const aid = activeAssistantIdRef.current;
+      if (!aid) return;
+      activeAssistantIdRef.current = null;
+      updateTurn(aid, (t) => ({
+        ...t,
+        status:
+          t.status === "pending" || t.status === "streaming"
+            ? "error"
+            : t.status,
+        error: t.error ?? {
+          code: "CONNECTION_LOST",
+          message: info.reason || `socket closed (code ${info.code ?? "?"})`,
+        },
+      }));
+    },
+  });
+
   const startStream = useCallback(
     (userPrompt: string) => {
-      if (isStreaming) return;
+      if (stream.phase === "streaming") return;
 
       const userTurn: ChatTurn = {
         id: newId(),
@@ -156,7 +180,6 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
       };
       activeAssistantIdRef.current = assistantTurn.id;
       setTurns((prev) => [...prev, userTurn, assistantTurn]);
-      setIsStreaming(true);
 
       const payload: ChatRequestPayload = {
         message: userPrompt,
@@ -166,40 +189,9 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
         tools,
         max_turns: maxTurns,
       };
-
-      const client = connect("/chat/ws", { noReconnect: true });
-      wsRef.current = client;
-
-      const unsub = client.subscribe((ev: WsEvent) => {
-        if (ev.kind === "open") {
-          client.send(payload);
-        } else if (ev.kind === "json") {
-          handleEvent(ev.data as StreamEvent);
-        } else if (ev.kind === "close") {
-          // If we hit close before a 'done' event the server dropped on us
-          if (activeAssistantIdRef.current) {
-            const aid = activeAssistantIdRef.current;
-            activeAssistantIdRef.current = null;
-            updateTurn(aid, (t) => ({
-              ...t,
-              status: t.status === "pending" || t.status === "streaming"
-                ? "error"
-                : t.status,
-              error: t.error ?? {
-                code: "CONNECTION_LOST",
-                message: ev.reason || `socket closed (code ${ev.code})`,
-              },
-            }));
-            wsRef.current = null;
-            setIsStreaming(false);
-          }
-          unsub();
-        } else if (ev.kind === "error") {
-          // The browser doesn't expose per-error details — wait for close
-        }
-      });
+      stream.start(payload);
     },
-    [backend, model, tools, maxTurns, isStreaming, handleEvent, updateTurn],
+    [backend, model, tools, maxTurns, stream],
   );
 
   const send = useCallback(
@@ -213,20 +205,19 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
 
   const cancel = useCallback(() => {
     const aid = activeAssistantIdRef.current;
-    if (!aid) return;
-    activeAssistantIdRef.current = null;
-    updateTurn(aid, (t) => ({
-      ...t,
-      status: "cancelled",
-      error: { code: "CANCELLED", message: "已取消" },
-    }));
-    wsRef.current?.close();
-    wsRef.current = null;
-    setIsStreaming(false);
-  }, [updateTurn]);
+    if (aid) {
+      activeAssistantIdRef.current = null;
+      updateTurn(aid, (t) => ({
+        ...t,
+        status: "cancelled",
+        error: { code: "CANCELLED", message: "已取消" },
+      }));
+    }
+    stream.cancel();
+  }, [updateTurn, stream]);
 
   const retry = useCallback(() => {
-    if (isStreaming) return;
+    if (stream.phase === "streaming") return;
     // Find the most recent user turn — it carries the prompt to retry
     for (let i = turns.length - 1; i >= 0; i--) {
       const t = turns[i];
@@ -235,17 +226,24 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
         return;
       }
     }
-  }, [turns, isStreaming, startStream]);
+  }, [turns, stream.phase, startStream]);
 
   const reset = useCallback(() => {
-    wsRef.current?.close();
-    wsRef.current = null;
     activeAssistantIdRef.current = null;
     sessionIdRef.current = null;
     setTurns([]);
     setSessionId(null);
-    setIsStreaming(false);
-  }, []);
+    stream.cancel();
+    stream.reset();
+  }, [stream]);
 
-  return { turns, sessionId, isStreaming, send, cancel, retry, reset };
+  return {
+    turns,
+    sessionId,
+    isStreaming: stream.phase === "streaming",
+    send,
+    cancel,
+    retry,
+    reset,
+  };
 }

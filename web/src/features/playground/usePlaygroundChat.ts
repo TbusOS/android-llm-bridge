@@ -1,19 +1,25 @@
 /**
  * usePlaygroundChat — WS streaming chat for the Playground page.
  *
- * Owns:
- *   - the websocket lifecycle (open per send, close on done — the
- *     server's protocol is one-shot per request, not a long-lived
- *     channel like Audit)
- *   - a streaming buffer for the in-flight assistant message
- *   - the metrics + finish_reason from the terminal `done` event
+ * Thin wrapper around `useWsChatStream` (shared lifecycle for one-shot
+ * WS chat protocols). This hook only owns the Playground-specific
+ * payload shapes:
+ *   - a streaming `delta` buffer for the in-flight assistant message
+ *   - the terminal `done` event with metrics + finish_reason + error
  *
- * Message log is held by the parent (PlaygroundPage) so multiple
- * sends append cleanly; this hook is per-request.
+ * Message log is held by the parent (PlaygroundPage) so multiple sends
+ * append cleanly; this hook is per-request.
+ *
+ * H1 fix (5/25 audit): close-before-done now produces a synthetic
+ * `done` payload with code=WS_DISCONNECTED so the error UI renders
+ * ("status === 'error' && done" pattern in PlaygroundPage) — without
+ * the synthetic, the assistant bubble silently froze with no signal.
+ * Cancel-then-late-close race is fixed inside useWsChatStream (it
+ * suppresses the closing socket's close event after cancel).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
-import { connect, type WsClient } from "../../lib/ws";
+import { useWsChatStream } from "../../lib/hooks/useWsChatStream";
 
 export interface PlaygroundRequest {
   backend: string;
@@ -41,82 +47,75 @@ export interface DoneEvent {
 
 type Status = "idle" | "streaming" | "done" | "error";
 
+interface ServerMessage {
+  type?: string;
+  delta?: string;
+}
+
 export function usePlaygroundChat() {
   const [delta, setDelta] = useState("");
   const [done, setDone] = useState<DoneEvent | null>(null);
-  const [status, setStatus] = useState<Status>("idle");
-  const clientRef = useRef<WsClient | null>(null);
-  // Ref tracker for "we already received the `done` terminal event".
-  // The subscribe callback captures the `status` closure at send-time
-  // (idle / done), not the current React state, so testing
-  // `if (status === "streaming") setStatus("error")` always sees the
-  // stale snapshot and never fires on close-before-done. Ref reads are
-  // always live, so we flip it true on done and gate the error branch
-  // on its NEGATION instead.
-  const gotDoneRef = useRef(false);
 
-  // Cleanup on unmount — close any in-flight WS.
-  useEffect(() => {
-    return () => {
-      clientRef.current?.close();
-      clientRef.current = null;
-    };
-  }, []);
-
-  // send is stable across renders — no `status` in deps because we now
-  // use `gotDoneRef` instead of reading state inside the closure.
-  // Without this, every status flip rebuilt `send`, which cascaded
-  // through React.memo'd children if any consumer ever wraps the hook.
-  const send = useCallback((req: PlaygroundRequest) => {
-    // Drop any previous connection — the protocol is one-shot.
-    clientRef.current?.close();
-    setDelta("");
-    setDone(null);
-    setStatus("streaming");
-    gotDoneRef.current = false;
-
-    const client = connect("/playground/chat/ws", { noReconnect: true });
-    clientRef.current = client;
-
-    const unsub = client.subscribe((ev) => {
-      if (ev.kind === "open") {
-        client.send(req);
-      } else if (ev.kind === "json") {
-        const msg = ev.data as { type?: string; delta?: string } & Partial<DoneEvent>;
-        if (msg.type === "token" && typeof msg.delta === "string") {
-          setDelta((d) => d + msg.delta);
-        } else if (msg.type === "done") {
-          gotDoneRef.current = true;
-          setDone(msg as DoneEvent);
-          setStatus(msg.ok === false ? "error" : "done");
-          unsub();
-          client.close();
-          clientRef.current = null;
-        }
-      } else if (ev.kind === "error" || ev.kind === "close") {
-        // close-before-done = unexpected disconnect → surface as error.
-        // We read the ref (live) instead of `status` (stale closure).
-        if (!gotDoneRef.current) {
-          setStatus("error");
-        }
+  const stream = useWsChatStream<PlaygroundRequest>({
+    path: "/playground/chat/ws",
+    onJson: (raw) => {
+      const msg = raw as ServerMessage & Partial<DoneEvent>;
+      if (msg.type === "token" && typeof msg.delta === "string") {
+        setDelta((d) => d + msg.delta);
+        return;
       }
-    });
-  }, []);
+      if (msg.type === "done") {
+        setDone(msg as DoneEvent);
+        return msg.ok === false ? "error" : "done";
+      }
+    },
+    onCloseBeforeDone: (info) => {
+      // H1 fix: PlaygroundPage's error block renders on
+      // `status === "error" && chat.done` — without a synthetic done
+      // here, the user sees a truncated assistant bubble + idle input
+      // with no signal that the connection dropped.
+      const reasonText =
+        info.reason || `WebSocket closed (code ${info.code ?? "?"})`;
+      setDone({
+        ok: false,
+        content: "",
+        finish_reason: "disconnected",
+        model: "",
+        backend: "",
+        error: {
+          code: "WS_DISCONNECTED",
+          message: reasonText,
+        },
+      });
+    },
+  });
 
-  const cancel = useCallback(() => {
-    clientRef.current?.close();
-    clientRef.current = null;
-    // cancel is fine reading status because it's only called from a
-    // user click during the live render — closure is current.
-    if (!gotDoneRef.current) setStatus("idle");
-  }, []);
+  const send = useCallback(
+    (req: PlaygroundRequest) => {
+      setDelta("");
+      setDone(null);
+      stream.start(req);
+    },
+    [stream],
+  );
 
   const reset = useCallback(() => {
     setDelta("");
     setDone(null);
-    setStatus("idle");
-    gotDoneRef.current = false;
-  }, []);
+    stream.reset();
+  }, [stream]);
 
-  return { delta, done, status, send, cancel, reset };
+  // Map the 5-phase hook state to the page's 4-state surface. cancelled
+  // collapses to idle (PlaygroundPage doesn't need to distinguish — it
+  // just wants the input usable again).
+  const status: Status =
+    stream.phase === "streaming"
+      ? "streaming"
+      : stream.phase === "done"
+        ? "done"
+        : stream.phase === "error"
+          ? "error"
+          : "idle";
+
+  return { delta, done, status, send, cancel: stream.cancel, reset };
 }

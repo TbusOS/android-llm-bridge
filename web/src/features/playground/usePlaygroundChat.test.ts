@@ -283,4 +283,119 @@ describe("usePlaygroundChat", () => {
     expect(currentClients[0]?.closed).toBe(true);
     expect(result.current.status).toBe("idle");
   });
+
+  it("close-before-done injects a synthetic done payload (H1 fix)", () => {
+    // Regression: before AH-3, close-before-done set status="error" but
+    // left `done` null — PlaygroundPage's error block ("status=error
+    // && done") then never rendered, silently freezing the assistant
+    // bubble. The hook now writes a synthetic done with
+    // code=WS_DISCONNECTED so the UI surfaces the disconnect.
+    const { result } = renderHook(() => usePlaygroundChat());
+
+    act(() =>
+      result.current.send({
+        backend: "ollama",
+        model: null,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    );
+    act(() => emit(0, { kind: "open" }));
+    act(() =>
+      emit(0, { kind: "json", data: { type: "token", delta: "partial" } }),
+    );
+
+    act(() =>
+      emit(0, { kind: "close", code: 1006, reason: "abnormal closure" }),
+    );
+
+    expect(result.current.status).toBe("error");
+    expect(result.current.done).not.toBeNull();
+    expect(result.current.done?.ok).toBe(false);
+    expect(result.current.done?.error?.code).toBe("WS_DISCONNECTED");
+    expect(result.current.done?.error?.message).toContain("abnormal closure");
+    expect(result.current.done?.finish_reason).toBe("disconnected");
+  });
+
+  it("cancel-then-late-close does NOT flip status back to error (H1 race fix)", () => {
+    // Regression target: pre-AH-3 the cancel() path closed the socket
+    // and set status="idle", but the same subscriber lived on; the
+    // browser's async close event then fired and the "close-before-
+    // done" branch ran, overwriting idle → error. UI flickered idle
+    // for one tick before reverting to a false error state.
+    const { result } = renderHook(() => usePlaygroundChat());
+
+    act(() =>
+      result.current.send({
+        backend: "ollama",
+        model: null,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    );
+    act(() => emit(0, { kind: "open" }));
+    act(() =>
+      emit(0, { kind: "json", data: { type: "token", delta: "partial" } }),
+    );
+
+    act(() => result.current.cancel());
+    expect(result.current.status).toBe("idle");
+    expect(currentClients[0]?.closed).toBe(true);
+
+    // The browser will deliver the close event AFTER cancel(). Without
+    // the cancelledRef suppression in useWsChatStream, this would
+    // trigger onCloseBeforeDone and flip status → error.
+    act(() =>
+      emit(0, { kind: "close", code: 1000, reason: "client cancelled" }),
+    );
+
+    expect(result.current.status).toBe("idle");
+    expect(result.current.done).toBeNull();
+  });
+
+  it("re-send during streaming: late close on the old socket does not pollute the new stream", () => {
+    // Regression target: send() while the previous stream is still
+    // in flight tears down the old socket. Its close event still
+    // lands async. Pre-AH-3 the old subscriber would fire the
+    // close-before-done branch on the NEW stream's state, flipping
+    // its status to error mid-stream.
+    const { result } = renderHook(() => usePlaygroundChat());
+
+    act(() =>
+      result.current.send({
+        backend: "ollama",
+        model: null,
+        messages: [{ role: "user", content: "first" }],
+      }),
+    );
+    act(() => emit(0, { kind: "open" }));
+    act(() =>
+      emit(0, { kind: "json", data: { type: "token", delta: "first-1" } }),
+    );
+
+    // User fires a second send before first completes.
+    act(() =>
+      result.current.send({
+        backend: "ollama",
+        model: null,
+        messages: [{ role: "user", content: "second" }],
+      }),
+    );
+
+    expect(mockConnect).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe("streaming");
+    expect(result.current.delta).toBe(""); // reset for new send
+
+    // Old socket's late close event lands. The hook must NOT flip
+    // status to error on the NEW stream.
+    act(() =>
+      emit(0, { kind: "close", code: 1006, reason: "stale socket" }),
+    );
+    expect(result.current.status).toBe("streaming");
+
+    // The new stream still works normally.
+    act(() => emit(1, { kind: "open" }));
+    act(() =>
+      emit(1, { kind: "json", data: { type: "token", delta: "second-reply" } }),
+    );
+    expect(result.current.delta).toBe("second-reply");
+  });
 });
