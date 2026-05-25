@@ -2,47 +2,49 @@
  * useWsChatStream — shared lifecycle for one-shot streaming WS chat
  * protocols (Playground + Chat, and any future LLM stream endpoint).
  *
- * The shared shape:
- *   - open a fresh WS per request (noReconnect — protocol is single-
- *     shot, a closed socket means "this turn is over")
- *   - on open: send the request payload the consumer hands us
- *   - on json: consumer routes message → its own state, optionally
- *     calls helpers.markSettled() to terminate the stream
- *   - on close-before-settled OR error: phase = "settled" with
- *     reason="error", consumer's onSettled callback fires so it can
- *     write a synthetic error payload into its own state
- *   - cancel() → close + phase = "settled" with reason="cancelled",
- *     suppresses the closing socket's `close` event
+ * Design (AO-1 redesign · arch HIGH-2 fix):
  *
- * API design (AL-1 redesign · arch HIGH-1/4 fix):
+ * State is a **2-piece machine**:
+ *   - `phase: "idle" | "streaming" | "settled"` (3 states)
+ *   - `settled: WsChatSettled | null` (discriminated union when phase=settled)
  *
- * Phase enum is **3 states** not 5:
- *   - "idle"      — no in-flight request
- *   - "streaming" — request sent, awaiting json messages
- *   - "settled"   — terminal (consumer reads `settledReason` to know
- *                   why: "done" / "error" / "cancelled")
+ * `WsChatSettled` carries everything the consumer needs to dispatch on
+ * a terminal event, in ONE typed value:
  *
- * Why 3 + reason enum, not 5 phases: both pre-existing consumers
- * collapsed done/error/cancelled into their own UI state — none
- * needed all 5. A reason enum captures intent without forcing
- * consumers to write mapping code, and a new consumer only needs
- * to handle 3 phases + 3 reason cases. Empirically this is the
- * minimum surface (see L-051 sec audit: the previous 5-phase
- * design forced both consumers to duplicate synthetic-done /
- * cancel-then-close fallback).
+ *   { kind: "done" }
+ *   { kind: "error", source: "server" | "ws-close" | "ws-error",
+ *     code?: number, reasonText?: string }
+ *   { kind: "cancelled" }
  *
- * Callback model is **single onSettled enum** not dual callbacks:
- *   - onJson(msg, { markSettled }) for routing payload + optional
- *     terminal marker
- *   - onSettled(info) ALWAYS fires once when phase → settled, no
- *     matter what caused it (markSettled / cancel / socket-close
- *     / socket-error). Info carries `reason` + `cause` so consumer
- *     can write a synthetic payload (or skip if reason=done).
+ * Why discriminated union instead of (phase + reason + cause) tri-enum
+ * (the pre-AO-1 design):
+ *   - 3 enums (3 phase × 3 reason × 4 cause) = 36 nominal states for
+ *     5 legal combinations. consumers wrote 4-way if/else mapping tables.
+ *   - single union = TS narrows on `kind` switch · 0 mapping tables
+ *   - 2nd consumer onwards can reuse the type without re-deriving rules
  *
- * Race protection (unchanged):
+ * Consumer pattern:
+ * ```ts
+ * const stream = useWsChatStream<Req>({
+ *   path: "/foo/ws",
+ *   onJson: (raw, { markSettled }) => {
+ *     // parse raw, apply to consumer state
+ *     if (isDoneMsg(raw)) markSettled({ kind: "done" });
+ *   },
+ *   onSettled: (info) => {
+ *     switch (info.kind) {
+ *       case "done": / * already wrote via onJson * / break;
+ *       case "error": setError(info.source, info.reasonText); break;
+ *       case "cancelled": markTurnCancelled(); break;
+ *     }
+ *   },
+ * });
+ * ```
+ *
+ * Race protection (unchanged from prior implementations):
  *   - unsubRef: subscription pointer cleared on every terminal path
- *   - cancelledRef: pending close events from a cancelled stream are
- *     swallowed (don't flip phase back to "settled with error")
+ *   - cancelledRef: pending close events from a cancelled stream
+ *     are swallowed (don't flip phase back to settled-with-error)
  *   - settledRef: extra cleanup after onSettled fires once; further
  *     events are ignored
  *   - myClient capture: a fast re-start before old socket's close
@@ -54,26 +56,33 @@ import { connect, type WsClient } from "../ws";
 
 export type WsChatPhase = "idle" | "streaming" | "settled";
 
-export type WsChatSettledReason = "done" | "error" | "cancelled";
-
-export interface WsChatSettledInfo {
-  /** What concluded the stream. */
-  reason: WsChatSettledReason;
-  /** Lower-level cause. "server-done" = onJson markSettled with reason
-   *  "done"/"error" / "user-cancel" = consumer called cancel() /
-   *  "ws-close" = socket dropped before consumer settled /
-   *  "ws-error" = socket error event before consumer settled. */
-  cause: "server-done" | "user-cancel" | "ws-close" | "ws-error";
-  /** WebSocket close code if `cause === "ws-close"`, else undefined. */
-  code?: number;
-  /** Server / browser-supplied reason string. May be empty. */
-  reasonText?: string;
-}
+/**
+ * Discriminated union describing why the stream settled. ONE type
+ * carries everything consumers need to switch on.
+ *
+ * `error.source` distinguishes the failure path:
+ *   - "server": consumer's onJson called markSettled({ kind: "error" })
+ *     based on a server payload (e.g. `done.ok = false`)
+ *   - "ws-close": socket close event before settled (network drop /
+ *     server reset / proxy timeout). `code` + `reasonText` from the
+ *     WebSocket CloseEvent.
+ *   - "ws-error": socket error event before settled. `reasonText`
+ *     from the browser-supplied error message.
+ */
+export type WsChatSettled =
+  | { kind: "done" }
+  | {
+      kind: "error";
+      source: "server" | "ws-close" | "ws-error";
+      code?: number;
+      reasonText?: string;
+    }
+  | { kind: "cancelled" };
 
 export interface OnJsonHelpers {
-  /** Terminate the stream from inside onJson. The phase will flip to
-   *  "settled" and onSettled will fire with cause="server-done". */
-  markSettled: (reason: "done" | "error") => void;
+  /** Terminate the stream from inside onJson. Pass the full settled
+   *  variant; `onSettled` will fire with this exact object. */
+  markSettled: (info: WsChatSettled) => void;
 }
 
 export interface UseWsChatStreamOptions {
@@ -81,15 +90,15 @@ export interface UseWsChatStreamOptions {
   path: string;
   /** Per-message router. Consumer applies payload to its own state
    *  (setTurns / setDelta / setDone). Call `helpers.markSettled()`
-   *  to terminate the stream — useful when the message itself signals
-   *  the end (a "done" type, etc). The hook reads this callback via
-   *  ref so it can change between renders without re-subscribing. */
+   *  with a `WsChatSettled` variant to terminate the stream. The
+   *  hook reads this callback via ref so it can change between
+   *  renders without re-subscribing. */
   onJson?: (msg: unknown, helpers: OnJsonHelpers) => void;
   /** Fired exactly once when phase transitions to "settled", no
-   *  matter what triggered it. Info.reason distinguishes
-   *  done / error / cancelled. Use to write a synthetic payload
-   *  for error/cancelled (consumer's UI may need a `done` object). */
-  onSettled?: (info: WsChatSettledInfo) => void;
+   *  matter what triggered it (onJson markSettled / cancel /
+   *  ws-close / ws-error). The info value is the SAME object stored
+   *  in `result.settled` — consumer can switch on `info.kind`. */
+  onSettled?: (info: WsChatSettled) => void;
   /** Fired once after the WS opens but BEFORE the request payload is
    *  sent. Optional. */
   onOpen?: () => void;
@@ -98,17 +107,19 @@ export interface UseWsChatStreamOptions {
 export interface UseWsChatStreamResult<TReq> {
   phase: WsChatPhase;
   /** Set after phase → settled. Read alongside phase to dispatch on
-   *  reason. Cleared by reset(). */
-  settledReason: WsChatSettledReason | null;
+   *  `info.kind`. Cleared by reset(). */
+  settled: WsChatSettled | null;
   /** Open a fresh WS and send `req` on open. If a previous stream is
    *  still in flight, it is silently torn down first. */
   start: (req: TReq) => void;
   /** User-initiated cancel: close the socket, transition to settled
-   *  with reason="cancelled". Suppresses any pending close-event from
-   *  re-firing onSettled. No-op if nothing in flight. */
+   *  with `kind: "cancelled"`. Suppresses any pending close-event
+   *  from re-firing onSettled. No-op if nothing in flight. */
   cancel: () => void;
   /** Move phase back to "idle" without touching the socket (assumes
-   *  the socket is already closed by terminal path). */
+   *  the socket is already closed by terminal path). Idempotent —
+   *  if a stream is somehow still live (consumer bug or unusual
+   *  timing), tear it down first. */
   reset: () => void;
 }
 
@@ -117,8 +128,7 @@ export function useWsChatStream<TReq>(
 ): UseWsChatStreamResult<TReq> {
   const { path } = opts;
   const [phase, setPhase] = useState<WsChatPhase>("idle");
-  const [settledReason, setSettledReason] =
-    useState<WsChatSettledReason | null>(null);
+  const [settled, setSettled] = useState<WsChatSettled | null>(null);
 
   const clientRef = useRef<WsClient | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
@@ -147,10 +157,10 @@ export function useWsChatStream<TReq>(
    *  here so onSettled fires exactly once + flags are set in a
    *  consistent order. */
   const settle = useCallback(
-    (info: WsChatSettledInfo) => {
+    (info: WsChatSettled) => {
       if (settledRef.current) return;
       settledRef.current = true;
-      setSettledReason(info.reason);
+      setSettled(info);
       setPhase("settled");
       onSettledRef.current?.(info);
       teardown();
@@ -173,15 +183,15 @@ export function useWsChatStream<TReq>(
     (req: TReq) => {
       // Drop any in-flight stream. Mark cancelledRef so the OLD
       // socket's close event (which arrives async after close())
-      // doesn't fire onSettled — this is a deliberate re-send, not a
-      // disconnect.
+      // doesn't fire onSettled — this is a deliberate re-send, not
+      // a disconnect.
       if (clientRef.current) {
         cancelledRef.current = true;
         teardown();
       }
       cancelledRef.current = false;
       settledRef.current = false;
-      setSettledReason(null);
+      setSettled(null);
       setPhase("streaming");
 
       const client = connect(path, { noReconnect: true });
@@ -189,13 +199,11 @@ export function useWsChatStream<TReq>(
       const myClient = client;
 
       const helpers: OnJsonHelpers = {
-        markSettled: (reason) => {
-          settle({ reason, cause: "server-done" });
-        },
+        markSettled: (info) => settle(info),
       };
 
       const unsub = client.subscribe((ev) => {
-        // Defence-in-depth: an even faster re-start() would replace
+        // Defence-in-depth: a faster re-start() would replace
         // clientRef before this listener runs. Bail out if the slot
         // no longer points at us.
         if (clientRef.current !== myClient) return;
@@ -207,13 +215,18 @@ export function useWsChatStream<TReq>(
           client.send(req as unknown as object);
         } else if (ev.kind === "json") {
           onJsonRef.current?.(ev.data, helpers);
-        } else if (ev.kind === "close" || ev.kind === "error") {
-          // close-before-settled = unexpected disconnect.
+        } else if (ev.kind === "close") {
           settle({
-            reason: "error",
-            cause: ev.kind === "close" ? "ws-close" : "ws-error",
-            code: ev.kind === "close" ? ev.code : undefined,
-            reasonText: ev.kind === "close" ? ev.reason : ev.message,
+            kind: "error",
+            source: "ws-close",
+            code: ev.code,
+            reasonText: ev.reason,
+          });
+        } else if (ev.kind === "error") {
+          settle({
+            kind: "error",
+            source: "ws-error",
+            reasonText: ev.message,
           });
         }
       });
@@ -226,22 +239,19 @@ export function useWsChatStream<TReq>(
     if (settledRef.current) return;
     if (!clientRef.current) return;
     cancelledRef.current = true;
-    settle({ reason: "cancelled", cause: "user-cancel" });
+    settle({ kind: "cancelled" });
   }, [settle]);
 
   const reset = useCallback(() => {
-    // reset is idempotent: if a stream is somehow still live (consumer
-    // bug or unusual timing), tear it down first instead of silently
-    // leaving the socket dangling. The reason is null in idle.
     if (clientRef.current) {
       cancelledRef.current = true;
       teardown();
     }
     cancelledRef.current = false;
     settledRef.current = false;
-    setSettledReason(null);
+    setSettled(null);
     setPhase("idle");
   }, [teardown]);
 
-  return { phase, settledReason, start, cancel, reset };
+  return { phase, settled, start, cancel, reset };
 }

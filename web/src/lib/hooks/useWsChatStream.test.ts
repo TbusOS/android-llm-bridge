@@ -1,11 +1,9 @@
 /**
- * useWsChatStream — protocol-level race / lifecycle specs.
+ * useWsChatStream protocol-level race / lifecycle specs.
  *
- * These are extracted/distilled from usePlaygroundChat.test.ts after
- * AL-1 redesign, plus added cases the consumer spec couldn't reach
- * (helpers.markSettled / onSettled cause variants / re-start race
- * defence). Consumer-level specs (Playground / Chat) keep their own
- * end-to-end assertions on synthetic done payload + turn projection.
+ * AO-1 rewrite: API moved from (phase + reason + cause) tri-enum to
+ * single `settled: WsChatSettled` discriminated union. All assertions
+ * now switch on `info.kind` and the explicit `source` for error.
  */
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,11 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WsClient, WsEvent } from "../ws";
 import {
   useWsChatStream,
-  type OnJsonHelpers,
-  type WsChatSettledInfo,
+  type WsChatSettled,
 } from "./useWsChatStream";
 
-// Hoisted mock — vitest re-runs the factory per spec.
 const { mockConnect, currentClients } = vi.hoisted(() => {
   const currentClients: Array<{
     listeners: Set<(ev: WsEvent) => void>;
@@ -72,25 +68,23 @@ interface TestReq {
 }
 
 describe("useWsChatStream", () => {
-  it("initial state is idle / settledReason null", () => {
+  it("initial state is idle / settled null", () => {
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({ path: "/test/ws" }),
     );
     expect(result.current.phase).toBe("idle");
-    expect(result.current.settledReason).toBeNull();
+    expect(result.current.settled).toBeNull();
     expect(mockConnect).not.toHaveBeenCalled();
   });
 
-  it("happy path: start → open sends req → onJson markSettled done", () => {
-    const onJson = vi.fn();
+  it("happy path: start → open sends req → markSettled({kind:'done'})", () => {
     const onSettled = vi.fn();
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({
         path: "/test/ws",
-        onJson: (raw, helpers) => {
-          onJson(raw);
+        onJson: (raw, { markSettled }) => {
           const msg = raw as { type?: string };
-          if (msg.type === "done") helpers.markSettled("done");
+          if (msg.type === "done") markSettled({ kind: "done" });
         },
         onSettled,
       }),
@@ -107,23 +101,25 @@ describe("useWsChatStream", () => {
     act(() => emit(0, { kind: "json", data: { type: "done", ok: true } }));
 
     expect(result.current.phase).toBe("settled");
-    expect(result.current.settledReason).toBe("done");
+    expect(result.current.settled).toEqual({ kind: "done" });
     expect(onSettled).toHaveBeenCalledTimes(1);
-    expect(onSettled).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: "done", cause: "server-done" }),
-    );
+    expect(onSettled).toHaveBeenCalledWith({ kind: "done" });
     expect(currentClients[0]?.closed).toBe(true);
   });
 
-  it("markSettled('error') sets phase=settled / reason=error", () => {
+  it("markSettled({kind:'error',source:'server'}) → settled with that variant", () => {
     const onSettled = vi.fn();
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({
         path: "/test/ws",
-        onJson: (raw, helpers: OnJsonHelpers) => {
+        onJson: (raw, { markSettled }) => {
           const msg = raw as { type?: string; ok?: boolean };
           if (msg.type === "done") {
-            helpers.markSettled(msg.ok === false ? "error" : "done");
+            markSettled(
+              msg.ok === false
+                ? { kind: "error", source: "server" }
+                : { kind: "done" },
+            );
           }
         },
         onSettled,
@@ -135,34 +131,34 @@ describe("useWsChatStream", () => {
     act(() => emit(0, { kind: "json", data: { type: "done", ok: false } }));
 
     expect(result.current.phase).toBe("settled");
-    expect(result.current.settledReason).toBe("error");
-    expect(onSettled).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: "error", cause: "server-done" }),
-    );
+    expect(result.current.settled).toEqual({ kind: "error", source: "server" });
+    expect(onSettled).toHaveBeenCalledWith({ kind: "error", source: "server" });
   });
 
-  it("ws close before markSettled → settled with cause=ws-close + reasonText/code", () => {
+  it("ws close before markSettled → settled {kind:'error', source:'ws-close', code, reasonText}", () => {
     const onSettled = vi.fn();
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({ path: "/test/ws", onSettled }),
     );
     act(() => result.current.start({ prompt: "hi" }));
     act(() => emit(0, { kind: "open" }));
-    act(() => emit(0, { kind: "json", data: { type: "token", delta: "partial" } }));
+    act(() =>
+      emit(0, { kind: "json", data: { type: "token", delta: "partial" } }),
+    );
 
     act(() => emit(0, { kind: "close", code: 1006, reason: "network abend" }));
 
     expect(result.current.phase).toBe("settled");
-    expect(result.current.settledReason).toBe("error");
-    expect(onSettled).toHaveBeenCalledWith({
-      reason: "error",
-      cause: "ws-close",
+    expect(result.current.settled).toEqual({
+      kind: "error",
+      source: "ws-close",
       code: 1006,
       reasonText: "network abend",
     });
+    expect(onSettled).toHaveBeenCalledWith(result.current.settled);
   });
 
-  it("ws error event before markSettled → settled with cause=ws-error", () => {
+  it("ws error event before markSettled → settled {kind:'error', source:'ws-error'}", () => {
     const onSettled = vi.fn();
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({ path: "/test/ws", onSettled }),
@@ -171,13 +167,14 @@ describe("useWsChatStream", () => {
     act(() => emit(0, { kind: "error", message: "browser error" }));
 
     expect(result.current.phase).toBe("settled");
-    expect(result.current.settledReason).toBe("error");
-    expect(onSettled).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: "error", cause: "ws-error" }),
-    );
+    expect(result.current.settled).toEqual({
+      kind: "error",
+      source: "ws-error",
+      reasonText: "browser error",
+    });
   });
 
-  it("cancel() → settled with cause=user-cancel + suppresses late close", () => {
+  it("cancel() → settled {kind:'cancelled'} + suppresses late close event", () => {
     const onSettled = vi.fn();
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({ path: "/test/ws", onSettled }),
@@ -187,18 +184,15 @@ describe("useWsChatStream", () => {
 
     act(() => result.current.cancel());
     expect(result.current.phase).toBe("settled");
-    expect(result.current.settledReason).toBe("cancelled");
+    expect(result.current.settled).toEqual({ kind: "cancelled" });
     expect(onSettled).toHaveBeenCalledTimes(1);
-    expect(onSettled).toHaveBeenCalledWith({
-      reason: "cancelled",
-      cause: "user-cancel",
-    });
+    expect(onSettled).toHaveBeenCalledWith({ kind: "cancelled" });
     expect(currentClients[0]?.closed).toBe(true);
 
     // late close event from the closed socket should NOT re-fire onSettled
     act(() => emit(0, { kind: "close", code: 1000, reason: "client cancelled" }));
     expect(onSettled).toHaveBeenCalledTimes(1);
-    expect(result.current.settledReason).toBe("cancelled");
+    expect(result.current.settled).toEqual({ kind: "cancelled" });
   });
 
   it("close after settled (done) is a no-op · no second onSettled call", () => {
@@ -206,9 +200,9 @@ describe("useWsChatStream", () => {
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({
         path: "/test/ws",
-        onJson: (raw, helpers) => {
+        onJson: (raw, { markSettled }) => {
           const msg = raw as { type?: string };
-          if (msg.type === "done") helpers.markSettled("done");
+          if (msg.type === "done") markSettled({ kind: "done" });
         },
         onSettled,
       }),
@@ -219,10 +213,10 @@ describe("useWsChatStream", () => {
     expect(onSettled).toHaveBeenCalledTimes(1);
 
     // Server commonly sends close frame right after done — must not
-    // re-fire onSettled or change reason.
+    // re-fire onSettled or change settled value.
     act(() => emit(0, { kind: "close", code: 1000, reason: "" }));
     expect(onSettled).toHaveBeenCalledTimes(1);
-    expect(result.current.settledReason).toBe("done");
+    expect(result.current.settled).toEqual({ kind: "done" });
   });
 
   it("re-start during streaming · late close on old socket doesn't pollute new stream", () => {
@@ -257,28 +251,28 @@ describe("useWsChatStream", () => {
 
     act(() => result.current.reset());
     expect(result.current.phase).toBe("idle");
-    expect(result.current.settledReason).toBeNull();
+    expect(result.current.settled).toBeNull();
     expect(currentClients[0]?.closed).toBe(true);
   });
 
-  it("reset() after settled clears reason / returns to idle without touching socket", () => {
+  it("reset() after settled clears settled / returns to idle without touching socket", () => {
     const { result } = renderHook(() =>
       useWsChatStream<TestReq>({
         path: "/test/ws",
-        onJson: (raw, helpers) => {
+        onJson: (raw, { markSettled }) => {
           const msg = raw as { type?: string };
-          if (msg.type === "done") helpers.markSettled("done");
+          if (msg.type === "done") markSettled({ kind: "done" });
         },
       }),
     );
     act(() => result.current.start({ prompt: "hi" }));
     act(() => emit(0, { kind: "open" }));
     act(() => emit(0, { kind: "json", data: { type: "done" } }));
-    expect(result.current.settledReason).toBe("done");
+    expect(result.current.settled).toEqual({ kind: "done" });
 
     act(() => result.current.reset());
     expect(result.current.phase).toBe("idle");
-    expect(result.current.settledReason).toBeNull();
+    expect(result.current.settled).toBeNull();
   });
 
   it("cancel on idle is a no-op (no settled fire)", () => {
@@ -288,6 +282,7 @@ describe("useWsChatStream", () => {
     );
     act(() => result.current.cancel());
     expect(result.current.phase).toBe("idle");
+    expect(result.current.settled).toBeNull();
     expect(onSettled).not.toHaveBeenCalled();
   });
 
@@ -300,22 +295,33 @@ describe("useWsChatStream", () => {
     act(() => emit(0, { kind: "open" }));
 
     unmount();
-    // The cleanup effect sets cancelledRef so a late close should not
-    // fire onSettled (it would also setState on an unmounted hook).
     expect(() => emit(0, { kind: "close", code: 1006, reason: "" })).not.toThrow();
     expect(onSettled).not.toHaveBeenCalled();
   });
 
-  it("onSettled info object shape · all 4 cause variants covered", () => {
-    // sanity: TS surface stays narrow. This is more a compile-time
-    // assertion than a runtime check.
-    const _shape: WsChatSettledInfo[] = [
-      { reason: "done", cause: "server-done" },
-      { reason: "error", cause: "server-done" },
-      { reason: "error", cause: "ws-close", code: 1006, reasonText: "x" },
-      { reason: "error", cause: "ws-error", reasonText: "x" },
-      { reason: "cancelled", cause: "user-cancel" },
+  it("WsChatSettled discriminated union shape (compile-time + runtime)", () => {
+    // Compile-time: every variant typed correctly.
+    const variants: WsChatSettled[] = [
+      { kind: "done" },
+      { kind: "error", source: "server" },
+      { kind: "error", source: "ws-close", code: 1006, reasonText: "x" },
+      { kind: "error", source: "ws-error", reasonText: "browser error" },
+      { kind: "cancelled" },
     ];
-    expect(_shape).toHaveLength(5);
+    expect(variants).toHaveLength(5);
+    // Runtime: TS narrow on switch works as expected.
+    for (const v of variants) {
+      switch (v.kind) {
+        case "done":
+          expect(v).not.toHaveProperty("source");
+          break;
+        case "error":
+          expect(v.source).toMatch(/^(server|ws-close|ws-error)$/);
+          break;
+        case "cancelled":
+          expect(v).not.toHaveProperty("source");
+          break;
+      }
+    }
   });
 });
