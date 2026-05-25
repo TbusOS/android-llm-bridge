@@ -33,20 +33,49 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
   const [dragging, setDragging] = useState(false);
   const dragOriginRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  // Element that had focus BEFORE the modal opened — we restore focus
+  // here on unmount so keyboard users return to whatever opened the
+  // zoom (the screenshot thumbnail button, typically) instead of
+  // landing on <body> and having to Tab-cycle from page top.
+  const previousActiveRef = useRef<HTMLElement | null>(null);
 
-  // Esc closes; trap focus inside wrapper while open.
+  // Modal a11y lifecycle:
+  //   - Esc closes (was already here pre-AI-7).
+  //   - Save previously-focused element, focus the close button so
+  //     Enter / Space immediately closes (5/25 ui-f MID-6).
+  //   - Tab / Shift+Tab is trapped: there is only one focusable
+  //     element inside the modal (close button), so any Tab keypress
+  //     forces focus back to it instead of escaping to the page
+  //     behind the backdrop.
+  //   - Restore focus on unmount (5/25 ui-f MID-6).
   useEffect(() => {
+    previousActiveRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key === "Tab") {
+        // Single-focusable-element trap — pin focus to close button.
+        e.preventDefault();
+        closeBtnRef.current?.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
-    wrapRef.current?.focus();
+    closeBtnRef.current?.focus();
+
     // Lock page scroll while modal is open.
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      previousActiveRef.current?.focus?.();
     };
   }, [onClose]);
 
@@ -115,6 +144,7 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
       onClick={onBackdropClick}
     >
       <button
+        ref={closeBtnRef}
         type="button"
         className="screenshot-zoom__close"
         onClick={onClose}
@@ -122,11 +152,20 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
       >
         <X size={20} />
       </button>
-      <div className="screenshot-zoom__hint" role="status">
-        {lang === "zh"
-          ? "滚轮缩放 · 拖动平移 · 双击复位 · Esc 关闭"
-          : "scroll = zoom · drag = pan · dbl-click = reset · Esc = close"}
-        {scale !== 1 && <> · {Math.round(scale * 100)}%</>}
+      {/* 5/25 ui-f MID-3: pre-AI-7 the zoom % shared this region's
+       *   `role="status"` so every wheel tick triggered a polite SR
+       *   announcement ("…100%, 110%, 120%, 130%…"). The hint text
+       *   itself is static and doesn't need a live region; the % is a
+       *   visual decoration only (aria-hidden so AT skips it). */}
+      <div className="screenshot-zoom__hint">
+        <span>
+          {lang === "zh"
+            ? "滚轮缩放 · 拖动平移 · 双击复位 · Esc 关闭"
+            : "scroll = zoom · drag = pan · dbl-click = reset · Esc = close"}
+        </span>
+        {scale !== 1 && (
+          <span aria-hidden="true"> · {Math.round(scale * 100)}%</span>
+        )}
       </div>
       <img
         src={src}

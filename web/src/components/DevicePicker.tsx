@@ -163,6 +163,17 @@ export function DevicePicker({ lang }: Props) {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
+        // 5/25 ui-f MID-5: SR needs to know which option is virtually
+        // focused while keyboard nav moves through the listbox. We
+        // keep DOM focus on the <ul> (existing behaviour) but expose
+        // the active option's id via aria-activedescendant so NVDA /
+        // VoiceOver announce each step instead of staying silent on
+        // "Available devices" forever.
+        aria-activedescendant={
+          open && devices[focusIdx]
+            ? `${listId}-opt-${focusIdx}`
+            : undefined
+        }
         aria-label={lang === "zh" ? "选择设备" : "Select device"}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={onTriggerKey}
@@ -222,6 +233,7 @@ export function DevicePicker({ lang }: Props) {
             return (
               <li
                 key={d.id}
+                id={`${listId}-opt-${i}`}
                 role="option"
                 aria-selected={isActive}
                 className={[
