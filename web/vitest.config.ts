@@ -9,23 +9,22 @@
  *     form, rejecting our `{ xterm: [...] }` record form (prod build's
  *     chunk-split config).
  *
- * Split keeps both configs typed correctly. Maintenance contract: any
- * plugin / alias / resolve-config change that specs also need MUST be
- * mirrored here. Today we share `react()` plugin + `@` alias.
+ * Split keeps both configs typed correctly. Shared config (plugins /
+ * alias) is now imported from `vite.shared.ts` so vite and vitest
+ * never drift out of sync (AM-3 · arch MID-15). Add new shared config
+ * to `vite.shared.ts`; test-only options stay here.
  *
- * See AH-5 commit message for the single-config attempt and the
- * concrete errors that ruled it out.
+ * See AH-5 + AM-3 commit messages for the single-config attempt and
+ * the concrete errors that ruled it out.
  */
 import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
-import path from "node:path";
+
+import { sharedAlias, sharedPlugins } from "./vite.shared";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: sharedPlugins,
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: sharedAlias,
   },
   test: {
     environment: "jsdom",

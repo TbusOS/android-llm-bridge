@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path from "node:path";
+
+import { sharedAlias, sharedPlugins } from "./vite.shared";
 
 // alb Web build → `../docs/app/` (committed, served by FastAPI StaticFiles
 // and by GitHub Pages). During dev, Vite proxies /chat, /playground,
@@ -26,15 +26,15 @@ import path from "node:path";
 // but wasn't a misdiagnosis — single-config attempt confirmed both
 // errors are real (see AH-5 commit message + DEBT-053).
 //
-// Maintainer responsibility: when adding plugins / alias / server
-// proxy / resolve config that test files also need, mirror the change
-// into vitest.config.ts. The two configs share an alias on `@` today.
+// Shared config (plugins / alias) is imported from `vite.shared.ts`
+// so vite.config.ts and vitest.config.ts can never drift out of sync
+// (AM-3 fix for ADR-040 maintenance contract). Add new shared config
+// to `vite.shared.ts`; vite-only options stay here, test-only options
+// stay in vitest.config.ts.
 export default defineConfig({
-  plugins: [react()],
+  plugins: sharedPlugins,
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: sharedAlias,
   },
   server: {
     port: 5173,
