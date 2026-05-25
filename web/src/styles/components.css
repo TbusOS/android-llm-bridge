@@ -628,14 +628,26 @@ html[lang^="zh"] h3 {
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+  /* Set the inherited color here so `.live-pulse` (which uses
+   * currentColor for both background and the keyframe box-shadow)
+   * stays orange in Dashboard. The is-idle variant overrides to mid-
+   * gray; AuditPage's `.audit-page__status--live` is a different
+   * container with its own color and the pulse follows that. */
+  color: var(--anth-orange);
 }
 
-/* 5/25 code-r MID-7: dot now inherits the parent's `color` instead
- * of forcing orange. Dashboard's `.live-head` stays orange (the
- * default heading colour); AuditPage's `.audit-page__status--live`
- * pill is green, and the pulse follows. color-mix mirrors the
- * historical 50% opacity start / fully transparent end so the ring
- * fades to nothing regardless of base hue. */
+.live-card.is-idle .live-head {
+  color: var(--anth-mid-gray);
+}
+
+/* 5/25 code-r MID-7 + 5/25 mockup HIGH-1 fix:
+ * `.live-pulse` inherits its colour from the nearest `color` ancestor.
+ *   - Dashboard `.live-head` is orange (set above), so the pulse is
+ *     orange — matches webui-preview-v2.html baseline.
+ *   - AuditPage `.audit-page__status--live` pill is green, the pulse
+ *     follows the pill colour.
+ * color-mix mirrors the historical 50% opacity start / fully
+ * transparent end so the ring fades to nothing regardless of base hue. */
 .live-pulse {
   width: 9px;
   height: 9px;

@@ -38,11 +38,10 @@ export function LiveSessionCard({ data, streamStatus, onInterrupt }: Props) {
     return (
       <article className="live-card is-idle" aria-live="polite">
         <div className="live-head">
-          <span
-            className="live-pulse"
-            style={{ background: "var(--anth-mid-gray)", animation: "none" }}
-            aria-hidden={true}
-          />
+          {/* idle 状态由 `.live-card.is-idle .live-head { color: mid-
+           *  gray }` + `@media reduced-motion { .live-pulse { animation:
+           *  none } }` 共同覆盖，不再需要内联 style。 */}
+          <span className="live-pulse" aria-hidden={true} />
           <span className="live-label">
             {lang === "zh" ? "无活动会话" : "No live session"}
           </span>

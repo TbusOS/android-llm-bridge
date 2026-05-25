@@ -163,17 +163,6 @@ export function DevicePicker({ lang }: Props) {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
-        // 5/25 ui-f MID-5: SR needs to know which option is virtually
-        // focused while keyboard nav moves through the listbox. We
-        // keep DOM focus on the <ul> (existing behaviour) but expose
-        // the active option's id via aria-activedescendant so NVDA /
-        // VoiceOver announce each step instead of staying silent on
-        // "Available devices" forever.
-        aria-activedescendant={
-          open && devices[focusIdx]
-            ? `${listId}-opt-${focusIdx}`
-            : undefined
-        }
         aria-label={lang === "zh" ? "选择设备" : "Select device"}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={onTriggerKey}
@@ -197,6 +186,16 @@ export function DevicePicker({ lang }: Props) {
           role="listbox"
           aria-label={lang === "zh" ? "可用设备" : "Available devices"}
           tabIndex={-1}
+          // 5/25 ui-f HIGH-1 真修：AI-7 第一次把 aria-activedescendant
+          // 挂在 trigger 上但 DOM focus 在 <ul> · SR 从 focused element
+          // 读 activedescendant · 挂错宿主 → 朗读没生效。WAI-ARIA 1.2
+          // listbox-with-active pattern：activedescendant 必须挂在
+          // **持有 DOM focus** 的元素（这里是 listbox 自己）。
+          aria-activedescendant={
+            open && devices[focusIdx]
+              ? `${listId}-opt-${focusIdx}`
+              : undefined
+          }
           onKeyDown={onListKey}
         >
           {isLoading && (
