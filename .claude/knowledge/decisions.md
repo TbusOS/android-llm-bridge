@@ -1210,3 +1210,62 @@ vite re-export，应该可单 config 解决"）。AH-5 实测验证：
   条 finding 的"实测后反驳"
 - DEBT-053（hook test mock pattern · vi.hoisted N=2 抽 helper）
 - 任何升级 vite / vitest 主版本时重测：可能未来某个版本两边类型趋同
+
+---
+
+## ADR-041 · hook 组织规则 · lib/hooks/ vs lib/ vs features/<x>/
+
+**Status**: accepted · 关 5/25 arch HIGH-3
+
+**Context**:
+
+5/25 arch HIGH-3: lib/hooks/ 与 lib/ 命名分裂 — 4 hook 分 2 目录无
+判定依据 (useDevices / useAuditStream 在 hooks/ · useArmedAction /
+useElapsedSeconds 在 lib/ 裸放 · useDashboardQuery 在 lib/ 裸放)。
+AH-1 commit 把 4 个业务 hook 统一到 lib/hooks/ · useDashboardQuery
+留 lib/ 作 query factory 例外。
+
+**Decision**:
+
+强制 3 槽：
+
+- `web/src/lib/hooks/<useX>.ts` = **多 feature 共享的业务 hook** ·
+  数据 fetch / WS lifecycle / 状态 hook · 必须只返 raw (服务端原
+  shape) · 不允许 import features/ (反向依赖触发 arch HIGH)
+- `web/src/lib/<utility>.ts` = **非 hook 的纯 utility** · api.ts /
+  ws.ts / format.ts / deviceFormat.ts / dashboardQuery.ts (薄封装
+  TanStack Query) 这类 · 不带 React state · 不带 useEffect
+- `web/src/features/<x>/use<Y>.ts` = **单 feature 专属 hook** · view
+  projection wrapper / 业务编排 hook · 可以 import lib/hooks/ +
+  features/<x>/types · 不允许跨 feature import (除非通过 lib/hooks/)
+
+**Why**:
+
+- AA commit (5/22) 把 useDevices / useAuditStream 提到 lib/ 但留在
+  hooks/ subfolder · AG commit (5/25) 又把 useArmedAction /
+  useElapsedSeconds 直接放 lib/ — bikeshed-prone (作者要二选一无
+  judge)
+- raw vs view-model 拆分必须在 boundary 上显式 · feature wrapper
+  做 projection (mapToDeviceCard / mapAuditToTimeline) · lib hook 不
+  知道 feature view shape
+
+**Enforcement**:
+
+- 任何 lib/hooks/<X>.ts grep 自身 import features/ → audit HIGH
+- 新加共享 hook 默认 lib/hooks/ · 默认 raw shape · feature wrapper
+  自己做投影
+- code-reviewer agent grep checklist 加: lib/hooks/*.ts 内
+  `import.*features/` → flag
+
+**Rationale**:
+
+- 单一规则消除"该放哪"的判断分歧
+- raw / view-model 分离让 lib hook 测试不依赖 feature types
+- 跨 feature 共享只通过 lib · 不通过 sibling feature
+
+**关联**：
+
+- AH-1 commit · arch HIGH-3 fix
+- AH-2 commit · arch HIGH-4 fix (raw / wrapper split 实操)
+- L-048 (提层提一半 = 反向依赖 trap)
+- DEBT-053 (test mock helper 抽 · 跟随同一 lib/hooks/ 不变量)

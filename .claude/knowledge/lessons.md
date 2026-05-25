@@ -2385,3 +2385,135 @@ DEBT-047 (该 dedup 真做的工作)
 ---
 
 （新教训按此格式追加）
+
+## L-046 · WS 流式 hook 必须在 close-before-done 路径同时构造 synthetic done payload
+
+**症状**: 用户在 PlaygroundPage 发 prompt · token 正在流 · 后端 503
+/ WS 被中间代理断 · 流式光标 ▍ 消失 · 用户看到截断的 assistant 气泡 +
+idle 输入框 · 0 反馈说"连接断了"。
+
+**根因**: hook 在 close-before-done 路径只 `setStatus("error")` · 不
+塞 `done` payload · 而 PlaygroundPage 的错误 UI 渲染条件是
+`status === "error" && done`（line 267）· `done` 为 null 时整个 error
+block 不渲染。
+
+**Fix pattern** (commit AH-3 `8f5d44a` · useWsChatStream):
+```ts
+onCloseBeforeDone: (info) => {
+  setDone({
+    ok: false,
+    content: "",
+    finish_reason: "disconnected",
+    model: "", backend: "",
+    error: { code: "WS_DISCONNECTED", message: info.reason || ... },
+  });
+}
+```
+hook 内置 fallback 模板的 **必填项**：consumer 渲染逻辑常用
+`status && payload` 双条件 · 单 setStatus 一定 silent-freeze。
+
+**触发条件**：任何 WS 流式协议 hook · 任何 consumer 的错误 UI 渲染
+读 hook 返回的 payload 字段 → 必须 audit 这条 race。
+
+**关联**: AH-3 commit · DEBT-047 (将来 ws dedup 时 pool 复用注意保留
+synthetic done 语义) · ui-f HIGH-1 audit finding
+
+---
+
+## L-047 · 流式 chat / log UI 必须实现 stick-to-bottom 双模式 (跟随尾部 + 用户上滚脱离)
+
+**症状**: 长回复（500+ token） · log 容器 `overflow-y:auto` · 但无
+scroll-follow → 流的内容把视口推到顶 · 用户看不到新 token。
+
+**Fix pattern** (commit AI-8 `02d6076` · PlaygroundPage):
+- `useRef<HTMLDivElement>(logRef)` + `useState<stickToBottom>(true)`
+- `useEffect`: stick 为真时 `el.scrollTop = el.scrollHeight` (每 render)
+- `onScroll`: 检测 `scrollHeight - clientHeight - scrollTop <= 40px`
+  → 设回 stick (用户滚到底自动恢复) · `> 40px` → 关 stick
+- 发送 / clear 强制 setStick(true) 重新锚到底
+- 显示 floating "回到最新 ↓" 按钮 when !stick && (log 非空 || streaming)
+
+**触发条件**: 下一个 chat-like / streaming log / agent trace / repl
+组件出现时 (Anthropic SSE bridge / Gemma 4 on-device chat / etc.) ·
+**单一容器 overflow:auto + 流式 setState 不会自动滚** · 必须显式管。
+
+**关联**: AI-8 commit · ui-f MID-2 audit · DEBT-046 (Playground
+metrics rail) 不影响本不变量
+
+---
+
+## L-048 · 提层 hook 必须同步剥离 view-model 反向依赖 · 不留 "future split" TODO
+
+**症状**: 把 hook 从 `features/dashboard/` 提到 `lib/hooks/` 关 layering
+audit · 但 hook 内部仍 `import features/dashboard/types` +
+`mapAuditToTimeline` · 注释里写 "future split: keep raw-only" 表示
+"明天的我会做" · 实际下次 audit 再次抓 · "提层只提了一半"。
+
+**根因**: 把"被多处 import"问题转成"低层 import 高层"问题 · 分层规则
+破得更深。Future TODO 是 self-defeating · 当前 reviewer 看见有
+comment 以为问题在管 · 真问题更隐蔽。
+
+**Fix pattern** (commit AH-2 `60c031f`):
+- raw hook 只返服务端原 shape (ApiDevice[] / AuditEvent[])
+- 每个 feature 自己 wrapper hook 做 view projection
+- 共享 utility (Transport union / status mapper) 提到 `lib/<name>.ts`
+  · types.ts re-export 给 dashboard 继续用
+
+**触发条件**: 任何 layering audit finding "X 被多处用 · 提到 lib"
+· 检 X 内部有无 import features/ → 同步剥离 · 不留 future split
+
+**关联**: AH-2 commit · arch HIGH-4 + code MID-1 audit · 之前 AA
+commit (5/22) 是"提一半"的反例
+
+---
+
+## L-049 · 配置文件类型 trade-off 实测优先 · 不能"听上去 narrows"就误诊
+
+**症状**: 5/25 arch audit 怀疑 "vitest 双 config 是过度防御 · 应可
+单 config" · AH-5 实测后两条都是真错 (vite 的 defineConfig 无 test
+字段 / vitest 的 defineConfig narrows manualChunks record form) ·
+arch agent 的"误诊"说法本身是误诊。
+
+**根因**: 类型限制 / 兼容性问题不能纯靠"看注释" / "凭印象"判 · 工具
+版本演进快 (vite 5 + vitest 4 + rollup 4 各自的 narrow 策略不同) ·
+唯一可信的方式是**实测合并 · 看错出在哪**。
+
+**Fix pattern** (commit AH-5 `7c96fae`):
+- 试合并 vite + vitest config · 跑 `tsc -b && vite build`
+- 实测两条错都是真 · 注释改写真因 (而非"听上去")
+- 写 ADR-040 永久留档 + 维护契约段 (plugins / alias 同步两边)
+
+**触发条件**: 任何 "X 配置应该可以合并" / "Y 类型限制听上去可以
+绕开" 的判断 · 必须先合并跑 build 实测 · 0 错才能下"误诊"结论 ·
+有错就把真因写注释 + ADR
+
+**关联**: AH-5 commit · ADR-040 · L-009 (代码事实禁止 hedge) ·
+arch audit MID-5
+
+---
+
+## L-050 · diag/file-scan TOCTOU 防御必须 full coverage · not pointwise
+
+**症状**: AC commit 给 `p.stat()` 包了 try/except OSError · 但
+`p.iterdir()` / `p.is_symlink()` / `p.is_file()` / `p.is_dir()` 都
+仍裸抛 · TOCTOU race 还在 · 修了 1/5 的 case。
+
+**根因**: 文件系统 race window 在**每一个 stat call** 之间都打开 ·
+单独包某一个无意义 · 调用方法签名一变 ATTACK SURFACE 不变。
+
+**Fix pattern** (commit AI-6 `5d4877e` · diag_route):
+- 抽 `_safe_iterdir(p) -> list[Path]` · OSError → []
+- 抽 `_safe_entry(p, want="file"|"dir") -> bool` · symlink reject +
+  is_* + OSError → False
+- **所有 file-system 探测都走 helper** · 不允许裸 iterdir / is_* 出现
+
+**触发条件**: 任何 endpoint 跑 file-system scan / dir walk · 任何
+sync function 在 async event loop 里 · 任何 OSError 没 catch 直接
+冒到 ASGI handler · 必须 full coverage 防 race
+
+**关联**: AI-6 commit · code HIGH-2 audit · ADR-027 (workspace path
+boundary) · L-035 (path-traversal 实测验证文化)
+
+---
+
+（新教训按此格式追加）

@@ -1269,3 +1269,83 @@
 ---
 
 （新债由主对话评估后追加；agents 不直接写）
+
+## DEBT-052 · React Test StrictMode wrapper baseline
+
+- **现象**：5/25 code-r MID-6 / arch HIGH-6 · DevicePicker /
+  useArmedAction / useElapsedSeconds / usePlaygroundChat 4 spec 都用
+  普通 `renderHook` / `render` · prod 在 `main.tsx:32` 有
+  `<StrictMode>` 包整个 app · dev 模式 effect 跑两遍 · spec 跑一遍 ·
+  effect cleanup / timer 重创 / useEffect 双 invoke 副作用永远测不到
+- **影响**：DevicePicker focus effect 在 StrictMode 下 wasOpenRef 是否
+  被错改 true 触发误归位 / useArmedAction 8s timer 是否在 cleanup
+  re-effect 后重复创建 / useElapsedSeconds setInterval 是否泄露 —
+  4 个 race candidate 都 dark
+- **建议方案**：
+  - test/setup.ts 加 `import { StrictMode } from "react"`
+  - 在 `renderHook(hook, { wrapper: StrictMode })` / `render(<Comp />,
+    { wrapper: StrictMode })` 全局默认包
+  - 或最低门槛：给每个 effect-heavy hook 加 1 个 `it("survives
+    StrictMode double-invoke", ...)` spec
+- **触发关闭**：StrictMode 下任一现有 spec fail / 第 5 个 hook
+  spec 落地时一起做
+- **来源**：5/25 audit code MID-6 + arch HIGH-6
+
+---
+
+## DEBT-053 · 测试 mock helper 抽 (vi.hoisted N=2 触发)
+
+- **现象**：5/25 arch MID-6 · DevicePicker.test.tsx 用 `vi.hoisted`
+  factory mock useDevices + useApp 两层 · 含一堆 mutable closures over
+  activeDevice / devicesList / isLoading / isError · pattern 强但
+  hard-to-read · 第 2 个组件 spec 大概率会复制 4-5 个 let-state +
+  setDeviceFn = vi.fn() 模式 · typo / 漏 reset 在 beforeEach 风险高
+  · 当前 setActiveDevice helper 已经是 dead code (spec 里 0 引用)
+- **影响**：N=4-5 spec 后 helper 设计已散 · 回头抽代价高
+- **建议方案**：
+  - 抽 web/src/test/mock-hooks.ts · `mockUseDevices(initial)` /
+    `mockUseApp(initial)` 工厂返 `{ mock, set: { devices, device,
+    loading, error } }`
+  - decisions.md 加 ADR "test mock 优先 helper · 不直接 vi.hoisted"
+  - 第一个 helper 在 N=2 (下一个组件 spec 出来) 时抽
+- **触发关闭**：第 2 个组件 spec 用 vi.hoisted mock 两个以上 hook
+- **来源**：5/25 arch MID-6
+
+---
+
+## DEBT-054 · audit event_id 字段
+
+- **现象**：5/25 code-r MID-5 / AI-6 修 row key 抓的 fallback
+  · server 端 AuditEvent 缺 unique id · client 端只能拼
+  `${ts}|${sid}|${kind}|${source}|${summary[0..30]}` 当 key ·
+  亚毫秒同 ts+sid+kind+source+summary 全撞概率极低但理论存在
+- **影响**：row 重挂载 / animation flicker / focus 丢
+- **建议方案**：
+  - server 端 src/alb/audit/__init__.py emit event 时加 `event_id` =
+    ulid / uuid4 · append-only log 兼容（旧 jsonl 无 event_id · client
+    保留 fallback 拼 key）
+  - client 端 row key 改 `event_id ?? fallback`
+- **触发关闭**：row key 实测撞 (基本不会) / 或下次 audit 改 schema 时
+- **来源**：5/25 code-r MID-5
+
+---
+
+## DEBT-055 · `mapAuditToTimeline` migration to wrapper
+
+- **现象**：mapAuditToTimeline 当前在 `features/dashboard/useAudit.ts`
+  · `useAuditTimeline.ts` wrapper 也 import 这个函数 · 形成
+  `features/dashboard/useAudit.ts` → `features/dashboard/useAudit
+  Timeline.ts` 内部 cross-import · 不算违规但说明 mapper 归宿没定
+- **影响**：将来 audit 改 schema 要扫两处 mapper · useAudit (legacy
+  polling) 可能已废 (snapshot WS 取代) 但还没删
+- **建议方案**：
+  - 检查 useAudit() 是否还有 caller · 如果只剩 dashboard fallback ·
+    把 mapAuditToTimeline 搬进 useAuditTimeline.ts · 把 useAudit.ts
+    标 deprecated 或删
+- **触发关闭**：useAudit() caller count = 0 / 下次 dashboard 改 audit
+  view 时
+- **来源**：AH-2 重构 (lib/hooks/ 去反向依赖) 时观察到
+
+---
+
+（新债由主对话评估后追加；agents 不直接写）
