@@ -34,7 +34,7 @@ import {
 import { formatBytes } from "../../lib/format";
 import { NoDeviceCard } from "../../components/NoDeviceCard";
 import { SectionPlaceholder } from "../../components/SectionPlaceholder";
-import { useArmedAction } from "../../lib/useArmedAction";
+import { useArmedAction } from "../../lib/hooks/useArmedAction";
 import { ScreenshotZoom } from "./ScreenshotZoom";
 import {
   useDeleteScreenshotMutation,

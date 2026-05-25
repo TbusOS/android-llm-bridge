@@ -15,7 +15,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { useApp } from "../../stores/app";
 import { type AppEnvelope } from "../../lib/api";
-import { useArmedAction } from "../../lib/useArmedAction";
+import { useArmedAction } from "../../lib/hooks/useArmedAction";
 import {
   useAppClearDataMutation,
   useAppInfo,

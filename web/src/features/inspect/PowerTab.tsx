@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 
 import { useApp } from "../../stores/app";
 import type { RebootRequest } from "../../lib/api";
-import { useArmedAction } from "../../lib/useArmedAction";
+import { useArmedAction } from "../../lib/hooks/useArmedAction";
 import { useBattery, useRebootMutation, useSleepWakeMutation } from "./usePower";
 
 type RebootMode = RebootRequest["mode"];

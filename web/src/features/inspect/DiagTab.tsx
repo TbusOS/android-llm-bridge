@@ -27,7 +27,7 @@ import {
   type DiagArtifactBundle,
   type DiagArtifactFile,
 } from "../../lib/api";
-import { useElapsedSeconds } from "../../lib/useElapsedSeconds";
+import { useElapsedSeconds } from "../../lib/hooks/useElapsedSeconds";
 
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
