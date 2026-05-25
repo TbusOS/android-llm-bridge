@@ -4675,14 +4675,20 @@ html[lang^="zh"] h3 {
   overflow: hidden;
 }
 
-/* "Jump to latest" floating button (5/25 ui-f MID-2): shown only when
- * the user has scrolled away from the bottom while content is live.
- * Anchored to the bottom-right of the chat container so it doesn't
- * push reflows or overlap the input bar. */
+/* "Jump to latest" floating button (5/25 ui-f MID-2 / AM-1 MID-11):
+ * shown only when the user has scrolled away from the bottom while
+ * content is live. Position uses CSS var so the input bar height
+ * (which the user can resize via textarea `resize: vertical`) doesn't
+ * push the button under the input. The var is set in .playground-chat
+ * and consumed here so jsx layout can update --chat-bar-height when
+ * input grows. */
+.playground-chat {
+  --chat-bar-height: 72px;
+}
 .playground-chat__jump {
   position: absolute;
   right: 16px;
-  bottom: 76px; /* clear the .playground-chat__bar (input + buttons) */
+  bottom: calc(var(--chat-bar-height) + 8px);
   z-index: 2;
   background: var(--anth-orange);
   color: #ffffff;
@@ -4702,6 +4708,16 @@ html[lang^="zh"] h3 {
 .playground-chat__jump:focus-visible {
   outline: 2px solid var(--anth-orange);
   outline-offset: 2px;
+}
+
+/* Partial (already-streamed) tokens shown above the error / cancel
+ * marker. Slightly muted to differentiate from the final error
+ * message but still readable / selectable for copy. */
+.playground-msg__partial {
+  opacity: 0.75;
+  border-bottom: 1px dashed var(--anth-light-gray);
+  padding-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .playground-chat__head {

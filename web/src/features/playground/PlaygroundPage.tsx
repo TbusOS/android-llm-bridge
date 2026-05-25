@@ -69,12 +69,32 @@ export function PlaygroundPage() {
   //   - sending a new prompt → force stick=true so the next reply
   //     starts from a known anchor
   const logRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLFormElement>(null);
+  const chatRef = useRef<HTMLElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
   // Snapshot of the most recently sent prompt — used to repopulate
   // the input on error (5/25 ui-f LOW-2). Cleared by user typing
   // anything (we only restore when input is empty), so retry doesn't
   // clobber a follow-up edit.
   const lastPromptRef = useRef<string>("");
+
+  // 5/25 ui-f MID-11: keep --chat-bar-height in sync with the actual
+  // bar height (textarea has `resize: vertical`, so user-drag changes
+  // it). Reads barRef.offsetHeight via ResizeObserver and writes the
+  // CSS var on the parent so the absolute-positioned jump button
+  // stays clear of the bar.
+  useEffect(() => {
+    const bar = barRef.current;
+    const chat = chatRef.current;
+    if (!bar || !chat) return;
+    const apply = () => {
+      chat.style.setProperty("--chat-bar-height", `${bar.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
 
   const SCROLL_THRESHOLD_PX = 40;
 
@@ -161,6 +181,23 @@ export function PlaygroundPage() {
     setLog([]);
     chat.reset();
     setStickToBottom(true);
+  };
+
+  // 5/25 ui-f MID-1: cancel during streaming used to drop the partial
+  // delta silently — user lost the 200+ tokens that had already
+  // arrived. We now stash whatever's accumulated into the log as a
+  // (truncated) assistant message before tearing down the stream so
+  // the output is at least visible / copyable.
+  const onCancel = () => {
+    if (chat.delta) {
+      const trailer = lang === "zh" ? " [已取消]" : " [cancelled]";
+      const partial = chat.delta;
+      setLog((l) => [
+        ...l,
+        { role: "assistant", content: partial + trailer },
+      ]);
+    }
+    chat.cancel();
   };
 
   const onJumpToBottom = () => {
@@ -289,7 +326,7 @@ export function PlaygroundPage() {
         </label>
       </aside>
 
-      <main className="playground-chat">
+      <main className="playground-chat" ref={chatRef}>
         <header className="playground-chat__head">
           <h1 className="h-title">
             {lang === "zh" ? "Playground 调试台" : "Playground"}
@@ -337,6 +374,15 @@ export function PlaygroundPage() {
           {chat.status === "error" && chat.done && (
             <div className="playground-msg playground-msg--error">
               <span className="playground-msg__role">error</span>
+              {/* 5/25 ui-f MID-1: 在错误条之前保留已流的 token · 之前
+               *   error 一来 streaming 气泡消失 · 用户失去 200+ token
+               *   的输出 · 也没回放路径。chat.delta 仍有上次终止前的
+               *   累积 · 显示出来让用户至少能复制 / 看到。 */}
+              {chat.delta && (
+                <pre className="playground-msg__body playground-msg__partial">
+                  {chat.delta}
+                </pre>
+              )}
               <pre className="playground-msg__body">
                 {chat.done.error?.code ?? "ERROR"}:{" "}
                 {chat.done.error?.message ?? "(no message)"}
@@ -373,6 +419,7 @@ export function PlaygroundPage() {
         )}
 
         <form
+          ref={barRef}
           className="playground-chat__bar"
           onSubmit={(e) => {
             e.preventDefault();
@@ -396,7 +443,7 @@ export function PlaygroundPage() {
               // `disabled` which dropped focus, so ESC never fired).
               if (e.key === "Escape" && chat.status === "streaming") {
                 e.preventDefault();
-                chat.cancel();
+                onCancel();
               }
             }}
             placeholder={
@@ -417,7 +464,7 @@ export function PlaygroundPage() {
             <button
               type="button"
               className="playground-chat__cancel"
-              onClick={chat.cancel}
+              onClick={onCancel}
             >
               {lang === "zh" ? "取消" : "cancel"}
             </button>

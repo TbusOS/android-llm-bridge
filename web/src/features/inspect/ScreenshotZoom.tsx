@@ -41,14 +41,17 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
   const previousActiveRef = useRef<HTMLElement | null>(null);
 
   // Modal a11y lifecycle:
-  //   - Esc closes (was already here pre-AI-7).
+  //   - Esc closes.
   //   - Save previously-focused element, focus the close button so
   //     Enter / Space immediately closes (5/25 ui-f MID-6).
-  //   - Tab / Shift+Tab is trapped: there is only one focusable
-  //     element inside the modal (close button), so any Tab keypress
-  //     forces focus back to it instead of escaping to the page
-  //     behind the backdrop.
-  //   - Restore focus on unmount (5/25 ui-f MID-6).
+  //   - Restore focus on unmount; check `isConnected` so if the
+  //     previously focused element was unmounted (route nav while
+  //     zoom open) we drop the call gracefully rather than focus()
+  //     no-oping silently (5/25 AM-1 ui-f MID-3).
+  //   - **No Tab trap**: modal has only one focusable (close button)
+  //     so Tab naturally cycles on it. Earlier AI-7 added force-pull
+  //     Tab → close, but that breaks NVDA / JAWS "Forms mode" Tab
+  //     browse-cursor (5/25 AM-1 ui-f MID-4).
   useEffect(() => {
     previousActiveRef.current =
       document.activeElement instanceof HTMLElement
@@ -56,15 +59,7 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
         : null;
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (e.key === "Tab") {
-        // Single-focusable-element trap — pin focus to close button.
-        e.preventDefault();
-        closeBtnRef.current?.focus();
-      }
+      if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     closeBtnRef.current?.focus();
@@ -75,7 +70,8 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
-      previousActiveRef.current?.focus?.();
+      const target = previousActiveRef.current;
+      if (target?.isConnected) target.focus();
     };
   }, [onClose]);
 
