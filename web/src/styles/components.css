@@ -630,24 +630,28 @@ html[lang^="zh"] h3 {
   flex-wrap: wrap;
 }
 
+/* 5/25 code-r MID-7: dot now inherits the parent's `color` instead
+ * of forcing orange. Dashboard's `.live-head` stays orange (the
+ * default heading colour); AuditPage's `.audit-page__status--live`
+ * pill is green, and the pulse follows. color-mix mirrors the
+ * historical 50% opacity start / fully transparent end so the ring
+ * fades to nothing regardless of base hue. */
 .live-pulse {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--anth-orange);
-  box-shadow: 0 0 0 0 rgba(217, 119, 87, 0.5);
+  background: currentColor;
+  box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent);
   animation: live-pulse 1.6s ease-out infinite;
 }
 
 @keyframes live-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0.5);
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent);
   }
-  80% {
-    box-shadow: 0 0 0 9px rgba(217, 119, 87, 0);
-  }
+  80%,
   100% {
-    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0);
+    box-shadow: 0 0 0 9px transparent;
   }
 }
 

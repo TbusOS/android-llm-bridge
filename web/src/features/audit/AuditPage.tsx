@@ -86,10 +86,15 @@ export function AuditPage() {
 
   const vm = useAuditStream({ includeMetrics, minutes });
 
-  // rawEvents already includes metric events when includeMetrics=true.
-  // Reverse to newest-first for the table view (the hook stores in
-  // arrival order, oldest first).
-  const allEvents = useMemo(() => [...vm.rawEvents].reverse(), [vm.rawEvents]);
+  // 5/25 audit perf-r M14: the prior code did `[...vm.rawEvents]
+  // .reverse()` with a "reverse to newest-first" comment — but the
+  // hook already returns newest-first (snapshot is newest-first,
+  // live events are unshifted to head, merged rawEvents is
+  // ts-descending). Reverse here flipped the table to oldest-first,
+  // which is backwards for a live log view. Use the rawEvents
+  // directly. includeMetrics=true folds tps_sample into the same
+  // ts-ordered list.
+  const allEvents = vm.rawEvents;
 
   // Distinct kinds for filter dropdown — derived from current events
   // so unused kinds don't clutter the picker.
@@ -229,9 +234,18 @@ export function AuditPage() {
               {lang === "zh" ? "摘要" : "summary"}
             </span>
           </div>
-          {visible.map((e, i) => (
+          {visible.map((e) => (
             <div
-              key={`${e.ts}-${e.session_id}-${e.kind}-${i}`}
+              // 5/25 code-r MID-5: the previous `-${i}` tiebreaker
+              // meant every filter / new-event re-shift mutated all
+              // row keys → React remounted the entire table (loses
+              // CSS transitions, focus, any inner state). Drop i;
+              // use stable per-event fields. Same (ts, sid, kind,
+              // source, summary[0..30]) collision is astronomically
+              // unlikely under our 1Hz tps_sample / few-per-second
+              // business cadence (DEBT-055 if/when server starts
+              // emitting event_id).
+              key={`${e.ts}|${e.session_id}|${e.kind}|${e.source}|${(e.summary ?? "").slice(0, 30)}`}
               className="audit-table__row"
               role="row"
               data-source={e.source}

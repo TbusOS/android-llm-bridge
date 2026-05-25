@@ -48,13 +48,50 @@ def _resolve_transport(
     """See ``power_route._resolve_transport``: tuple-return so handlers
     surface ``build_transport`` failure as envelope shape (b)."""
     if device and not is_safe_device(device):
-        raise HTTPException(
-            status_code=400, detail=f"invalid device serial: {device!r}"
-        )
+        # Don't echo the rejected serial back — the input passed
+        # FastAPI's max_length=128 but pre-`is_safe_device` it's still
+        # raw user-controlled bytes (control chars / unicode RTL
+        # override / quotes). 5/25 sec audit MID-1: any future
+        # consumer that renders `detail` via dangerouslySetInnerHTML
+        # turns this into reflected XSS. The reject reason is a
+        # boolean ("yes it failed") not a value ("here's what you
+        # sent") — keep it that way.
+        raise HTTPException(status_code=400, detail="invalid device serial")
     try:
         return build_transport(device_serial=device), None
     except Exception as e:  # noqa: BLE001
         return None, envelope_transport_init_error(e, device=device)
+
+
+def _safe_iterdir(p: Path) -> list[Path]:
+    """Sorted iterdir that survives the dir being unlinked / replaced
+    mid-scan. Returns [] on OSError instead of bubbling to 500.
+
+    5/25 code audit HIGH-2: AC commit (TOCTOU stat guard) protected
+    `p.stat()` but `p.iterdir()` / `is_symlink()` / `is_file()` /
+    `is_dir()` still raised. Same race window, same defence required.
+    """
+    try:
+        return sorted(p.iterdir(), reverse=True)
+    except OSError:
+        return []
+
+
+def _safe_entry(p: Path, *, want: str) -> bool:
+    """True if `p` is a real (non-symlink) entry of the requested
+    kind. `want` is "file" or "dir". Any OSError (concurrent unlink,
+    permission flip, EIO) collapses to False so callers can `continue`.
+    """
+    try:
+        if p.is_symlink():
+            return False
+        if want == "file":
+            return p.is_file()
+        if want == "dir":
+            return p.is_dir()
+        return False
+    except OSError:
+        return False
 
 
 class AnrRequest(BaseModel):
@@ -142,15 +179,12 @@ def _scan_artifacts_in_thread(
 
     br = base / "bugreports"
     if br.exists():
-        for p in sorted(br.iterdir(), reverse=True):
-            # is_symlink() short-circuits before is_file() so we refuse
-            # to follow any link that may point outside the device's
-            # artifact dir (defence-in-depth even though the dir is
-            # ours).
-            if p.is_symlink() or not p.is_file() or not p.name.endswith(".zip"):
+        for p in _safe_iterdir(br):
+            # _safe_entry rejects symlinks (defence-in-depth even
+            # though the dir is ours) AND swallows OSError races
+            # (entry unlinked between iterdir and stat).
+            if not _safe_entry(p, want="file") or not p.name.endswith(".zip"):
                 continue
-            # TOCTOU + filesystem race: between is_symlink/is_file and
-            # stat, the entry could be unlinked. Skip rather than 500.
             try:
                 st = p.stat()
             except OSError:
@@ -172,18 +206,18 @@ def _scan_artifacts_in_thread(
         kdir = base / kind
         if not kdir.exists():
             continue
-        for tdir in sorted(kdir.iterdir(), reverse=True):
-            if tdir.is_symlink() or not tdir.is_dir():
+        for tdir in _safe_iterdir(kdir):
+            if not _safe_entry(tdir, want="dir"):
                 continue
             tdir_rel = _rel(tdir)
             if tdir_rel is None:
                 continue
             files: list[dict[str, Any]] = []
-            for f in sorted(tdir.iterdir()):
-                if f.is_symlink() or not f.is_file():
+            for f in sorted(_safe_iterdir(tdir), reverse=False):
+                if not _safe_entry(f, want="file"):
                     continue
                 # Cache stat() — previously called twice per file
-                # (.st_size and .st_mtime). Same TOCTOU guard as above.
+                # (.st_size and .st_mtime). Same TOCTOU guard.
                 try:
                     st = f.stat()
                 except OSError:
@@ -219,9 +253,8 @@ async def get_artifacts(
 ) -> dict[str, Any]:
     """List already-collected diag bundles under workspace."""
     if not is_safe_device(device):
-        raise HTTPException(
-            status_code=400, detail=f"invalid device serial: {device!r}"
-        )
+        # See _resolve_transport for the no-echo rationale (sec MID-1).
+        raise HTTPException(status_code=400, detail="invalid device serial")
     root = workspace_root()
     data = await asyncio.to_thread(
         _scan_artifacts_in_thread, root, device, limit_per_kind

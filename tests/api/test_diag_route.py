@@ -134,6 +134,25 @@ def test_bad_device_400(client) -> None:
     assert r.status_code == 400
 
 
+def test_bad_device_detail_does_not_echo_input(client) -> None:
+    """5/25 sec audit MID-1 regression: HTTPException detail must not
+    echo the rejected serial back (control chars / unicode RTL /
+    quotes pre-`is_safe_device` could become reflected-XSS via any
+    future consumer rendering detail unsafely)."""
+    sneaky = "<script>alert(1)</script>"
+    r = client.post(f"/api/diag/bugreport?device={sneaky}")
+    assert r.status_code == 400
+    body = r.json()
+    assert body["detail"] == "invalid device serial"
+    assert sneaky not in body["detail"]
+
+    r2 = client.get(f"/api/diag/artifacts?device={sneaky}")
+    assert r2.status_code == 400
+    body2 = r2.json()
+    assert body2["detail"] == "invalid device serial"
+    assert sneaky not in body2["detail"]
+
+
 def test_artifacts_lists_existing_bundles(client, workspace) -> None:
     """Pre-populate workspace with bugreport + anr bundle + tombstone bundle,
     then verify the listing endpoint enumerates them."""
