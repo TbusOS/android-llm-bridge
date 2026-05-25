@@ -5,6 +5,11 @@ import path from "node:path";
 // alb Web build → `../docs/app/` (committed, served by FastAPI StaticFiles
 // and by GitHub Pages). During dev, Vite proxies /chat, /playground,
 // /metrics, /terminal, /api, /health to a running `alb-api` on localhost.
+//
+// Vitest config lives in `vitest.config.ts` so the strict rollup types
+// in `vitest/config` don't conflict with our `manualChunks` setup
+// (vite's defineConfig accepts both function + record form; vitest's
+// re-export narrows it).
 export default defineConfig({
   plugins: [react()],
   resolve: {
