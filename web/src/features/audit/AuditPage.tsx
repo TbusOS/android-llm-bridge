@@ -9,13 +9,12 @@
  *   - server emits deltas; polling would race
  *   - Dashboard already pays a WS for the audit stream, so the visual
  *     model is consistent across pages
- *
- * Caveat — NOT free yet: lib/ws.ts does NOT dedup `connect()` by path
- * today, so opening AuditPage while Dashboard is mounted creates a
- * second socket to `/audit/stream` with its own snapshot replay.
- * Tracking in DEBT-047 (path-keyed dedup + late-joiner snapshot
- * replay). The wire cost is small (one ~40 KB snapshot per page-open),
- * so this is a perf hardening, not a blocker.
+ *   - `lib/ws.ts` pools by (path, shareKey) since DEBT-047 (AP-1),
+ *     so opening AuditPage while Dashboard is mounted shares the
+ *     underlying `/audit/stream` socket when the (minutes,
+ *     includeMetrics) config matches; late joiners get a microtask
+ *     replay of the cached snapshot. Per-page sockets only fork when
+ *     configs diverge.
  */
 import { useDeferredValue, useMemo, useState } from "react";
 

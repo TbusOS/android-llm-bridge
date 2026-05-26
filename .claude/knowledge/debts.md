@@ -1494,3 +1494,82 @@
     维护 --chat-bar-height CSS var)
 - **触发关闭**：18 spec 全过 · 业务正确性回归保护就位
 - **来源**：AO-3 commit 自承 + arch follow-up
+
+---
+
+## DEBT-064 · `lib/ws.ts` pool key 拼接迁 JSON.stringify (collision-proof)
+
+- **现象** (5/26 第四轮 arch LOW)：`const key = \`${path}|${opts.shareKey}\`` 用裸 `|` 分隔。今天 caller 全是字面量 path (`/audit/stream`) + JSON shareKey · 0 collision · 实际无风险。但任何未来 caller 传动态 path (template literal 拼 query string / `|` 字符) 或 free-form shareKey 都会和分隔符碰撞悄悄混键 (例如 `path="/x|y"` + `shareKey="z"` 等价于 `path="/x"` + `shareKey="y|z"`)。
+- **影响**：N/A 今天 · 未来可能 silent dedup bug
+- **建议方案**：
+  - 改 `const key = JSON.stringify([path, opts.shareKey])` · 0 字节实际开销 (key 只在 Map 里存) · shape 自解释 · 0 collision
+  - 同时更新 `useAuditStream.shareKey.test.ts` 钉新字节序列 (顺手把 contract spec assertion 跟新 key 格式 align)
+- **触发关闭**：第 2 个 connect() caller 使用 shareKey · 或任何 path 变量化 caller 出现 (lib/hooks/* 用 template literal 构造 path)
+- **优先级**：LOW · 不阻塞 · YAGNI 当前
+- **来源**：5/26 第四轮 architecture-reviewer LOW-1
+
+---
+
+## DEBT-065 · `lib/ws.ts` cachedSnapshot 永不过期策略
+
+- **现象** (5/26 第四轮 ui-f MID-2)：pool entry 长寿 (refcount > 0) · cachedSnapshot 可能持有数小时未更新的 snapshot (服务端只在显式 send config 时回 snapshot · 期间只发 delta)。late-joiner 用过期 snapshot bootstrap → 立刻收 live delta · view 短暂处于"过期 snapshot + 未来 delta"不一致态。
+- **影响**：late-joiner 视觉短暂错乱 (rare path · 用户开 N 个 tab 长时间挂)
+- **建议方案** (二选一):
+  - (a) entry 加 `cachedSnapshotAt: number` · subscribe 时若 `Date.now() - cachedSnapshotAt > 5min` 则不回放 · 让 view 等真服务器响应 (代价: 用户看 5min 后开新 tab 要等几百 ms snapshot)
+  - (b) 接受现状 · 文档明记 trade-off (late-joiner 已经在 ADR-045 trade-off 节 ack 1 帧 redundancy · 这条只是说"那 1 帧可能是过期数据")
+- **触发关闭**：实测 late-joiner 用户 visible 不一致 / 第 2 个 pool consumer 进来时再 evaluate
+- **优先级**：LOW · 不阻塞
+- **来源**：5/26 第四轮 ui-fluency-auditor MID-2
+
+---
+
+## DEBT-066 · pool refcount close→reconnect 同 tick 瞬时双 socket race
+
+- **现象** (5/26 第四轮 ui-f MID-1)：viewA.close() 同步执行 → refCount 0 → `pool.delete(key)` + `entry.client.close()` (排到 ws onclose macrotask)。同 tick viewB connect() 见 pool 空 · 重建新 entry · 旧 underlying 还在 close 流程中 → **瞬时 2 个 underlying socket** (旧的几 ms 内 close · 新的已 connecting)。
+- **影响**：服务端短暂 2 connections · snapshot 多发 1 次。不影响功能 · 只是 wire / 服务端负载边缘 cost。
+- **建议方案**：
+  - 等 entry.client.close() 真触发 close event 后才 pool.delete (用 close listener · 同步 close call 后挂监听)
+  - 或在 ADR-045 trade-off 节加 "close→reconnect 同 tick 瞬时双 socket" 已知 limitation 段
+- **触发关闭**：服务端 hot path 实测 2x 连接 spike / 用户路由切换抖动反馈
+- **优先级**：LOW · 服务端负载 < 1% 增量
+- **来源**：5/26 第四轮 ui-fluency-auditor MID-1
+
+---
+
+## DEBT-067 · 跨 React subtree fan-out 压测 + 同 root 假设钉死
+
+- **现象** (5/26 第四轮 ui-f MID-3)：pool fan-out 是同步循环 N 个 listener · React 18 自动 batch 同 root 内的 setState · 但跨 root (portal / iframe / 微前端) 不 batch · 同 1 服务端 snapshot 触发 N 次独立 commit。
+- **影响**：当前架构单 React root (单 App)·N/A 今天。未来引入 portal / 微前端时静默退化。
+- **建议方案**：
+  - 加 spec 钉 "fan-out 调用方必须在同 React root" 契约
+  - lib/ws.ts JSDoc 明记此前提
+  - 或主动包 `unstable_batchedUpdates` (React 18 内已默认 · 但被 polyfill 一层保险)
+- **触发关闭**：项目引入 React portal-mount UI / micro-frontend 时
+- **优先级**：LOW · YAGNI 今天
+- **来源**：5/26 第四轮 ui-fluency-auditor MID-3
+
+---
+
+## DEBT-068 · pool dedup 真实命中率追踪
+
+- **现象** (5/26 第四轮 perf MID-1)：pool 设计是 N→1 socket · 但实测 3 个 prod caller (Dashboard timeline + LiveSession + AuditPage) 用 3 个 unique shareKey (LiveSession 因 includeMetrics:true 不同 · AuditPage 因用户动态 minutes 不同) · 单 tab 单用户场景下 **dedup 实际命中 = 0**。基础设施投资是对的 (架构层防御 + 未来扩展) · 但当前 RoI 数据没记录。
+- **影响**：开发者 / reviewer 看 ADR-045 期望"3 socket → 1 socket" · 实际不变。预期管理偏差。
+- **建议方案**：
+  - ADR-045 trade-off 节加 "实测命中率" 段 (3 caller / 3 unique shareKey / 单 tab 0 dedup)
+  - 列出"真触发 dedup 的场景": 多 tab 同 config / 同页面 N 处复用同一 config 的 hook
+  - 可加 dev-only 计数器 `pool.dedupHits` · 跑一周开发量化
+- **触发关闭**：第 2 个 caller 用 shareKey · 或 dev-mode 计数实测 0
+- **优先级**：LOW
+- **来源**：5/26 第四轮 performance-auditor MID-1
+
+---
+
+## DEBT-069 · PlaygroundPage backend 切换 → model reset 副作用 spec 0 覆盖
+
+- **现象** (5/26 第四轮 code LOW-6)：`PlaygroundPage.tsx:261` 用户切 backend → `setModel("")` · 然后 `useBackendModels(backend)` 触发新 model list · PlaygroundPage 的 useEffect 把 model 置默认。这一链 0 spec 覆盖。
+- **影响**：改 backend onChange 逻辑 / model 默认选择策略时无回归保护
+- **建议方案**：
+  - PlaygroundPage.component.test.tsx 加 1 spec：模拟 backend select onChange → mock useBackendModels 返不同 list → 验 model 被 reset 到默认
+- **触发关闭**：spec 加 1 条 · 或 backend/model 选择逻辑下次改动时
+- **优先级**：LOW
+- **来源**：5/26 第四轮 code-reviewer LOW-6

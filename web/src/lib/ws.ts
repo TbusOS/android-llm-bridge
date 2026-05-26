@@ -58,10 +58,17 @@ interface Options {
    *  `useAuditStream({includeMetrics: true})` per ADR-022. Omit
    *  entirely for must-not-share callers (e.g. per-turn chat streams).
    *
+   *  SECURITY (AR-4 / sec LOW): shareKey is held verbatim in module-
+   *  global Map keys AND closed-over inside view send-dedup state for
+   *  the lifetime of the pool entry. DO NOT pass tokens, session IDs,
+   *  user IDs, or other PII / secrets — hash them or omit shareKey
+   *  entirely. Today's only caller (`useAuditStream`) serializes
+   *  `{minutes, includeMetrics}` which are pure UI config, no PII.
+   *
    *  Wire-format-style contract: changing the serialization shape of
    *  shareKey silently re-keys existing callers. `useAuditStream.
    *  shareKey.test.ts` pins the exact byte sequence — bump that spec
-   *  and DEBT-047 when intentionally changing. */
+   *  when intentionally changing. */
   shareKey?: string;
 }
 
@@ -93,9 +100,48 @@ interface PoolEntry {
    *  helper stays protocol-agnostic — only paths that ACTUALLY emit
    *  `{type:"snapshot"}` benefit. */
   cachedSnapshot: WsEvent | null;
+  /** Incremented every time the underlying socket re-opens (initial
+   *  open + every auto-reconnect). Drives per-epoch payload dedup so
+   *  the same config message sent by N view-listeners in response to
+   *  a single underlying "open" reaches the server exactly once.
+   *
+   *  AR-1 (5/26 第四轮 ui-f HIGH-1 fix): without this, N views with
+   *  same shareKey each saw "open" via fan-out, each re-sent its config
+   *  in its open handler, server received N identical config messages
+   *  and rebroadcast N snapshots, fanned back out to N listeners =
+   *  N² setState. Pool-level dedup collapses it to 1 send / 1 snapshot
+   *  / N setState. */
+  currentEpoch: number;
+  /** Last text-shape payload sent in `currentEpoch`. View.send() drops
+   *  any subsequent identical payload from the SAME epoch — different
+   *  payloads pass through, and a new epoch (reconnect) resets the
+   *  tracker so config gets re-sent on the new underlying socket.
+   *  Binary payloads bypass dedup entirely (rare, content-addressed
+   *  hashing would need a hash that doesn't trigger main-thread jank). */
+  lastSentPayload: { epoch: number; payload: string } | null;
 }
 
 const pool = new Map<string, PoolEntry>();
+
+/** Default listener-error handler: re-throw on a microtask so dev-tools
+ *  / window.onerror still see the stack but the synchronous fan-out
+ *  loop isn't truncated. Tests stub this via `_setListenerErrorHandler`
+ *  to capture errors without crashing the test runner. */
+let listenerErrorHandler: (e: unknown) => void = (e) => {
+  queueMicrotask(() => {
+    throw e;
+  });
+};
+
+/** Test hook: swap the listener-error handler. Returns the prior
+ *  handler so tests can restore it in afterEach. */
+export function _setListenerErrorHandler(
+  handler: (e: unknown) => void,
+): (e: unknown) => void {
+  const prev = listenerErrorHandler;
+  listenerErrorHandler = handler;
+  return prev;
+}
 
 /** Build a pool entry around a fresh underlying client. The entry's
  *  fan-out listener is installed exactly once per underlying socket;
@@ -112,8 +158,16 @@ function createPoolEntry(
     refCount: 0,
     subscribers: new Set(),
     cachedSnapshot: null,
+    currentEpoch: 0,
+    lastSentPayload: null,
   };
   underlying.subscribe((ev) => {
+    // Bump epoch on every real "open" (initial connect + each
+    // auto-reconnect). Subsequent identical sends in this epoch get
+    // deduped at the view layer; new payloads always pass through.
+    if (ev.kind === "open") {
+      entry.currentEpoch += 1;
+    }
     // Cache the latest snapshot for late-joiner replay. The server
     // contract is `{type:"snapshot", events, since, until}` — anything
     // else is a delta and shouldn't replace the cached snapshot.
@@ -124,8 +178,20 @@ function createPoolEntry(
     // that calls .close() (refCount → 0) deletes its own subscription
     // mid-iteration, and a sibling handler that opens a new view re-
     // adds to the set. Both would corrupt a live iteration.
+    // AR-3 (5/26 第四轮 code MID-1): each listener call is wrapped in
+    // a try/catch so a throwing listener (consumer bug · React state
+    // update during render · whatever) doesn't truncate the fan-out
+    // and starve sibling views of the event. The error is re-thrown
+    // via queueMicrotask so dev-tools / window.onerror still see the
+    // stack trace, but the synchronous fan-out completes first.
     const snapshot = Array.from(entry.subscribers);
-    for (const l of snapshot) l(ev);
+    for (const l of snapshot) {
+      try {
+        l(ev);
+      } catch (e) {
+        listenerErrorHandler(e);
+      }
+    }
   });
   return entry;
 }
@@ -147,6 +213,31 @@ function makeView(entry: PoolEntry): WsClient {
   return {
     send(data) {
       if (viewClosed) return;
+      // Binary frames are content-addressed at the application layer;
+      // dedup would need a hash + a payload-equality contract the WS
+      // helper has no opinion on. Pass them through unfiltered.
+      const isBinary =
+        data instanceof ArrayBuffer ||
+        ArrayBuffer.isView(data) ||
+        data instanceof Blob;
+      if (isBinary) {
+        entry.client.send(data);
+        return;
+      }
+      // Text-shape dedup: same payload within the same epoch reaches
+      // the underlying socket exactly once. N views responding to one
+      // "open" event with identical config collapse to one server-
+      // bound message (AR-1 fix for ui-f HIGH-1 reconnect storm).
+      const payload = typeof data === "string" ? data : JSON.stringify(data);
+      const tracker = entry.lastSentPayload;
+      if (
+        tracker !== null &&
+        tracker.epoch === entry.currentEpoch &&
+        tracker.payload === payload
+      ) {
+        return;
+      }
+      entry.lastSentPayload = { epoch: entry.currentEpoch, payload };
       entry.client.send(data);
     },
     close() {
@@ -234,9 +325,18 @@ function soloConnect(path: string, opts: Omit<Options, "shareKey">): WsClient {
 
   const emit = (ev: WsEvent) => {
     // Snapshot listeners before iterating: a listener may unsubscribe
-    // (or trigger code that does) during dispatch.
+    // (or trigger code that does) during dispatch. AR-3 (5/26 code
+    // MID-1): wrap each listener so a throw doesn't truncate fan-out.
+    // The error goes to `listenerErrorHandler` (microtask rethrow by
+    // default, capturable by tests).
     const snapshot = Array.from(listeners);
-    for (const l of snapshot) l(ev);
+    for (const l of snapshot) {
+      try {
+        l(ev);
+      } catch (e) {
+        listenerErrorHandler(e);
+      }
+    }
   };
 
   const open = () => {

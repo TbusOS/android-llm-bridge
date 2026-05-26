@@ -475,4 +475,145 @@ describe("PlaygroundPage · handledSettledRef guard", () => {
 
     expect(screen.getAllByText("single reply")).toHaveLength(1);
   });
+
+  it("after first settled push, a NEW settled object with NEW content DOES push again — proves handledSettledRef is ref-identity not value-identity (AR-2 / code MID-2)", () => {
+    const { rerender } = render(<PlaygroundPage />);
+    sendPrompt("hi");
+
+    // First settled: push happens.
+    chatState.status = "done";
+    chatState.settled = { kind: "done" };
+    chatState.done = {
+      ok: true,
+      content: "first reply",
+      finish_reason: "stop",
+      model: "llama3",
+      backend: "ollama",
+    };
+    rerender(<PlaygroundPage />);
+    expect(screen.getAllByText("first reply")).toHaveLength(1);
+
+    // Simulate reset cycle (PlaygroundPage's chat.reset() in the effect
+    // clears settled to null between turns — the guard branch
+    // `if (!info) { handledSettledRef.current = null; return; }` is the
+    // ONLY way handledSettledRef goes back to null. New settled with the
+    // same ref as the prior one would still no-op without this reset.)
+    chatState.settled = null;
+    rerender(<PlaygroundPage />);
+
+    // Second turn: brand-new settled object literal with DIFFERENT
+    // content. The push happens because (a) handledSettledRef was reset
+    // to null on the previous frame, (b) the NEW settled ref !== the
+    // previous one, and (c) content differs so the setLog
+    // last-assistant-content dedup inside the done branch doesn't fire.
+    chatState.settled = { kind: "done" };
+    chatState.done = {
+      ok: true,
+      content: "second reply",
+      finish_reason: "stop",
+      model: "llama3",
+      backend: "ollama",
+    };
+    rerender(<PlaygroundPage />);
+
+    expect(screen.getByText("first reply")).toBeInTheDocument();
+    expect(screen.getByText("second reply")).toBeInTheDocument();
+  });
+});
+
+describe("PlaygroundPage · keyboard shortcuts (AR-2 / ui-f HIGH-3)", () => {
+  it("⌘+Enter (metaKey) on input → sends · same as send button", () => {
+    render(<PlaygroundPage />);
+    const textarea = screen.getByPlaceholderText(/Message…/);
+    fireEvent.change(textarea, { target: { value: "via cmd-enter" } });
+    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
+    expect(chatActions.send).toHaveBeenCalledTimes(1);
+    expect(chatActions.send.mock.calls[0]![0].messages).toEqual([
+      { role: "user", content: "via cmd-enter" },
+    ]);
+  });
+
+  it("Ctrl+Enter on input → sends (parity with ⌘+Enter for non-Mac users)", () => {
+    render(<PlaygroundPage />);
+    const textarea = screen.getByPlaceholderText(/Message…/);
+    fireEvent.change(textarea, { target: { value: "via ctrl-enter" } });
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+    expect(chatActions.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("plain Enter (no modifier) does NOT send — preserves newline behaviour in the textarea", () => {
+    render(<PlaygroundPage />);
+    const textarea = screen.getByPlaceholderText(/Message…/);
+    fireEvent.change(textarea, { target: { value: "draft" } });
+    fireEvent.keyDown(textarea, { key: "Enter" }); // no modifier
+    expect(chatActions.send).not.toHaveBeenCalled();
+  });
+
+  it("⌘+Enter while streaming → does NOT trigger another send (gated by chat.status)", () => {
+    const { rerender } = render(<PlaygroundPage />);
+    chatState.status = "streaming";
+    rerender(<PlaygroundPage />);
+    const textarea = screen.getByPlaceholderText(/Streaming/);
+    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
+    expect(chatActions.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlaygroundPage · send button disabled paths (AR-2 / ui-f HIGH-3)", () => {
+  it("send button disabled when no backend is available (useBackends returns empty)", () => {
+    // mockImplementation (not mockReturnValueOnce) — React may call
+    // useBackends multiple times during render commit / effect flush;
+    // Once-mocks revert to the default after the first call and leak
+    // the populated backends list back into the second render.
+    useBackends.mockImplementation(() => ({
+      data: { backends: [] },
+      isLoading: false,
+      isError: false,
+    }));
+    try {
+      render(<PlaygroundPage />);
+      const textarea = screen.getByPlaceholderText(/Message…/);
+      fireEvent.change(textarea, { target: { value: "hi" } });
+      // disabled = !input.trim() || !backend → empty backend list → !backend
+      expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
+    } finally {
+      // Restore the default mock so downstream tests get the populated backend list.
+      useBackends.mockImplementation(() => ({
+        data: { backends: [{ name: "ollama", host_compute_type: "gpu" }] },
+        isLoading: false,
+        isError: false,
+      }));
+    }
+  });
+});
+
+describe("PlaygroundPage · i18n zh path (AR-2 / ui-f HIGH-3)", () => {
+  it("lang='zh' renders 发送 / 取消 / 清空 buttons + cancelled label in Chinese", () => {
+    useApp.mockImplementation(
+      (sel?: (s: { lang: "en" | "zh" }) => unknown) =>
+        sel ? sel({ lang: "zh" }) : { lang: "zh" },
+    );
+    const { rerender } = render(<PlaygroundPage />);
+
+    // Send button shows "发送"
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "清空" })).toBeInTheDocument();
+
+    // Drive a cancelled turn — should show Chinese "已取消" label.
+    const textarea = screen.getByPlaceholderText(/输入消息/);
+    fireEvent.change(textarea, { target: { value: "你好" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    chatState.delta = "部分回复";
+    chatState.settled = { kind: "cancelled" };
+    rerender(<PlaygroundPage />);
+
+    expect(screen.getByText(/已取消（未发给模型）/)).toBeInTheDocument();
+
+    // Switch back to en for downstream tests (useApp is shared mock state).
+    useApp.mockImplementation(
+      (sel?: (s: { lang: "en" | "zh" }) => unknown) =>
+        sel ? sel({ lang: "en" }) : { lang: "en" },
+    );
+  });
 });

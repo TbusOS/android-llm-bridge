@@ -15,7 +15,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { connect, __resetPoolForTests, type WsEvent } from "./ws";
+import {
+  connect,
+  __resetPoolForTests,
+  _setListenerErrorHandler,
+  type WsEvent,
+} from "./ws";
 
 type Listener = (ev: Event | MessageEvent | CloseEvent) => void;
 
@@ -89,7 +94,20 @@ class FakeWebSocket {
   }
 }
 
+// Capture-by-default listener-error handler so a throwing listener
+// installed by one test doesn't leak into the next test's
+// __resetPoolForTests close fan-out (close events broadcast to live
+// listeners, and the default handler re-throws on a microtask — which
+// vitest turns into an "unhandled error" test failure even though the
+// failing test already finished).
+let capturedListenerErrors: unknown[] = [];
+let prevListenerErrorHandler: ((e: unknown) => void) | null = null;
+
 beforeEach(() => {
+  capturedListenerErrors = [];
+  prevListenerErrorHandler = _setListenerErrorHandler((e) => {
+    capturedListenerErrors.push(e);
+  });
   FakeWebSocket.instances = [];
   __resetPoolForTests();
   vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -98,6 +116,10 @@ beforeEach(() => {
 afterEach(() => {
   __resetPoolForTests();
   vi.unstubAllGlobals();
+  if (prevListenerErrorHandler) {
+    _setListenerErrorHandler(prevListenerErrorHandler);
+    prevListenerErrorHandler = null;
+  }
 });
 
 /** TS-strict-friendly accessor: throws if the requested fake socket
@@ -299,5 +321,169 @@ describe("lib/ws · pooled mode (shareKey)", () => {
     // construct a second WebSocket.
     connect("/audit/stream", { shareKey: "k1" });
     expect(FakeWebSocket.instances.length).toBe(1);
+  });
+});
+
+describe("lib/ws · pool send dedup-by-payload-per-epoch (AR-1)", () => {
+  it("two views with same shareKey + identical payload after one open → underlying socket sees one send", () => {
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    const b = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    a.send({ config: "x" });
+    b.send({ config: "x" });
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("different payloads bypass dedup (each pass through)", () => {
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    const b = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    a.send({ config: "x" });
+    b.send({ config: "y" });
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("string vs object form of the SAME payload still dedups (JSON.stringify normalisation)", () => {
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    const b = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    a.send({ k: 1 });
+    b.send(JSON.stringify({ k: 1 }));
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-open (reconnect) bumps epoch · identical payload IS re-sent in the new epoch", () => {
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    a.send({ config: "x" });
+    // Simulate reconnect: same fake fires another "open". In real life
+    // soloConnect builds a new WebSocket but the pool fan-out sees only
+    // an "open" event either way — that's what bumps currentEpoch.
+    fakeAt(0).simulateOpen();
+    a.send({ config: "x" });
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("binary frames (ArrayBuffer / typed array / Blob) bypass dedup entirely", () => {
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    const buf = new ArrayBuffer(8);
+    a.send(buf);
+    a.send(buf);
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("late joiner whose synth-open handler re-sends the same config → deduped at the pool", async () => {
+    const first = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    first.subscribe(() => {});
+    first.send({ config: "x" });
+
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    late.subscribe((ev) => {
+      if (ev.kind === "open") late.send({ config: "x" });
+    });
+    await Promise.resolve();
+    // Only the first view's send hit the wire; the late joiner's
+    // synth-open-triggered identical config was deduped.
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("solo mode (no shareKey) does NOT dedup (each send passes through)", () => {
+    const a = connect("/audit/stream");
+    fakeAt(0).simulateOpen();
+    a.send({ config: "x" });
+    a.send({ config: "x" });
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("lib/ws · listener-throw isolation (AR-3 / code MID-1)", () => {
+  it("pool fan-out: a throwing listener does NOT starve sibling listeners on the same event · errors routed to handler", () => {
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    const b = connect("/audit/stream", { shareKey: "k1" });
+    const aEvents: WsEvent[] = [];
+    const bEvents: WsEvent[] = [];
+    a.subscribe(() => {
+      throw new Error("listener-a deliberately throws");
+    });
+    a.subscribe((ev) => aEvents.push(ev));
+    b.subscribe((ev) => bEvents.push(ev));
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: [] });
+    // 2 events × 2 sibling listeners survived the throw.
+    expect(aEvents.length).toBe(2);
+    expect(bEvents.length).toBe(2);
+    // Both events triggered the throwing listener once → 2 captured by
+    // the spec-wide capture handler installed in beforeEach.
+    expect(capturedListenerErrors.length).toBe(2);
+    expect((capturedListenerErrors[0] as Error).message).toBe(
+      "listener-a deliberately throws",
+    );
+  });
+
+  it("solo fan-out: a throwing listener does NOT starve siblings either", () => {
+    const c = connect("/audit/stream");
+    const okEvents: WsEvent[] = [];
+    c.subscribe(() => {
+      throw new Error("solo-listener-throws");
+    });
+    c.subscribe((ev) => okEvents.push(ev));
+    fakeAt(0).simulateOpen();
+    expect(okEvents).toEqual([{ kind: "open" }]);
+    expect(capturedListenerErrors.length).toBe(1);
+  });
+});
+
+describe("lib/ws · late-joiner microtask event ordering (AR-3 / ui-f HIGH-2)", () => {
+  it("microtask delivers open THEN snapshot to the late joiner — never in reverse", async () => {
+    connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["seed"] });
+
+    const lateView = connect("/audit/stream", { shareKey: "k1" });
+    const ordered: string[] = [];
+    lateView.subscribe((ev) => {
+      if (ev.kind === "open") ordered.push("open");
+      else if (ev.kind === "json") ordered.push("json");
+    });
+    await Promise.resolve();
+    expect(ordered).toEqual(["open", "json"]);
+  });
+
+  it("synchronous events arriving between subscribe() and microtask flush DO race ahead — known timing window, deltas arrive ahead of synth bootstrap", async () => {
+    connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["snap1"] });
+
+    const lateView = connect("/audit/stream", { shareKey: "k1" });
+    const ordered: WsEvent[] = [];
+    lateView.subscribe((ev) => ordered.push(ev));
+
+    // A "later" delta from the underlying socket arrives in the SAME
+    // synchronous frame as subscribe() — BEFORE the queued microtask
+    // flushes. This pin's the known limitation: the synth-bootstrap
+    // microtask runs at end-of-task; any synchronous event fired in
+    // between reaches the late joiner FIRST.
+    //
+    // In production this window is microseconds (subscribe is in a
+    // useEffect, no network event arrives in the same JS frame), but
+    // consumers that need strict "snapshot before any delta" ordering
+    // MUST defer their own state updates until the snapshot event,
+    // not the first event of any kind. See ADR-045 trade-off section.
+    fakeAt(0).simulateJson({ type: "event", data: { ts: "t2" } });
+
+    await Promise.resolve();
+
+    expect(ordered.length).toBe(3);
+    // Sync delta first (the known race window):
+    expect((ordered[0] as { data: { type: string } }).data.type).toBe(
+      "event",
+    );
+    // Then microtask: synth open + cached snapshot:
+    expect(ordered[1]).toEqual({ kind: "open" });
+    expect((ordered[2] as { data: { type: string } }).data.type).toBe(
+      "snapshot",
+    );
   });
 });
