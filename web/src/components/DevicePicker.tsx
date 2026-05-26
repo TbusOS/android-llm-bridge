@@ -97,19 +97,29 @@ export function DevicePicker({ lang }: Props) {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  // Sync focusIdx to the currently-selected device when opening.
-  // deps intentionally exclude `devices` — react-query returns stable
-  // refs when payload is unchanged in prod, but any consumer (or test
-  // mock) that returns a new array per render would otherwise re-fire
-  // this effect on every render and clobber focusIdx → 0 mid-keyboard
-  // nav. We re-sync only when the menu opens or the actively-selected
-  // serial changes; the user's manual focus moves win after that.
+  // Sync focusIdx to the currently-selected device when opening, AND
+  // clamp it if `devices` shrinks while the menu is open (5/25 AO-4 /
+  // ui-f MID-7 fix). react-query refetches every 5s · if device count
+  // drops between renders, focusIdx might point past the end →
+  // aria-activedescendant becomes undefined and visual focus ring
+  // disappears. deps include devices.length so we re-evaluate on
+  // those refetches; deps intentionally still exclude the `devices`
+  // array reference (react-query returns stable refs prod-side, but
+  // mock-side may not).
   useEffect(() => {
     if (!open) return;
     const i = devices.findIndex((d) => d.id === device);
-    setFocusIdx(i >= 0 ? i : 0);
+    if (i >= 0) {
+      setFocusIdx(i);
+      return;
+    }
+    // selected device not in list (or no selection) — keep current
+    // focus if still in range; clamp to last item if devices shrunk.
+    setFocusIdx((prev) =>
+      Math.min(prev, Math.max(0, devices.length - 1)),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, device]);
+  }, [open, device, devices.length]);
 
   const onTriggerKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {

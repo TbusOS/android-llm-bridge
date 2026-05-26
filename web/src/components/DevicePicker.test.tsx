@@ -150,6 +150,37 @@ describe("DevicePicker", () => {
     expect(setDeviceFn).toHaveBeenCalledWith("def456");
   });
 
+  it("aria-activedescendant is on the listbox (not the trigger) · L-053 regression", () => {
+    // AK-1 真修 (5/25 第二轮 AI-7 假修 → 第三轮 H1 → AK-1 真修)：
+    // DOM focus 在 <ul role="listbox"> · 必须把 aria-activedescendant
+    // 挂在 listbox 上才能被 SR (NVDA/VoiceOver) 读。任何 future
+    // refactor 把它挪回 trigger button = 静默 a11y regression。
+    render(<DevicePicker lang="en" />);
+    fireEvent.click(screen.getByRole("combobox"));
+    const list = screen.getByRole("listbox");
+    const trigger = screen.getByRole("combobox");
+
+    // listbox carries activedescendant pointing at focused option
+    expect(list).toHaveAttribute(
+      "aria-activedescendant",
+      expect.stringMatching(/-opt-0$/),
+    );
+    // trigger MUST NOT carry it (would split AT attention)
+    expect(trigger).not.toHaveAttribute("aria-activedescendant");
+
+    // Step through options with ArrowDown → activedescendant follows
+    fireEvent.keyDown(list, { key: "ArrowDown" });
+    expect(list).toHaveAttribute(
+      "aria-activedescendant",
+      expect.stringMatching(/-opt-1$/),
+    );
+
+    // Every focused option's id matches the activedescendant value
+    const activeId = list.getAttribute("aria-activedescendant");
+    expect(activeId).not.toBeNull();
+    expect(document.getElementById(activeId!)).not.toBeNull();
+  });
+
   it("Escape closes the menu without selecting", () => {
     render(<DevicePicker lang="en" />);
     fireEvent.click(screen.getByRole("combobox"));

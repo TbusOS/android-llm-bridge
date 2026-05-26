@@ -13,6 +13,7 @@
  * scroll doesn't bleed to background).
  */
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 const MIN_SCALE = 0.25;
@@ -48,10 +49,15 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
   //     previously focused element was unmounted (route nav while
   //     zoom open) we drop the call gracefully rather than focus()
   //     no-oping silently (5/25 AM-1 ui-f MID-3).
-  //   - **No Tab trap**: modal has only one focusable (close button)
-  //     so Tab naturally cycles on it. Earlier AI-7 added force-pull
-  //     Tab → close, but that breaks NVDA / JAWS "Forms mode" Tab
-  //     browse-cursor (5/25 AM-1 ui-f MID-4).
+  //   - **Background `#root` is marked `inert` while modal is open**
+  //     (5/25 AO-4 / ui-f MID-2). Earlier AM-1 dropped the Tab trap
+  //     to avoid breaking NVDA/JAWS "Forms mode" cursor — correct
+  //     thinking, but the modal renders inside ScreenshotTab so Tab
+  //     would escape into the page behind the backdrop (sidebar /
+  //     dashboard cards) where focus is hidden under the overlay.
+  //     `inert` removes those elements from the focus order without
+  //     disturbing the AT browse cursor. Pair with Portal so we can
+  //     inert the root WITHOUT inerting ourselves.
   useEffect(() => {
     previousActiveRef.current =
       document.activeElement instanceof HTMLElement
@@ -67,9 +73,17 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
     // Lock page scroll while modal is open.
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
+    // Inert the React root so Tab can't escape into background UI.
+    // Modal itself is portaled into document.body, sibling of root.
+    const root = document.getElementById("root");
+    const rootWasInert = root?.hasAttribute("inert") ?? false;
+    if (root && !rootWasInert) root.setAttribute("inert", "");
+
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      if (root && !rootWasInert) root.removeAttribute("inert");
       const target = previousActiveRef.current;
       if (target?.isConnected) target.focus();
     };
@@ -129,7 +143,12 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
     if (e.target === e.currentTarget) onClose();
   };
 
-  return (
+  // Portal so the modal mounts as a sibling of #root, not under it.
+  // Required for `inert` on #root to work without disabling the modal
+  // itself. Also nicer for z-index — no parent stacking-context
+  // surprises (parent in ScreenshotTab might add transform / filter /
+  // perspective and trap our fixed-position overlay).
+  return createPortal(
     <div
       className="screenshot-zoom"
       role="dialog"
@@ -179,6 +198,7 @@ export function ScreenshotZoom({ src, alt, onClose, lang }: Props) {
         onDoubleClick={onDoubleClick}
         draggable={false}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }

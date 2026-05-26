@@ -640,6 +640,15 @@ html[lang^="zh"] h3 {
   color: var(--anth-mid-gray);
 }
 
+/* 5/25 第三轮 ui-f MID-3 fix: idle state should not pulse — there's
+ * literally no agent running, the breathing dot is misleading
+ * ("looks live"). AM-1 dropped the inline `animation: none` and only
+ * the global `prefers-reduced-motion` fallback was stopping it.
+ * Pin animation off explicitly on idle state. */
+.live-card.is-idle .live-pulse {
+  animation: none;
+}
+
 /* 5/25 code-r MID-7 + 5/25 mockup HIGH-1 fix:
  * `.live-pulse` inherits its colour from the nearest `color` ancestor.
  *   - Dashboard `.live-head` is orange (set above), so the pulse is
