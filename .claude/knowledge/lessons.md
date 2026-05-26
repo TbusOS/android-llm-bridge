@@ -2642,3 +2642,52 @@ element 开始走 activedescendant 链。挂错位的 attribute 不会被读。
 - L-051 (安全修复扫 sibling 一并修 · 同款"修了等于没修"主题)
 - WAI-ARIA APG combobox / listbox / Roving tabindex 模式
 - DEBT-058 (DevicePicker combobox 模式正式化)
+
+## L-054 · 拆 enum 拆一半比不拆更糟 · "5 phase → 3 phase + 2 enum" 是数学等价
+
+**症状**: AL-1 commit 把 useWsChatStream 的 5-phase enum
+("idle/connecting/streaming/done/error/cancelled") 缩到 3 phase
+("idle/streaming/settled") + 加 settledReason 3 enum + cause 4
+enum。**数学上** 5 个合法状态变成 3 × 3 × 4 = 36 名义状态 (5 个
+合法) · consumer 还是写 4-way if/else 映射两份 · DRY 违反 ·
+**没真简化**。AO-1 commit 走 discriminated union 一步到位才真简化。
+
+**根因**: 拆 enum 拆一半 = 把"N 态"变成"M+P+Q 平行 enum 笛卡尔积" ·
+名义状态爆炸 · 合法状态不变 · 消费者必须维护 (M, P, Q) → behavior
+映射表 · 比单 N 态 enum 还差。
+
+**Fix pattern** (commit AO-1 / `web/src/lib/hooks/useWsChatStream.ts`):
+
+```ts
+// ❌ 错 · 3 enum 平行
+type Phase = "idle" | "streaming" | "settled";
+type SettledReason = "done" | "error" | "cancelled";
+type Cause = "server-done" | "user-cancel" | "ws-close" | "ws-error";
+
+// ✅ 对 · 2 piece state machine + discriminated union
+type Phase = "idle" | "streaming" | "settled";
+type Settled =
+  | { kind: "done" }
+  | { kind: "error", source: "server" | "ws-close" | "ws-error",
+      code?, reasonText? }
+  | { kind: "cancelled" };
+```
+
+TS 在 `switch (settled.kind)` narrow · consumer 0 映射表。
+
+**禁止的写法**:
+- ❌ 终态带细节时用 (state + reason + cause) 三平 enum
+- ❌ N 态 enum 拆成 M+P 时不画"合法组合矩阵" vs "名义笛卡尔积"
+- ❌ "我只拆 phase 一层 · reason 后面再说" → 后面就是 5-→-3+enum
+  的反例
+
+**触发条件**:
+- 任何 hook / type 有 "N 态合并 → M 态" 重构提议
+- 必须先列出**所有合法组合** · 对比"名义状态数" · 大于 1.5x 就 stop
+- 终态/错误状态如果带 sub-detail (code / source / reasonText) ·
+  必走 discriminated union 不走平行 enum
+
+**关联**:
+- AL-1 commit (5→3+enum 反例) + AO-1 commit (discriminated union 真修)
+- L-052 (thin wrapper 是规则压力副产物 · 同款 over-reaction 主题)
+- ADR-041 修订 + ADR-043 (wrapper 抽取临界 · 同款"过激规则后撤"模式)

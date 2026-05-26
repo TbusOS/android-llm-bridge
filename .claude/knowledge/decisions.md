@@ -1342,3 +1342,73 @@ wrapper hook 抽取的临界数：
 - L-052 (thin wrapper hook 是规则压力的副产物)
 - DEBT-055 (mapAuditToTimeline 归宿)  → 关 (mappers.ts 决定下来了)
 - ADR-041 修订 (第 1 槽规则保留 · "必须 wrapper" 条款撤回)
+
+---
+
+## ADR-044 · `lib/hooks/*` 复合 viewModel 返回必须 useMemo 稳定 reference
+
+**Status**: accepted · 关 5/25 第三轮 arch HIGH-1
+
+**Context**:
+
+5/25 第三轮 arch HIGH-1 实测发现：AM-2 给 `useDevices` 加了
+`useMemo<DevicesRawViewModel>(...)` 包返回对象 · 但 `useAuditStream`
+没加 · 返回裸 object literal。consumer DashboardPage 用
+`useMemo(() => ({...auditStream, events: auditEvents}), [auditStream,
+auditEvents])` 是 **假 memo** —— auditStream 每 render 新 ref ·
+deps 永不命中 · 下游 ActivityTimeline / KpiStrip / 其他 React.memo
+子组件全 invalidate。
+
+同源问题影响所有 lib/hooks/* 复合 hook (return `{ field, fn, ... }`
+而非 primitive)。useDevices 和 useAuditStream 写法不对称是 reviewer
++ 新人陷阱。
+
+**Decision**:
+
+`web/src/lib/hooks/<X>.ts` **复合 viewModel** 返回必须 `useMemo`
+包裹 · deps 列稳定 reference 字段：
+
+```ts
+return useMemo<ViewModel>(
+  () => ({
+    field1: stableField1,
+    field2: stableField2,
+    callback1, // 已是 useCallback
+  }),
+  [stableField1, stableField2, callback1],
+);
+```
+
+**例外**：
+- 返回 primitive 或单值的 hook (useElapsedSeconds 返 number ·
+  useArmedAction 返 single fn · useDashboardQuery 透传 react-query
+  hook 结果) 不需要 · 反正 ref 本来就稳
+- 内部 callback 必须用 useCallback (不要每 render 新函数)
+- state 数组用 useState(()→[]) 初值化 · React 自身保证 ref 稳
+
+**Enforcement**:
+
+- code-reviewer agent grep checklist 加：`lib/hooks/*.ts` 的 return
+  是裸字面量对象 `return { ... }` 而非 `return useMemo(...)` →
+  flag MID
+- 新加 lib/hooks/<X>.ts 必须从这条规则开始 · 不再"先 ship 后包"
+- 现状审计 (5/26)：useDevices ✓ · useAuditStream ✓ (AO-2 修)
+  · useWsChatStream 返 `{ phase, settled, start, cancel, reset }`
+  · phase/settled 是 useState · start/cancel/reset 是 useCallback
+  · ref 已稳但**未 useMemo 包** → DEBT-064 候选 (低优先 · 不破)
+
+**Rationale**:
+
+- 消除 useDevices vs useAuditStream 对称性 trap (reviewer 看其中一
+  个会以为另一个也包了)
+- consumer 可以放心 `useMemo([hookReturn])` · 不用拼字段级 deps
+- 配合 ADR-043 (N≥2 才抽 wrapper) · raw hook 已经 stable · consumer
+  inline useMemo 不需要再包字段级 deps (AO-2 DashboardPage 仍写
+  字段级是冗余防御 · 历史代码可逐步收敛)
+
+**关联**：
+
+- AO-2 commit (useAuditStream useMemo wrap · 关 H1)
+- AM-2 commit (useDevices useMemo wrap · ref 稳定立 baseline)
+- DEBT-047 (WS pool dedup · 未来 connect() 也要 useMemo 包返回)
+- L-054 (lib/hooks/* 返回 ref 契约不对称是 trap)
