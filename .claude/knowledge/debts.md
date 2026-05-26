@@ -1472,23 +1472,25 @@
 
 ---
 
-## DEBT-063 · PlaygroundPage 组件 spec (terminal-path effect + LLM payload filter)
+## DEBT-063 · PlaygroundPage 组件 spec (terminal-path effect + LLM payload filter) —— **CLOSED 2026-05-26 (AQ-1)**
 
 - **现象**：AO-3 加 llmMessagesFrom 纯函数 spec · 但 PlaygroundPage
   整体组件 (chat.settled effect / cancel push log / error push partial
-  + error message / lastPromptRef 回填 input) 0 spec · 需要 mock 4
-  个 hook (useApp / useBackends / useBackendModels / usePlaygroundChat)
-  + react-query provider 才能跑
-- **影响**：业务正确性核心 (HIGH-4 修复) 仅靠纯函数 spec + 手工验 ·
-  下次改 terminal-path 易回归
-- **建议方案**：
-  - 新建 web/src/features/playground/PlaygroundPage.component.test.tsx
-  - vi.mock 4 hook · 用 hoisted factory 控制 chat.settled / chat.delta
-    / chat.done · 验：
-    · cancelled settled + chat.delta="abc" → log push {meta:cancelled,
-      content:"abc"} · 后续 onSend payload 不含 cancelled message
-    · error settled + chat.done.error · log push partial + error msg ·
-      input 回填 lastPromptRef
-  - 与 DEBT-059 StrictMode wrapper 同步规划
-- **触发关闭**：terminal-path effect 改大 / 第二个 chat 页面参考时
+  + error message / lastPromptRef 回填 input) 0 spec · 业务正确性
+  核心 (HIGH-4 修复) 仅靠纯函数 spec + 手工验
+- **落地** (AQ-1)：
+  - `web/src/features/playground/PlaygroundPage.component.test.tsx`
+    新增 · 18 spec · 7 describe block 全覆盖
+  - 用 `vi.hoisted` 给 chatState 一个可变 ref · 测试 mutate 后
+    `rerender()` 触发 chat.settled effect · 不要 react-query provider
+    (mock 干净到 useBackends 直接返 `{data,isLoading,isError}`)
+  - 覆盖 4 settled 路径: done w/ content / done w/ empty content /
+    cancelled w/ partial / cancelled w/ empty / error w/ server / error
+    w/ ws-close 双 entry
+  - HIGH-4 业务正确性回归网 3 条 (cancelled / errored / done 后下一
+    send payload assertion · 钉 llmMessagesFrom 过滤行为)
+  - cancel / clear / Esc / input restore / handledSettledRef guard 5 条
+  - jsdom 没 ResizeObserver · stub no-op class (PlaygroundPage 用 RO
+    维护 --chat-bar-height CSS var)
+- **触发关闭**：18 spec 全过 · 业务正确性回归保护就位
 - **来源**：AO-3 commit 自承 + arch follow-up
