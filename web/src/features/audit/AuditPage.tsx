@@ -83,7 +83,15 @@ export function AuditPage() {
   const [minutes, setMinutes] = useState(30);
   const deferredKind = useDeferredValue(kindFilter);
 
-  const vm = useAuditStream({ includeMetrics, minutes });
+  // AU-3 (5/26 第七轮 MID-3): pass the same `staleSnapshotMs` as
+  // DashboardPage so ADR-047 first-caller-wins doesn't silently override
+  // the value — 30 min covers long-idle background tabs without an
+  // unnecessary server round-trip on resume.
+  const vm = useAuditStream({
+    includeMetrics,
+    minutes,
+    staleSnapshotMs: 30 * 60 * 1000,
+  });
 
   // 5/25 audit perf-r M14: the prior code did `[...vm.rawEvents]
   // .reverse()` with a "reverse to newest-first" comment — but the

@@ -619,16 +619,137 @@ describe("lib/ws · cachedSnapshot age check (AS-2 / DEBT-065 MID fix)", () => {
   });
 });
 
-describe("lib/ws · SharedArrayBuffer payload routes through binary path (AS-3 code LOW-4 regression)", () => {
-  it("SAB send bypasses dedup (binary path) · 2 identical sends both reach the wire", () => {
-    if (typeof SharedArrayBuffer === "undefined") return; // env-skip
-    const a = connect("/audit/stream", { shareKey: "k1" });
+describe("lib/ws · staleSnapshotMs validation (AU-1 / code MID-1 + sec LOW)", () => {
+  // Each invalid value silently degrades dedup a different way — pin
+  // the fallback + warn at the connect() boundary so the misuse can't
+  // sneak through into the entry stale check.
+  async function expectInvalidFallsBackToDefault(
+    value: number,
+    label: string,
+  ): Promise<void> {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let t = 1_000_000_000_000;
+      __setNowProviderForTests(() => t);
+      connect("/audit/stream", { shareKey: label, staleSnapshotMs: value });
+      fakeAt(0).simulateOpen();
+      fakeAt(0).simulateJson({ type: "snapshot", events: ["v"] });
+
+      // Default = 5 min. After 4 min the snapshot is still FRESH; if the
+      // invalid value leaked through it would change this behaviour
+      // (NaN → never stale BUT entry already uses default so still
+      // fresh; negative → always stale → cache skipped).
+      t += 4 * 60 * 1000;
+      const late = connect("/audit/stream", {
+        shareKey: label,
+        staleSnapshotMs: value,
+      });
+      const events: WsEvent[] = [];
+      late.subscribe((ev) => events.push(ev));
+      await Promise.resolve();
+      expect(events.length).toBe(2); // open + cached snapshot (still fresh)
+
+      // Advance past default ceiling → cache becomes stale even though
+      // value would have said "never stale" (NaN/Infinity case) — proves
+      // entry is using DEFAULT_STALE_SNAPSHOT_MS, not the invalid value.
+      t += 2 * 60 * 1000; // now 6 min after snapshot
+      const second = connect("/audit/stream", {
+        shareKey: label,
+        staleSnapshotMs: value,
+      });
+      const events2: WsEvent[] = [];
+      second.subscribe((ev) => events2.push(ev));
+      await Promise.resolve();
+      expect(events2).toEqual([{ kind: "open" }]); // stale, no snapshot
+
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  }
+
+  it("NaN → fallback to default + warn", async () => {
+    await expectInvalidFallsBackToDefault(Number.NaN, "kNaN");
+  });
+
+  it("negative number → fallback to default + warn", async () => {
+    await expectInvalidFallsBackToDefault(-1, "kNeg");
+  });
+
+  it("Infinity → fallback to default + warn", async () => {
+    await expectInvalidFallsBackToDefault(Number.POSITIVE_INFINITY, "kInf");
+  });
+
+  it("0 is LEGAL (treat-as-stale always) — does NOT trigger warn", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let t = 1_000_000_000_000;
+      __setNowProviderForTests(() => t);
+      connect("/audit/stream", { shareKey: "k0", staleSnapshotMs: 0 });
+      fakeAt(0).simulateOpen();
+      fakeAt(0).simulateJson({ type: "snapshot", events: ["v"] });
+
+      // Any nonzero age vs ceiling 0 → `now - at > 0` is true → stale.
+      t += 1;
+      const late = connect("/audit/stream", {
+        shareKey: "k0",
+        staleSnapshotMs: 0,
+      });
+      const events: WsEvent[] = [];
+      late.subscribe((ev) => events.push(ev));
+      await Promise.resolve();
+      expect(events).toEqual([{ kind: "open" }]); // cached snapshot skipped
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe("lib/ws · per-view forceNextSendFresh consume semantics (AU-5 / code LOW)", () => {
+  it("late joiner with stale cache: force-flag consumed on first send through view (next dup is deduped)", async () => {
+    let t = 1_000_000_000_000;
+    __setNowProviderForTests(() => t);
+    const first = connect("/audit/stream", { shareKey: "k1" });
     fakeAt(0).simulateOpen();
-    const sab = new SharedArrayBuffer(16);
-    a.send(sab);
-    a.send(sab);
+    first.send({ minutes: 30 });
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+
+    t += 10 * 60 * 1000; // stale
+
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    late.subscribe((ev) => {
+      if (ev.kind === "open") late.send({ minutes: 30 });
+    });
+    await Promise.resolve();
+
+    // 2 sends so far: first's original + late's force-fresh.
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+
+    // The force-flag was a one-shot — same view re-sending the same
+    // payload now hits dedup (entry.lastSentPayload was updated by
+    // late's force-fresh send, so the duplicate check matches).
+    late.send({ minutes: 30 });
     expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
   });
+});
+
+describe("lib/ws · SharedArrayBuffer payload routes through binary path (AS-3 code LOW-4 regression)", () => {
+  // AU-2 (5/26 第七轮 code MID-2): use vitest's `it.skipIf` so reporter
+  // shows a SKIPPED status when SAB is unavailable (post-Spectre browser
+  // without crossOriginIsolated) — the prior `if (...) return` made the
+  // spec silently PASS with no assertion.
+  it.skipIf(typeof SharedArrayBuffer === "undefined")(
+    "SAB send bypasses dedup (binary path) · 2 identical sends both reach the wire",
+    () => {
+      const a = connect("/audit/stream", { shareKey: "k1" });
+      fakeAt(0).simulateOpen();
+      const sab = new SharedArrayBuffer(16);
+      a.send(sab);
+      a.send(sab);
+      expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+    },
+  );
 });
 
 describe("lib/ws · late-joiner microtask event ordering (AR-3 / ui-f HIGH-2)", () => {

@@ -1684,5 +1684,37 @@
   - 或: lib 不管 · useAuditStream 自加 timeout 兜底
   - 评估: lib 是 protocol-agnostic · 不应假设"snapshot 必到" · 建议 useAuditStream 实施
 - **触发关闭**：服务器 snapshot 静默 bug 实测 / useAuditStream 加 status="timeout" 状态时
+- **客观升级条件** (AU-6 / 5/26 第七轮 arch LOW)：**若 backend audit_stream timeout 实测 ≥ 1 例 · 立刻 LOW → MID** · 用户可见 UI 死锁优先级高于"理论 rare"
+- **优先级**：LOW (rare 双条件: 5min idle + 服务器 bug)
+- **来源**：5/26 第六轮 ui-fluency-auditor MID-2 + 第七轮 arch LOW (升级条件)
+
+---
+
+## DEBT-078 · `lib/ws.ts` 综合拐点 watchdog (4 维度任 2 +1 启重整)
+
+- **现象** (5/26 第七轮 arch MID): lib/ws.ts 累积已可见 · 4 个维度同时压临界:
+  - **Options 字段数**: 4 (maxBackoffMs / noReconnect / shareKey / staleSnapshotMs) · 第 5 个加入时该分 PoolOptions vs ClientOptions
+  - **module-level mutable hook**: 3 (pool / listenerErrorHandler / nowMs) · DEBT-075 已立 ≥4 时评估 DI
+  - **spec 文件**: ws.test.ts 685+ 行 / 42 spec / 9 describe · 接近 ADR-040 拆分临界 (600 行 / 30 spec)
+  - **ADR-046 trade-off 叠加**: 原段 + AS-2 段 + AT-2 段 · 3 段累计 narrative 越来越复杂
+- **影响**：任 1 维度单看 OK · 4 同时压 = 综合信号 · 下次大改前必整
+- **触发**：上面 **4 维度任 2 同时 +1** (例如 spec 700 行 + Options 5 字段 / hook ≥4 + ADR-046 第 4 段修订)
+- **触发后启动重整 sketch**：
+  1. Options 拆 `PoolOptions` (entry-level: shareKey/maxBackoffMs/noReconnect/staleSnapshotMs) vs `ClientOptions` (view-level: 未来扩展位)
+  2. spec 按 concern 拆 ws.pool.test / ws.dedup.test / ws.cachedSnapshot.test / ws.lifecycle.test
+  3. ADR-046 v2 rewrite narrative (合并 3 段修订成单条目 + "当前 state + 推翻条件 + 修订史 collapsed" 结构)
+  4. module hook 走 DI factory (DEBT-075 sketch)
+- **不重整代价**：每位 reviewer 必读 685 行 spec + 3 段叠加 ADR · 上下文成本指数增长
+- **优先级**：LOW (watchdog 性 · 触发条件未到不修)
+- **来源**：5/26 第七轮 architecture-reviewer MID-4 + LOW
+
+---
+
+## DEBT-079 · ADR-046 narrative v2 重写 (3 段累计修订 → 单条目)
+
+- **现象** (5/26 第七轮 arch LOW): ADR-046 累计了 3 段修订 (原段 + AS-2 dedup 段 + AT-2 修正段) · reviewer 必须读全才能理解最终 state · 已被推翻的描述还在文中。
+- **影响**：reviewer cognitive load · 后人误读"原 trade-off" 已不成立的部分
+- **建议方案**：ADR-046 v2 重写 narrative · 结构 "**当前 state** + **推翻条件** + **修订史 (放底部 collapsed)**" · 把"AR-1 后已消除 / AS-2 修正 / AT-2 修正" 三段合到 v2 单条目里
+- **触发关闭**：DEBT-078 综合拐点触发时一并做 / 下次 ADR-046 再有修订之前
 - **优先级**：LOW
-- **来源**：5/26 第六轮 ui-fluency-auditor MID-2
+- **来源**：5/26 第七轮 architecture-reviewer LOW

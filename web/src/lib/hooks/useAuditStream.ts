@@ -108,6 +108,23 @@ export interface UseAuditStreamOptions {
   includeMetrics?: boolean;
   /** Snapshot window in minutes. Default 30 (matches server default). */
   minutes?: number;
+  /** Cached-snapshot age ceiling (ms) before the late-joiner microtask
+   *  refuses to replay and forces a fresh server-side snapshot. Passed
+   *  through to `lib/ws.connect` (see Options.staleSnapshotMs · ADR-046
+   *  AT-2 / AT-3). Default = lib default (5 min).
+   *
+   *  AU-3 (5/26 第七轮 MID-3): AuditPage commonly sits idle for hours
+   *  in the background while the user works in another tab; raising
+   *  this to e.g. 30 min lets the user resume without an extra server
+   *  round-trip. Conversely a high-freshness Dashboard panel could
+   *  pass `0` to force fresh on every late-join.
+   *
+   *  First-caller-wins (ADR-047): the FIRST useAuditStream call to
+   *  create a given (path, shareKey) pool entry pins the value; later
+   *  callers with different staleSnapshotMs are silently ignored. Pass
+   *  the SAME value across all callers sharing a pool entry to avoid
+   *  surprises. */
+  staleSnapshotMs?: number;
 }
 
 export interface AuditStreamRawViewModel {
@@ -130,7 +147,7 @@ export interface AuditStreamRawViewModel {
 export function useAuditStream(
   options: UseAuditStreamOptions = {},
 ): AuditStreamRawViewModel {
-  const { includeMetrics = false, minutes = 30 } = options;
+  const { includeMetrics = false, minutes = 30, staleSnapshotMs } = options;
 
   // Two parallel buffers so a high-rate metric stream cannot evict
   // business events (DEBT-011). Caps are tuned so each kind keeps
@@ -146,13 +163,16 @@ export function useAuditStream(
   const clientRef = useRef<WsClient | null>(null);
 
   useEffect(() => {
-    // shareKey reserved for DEBT-047 pool. Encode the config knobs
-    // that change socket contents: two callers with different
-    // includeMetrics MUST NOT share (ADR-022 — metric streams
-    // follow device lifetime, not user pause). Today ignored by
-    // lib/ws.connect; pre-wired so the pool change is a one-file diff.
+    // shareKey reserved for DEBT-047 pool. Encode ONLY the config
+    // knobs that change socket contents: two callers with different
+    // includeMetrics MUST NOT share (ADR-022 — metric streams follow
+    // device lifetime, not user pause). `staleSnapshotMs` is
+    // deliberately EXCLUDED — it's a per-entry preference (ADR-047
+    // first-caller-wins), not a wire-shape divergence, so keeping it
+    // out of shareKey lets two callers with different staleSnapshotMs
+    // still share one socket (first wins).
     const shareKey = JSON.stringify({ minutes, includeMetrics });
-    const client = connect("/audit/stream", { shareKey });
+    const client = connect("/audit/stream", { shareKey, staleSnapshotMs });
     clientRef.current = client;
 
     const unsubscribe = client.subscribe((wsEv) => {
@@ -215,8 +235,11 @@ export function useAuditStream(
     };
     // Re-create the connection if include_metrics or minutes changes —
     // simpler than sending control messages, and we don't expect these
-    // to change at runtime.
-  }, [includeMetrics, minutes]);
+    // to change at runtime. staleSnapshotMs is in deps so a caller
+    // that swaps the value at runtime gets the new pool entry (though
+    // first-caller-wins means the new entry's value only applies if
+    // it's the first caller for a fresh (path, shareKey) pair).
+  }, [includeMetrics, minutes, staleSnapshotMs]);
 
   const pause = useCallback(() => {
     if (includeMetrics) {

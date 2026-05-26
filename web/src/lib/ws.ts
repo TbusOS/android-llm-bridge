@@ -103,12 +103,19 @@ interface Options {
    *  Default: 5 min. Long-idle tabs (e.g. an `AuditPage` running in
    *  the background for an hour) may set this higher to avoid an
    *  unnecessary server round-trip on resume; high-freshness streams
-   *  (chat / metrics) may set it lower or to 0 to always force fresh.
+   *  (chat / metrics) may set it lower. `0` is a legal value meaning
+   *  "treat cache as always stale" — every late joiner forces fresh.
+   *
+   *  Validation (AU-1 / 5/26 第七轮 code MID-1): non-finite (`NaN` /
+   *  `Infinity`) and negative values fall back to the default with a
+   *  console.warn — they each degrade dedup in a different silent way
+   *  (NaN → cache never stale; negative → cache always stale → dedup
+   *  effectively disabled) and almost certainly indicate a caller bug.
    *
    *  The first caller of `(path, shareKey)` to create the pool entry
    *  wins the value — subsequent callers' staleSnapshotMs is ignored.
-   *  This matches the existing "first-caller wins" semantics of
-   *  pool-level options. */
+   *  This matches the "first-caller wins" semantics of every other
+   *  pool-level option (see ADR-047). */
   staleSnapshotMs?: number;
 }
 
@@ -201,6 +208,36 @@ export function __setListenerErrorHandlerForTests(
   return prev;
 }
 
+/** Coerce a caller-supplied `staleSnapshotMs` to a sane value.
+ *  AU-1 (5/26 第七轮 code MID-1 / sec LOW): the field is typed
+ *  `number?` so callers can pass anything numeric (negative, `NaN`,
+ *  `Infinity`). Each value degrades dedup differently:
+ *
+ *    - `NaN`  → `now - at > NaN` is always false → cache never stale
+ *      → late joiner force flag never fires → original AS-2 fix
+ *      silently regresses
+ *    - `< 0`  → cache always considered stale → every late joiner
+ *      forces a fresh send → dedup is effectively disabled
+ *    - `Infinity` → cache never stale (same outcome as NaN but at
+ *      least intentional-looking from the call site)
+ *
+ *  Coerce non-finite-or-negative inputs to the default + warn in
+ *  dev/test so the misuse surfaces immediately. Pure prod silently
+ *  uses the default (warn would spam consoles).
+ *  `0` is a legal "always treat cache as stale" value and passes. */
+function sanitizeStaleSnapshotMs(raw: number | undefined): number {
+  if (raw === undefined) return DEFAULT_STALE_SNAPSHOT_MS;
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  if (typeof console !== "undefined" && console.warn) {
+    console.warn(
+      `lib/ws: ignoring invalid staleSnapshotMs=${String(raw)} ` +
+        `(must be a finite, non-negative number); using default ` +
+        `${DEFAULT_STALE_SNAPSHOT_MS} ms`,
+    );
+  }
+  return DEFAULT_STALE_SNAPSHOT_MS;
+}
+
 /** Default cached-snapshot age limit before the late-joiner microtask
  *  skips the replay and forces a fresh server round-trip. AS-2 /
  *  DEBT-065 MID: AR-1 send dedup means the server doesn't auto-re-
@@ -245,7 +282,7 @@ function createPoolEntry(
     subscribers: new Set(),
     cachedSnapshot: null,
     cachedSnapshotAt: 0,
-    staleSnapshotMs: options.staleSnapshotMs ?? DEFAULT_STALE_SNAPSHOT_MS,
+    staleSnapshotMs: sanitizeStaleSnapshotMs(options.staleSnapshotMs),
     currentEpoch: 0,
     lastSentPayload: null,
   };

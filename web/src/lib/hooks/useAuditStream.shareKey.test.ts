@@ -22,7 +22,7 @@ import type { WsClient } from "../ws";
 
 interface ConnectCapture {
   path: string | undefined;
-  opts: { shareKey?: string } | undefined;
+  opts: { shareKey?: string; staleSnapshotMs?: number } | undefined;
 }
 
 // Hoisted mock — capture the `(path, opts)` passed to connect().
@@ -34,16 +34,21 @@ const { mockConnect, lastConnect } = vi.hoisted((): {
   lastConnect: ConnectCapture;
 } => {
   const lastConnect: ConnectCapture = { path: undefined, opts: undefined };
-  const mockConnect = vi.fn((path: string, opts?: { shareKey?: string }) => {
-    lastConnect.path = path;
-    lastConnect.opts = opts;
-    return {
-      send: vi.fn(),
-      close: vi.fn(),
-      subscribe: () => () => {},
-      readyState: 1,
-    } as unknown as WsClient;
-  });
+  const mockConnect = vi.fn(
+    (
+      path: string,
+      opts?: { shareKey?: string; staleSnapshotMs?: number },
+    ) => {
+      lastConnect.path = path;
+      lastConnect.opts = opts;
+      return {
+        send: vi.fn(),
+        close: vi.fn(),
+        subscribe: () => () => {},
+        readyState: 1,
+      } as unknown as WsClient;
+    },
+  );
   return { mockConnect, lastConnect };
 });
 
@@ -104,5 +109,30 @@ describe("useAuditStream · shareKey contract", () => {
     const key30 = lastConnect.opts?.shareKey;
 
     expect(key5).not.toBe(key30);
+  });
+
+  it("staleSnapshotMs is passed through as a SEPARATE opt · NOT part of shareKey (AU-3 / ADR-047 first-caller-wins)", () => {
+    renderHook(() =>
+      useAuditStream({ staleSnapshotMs: 30 * 60 * 1000 }),
+    );
+    // shareKey stays canonical: only minutes + includeMetrics drive
+    // socket sharing. Two callers with different staleSnapshotMs MUST
+    // still share one socket (first-caller-wins on the pool entry).
+    expect(lastConnect.opts?.shareKey).toBe(
+      JSON.stringify({ minutes: 30, includeMetrics: false }),
+    );
+    expect(lastConnect.opts?.staleSnapshotMs).toBe(30 * 60 * 1000);
+  });
+
+  it("two callers with different staleSnapshotMs produce IDENTICAL shareKey (pool entry shared)", () => {
+    renderHook(() => useAuditStream({ staleSnapshotMs: 5 * 60 * 1000 }));
+    const keyA = lastConnect.opts?.shareKey;
+
+    mockConnect.mockClear();
+    lastConnect.opts = undefined as ConnectCapture["opts"];
+    renderHook(() => useAuditStream({ staleSnapshotMs: 30 * 60 * 1000 }));
+    const keyB = lastConnect.opts?.shareKey;
+
+    expect(keyA).toBe(keyB);
   });
 });

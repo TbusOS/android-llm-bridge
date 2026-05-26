@@ -13,7 +13,7 @@
 
 ---
 
-## 索引（按主题 · 46 ADR + 5 seed · 2026-05-26 update）
+## 索引（按主题 · 47 ADR + 5 seed · 2026-05-26 update）
 
 **核心架构（transport / backend / event）**
 - ADR-001 · Transport 抽象 + 4 实现
@@ -35,6 +35,7 @@
 - ADR-037 (seed) · transport 配置常量（retry / timeout / backoff）用 class attribute
 - ADR-045 · `lib/ws.ts` shareKey opt-in pool + late-joiner microtask replay（关 DEBT-047）
 - ADR-046 · `lib/ws.ts` pool view.send() epoch-scoped payload dedup（5/26 AR-1 · 关 ui-f HIGH-1 reconnect storm）
+- ADR-047 · `lib/ws.ts` Pool-level Options first-caller-wins 语义（5/26 AU-4 · 关 arch MID-4）
 
 **Web Tier / 前端**
 - ADR-017 · Web Tier 1 技术栈
@@ -1617,3 +1618,90 @@ cache 的那个 view" 跳 dedup 一次 · sibling view 的 dedup tracker
   · 本 ADR 是案例)
 - `web/src/lib/ws.ts` (`makeView.send` 实现) / `web/src/lib/ws.test.ts`
   (7 dedup spec)
+
+---
+
+## ADR-047 · `lib/ws.ts` Pool-level Options · first-caller-wins 语义
+
+**Status**: accepted · 5/26 AU-4 (第七轮 arch MID-4)
+
+**Context**:
+
+`lib/ws.ts` 的 `Options` 接口当前 4 个 pool-level 字段都遵循"first
+caller to mint the pool entry wins · 后续 callers 的同字段值 silently
+ignored":
+- `maxBackoffMs` (since 项目早期)
+- `noReconnect` (since 项目早期)
+- `shareKey` (since DEBT-047 AP-1)
+- `staleSnapshotMs` (since AT-3)
+
+这 4 个字段各自 JSDoc 里散写 "this matches the existing first-caller
+semantics" · 但**全 codebase grep 不到一个 ADR 立这条规则**。后续
+reviewer / 新 contributor 加第 5 个 pool-level 字段时不知道该明示
+first-caller-wins · 容易破。第七轮 arch MID-4 提:"4 个 JSDoc 文字
+契约 + 0 个 ADR 强制 = 一致性靠 reviewer 偶然发现"。
+
+**Decision**:
+
+立 `lib/ws.ts Pool-level Options` 一个集合 · 所有 `connect(path,
+opts)` 的 `opts.*` 字段都遵循 first-caller-wins:
+
+- pool entry 由 (path, shareKey) tuple 创建 · entry 一旦创建 · 所有
+  pool-level options 字段值锁死
+- 后续 `connect(path, opts')` 同键命中现有 entry → 返新 view · 但
+  entry 内部字段值 (`maxBackoffMs` / `noReconnect` / `staleSnapshotMs`
+  等) 不变 · `opts'` 同字段值 silently 被丢
+- shareKey 本身是 key 的一部分 · 不算 "value override"
+- view-level options (未来扩展) 应该走不同机制 (per-view state in
+  makeView · 不存 entry · 见 AT-2 `forceNextSendFresh` 模式)
+
+**备选**:
+
+1. ✅ **A (当前 · 选)**: first-caller-wins · documented + enforced by ADR
+2. ❌ **B (last-caller-wins)**: 第 N 个 connect 改 entry 字段 · 破坏
+   稳定性 (Dashboard 设 5min · AuditPage 后到改 30min · Dashboard 静默
+   收到行为变化)
+3. ❌ **C (per-caller override)**: 每个 view 持本 view 的 options · 需
+   makeView 拷一份 · 复杂度 + memory · 暂无 use case 证明值得
+4. ❌ **D (assert 不一致即抛)**: 第 N caller 字段值跟 entry 不同 → throw
+   · 太严 · 破坏 caller 独立性 (Dashboard 和 AuditPage 不该需要协调)
+
+**Trade-off**:
+
+- 放弃: 灵活性 — caller 无法保证自己的 options 真生效 · 必须依赖
+  约定 (所有 caller 同字段传同值)
+- 获得: pool entry 行为可预测 · 不会因 caller mount 顺序 silently 漂
+- 获得: 0 复杂度增量 · 当前实现已是 first-caller-wins
+
+**Enforcement** (写进 architecture-reviewer agent grep checklist):
+
+- 任何新加 `Options` 字段必须在 JSDoc 标"first-caller-wins"且关联本
+  ADR
+- 新 caller 用 pool-level option 时 · 若同 shareKey 其他 caller 已存
+  在 · 必须传相同值 (or assume 自己拿不到这个值的预期效果)
+- 跨页面共享 pool entry 的 callers (Dashboard / AuditPage 同 /audit/
+  stream) 应**统一选 1 个常量** · 避免各自传不同值后 first-caller-wins
+  silently 失效
+- spec 钉契约: `useAuditStream.shareKey.test.ts` 已示范怎么钉
+  shareKey 不含 staleSnapshotMs
+
+**触发推翻条件**:
+
+- 出现真需 per-view override 的 caller (e.g. 同 entry · view A 想
+  noReconnect=true · view B 想 false) → 该字段从 Options 升级为
+  per-view state · 走 makeView 闭包模式 (AT-2 forceNextSendFresh
+  case)
+- pool-level 字段数 ≥ 6 → 考虑拆 `PoolOptions` (entry-level) vs
+  `ClientOptions` (view-level) interface (DEBT-078 综合拐点 watchdog
+  的触发条件之一)
+
+**关联**:
+
+- ADR-045 (shareKey opt-in pool · entry 创建机制)
+- ADR-046 (send dedup · 也是 entry-level 状态 · 但 view 可以 force
+  跳一次 = per-view override 范式 见 AT-2)
+- DEBT-078 (lib/ws.ts 综合拐点 watchdog · 5 字段时考虑拆 PoolOptions
+  vs ClientOptions)
+- AU-3 commit (useAuditStream + Dashboard + AuditPage 全部 wire
+  30 min · 是 first-caller-wins 跨 caller 协调的样板)
+- L-056 (lib 行为契约修改即使 caller 0 改也需 ADR · 本 ADR 是案例)
