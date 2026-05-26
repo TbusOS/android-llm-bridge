@@ -1215,8 +1215,10 @@ vite re-export，应该可单 config 解决"）。AH-5 实测验证：
 
 ## ADR-041 · hook 组织规则 · lib/hooks/ vs lib/ vs features/<x>/
 
-**Status**: superseded by ADR-043 (wrapper hook 抽取临界) for the
-"raw vs view-model 必须 wrapper hook" 子条款 · 槽位规则其余生效
+**Status**: accepted — slot-allocation rule (lib/hooks/ vs lib/ vs
+features/<x>/) still authoritative. The "raw hook + feature wrapper
+必须分离" 子条款 amended by ADR-043 (wrapper 抽取临界 N ≥ 2 consumer)
+on 2026-05-25.
 
 **Context**:
 
@@ -1241,12 +1243,16 @@ AH-1 commit 把 4 个业务 hook 统一到 lib/hooks/ · useDashboardQuery
   projection wrapper / 业务编排 hook · 可以 import lib/hooks/ +
   features/<x>/types · 不允许跨 feature import (除非通过 lib/hooks/)
 
-**ADR-043 修订**：旧版本要求"raw hook 提层后必须配 wrapper hook 做
-view 投影"——AL-2 commit 发现 N=1 consumer 时 wrapper 是 over-design
-（useDeviceCards / useAuditTimeline 是反例 · 已撤回）。新规则：N=1
-consumer 时直接在 consumer 内 useMemo + 纯映射函数（放
-features/<x>/mappers.ts 或同等），N ≥ 2 consumer 时才抽 wrapper hook。
-槽位本身（lib/hooks/ vs lib/ vs features/）规则不变。
+**Amendment to "raw hook + wrapper" sub-clause** (added 2026-05-25 by
+ADR-043, restated 5/26 AO-5 for clarity)：原 ADR-041 第 4 段 "raw
+vs view-model 拆分必须在 boundary 上显式 · feature wrapper 做
+projection (mapToDeviceCard / mapAuditToTimeline) · lib hook 不知道
+feature view shape" **只在 N ≥ 2 consumer 时强制**。N=1 时直接在
+consumer 内 useMemo + 纯映射函数（放 features/<x>/mappers.ts 或
+lib/<thing>Format.ts），不抽 wrapper hook —— AL-2 commit 撤回
+useDeviceCards / useAuditTimeline 两个 N=1 wrapper 验证了这条。
+**槽位规则（3 槽 · lib/hooks/ 不准 import features/）保留。** 详见
+ADR-043 + L-052。
 
 **Why**:
 

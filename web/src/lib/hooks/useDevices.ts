@@ -22,12 +22,21 @@ import { useDashboardQuery } from "../dashboardQuery";
 import { fetchDevices, type ApiDevice, type DevicesResponse } from "../api";
 
 const REFETCH_MS = 5_000;
+/** Shared empty sentinel so the "loading / undefined data" branch
+ *  doesn't construct a new [] every render. Typed `readonly` AND
+ *  Object.freeze so consumers can't accidentally mutate the shared
+ *  array (AO-5 / code MID-2 真化: the interface field is also
+ *  readonly so TS catches `.push()` / `.sort()` at compile time
+ *  instead of throwing TypeError at runtime). */
 const EMPTY_DEVICES: readonly ApiDevice[] = Object.freeze([]);
 
 export interface DevicesRawViewModel {
   /** Raw devices as returned by `GET /devices`. Empty array when the
-   *  backend has no transport / probe failed (see backendError). */
-  devices: ApiDevice[];
+   *  backend has no transport / probe failed (see backendError).
+   *  Declared `readonly` so consumers can't in-place mutate the
+   *  shared EMPTY_DEVICES sentinel and crash at runtime. Use
+   *  `.map()` / `.filter()` / spread to read; never assign. */
+  devices: readonly ApiDevice[];
   /** Server-side Transport class name (e.g. "AdbUsbTransport") or null
    *  when the backend returned ok=false. Used by lib/deviceFormat
    *  utilities to derive a UI transport label. */
@@ -53,13 +62,13 @@ export function useDevices(): DevicesRawViewModel {
   // Freeze a shared empty sentinel; when data is present, react-query
   // structural sharing keeps the array reference stable so .map()
   // memoization works.
-  const devices = data?.devices ?? EMPTY_DEVICES;
+  const devices: readonly ApiDevice[] = data?.devices ?? EMPTY_DEVICES;
   // Stabilize the return identity too — every consumer that does
   // `useMemo([devicesVm])` benefits. Wrapping in useMemo lets React
   // bail out of downstream re-renders when nothing actually changed.
-  return useMemo(
+  return useMemo<DevicesRawViewModel>(
     () => ({
-      devices: devices as ApiDevice[],
+      devices,
       transportName: data?.transport ?? null,
       backendError:
         data && !data.ok ? data.error ?? "transport unavailable" : null,

@@ -64,36 +64,30 @@ def _resolve_transport(
 
 
 def _safe_iterdir(p: Path) -> list[Path]:
-    """Sorted iterdir that survives the dir being unlinked / replaced
-    mid-scan. Returns partial results on mid-iteration OSError instead
-    of bubbling to 500 OR throwing away everything already collected.
+    """Sorted iterdir that survives the dir being unlinked between
+    `exists()` check and call. Returns [] on OSError instead of
+    bubbling to 500.
 
-    5/25 code audit HIGH-2: AC commit (TOCTOU stat guard) protected
-    `p.stat()` but `p.iterdir()` / `is_symlink()` / `is_file()` /
-    `is_dir()` still raised. Same race window, same defence required.
+    5/26 AO-5 (code MID-3 third round): earlier implementation tried
+    to "truncate on mid-stream OSError" via manual iteration — but
+    Python 3.11 (current `.python-version`) `Path.iterdir` reads the
+    directory upfront via `os.listdir` so mid-stream OSError isn't
+    possible; the manual loop was dead code. On 3.12+ where iterdir
+    is generator-based, a raw `for x in it` without `with os.scandir`
+    leaks the scandir fd on early break. `list(p.iterdir())` drives
+    the generator to completion (or to the first OSError, raised once
+    and caught here), guaranteeing fd release in both versions.
 
-    5/25 second-round code MID-7: previous one-liner `sorted(p.iterdir())`
-    discarded already-iterated entries when scandir hit EIO mid-stream
-    (e.g. networked mount flaking on the Nth entry). Iterate manually
-    so a mid-stream OSError truncates the result instead of zeroing it.
+    AC commit (TOCTOU stat guard) handled `p.stat()`; this helper
+    + `_safe_entry` cover the surrounding iterdir / is_symlink /
+    is_file / is_dir race window.
     """
-    out: list[Path] = []
     try:
-        it = iter(p.iterdir())
+        entries = list(p.iterdir())
     except OSError:
         return []
-    while True:
-        try:
-            entry = next(it)
-        except StopIteration:
-            break
-        except OSError:
-            # Truncate at the failure point — anything collected so far
-            # is valid; we just stop here instead of returning [].
-            break
-        out.append(entry)
-    out.sort(reverse=True)
-    return out
+    entries.sort(reverse=True)
+    return entries
 
 
 def _safe_entry(p: Path, *, want: Literal["file", "dir"]) -> bool:

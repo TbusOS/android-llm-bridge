@@ -1,4 +1,5 @@
 {
+  "_comment": "build / test config sub-project. tsc -b uses this for type-checking only (noEmit:true). vitest doesn't read .tsbuildinfo and reloads vite.config.ts itself via vite resolver; including vitest.config.ts here only ensures `npm run build` (which runs `tsc -b && vite build`) catches type errors in the test runner config before they show up at test time. Adding new shared config: extend vite.shared.ts; vite-only stays in vite.config.ts; test-only stays in vitest.config.ts (ADR-040 + ADR-040 amendment by AM-3).",
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],

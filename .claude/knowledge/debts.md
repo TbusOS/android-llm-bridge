@@ -1411,3 +1411,80 @@
 - **触发关闭**：StrictMode 下任一现有 spec fail / Effect cleanup bug
   在 prod 被发现
 - **来源**：5/25 第二轮 隐含 + DEBT-052 升级
+
+---
+
+## DEBT-060 · PlaygroundPage 3 处 eslint-disable → 抽 useStickToBottom + useChatLogProjection 双 hook
+
+- **现象**：AN 收尾给 PlaygroundPage scroll/done/error effect 补了
+  deps · 但因 PlaygroundPage 其他 state 故意不加 仍 eslint-disable
+  3 处。AO-3 partial 收口又新加 1 处。当前 4 处局部抑制 lint。
+- **影响**：lint 工具在这 4 处失效 · 下次 audit reviewer 会重复提
+- **建议方案**：
+  - 抽 useStickToBottom(scrollRef, [chat.delta, chat.status, log.length])
+    · effect deps 自然封闭 · 1 处 disable 消失
+  - 抽 useChatLogProjection(chat, log, setLog) · 把 terminal-path
+    effect 搬进去 · 把 cancel/error stash 逻辑封 hook · 1 处 disable
+    消失
+  - 余下 2 处 (done useEffect / error input restore) 用同款 hook 化
+- **触发关闭**：第二个 chat 页面（Inspect Logcat live tail / 任何
+  streaming UI）需复用 scroll + log projection 行为时 · 或 lint 升级
+  把 disable 不允许局部
+- **来源**：5/25 第三轮 arch MID-5 + AO-3 partial 收口
+
+---
+
+## DEBT-061 · useWsChatStream API 替代设计备用
+
+- **现象**：AO-1 已经把 5 enum → 单 discriminated union · 现 API 在
+  双 consumer 上很顺。但未来如 M3 OpenAI-compat / Anthropic SSE bridge
+  / Gemma 4 on-device stream 出现 · API 可能再调
+- **建议方案**：保持 3 phase + WsChatSettled union 模式 · 新 consumer
+  按现有 switch 模板抄即可 · 如果发现共同模式 (如所有 consumer 都
+  需要 partial stash) 再抽 useWsChatStreamWithLog wrapper
+- **触发关闭**：第三个 WS stream consumer 出现时复审
+- **来源**：5/25 第三轮 arch HIGH-2 修后 follow-up
+
+---
+
+## DEBT-062 · mockup webui-preview-v3 真做 · 整 React UI baseline 锚
+
+- **现象**：DEBT-057 已立 · 整套 .playground-* / .audit-* / .screenshot-
+  zoom-* / .sessions-table-* / .live-card.is-idle / .playground-msg
+  --cancelled / .playground-msg--errored BEM 都未画 mockup · React
+  改动易漂 (H2 .live-pulse 橙色就是反例) · mockup .live-pulse 写法
+  vs React 不一致 (mockup MID-2)
+- **影响**：每次大改后 mockup baseline 形同虚设 · DEBT-057 兜底循环
+- **建议方案**：
+  - 建 docs/webui-preview-v3.html 或 v2-playground.html / v2-inspect.html
+    / v2-audit.html / v2-sessions.html / v2-screenshot-zoom.html
+    分 5 单页 · 视觉对齐 React 实际渲染
+  - 顺手统一 .live-pulse 写法 (mockup 也用 currentColor + color-mix)
+  - 跑 sky-skills/design-review 三闸 (verify / visual-audit / screenshot)
+  - mockup-baseline-checker agent 加 grep checklist 验 React class 都
+    在 mockup 出现
+- **触发关闭**：下次大批 audit cycle 前 / 或新 UI 工作前
+- **来源**：5/25 第三轮 mockup MID-1+2 + DEBT-057 升级
+
+---
+
+## DEBT-063 · PlaygroundPage 组件 spec (terminal-path effect + LLM payload filter)
+
+- **现象**：AO-3 加 llmMessagesFrom 纯函数 spec · 但 PlaygroundPage
+  整体组件 (chat.settled effect / cancel push log / error push partial
+  + error message / lastPromptRef 回填 input) 0 spec · 需要 mock 4
+  个 hook (useApp / useBackends / useBackendModels / usePlaygroundChat)
+  + react-query provider 才能跑
+- **影响**：业务正确性核心 (HIGH-4 修复) 仅靠纯函数 spec + 手工验 ·
+  下次改 terminal-path 易回归
+- **建议方案**：
+  - 新建 web/src/features/playground/PlaygroundPage.component.test.tsx
+  - vi.mock 4 hook · 用 hoisted factory 控制 chat.settled / chat.delta
+    / chat.done · 验：
+    · cancelled settled + chat.delta="abc" → log push {meta:cancelled,
+      content:"abc"} · 后续 onSend payload 不含 cancelled message
+    · error settled + chat.done.error · log push partial + error msg ·
+      input 回填 lastPromptRef
+  - 与 DEBT-059 StrictMode wrapper 同步规划
+- **触发关闭**：terminal-path effect 改大 / 第二个 chat 页面参考时
+- **来源**：AO-3 commit 自承 + arch follow-up
