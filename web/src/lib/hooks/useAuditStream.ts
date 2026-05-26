@@ -111,21 +111,40 @@ export interface UseAuditStreamOptions {
   /** Cached-snapshot age ceiling (ms) before the late-joiner microtask
    *  refuses to replay and forces a fresh server-side snapshot. Passed
    *  through to `lib/ws.connect` (see Options.staleSnapshotMs · ADR-046
-   *  AT-2 / AT-3). Default = lib default (5 min).
+   *  AT-2 / AT-3).
    *
-   *  AU-3 (5/26 第七轮 MID-3): AuditPage commonly sits idle for hours
-   *  in the background while the user works in another tab; raising
-   *  this to e.g. 30 min lets the user resume without an extra server
-   *  round-trip. Conversely a high-freshness Dashboard panel could
-   *  pass `0` to force fresh on every late-join.
+   *  **Default**: `AUDIT_STREAM_DEFAULT_STALE_MS` (30 min · AV-2).
+   *  Audit timelines commonly sit idle in a background tab for the
+   *  workday; the default is tuned for that case. Override only for
+   *  high-freshness panels (pass `0` to force fresh on every late-
+   *  join).
    *
-   *  First-caller-wins (ADR-047): the FIRST useAuditStream call to
-   *  create a given (path, shareKey) pool entry pins the value; later
-   *  callers with different staleSnapshotMs are silently ignored. Pass
-   *  the SAME value across all callers sharing a pool entry to avoid
-   *  surprises. */
+   *  **First-caller-wins (ADR-047)**: the FIRST useAuditStream call
+   *  to create a given (path, shareKey) pool entry pins the value;
+   *  later callers with different `staleSnapshotMs` are silently
+   *  ignored. The hook owns its own default so all caller sites
+   *  agree by default without coordination. Override only when you
+   *  know you're the first caller (and document why).
+   *
+   *  **Reactivity caveat** (AV-3 / 5/26 第八轮 code MID-4): this is
+   *  in the `useEffect` deps array, but changing the value at
+   *  runtime is a reactive no-op while other views still hold the
+   *  same pool entry — the cleanup decrement refCount but doesn't
+   *  reach 0, so the entry (and its locked-in staleSnapshotMs)
+   *  survive. Only when this hook instance is the SOLE remaining
+   *  consumer does the reconnect actually rebuild the entry with
+   *  the new value. */
   staleSnapshotMs?: number;
 }
+
+/** Default cached-snapshot age ceiling for ALL audit-stream callers.
+ *  AV-2 (5/26 第八轮 MID-3): owning the default in the hook (vs each
+ *  caller passing `30 * 60 * 1000` independently) means cross-caller
+ *  coordination is free — every Dashboard / AuditPage / future audit
+ *  consumer gets the same first-caller-wins entry value without any
+ *  caller having to remember the magic number. Override per-caller
+ *  only when there's a documented reason to diverge. */
+export const AUDIT_STREAM_DEFAULT_STALE_MS = 30 * 60 * 1000;
 
 export interface AuditStreamRawViewModel {
   /** Business-only buffer (newest first, capped at BUSINESS_CAP). The
@@ -147,7 +166,11 @@ export interface AuditStreamRawViewModel {
 export function useAuditStream(
   options: UseAuditStreamOptions = {},
 ): AuditStreamRawViewModel {
-  const { includeMetrics = false, minutes = 30, staleSnapshotMs } = options;
+  const {
+    includeMetrics = false,
+    minutes = 30,
+    staleSnapshotMs = AUDIT_STREAM_DEFAULT_STALE_MS,
+  } = options;
 
   // Two parallel buffers so a high-rate metric stream cannot evict
   // business events (DEBT-011). Caps are tuned so each kind keeps

@@ -101,16 +101,9 @@ export function DashboardPage() {
   // M3 adds auth (each WS = handshake + token). On the server side
   // this means the bus fan-out queue count goes 1× → 2×; acceptable
   // while N ≤ 4 connections per page.
-  // AU-3 (5/26 第七轮 MID-3): pass the same `staleSnapshotMs` as
-  // AuditPage so that ADR-047 first-caller-wins doesn't silently pin
-  // the pool entry to one page's preference. 30 min matches the
-  // common tab-idle threshold and is well within timeline freshness
-  // expectations (timeline auto-refreshes via deltas as soon as the
-  // tab is active again).
-  const auditStream = useAuditStream({
-    includeMetrics: false,
-    staleSnapshotMs: 30 * 60 * 1000,
-  });
+  // AV-2 (5/26 第八轮 MID-3): default staleSnapshotMs (30 min) lives
+  // in useAuditStream itself now — no per-caller coordination needed.
+  const auditStream = useAuditStream({ includeMetrics: false });
   const auditEvents = useMemo<TimelineEventData[]>(
     () => auditStream.businessRaw.map(mapAuditToTimeline),
     [auditStream.businessRaw],
@@ -122,10 +115,7 @@ export function DashboardPage() {
     () => ({ ...auditStream, events: auditEvents }),
     [auditStream, auditEvents],
   );
-  const liveAudit = useAuditStream({
-    includeMetrics: true,
-    staleSnapshotMs: 30 * 60 * 1000,
-  });
+  const liveAudit = useAuditStream({ includeMetrics: true });
   const live = useLiveSession(liveAudit.rawEvents);
   const tools = useTools();
   const metricsSummary = useMetricsSummary(300);

@@ -1685,12 +1685,17 @@
   - 评估: lib 是 protocol-agnostic · 不应假设"snapshot 必到" · 建议 useAuditStream 实施
 - **触发关闭**：服务器 snapshot 静默 bug 实测 / useAuditStream 加 status="timeout" 状态时
 - **客观升级条件** (AU-6 / 5/26 第七轮 arch LOW)：**若 backend audit_stream timeout 实测 ≥ 1 例 · 立刻 LOW → MID** · 用户可见 UI 死锁优先级高于"理论 rare"
+- **监控源** (AV-6 / 5/26 第八轮 code LOW)：
+  - backend log: `grep -E 'audit_stream.*(timeout|silent)' workspace/sessions/*/server.log`
+  - frontend console (一旦 DEBT-077 watchdog 实施): listener 收 `{kind:"error", message:"snapshot timeout"}` 计数
+  - 用户反馈渠道: GitHub issue + "timeline 一直空白 / connecting" 关键词监控
+  - **谁负责数**: 每月 release prep 时跑一次 backend log grep · ≥1 命中触发本 DEBT 升 MID
 - **优先级**：LOW (rare 双条件: 5min idle + 服务器 bug)
-- **来源**：5/26 第六轮 ui-fluency-auditor MID-2 + 第七轮 arch LOW (升级条件)
+- **来源**：5/26 第六轮 ui-fluency-auditor MID-2 + 第七轮 arch LOW (升级条件) + 第八轮 code LOW (监控源)
 
 ---
 
-## DEBT-078 · `lib/ws.ts` 综合拐点 watchdog (4 维度任 2 +1 启重整)
+## DEBT-078 · `lib/ws.ts` 综合拐点 watchdog (4 维度任 2 +1 启重整) — **STATUS: ACTIVE (5/26 第八轮)**
 
 - **现象** (5/26 第七轮 arch MID): lib/ws.ts 累积已可见 · 4 个维度同时压临界:
   - **Options 字段数**: 4 (maxBackoffMs / noReconnect / shareKey / staleSnapshotMs) · 第 5 个加入时该分 PoolOptions vs ClientOptions
@@ -1699,14 +1704,16 @@
   - **ADR-046 trade-off 叠加**: 原段 + AS-2 段 + AT-2 段 · 3 段累计 narrative 越来越复杂
 - **影响**：任 1 维度单看 OK · 4 同时压 = 综合信号 · 下次大改前必整
 - **触发**：上面 **4 维度任 2 同时 +1** (例如 spec 700 行 + Options 5 字段 / hook ≥4 + ADR-046 第 4 段修订)
+- **STATUS 升级 ACTIVE** (AV-6 / 5/26 第八轮 arch LOW)：实测 ws.test.ts 已 806+ 行 (从 685 升) · 已触发 spec 维度 +1 (>700 行)。第 2 个维度 (Options 字段 5 / hook 4 / ADR-046 第 4 段) 任 1 +1 时**立即启动重整 sketch** · 不再 watchdog 待触发。
 - **触发后启动重整 sketch**：
   1. Options 拆 `PoolOptions` (entry-level: shareKey/maxBackoffMs/noReconnect/staleSnapshotMs) vs `ClientOptions` (view-level: 未来扩展位)
   2. spec 按 concern 拆 ws.pool.test / ws.dedup.test / ws.cachedSnapshot.test / ws.lifecycle.test
   3. ADR-046 v2 rewrite narrative (合并 3 段修订成单条目 + "当前 state + 推翻条件 + 修订史 collapsed" 结构)
   4. module hook 走 DI factory (DEBT-075 sketch)
-- **不重整代价**：每位 reviewer 必读 685 行 spec + 3 段叠加 ADR · 上下文成本指数增长
-- **优先级**：LOW (watchdog 性 · 触发条件未到不修)
-- **来源**：5/26 第七轮 architecture-reviewer MID-4 + LOW
+- **不重整代价**：每位 reviewer 必读 806 行 spec + 3 段叠加 ADR · 上下文成本指数增长
+- **架构 agent 固化** (AV-6 / 5/26 第八轮 code LOW)：architecture-reviewer agent checklist 加 "每次 review web/src/lib/ws.ts diff 时数 4 维度计数 · 任 2 +1 必报 DEBT-078"
+- **优先级**：LOW (watchdog 已 ACTIVE · 触发条件接近 · 暂不重整代价仍可接受)
+- **来源**：5/26 第七轮 architecture-reviewer MID-4 + LOW + 第八轮 arch LOW 升 ACTIVE
 
 ---
 
@@ -1718,3 +1725,17 @@
 - **触发关闭**：DEBT-078 综合拐点触发时一并做 / 下次 ADR-046 再有修订之前
 - **优先级**：LOW
 - **来源**：5/26 第七轮 architecture-reviewer LOW
+
+---
+
+## DEBT-080 · `lib/ws.ts` first-caller-wins 0 反馈 API · debug 难
+
+- **现象** (5/26 第八轮 arch LOW): caller 传 `staleSnapshotMs=10min` 但是第 2 caller · 实际 entry 是别人 30min · caller 不知道自己被 silently 覆盖。0 API 让 caller 自检 "我是不是 first" 或 "我的 value 真生效了吗"。同款的 noReconnect / maxBackoffMs 都有此问题 (但当前 0 实战 hit · 见 ADR-047 修订)。
+- **影响**：debug 难 — 用户反馈"我设了 X 但效果没生效" · 开发者要看 entry first-caller 是谁、什么时候 mount · 没工具支持
+- **建议方案**：YAGNI 不现在做 · 入档备查。未来若 first-caller-wins 真踩坑:
+  - (a) `connect()` 返 `{view, isFirstViewOfEntry: boolean}` · caller 可 assert / warn
+  - (b) entry 创建时 dev-mode console.debug 标"entry X created by caller from path Y with value Z" · debug 友好
+  - (c) `__debugPoolStatesForTests` test hook 暴露 entry 列表 · 方便 spec 验
+- **触发关闭**：第 1 个 first-caller-wins 真冲突 case 出现 / 用户反馈"设了 X 不生效"
+- **优先级**：LOW (debug 性 · 不影响功能)
+- **来源**：5/26 第八轮 architecture-reviewer LOW

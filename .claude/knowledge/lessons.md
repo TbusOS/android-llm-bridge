@@ -2813,3 +2813,55 @@ architecture-reviewer 实测发现 ADR-045 trade-off 节描述已和代码事实
 - DEBT-065 (LOW → MID 升级 · AR-1 dedup 副作用放大 stale 风险)
 - L-055 (contract pre-wire 减少 caller 改动 · 同款"看似无 caller
   影响"主题)
+
+## L-057 · ADR universal contract 必须区分 "已验证字段" vs "0 场景验证字段" · 否则被未来真场景打脸
+
+**症状**: 5/26 AU-4 (第七轮) 写 ADR-047 "Pool-level Options first-caller-wins"
+把现有 4 字段全声明为遵循此 contract。但 noReconnect 字段唯一 caller
+是 useWsChatStream · **不传 shareKey · 走 soloConnect · 0 进 pool**。
+"noReconnect first-caller-wins" 是 universal claim · 但**实际 0 场景验证**。
+若未来出现 `{noReconnect:true, shareKey:"X"}` + `{noReconnect:false,
+shareKey:"X"}` 共 entry · first-caller-wins 立刻语义破 (chat 一次 ping
+锁死 entry · 持续监听 view 拿不回 reconnect)。
+
+第八轮 arch agent 实测发现这个不严 · 提议 ADR-047 加 "noReconnect 当前
+0 场景验证 · 若真出现需重审" 段。
+
+**根因**: 写 universal contract 时把"当前所有 caller 都满足"误读为
+"contract 对所有可能 caller 都成立"。前者是 observation · 后者是 design
+guarantee · 跨度大。reviewer 不区分会把 observation 升级成 contract ·
+被未来真场景打脸即推翻 ADR。
+
+**Fix pattern** (AV-1 / decisions.md ADR-047 修订):
+
+```markdown
+**当前观察**:
+- `staleSnapshotMs` — **已实战验证**: useAuditStream 3 caller 共 entry · OK
+- `maxBackoffMs` — **已实战验证**: 所有 caller 用 lib default · 0 caller override · 不冲突
+- `noReconnect` — **0 场景验证**: 唯一 caller 不进 pool · "first-caller-wins" 对此字段 **未经实战** · 若未来 X+Y 共 entry 需重审
+```
+
+**触发 pattern**:
+
+- 任何 ADR 声明 "所有 X 都遵循 Y" universal contract
+- 必须列举每个 X 的当前实战情况 (已验证 / 未验证 / N/A)
+- 未验证字段加显式标注 + 重审条件
+- universal contract 推翻条件里包括"未验证字段真出现冲突场景时"
+
+**禁止的写法**:
+
+- ❌ "X / Y / Z 都遵循 contract" 不区分哪些是真验过的
+- ❌ "matches existing semantics" 散写到字段 JSDoc · 不在 ADR 立 universal 规则
+- ❌ 把 "0 现实 case 不冲突" 当作 "contract 普适证明"
+- ❌ ADR 推翻条件只列功能性触发 · 不列 universal claim 被打脸的触发
+
+**关联**:
+
+- ADR-047 (5/26 AV-1 修订 · 加 "当前观察" 段)
+- AU-4 commit (ADR-047 原写 · 未区分)
+- AV-1 commit (ADR-047 修订 · 区分已验证 vs 0 场景验证)
+- L-052 (thin wrapper hook 是规则压力副产物 · 同款"过度泛化"主题)
+- L-055 (contract pre-wire · ADR universal 反面 · pre-wire 给 future
+  caller 准备 · 不要假设 universal)
+- L-056 (lib 行为契约修改即使 caller 0 改也需 ADR · L-057 是 ADR 写法的
+  补充)

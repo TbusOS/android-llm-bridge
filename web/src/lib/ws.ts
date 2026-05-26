@@ -115,7 +115,16 @@ interface Options {
    *  The first caller of `(path, shareKey)` to create the pool entry
    *  wins the value — subsequent callers' staleSnapshotMs is ignored.
    *  This matches the "first-caller wins" semantics of every other
-   *  pool-level option (see ADR-047). */
+   *  pool-level value option (see ADR-047).
+   *
+   *  Reactivity caveat (AV-3 / 5/26 第八轮 code MID-4): a caller
+   *  that puts `staleSnapshotMs` in a React `useEffect` deps array
+   *  expecting "swap value → entry rebuilds with new ceiling" gets
+   *  no-op behaviour while other views still hold the same pool
+   *  entry. The cleanup decrements refCount; if it doesn't reach 0
+   *  (another view alive), the entry survives with its locked-in
+   *  staleSnapshotMs. Only the SOLE-consumer path triggers a real
+   *  rebuild. Don't expose this option as user-tunable UI state. */
   staleSnapshotMs?: number;
 }
 
@@ -208,6 +217,20 @@ export function __setListenerErrorHandlerForTests(
   return prev;
 }
 
+/** Default cached-snapshot age limit before the late-joiner microtask
+ *  skips the replay and forces a fresh server round-trip. AS-2 /
+ *  DEBT-065 MID: AR-1 send dedup means the server doesn't auto-re-
+ *  send a snapshot on the late joiner's redundant config send, so
+ *  cache age needs an explicit ceiling — otherwise a tab opened 6h
+ *  after the pool entry bootstrapped would render 6h-old timeline
+ *  state for the first few frames. 5 min is the common tab-idle
+ *  threshold. AT-3 (5/26 第六轮 MID-1): callers can override per-
+ *  entry via `Options.staleSnapshotMs` for streams with different
+ *  freshness budgets. AV-5 (5/26 第八轮 code LOW): declared BEFORE
+ *  `sanitizeStaleSnapshotMs` (the only consumer) so module init can
+ *  never hit a TDZ — pure ordering hygiene, no functional change. */
+const DEFAULT_STALE_SNAPSHOT_MS = 5 * 60 * 1000;
+
 /** Coerce a caller-supplied `staleSnapshotMs` to a sane value.
  *  AU-1 (5/26 第七轮 code MID-1 / sec LOW): the field is typed
  *  `number?` so callers can pass anything numeric (negative, `NaN`,
@@ -221,9 +244,14 @@ export function __setListenerErrorHandlerForTests(
  *    - `Infinity` → cache never stale (same outcome as NaN but at
  *      least intentional-looking from the call site)
  *
- *  Coerce non-finite-or-negative inputs to the default + warn in
- *  dev/test so the misuse surfaces immediately. Pure prod silently
- *  uses the default (warn would spam consoles).
+ *  Coerce non-finite-or-negative inputs to the default + warn — this
+ *  always fires (dev, test, AND prod). AV-4 (5/26 第八轮 code MID-5):
+ *  earlier the comment claimed "Pure prod silently uses the default"
+ *  but the implementation never gated the warn. Aligning the comment
+ *  to the actual behaviour: a caller-bug signal is worth a single
+ *  prod console line; the entry will be created exactly once per
+ *  (path, shareKey), so this is at most one warn per pool entry per
+ *  page-load — not a spammy stream.
  *  `0` is a legal "always treat cache as stale" value and passes. */
 function sanitizeStaleSnapshotMs(raw: number | undefined): number {
   if (raw === undefined) return DEFAULT_STALE_SNAPSHOT_MS;
@@ -237,18 +265,6 @@ function sanitizeStaleSnapshotMs(raw: number | undefined): number {
   }
   return DEFAULT_STALE_SNAPSHOT_MS;
 }
-
-/** Default cached-snapshot age limit before the late-joiner microtask
- *  skips the replay and forces a fresh server round-trip. AS-2 /
- *  DEBT-065 MID: AR-1 send dedup means the server doesn't auto-re-
- *  send a snapshot on the late joiner's redundant config send, so
- *  cache age needs an explicit ceiling — otherwise a tab opened 6h
- *  after the pool entry bootstrapped would render 6h-old timeline
- *  state for the first few frames. 5 min is the common tab-idle
- *  threshold. AT-3 (5/26 第六轮 MID-1): callers can override per-
- *  entry via `Options.staleSnapshotMs` for streams with different
- *  freshness budgets. */
-const DEFAULT_STALE_SNAPSHOT_MS = 5 * 60 * 1000;
 
 /** Wall-clock provider — separate function so tests can swap it via
  *  `__setNowProviderForTests` without monkey-patching Date.now globally

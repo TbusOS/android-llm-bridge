@@ -1627,31 +1627,49 @@ cache 的那个 view" 跳 dedup 一次 · sibling view 的 dedup tracker
 
 **Context**:
 
-`lib/ws.ts` 的 `Options` 接口当前 4 个 pool-level 字段都遵循"first
-caller to mint the pool entry wins · 后续 callers 的同字段值 silently
-ignored":
+`lib/ws.ts` 的 `Options` 接口 4 个 pool-level 字段分两类:
+
+**Entry key 字段 (1)** — 参与 pool 寻址 · 不同值 → 不同 entry · 不在
+同 entry 内"竞争":
+- `shareKey` (since DEBT-047 AP-1) · 和 `path` 组成 entry key tuple
+
+**Entry value 字段 (3)** — 同 entry 内只有 1 份值 · "first caller to
+mint the pool entry wins · 后续 callers 的同字段值 silently ignored":
 - `maxBackoffMs` (since 项目早期)
 - `noReconnect` (since 项目早期)
-- `shareKey` (since DEBT-047 AP-1)
 - `staleSnapshotMs` (since AT-3)
 
-这 4 个字段各自 JSDoc 里散写 "this matches the existing first-caller
-semantics" · 但**全 codebase grep 不到一个 ADR 立这条规则**。后续
-reviewer / 新 contributor 加第 5 个 pool-level 字段时不知道该明示
-first-caller-wins · 容易破。第七轮 arch MID-4 提:"4 个 JSDoc 文字
-契约 + 0 个 ADR 强制 = 一致性靠 reviewer 偶然发现"。
+这 3 个 value 字段各自 JSDoc 里散写 "this matches the existing
+first-caller semantics" · 但**全 codebase grep 不到一个 ADR 立这条
+规则**。后续 reviewer / 新 contributor 加第 5 个 pool-level 字段时
+不知道该明示 first-caller-wins · 容易破。第七轮 arch MID-4 提:"4 个
+JSDoc 文字契约 + 0 个 ADR 强制 = 一致性靠 reviewer 偶然发现"。
+
+**当前观察 (AV-1 / 5/26 第八轮 arch MID-2 修订)**:
+- `staleSnapshotMs` — **已实战验证**: useAuditStream 3 caller 共 entry
+  · 验证过跨 caller 协调脆弱 (AU-3 commit 已统一 30min)
+- `maxBackoffMs` — **已实战验证**: 所有 caller 用 lib default · 0 caller
+  override · "first-caller-wins" 自然不冲突
+- `noReconnect` — **0 场景验证**: 唯一传 `noReconnect:true` 的 caller
+  是 `useWsChatStream` (chat 一次性 · 不要重连) · 但它**不传 shareKey ·
+  走 soloConnect · 0 进 pool**。"first-caller-wins" 对 noReconnect
+  当前**未经实战** · 若未来出现 `{noReconnect:true, shareKey:"X"}` 与
+  `{noReconnect:false, shareKey:"X"}` 共 entry · first-caller-wins 立刻
+  破 (chat 一次 ping 锁死 entry · 持续监听 view 拿不回 reconnect ·
+  ADR-047 必须重审)
 
 **Decision**:
 
-立 `lib/ws.ts Pool-level Options` 一个集合 · 所有 `connect(path,
-opts)` 的 `opts.*` 字段都遵循 first-caller-wins:
+`lib/ws.ts Pool-level Options` 的 **value 字段** (`maxBackoffMs` /
+`noReconnect` / `staleSnapshotMs`) 遵循 first-caller-wins:
 
 - pool entry 由 (path, shareKey) tuple 创建 · entry 一旦创建 · 所有
-  pool-level options 字段值锁死
-- 后续 `connect(path, opts')` 同键命中现有 entry → 返新 view · 但
-  entry 内部字段值 (`maxBackoffMs` / `noReconnect` / `staleSnapshotMs`
-  等) 不变 · `opts'` 同字段值 silently 被丢
-- shareKey 本身是 key 的一部分 · 不算 "value override"
+  value 字段值锁死
+- 后续 `connect(path, opts')` 同 (path, shareKey) 命中现有 entry →
+  返新 view · 但 entry 内部 value 字段不变 · `opts'` 同字段值 silently
+  被丢
+- `shareKey` 是 entry key · 不参与 value 竞争 (不同 shareKey → 不同
+  entry · 各自独立)
 - view-level options (未来扩展) 应该走不同机制 (per-view state in
   makeView · 不存 entry · 见 AT-2 `forceNextSendFresh` 模式)
 

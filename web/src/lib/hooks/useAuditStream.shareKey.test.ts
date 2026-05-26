@@ -67,7 +67,7 @@ afterEach(() => {
 });
 
 describe("useAuditStream · shareKey contract", () => {
-  it("default opts → shareKey = canonical 'minutes 30 / includeMetrics false'", () => {
+  it("default opts → shareKey = canonical 'minutes 30 / includeMetrics false' AND staleSnapshotMs = hook default (30 min)", () => {
     renderHook(() => useAuditStream());
     expect(lastConnect.path).toBe("/audit/stream");
     // Field-order + value-string is the wire contract. Bump DEBT-047
@@ -75,6 +75,10 @@ describe("useAuditStream · shareKey contract", () => {
     expect(lastConnect.opts?.shareKey).toBe(
       JSON.stringify({ minutes: 30, includeMetrics: false }),
     );
+    // AV-2: hook owns the default (AUDIT_STREAM_DEFAULT_STALE_MS),
+    // so caller-side coordination is free — pinning the default
+    // here means every audit-stream consumer agrees by construction.
+    expect(lastConnect.opts?.staleSnapshotMs).toBe(30 * 60 * 1000);
   });
 
   it("includeMetrics=true differs in shareKey → cannot share socket with false", () => {
