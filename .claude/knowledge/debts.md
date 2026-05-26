@@ -1179,22 +1179,26 @@
 
 ---
 
-## DEBT-047 · lib/ws.ts path-keyed dedup + late-joiner snapshot replay
+## DEBT-047 · lib/ws.ts path-keyed dedup + late-joiner snapshot replay —— **CLOSED 2026-05-26 (AP-1 / AP-2)**
 
 - **现象**：注释撒谎 (commit Y 已订正), 真问题: AuditPage + Dashboard
   同屏开 2-3 条 `/audit/stream` socket · snapshot bandwidth ×N · 服务
   端 bus fan-out N 次。
 - **影响**：localhost / LAN 下不阻塞 (snapshot ~40 KB/socket), 但
   setState 频率 N 倍, 50+ event/s deltas 时浪费 CPU。
-- **建议方案**：
-  - `lib/ws.ts` 加 `Map<path+shareKey, SharedEntry>` pool
-  - `connect(path, { shareKey })` 复用相同 (path, shareKey) 的现有
-    socket, refcount 到 0 才真 close
-  - 协议层: SharedEntry 缓存最近一次 snapshot · 新 subscribe 时立
-    回放给 listener · 不需要再 send config
-  - useAuditStream 改 `connect("/audit/stream", { shareKey:
-    JSON.stringify({minutes, includeMetrics}) })`
-- **触发关闭**：实测多 page 同屏 setState 风暴 / 下次 perf audit
+- **落地** (AP-1 / AP-2 · ADR-045 / L-055)：
+  - `lib/ws.ts` 加 `Map<path|shareKey, PoolEntry>` · `connect(path,
+    {shareKey})` 同键复用一条 underlying WebSocket · view.close()
+    refcount-- · 至 0 才真 close + 删 entry
+  - 缺 `shareKey` 走 `soloConnect()` · 保留 useWsChatStream 单 turn
+    隔离不池化的契约
+  - 新 subscribe 在 underlying 已 OPEN 时排 microtask · 给 listener
+    回放 `{kind:"open"}` + 缓存的 `{type:"snapshot"}` JSON 事件 ·
+    晚到 view 不靠服务器再吐就能 converge
+  - useAuditStream 走 AM-3 已 pre-wire 的 `shareKey =
+    JSON.stringify({minutes, includeMetrics})` · 0 caller diff
+  - 17 spec @ `web/src/lib/ws.test.ts` 钉契约 (solo / pool / refcount
+    / late-joiner / unsubscribe-race / snapshot-only-overwrites-snapshot)
 - **来源**：5/22 audit code-r MID#3 + perf HIGH#1
 
 ---

@@ -13,7 +13,7 @@
 
 ---
 
-## 索引（按主题 · 19 ADR + 5 seed · 2026-05-09）
+## 索引（按主题 · 45 ADR + 5 seed · 2026-05-26 update）
 
 **核心架构（transport / backend / event）**
 - ADR-001 · Transport 抽象 + 4 实现
@@ -33,6 +33,7 @@
 - ADR-030 (seed) · stream hook 抽象时机评估
 - ADR-036 · 流式文件传输用 WS 而非 SSE / Job-Model（MID-6）
 - ADR-037 (seed) · transport 配置常量（retry / timeout / backoff）用 class attribute
+- ADR-045 · `lib/ws.ts` shareKey opt-in pool + late-joiner microtask replay（关 DEBT-047）
 
 **Web Tier / 前端**
 - ADR-017 · Web Tier 1 技术栈
@@ -1412,3 +1413,90 @@ return useMemo<ViewModel>(
 - AM-2 commit (useDevices useMemo wrap · ref 稳定立 baseline)
 - DEBT-047 (WS pool dedup · 未来 connect() 也要 useMemo 包返回)
 - L-054 (lib/hooks/* 返回 ref 契约不对称是 trap)
+
+---
+
+## ADR-045 · `lib/ws.ts` shareKey opt-in pool + late-joiner microtask replay
+
+**Status**: accepted · 关 DEBT-047 (5/26 AP-1)
+
+**Context**:
+
+`/audit/stream` 同屏被 AuditPage + Dashboard timeline + LiveSession
+spark 3 处 hook 独立 connect · 服务端 fan-out 3 倍 snapshot · 客户端
+3 倍 setState。需要给 N→1 dedup · 但不能影响 useWsChatStream (chat
+per-turn 必须独占 socket · 池化会跨 turn 喂错 token)。
+
+且服务器协议是"open → 收到 client config → 发 snapshot → live deltas"
+。第 N 个 view subscribe 时 underlying 早已 open + snapshot 发完 ·
+那个 view 永远等不到 open / 等不到 snapshot · UI 卡 connecting。
+
+**Decision**:
+
+`connect(path, opts)` 的 `opts.shareKey` 控制行为：
+
+- **缺省 (`shareKey === undefined`)**: 走 `soloConnect()` · 1 caller
+  1 underlying socket · 完全保留 pre-DEBT-047 语义 · useWsChatStream
+  / 任何不愿被池化的 caller 默认安全
+- **提供 (`shareKey: string`)**: 进 `Map<path|shareKey, PoolEntry>`
+  pool · 同键复用 · 不同键 / 不同 path 互不影响 · view.close()
+  refcount-- · 0 时真 close + 删 entry
+
+新 view subscribe 时若 underlying.readyState === OPEN · 排
+`queueMicrotask` · 给 listener 顺次回放 `{kind:"open"}` +
+`entry.cachedSnapshot` (若有) · 微任务前 view.close() / unsub 都
+能 short-circuit (防 leak listener)。
+
+cachedSnapshot 只在 JSON `data.type === "snapshot"` 时更新 · delta
+不覆盖 · 保证晚到 view 总收"最近一次完整 snapshot" 而非中间帧。
+
+**备选**:
+
+1. ❌ **总是池化** — useWsChatStream 跨 turn 复用会喂错 token · 拒
+2. ❌ **server-driven dedup** (按 session_id 让服务器记 subscriber
+   list) — 后端复杂 + 跨进程更难 · 暂不动 backend
+3. ❌ **subscribe 时 short-poll fetch snapshot** — 多 1 个 HTTP
+   round-trip · 比 microtask replay 慢 100ms+
+4. ❌ **同步 emit open in subscribe()** — 破坏"事件总是异步" 的
+   listener 契约 · 容易和 listener 内 `clientRef.current = client`
+   赋值争 · microtask 队列保证赋值已完成
+
+**Trade-off**:
+
+- 放弃：晚到 view 第一次仍走 `useAuditStream` 的 open handler · 触发
+  `client.send({minutes, include_metrics})` · 服务器**再发一次 snapshot
+  广播给所有 view** · 已有 view setState 重渲一次。冗余 1 帧。React
+  19 structural sharing + 17 spec 验过的 ref 稳定让重渲很轻。
+- 获得：N→1 socket / N→1 server fan-out / 晚到 view 0 延迟 converge
+- 协议 0 改 · backend 0 改 · useAuditStream 0 改 (AM-3 已 pre-wire)
+
+**Enforcement** (写进 architecture-reviewer agent grep checklist):
+
+- 任何新 `lib/hooks/*.ts` 用 `connect()` · 必须明确"是否能池化":
+  - 一次性 turn-scoped / 上下文不能共享 → **缺 shareKey**
+  - 多 caller 配置完全一致 / 共享视图合理 → **填 shareKey** ·
+    用 `JSON.stringify(config-knobs)` 字符串
+- `shareKey` 序列化字段顺序是 wire 契约 · 改要更新
+  `useAuditStream.shareKey.test.ts` 钉住的字节序列
+- `lib/ws.ts` cachedSnapshot 探测条件 (`data?.type === "snapshot"`)
+  是 duck typing · 协议方加新 snapshot-shape 消息时需要扩这里
+
+**触发推翻条件**:
+
+- 出现"配置略有差异但还是想池化"的 caller (e.g. minutes=5 vs 30 想
+  共享底层 socket) → 需要 server-side multiplex 或重设计 shareKey
+  策略
+- 微任务回放仍跟 useState 时序竞 (实测 race) → 改 task / 改 sync
+- WS server 端引入 真 server-side dedup → 客户端 pool 退化为 no-op
+  · 删 makeView 简化
+
+**关联**:
+
+- DEBT-047 (CLOSED by AP-1 / AP-2 / AP-3)
+- ADR-022 (Dashboard 同页双 WS 实例 · pool 不能跨 metric 配置共享)
+- ADR-041 + ADR-043 + ADR-044 (hook layer 三槽 + N≥2 wrapper + 复
+  合 return useMemo · 同源工程化主题)
+- AM-3 commit (`useAuditStream` shareKey pre-wire) · L-055 (pre-wire
+  让 DEBT 落地变 1-file diff)
+- `web/src/lib/ws.ts:80` (`PoolEntry`) / `web/src/lib/ws.test.ts`
+  (17 spec)

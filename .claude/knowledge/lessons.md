@@ -2691,3 +2691,67 @@ TS 在 `switch (settled.kind)` narrow · consumer 0 映射表。
 - AL-1 commit (5→3+enum 反例) + AO-1 commit (discriminated union 真修)
 - L-052 (thin wrapper 是规则压力副产物 · 同款 over-reaction 主题)
 - ADR-041 修订 + ADR-043 (wrapper 抽取临界 · 同款"过激规则后撤"模式)
+
+## L-055 · contract pre-wire 让 DEBT 落地从"多文件 fan-out 重构" 变"1-file 主体 diff"
+
+**症状**: 5/26 落 DEBT-047 (WS pool) 时 useAuditStream 0 行改 ·
+useAuditStream.shareKey.test.ts 0 行改 · 全部新逻辑塞在 lib/ws.ts
+里 1 文件 diff。原因：AM-3 commit (5/25 arch MID-14 修复) 把
+shareKey opt 提前从"占位 void opts.shareKey"扩成"按业务语义算
+JSON.stringify({minutes, includeMetrics})" + 钉契约测试。pool 真
+落地时只动 lib/ws.ts 的 connect 入口 + 加 PoolEntry / makeView ·
+caller 自动享池化。
+
+**根因**: 当一个未来 feature (DEBT-047) 需要修改 caller 的接口
+shape · 提前在所有 caller 把 shape 填好 (即使被实现方 void 掉) ·
+真做的时候只用换实现 · 不必扫 caller。这是"接口 / 实现分离"在跨
+session 工程化的落地。
+
+**Fix pattern** (commit AM-3 → AP-1 pair):
+
+```ts
+// AM-3 pre-wire 阶段
+// lib/ws.ts
+interface Options { shareKey?: string; /* reserved for DEBT-047 */ }
+export function connect(path, opts) {
+  void opts.shareKey; // 不池化 · 但 caller 已传
+  ...
+}
+// useAuditStream.ts
+const shareKey = JSON.stringify({ minutes, includeMetrics });
+const client = connect("/audit/stream", { shareKey });
+
+// AP-1 真做阶段 · caller 不动 · 只换实现
+export function connect(path, opts) {
+  if (opts.shareKey === undefined) return soloConnect(path, opts);
+  const key = `${path}|${opts.shareKey}`;
+  let entry = pool.get(key) ?? createPoolEntry(...);
+  return makeView(entry);
+}
+```
+
+**触发 pattern**:
+
+- 任何 DEBT 提议是"加一个跨调用方协议 / opt / key 字段" · 先在
+  入口接收 + 用 `void` short-circuit · 同时在所有 caller 把字段填上
+- 配合 contract spec (`useAuditStream.shareKey.test.ts` 钉字节)
+  防 caller 偷偷漂移
+- DEBT 描述里写明"pre-wired" 让后续修者 1 步落地
+
+**禁止的写法**:
+
+- ❌ pre-wire 不写 contract spec · caller 半年后字段漂移 (例如
+  字段名改 / 序列化顺序变) · 真落地时 dedup 默默不命中
+- ❌ pre-wire 时给 opt 标 "TODO 暂未实现 · 别用" · caller 不传 ·
+  失去 pre-wire 意义
+- ❌ pre-wire 一个 opt 但只挑 1/N caller 填 · 真落地时仍要扫剩下
+  N-1 个
+
+**关联**:
+
+- AM-3 commit (pre-wire) + AP-1 commit (落地) · ws pool 案例
+- ADR-045 (落地决策)
+- L-052 (thin wrapper hook 是规则压力副产物 · 同款"接口看着冗余 ·
+  落地时才看出价值"主题)
+- DEBT-064 (useWsChatStream return useMemo 候选 · 类似 pre-wire
+  可行 · 但 N=1 暂不付)
