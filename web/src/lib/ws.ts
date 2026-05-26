@@ -34,8 +34,8 @@
  * **Test-hook naming convention** (AS-3 / sec LOW-1 + arch LOW-4):
  *   Module-level mutable state used ONLY for tests is exposed via
  *   `__xxxForTests` (double-underscore prefix + `ForTests` suffix).
- *   Examples: `__resetPoolForTests`, `___setListenerErrorHandlerForTestsForTests`,
- *   `___setNowProviderForTests`. The double-underscore marks the
+ *   Examples: `__resetPoolForTests`, `__setListenerErrorHandlerForTests`,
+ *   `__setNowProviderForTests`. The double-underscore marks the
  *   surface as not-stable-API; the `ForTests` suffix makes
  *   bundler grep / code review trivially spot misuse. Prod callers
  *   touching any `__*ForTests` export = failed code review.
@@ -93,6 +93,23 @@ interface Options {
    *  shareKey.test.ts` pins the exact byte sequence — bump that spec
    *  when intentionally changing. */
   shareKey?: string;
+  /** Cached-snapshot age ceiling (ms) for late-joiner replay (AT-3 /
+   *  5/26 第六轮 MID-1 · DEBT-065 follow-up). When the late-joiner
+   *  microtask checks the pool entry's cached snapshot, anything
+   *  older than this value is treated as stale: the cache is not
+   *  replayed AND the view's next text-shape send bypasses dedup
+   *  exactly once, forcing the server to broadcast a fresh snapshot.
+   *
+   *  Default: 5 min. Long-idle tabs (e.g. an `AuditPage` running in
+   *  the background for an hour) may set this higher to avoid an
+   *  unnecessary server round-trip on resume; high-freshness streams
+   *  (chat / metrics) may set it lower or to 0 to always force fresh.
+   *
+   *  The first caller of `(path, shareKey)` to create the pool entry
+   *  wins the value — subsequent callers' staleSnapshotMs is ignored.
+   *  This matches the existing "first-caller wins" semantics of
+   *  pool-level options. */
+  staleSnapshotMs?: number;
 }
 
 /** Build an absolute ws:// / wss:// URL for a path relative to the
@@ -129,11 +146,18 @@ interface PoolEntry {
    *  joiner's redundant config send; AR-1 dedup drops that send, so
    *  the cache is now the ONLY bootstrap. AS-2 (5/26 第五轮 arch
    *  HIGH-1 / DEBT-065 MID): if `Date.now() - cachedSnapshotAt`
-   *  exceeds `STALE_SNAPSHOT_MS`, the microtask replay skips the
-   *  cached snapshot AND clears `lastSentPayload` so the late
-   *  joiner's open-handler config send bypasses dedup, forcing a
-   *  fresh server-side snapshot. 0 = never set. */
+   *  exceeds the per-entry `staleSnapshotMs`, the microtask replay
+   *  skips the cached snapshot AND sets the late joiner's per-view
+   *  `forceNextSendFresh` flag (AT-2) so its open-handler config
+   *  send bypasses dedup and forces a fresh server-side snapshot.
+   *  0 = never set. */
   cachedSnapshotAt: number;
+  /** Caller-configurable stale-snapshot age ceiling for this entry
+   *  (AT-3 / Options.staleSnapshotMs). Captured from the FIRST
+   *  caller to mint the pool entry; subsequent callers' values are
+   *  ignored (matches the existing first-caller-wins semantics of
+   *  pool-level options like maxBackoffMs / noReconnect). */
+  staleSnapshotMs: number;
   /** Incremented every time the underlying socket re-opens (initial
    *  open + every auto-reconnect). Drives per-epoch payload dedup so
    *  the same config message sent by N view-listeners in response to
@@ -177,14 +201,17 @@ export function __setListenerErrorHandlerForTests(
   return prev;
 }
 
-/** Cached snapshot age limit before the late-joiner microtask skips
- *  the replay and forces a fresh server round-trip. AS-2 / DEBT-065
- *  MID: AR-1 send dedup means the server doesn't auto-re-send a
- *  snapshot on the late joiner's redundant config send, so cache age
- *  needs an explicit ceiling — otherwise a tab opened 6h after the
- *  pool entry bootstrapped would render 6h-old timeline state for
- *  the first few frames. 5 min is the common tab-idle threshold. */
-const STALE_SNAPSHOT_MS = 5 * 60 * 1000;
+/** Default cached-snapshot age limit before the late-joiner microtask
+ *  skips the replay and forces a fresh server round-trip. AS-2 /
+ *  DEBT-065 MID: AR-1 send dedup means the server doesn't auto-re-
+ *  send a snapshot on the late joiner's redundant config send, so
+ *  cache age needs an explicit ceiling — otherwise a tab opened 6h
+ *  after the pool entry bootstrapped would render 6h-old timeline
+ *  state for the first few frames. 5 min is the common tab-idle
+ *  threshold. AT-3 (5/26 第六轮 MID-1): callers can override per-
+ *  entry via `Options.staleSnapshotMs` for streams with different
+ *  freshness budgets. */
+const DEFAULT_STALE_SNAPSHOT_MS = 5 * 60 * 1000;
 
 /** Wall-clock provider — separate function so tests can swap it via
  *  `__setNowProviderForTests` without monkey-patching Date.now globally
@@ -218,6 +245,7 @@ function createPoolEntry(
     subscribers: new Set(),
     cachedSnapshot: null,
     cachedSnapshotAt: 0,
+    staleSnapshotMs: options.staleSnapshotMs ?? DEFAULT_STALE_SNAPSHOT_MS,
     currentEpoch: 0,
     lastSentPayload: null,
   };
@@ -271,6 +299,15 @@ function isSnapshotPayload(data: unknown): boolean {
 function makeView(entry: PoolEntry): WsClient {
   entry.refCount += 1;
   let viewClosed = false;
+  // AT-2 (5/26 第六轮 code HIGH-2 + arch HIGH-1 fix): per-view
+  // "force the next send to bypass dedup" flag. Replaces the prior
+  // cross-view side-effect where the stale-snapshot path mutated
+  // entry.lastSentPayload — that broke the dedup invariant for ALL
+  // sibling views (a force-fresh signal from view-A made view-B's
+  // next identical send also reach the server). Now the signal is
+  // local: only the view that observed the stale cache will skip
+  // dedup ONCE, then resume normal behaviour on subsequent sends.
+  let forceNextSendFresh = false;
   return {
     send(data) {
       if (viewClosed) return;
@@ -299,13 +336,18 @@ function makeView(entry: PoolEntry): WsClient {
       // bound message (AR-1 fix for ui-f HIGH-1 reconnect storm).
       const payload = typeof data === "string" ? data : JSON.stringify(data);
       const tracker = entry.lastSentPayload;
-      if (
+      const isDuplicate =
         tracker !== null &&
         tracker.epoch === entry.currentEpoch &&
-        tracker.payload === payload
-      ) {
+        tracker.payload === payload;
+      if (isDuplicate && !forceNextSendFresh) {
         return;
       }
+      // Consume the force flag on the first send through this view —
+      // it's a one-shot signal, not a sticky mode. Update the entry-
+      // wide tracker so subsequent dedup decisions (by THIS view AND
+      // sibling views) honour what was actually sent to the server.
+      forceNextSendFresh = false;
       entry.lastSentPayload = { epoch: entry.currentEpoch, payload };
       entry.client.send(data);
     },
@@ -336,24 +378,39 @@ function makeView(entry: PoolEntry): WsClient {
         // AS-2 (5/26 DEBT-065 MID fix): refuse to replay a snapshot
         // older than STALE_SNAPSHOT_MS. Stale cache + live deltas
         // would render "snapshot from hours ago + few latest events"
-        // until the next real server-side snapshot arrives. Skipping
-        // the cache also clears `lastSentPayload` so the late
-        // joiner's open-handler config send BYPASSES dedup and
-        // forces the server to broadcast a fresh snapshot.
+        // until the next real server-side snapshot arrives.
+        //
+        // AT-2 (5/26 第六轮 code/arch HIGH-2 fix): when skipping the
+        // stale cache, set the per-VIEW `forceNextSendFresh` flag so
+        // THIS view's open-handler config send bypasses dedup and
+        // forces the server to broadcast a fresh snapshot. The prior
+        // implementation mutated entry-level `lastSentPayload`, which
+        // also stripped sibling views' dedup tracker → next time any
+        // view re-sent the same config, it would reach the wire,
+        // multiplying late-join sends N× and re-introducing the
+        // reconnect-storm shape AR-1 was meant to kill.
         const cached = entry.cachedSnapshot;
-        const age = cached ? nowMs() - entry.cachedSnapshotAt : Infinity;
-        const cachedForReplay = age <= STALE_SNAPSHOT_MS ? cached : null;
-        if (cachedForReplay === null && cached !== null) {
-          entry.lastSentPayload = null;
+        if (cached === null) {
+          // Nothing to replay, nothing to force.
+          queueMicrotask(() => {
+            if (viewClosed) return;
+            if (!entry.subscribers.has(listener)) return;
+            listener({ kind: "open" });
+          });
+        } else {
+          const stale =
+            nowMs() - entry.cachedSnapshotAt > entry.staleSnapshotMs;
+          if (stale) forceNextSendFresh = true;
+          const cachedForReplay = stale ? null : cached;
+          queueMicrotask(() => {
+            if (viewClosed) return;
+            if (!entry.subscribers.has(listener)) return;
+            listener({ kind: "open" });
+            if (viewClosed) return;
+            if (!entry.subscribers.has(listener)) return;
+            if (cachedForReplay !== null) listener(cachedForReplay);
+          });
         }
-        queueMicrotask(() => {
-          if (viewClosed) return;
-          if (!entry.subscribers.has(listener)) return;
-          listener({ kind: "open" });
-          if (viewClosed) return;
-          if (!entry.subscribers.has(listener)) return;
-          if (cachedForReplay !== null) listener(cachedForReplay);
-        });
       }
       return () => {
         entry.subscribers.delete(listener);

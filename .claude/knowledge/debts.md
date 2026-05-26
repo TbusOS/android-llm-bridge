@@ -1621,12 +1621,12 @@
 
 ## DEBT-073 · listener throw 后视觉降级 UI (window CustomEvent / global toast)
 
-- **现象** (5/26 第五轮 ui-f MID-2)：AR-3 listener throw 不再饿 sibling · 但该 view 自己处于"半 state" (setState 没跑完 · UI 卡 stale)。用户看到"A 面板冻结 · B 面板活的"会以为 A 坏了 · 0 降级反馈 (无 error banner / 无"重连"按钮 / 无 console 给非 dev)。
-- **影响**：罕见 listener-bug 场景 · 用户体验差
+- **现象** (5/26 第五轮 ui-f MID-2 · 第六轮 arch MID-4 升级)：AR-3 listener throw 不再饿 sibling · 但该 view 自己处于"半 state" (setState 没跑完 · UI 卡 stale)。用户看到"A 面板冻结 · B 面板活的"会以为 A 坏了 · 0 降级反馈 (无 error banner / 无"重连"按钮 / 无 console 给非 dev)。
+- **影响**：罕见 listener-bug 场景 · 用户可见 stale UI · prod 用户看 console 红字 + 卡组件 · 无 toast / 无 banner = 真用户可见 bug
 - **建议方案**：`listenerErrorHandler` 默认行为加 `window.dispatchEvent(new CustomEvent("ws-listener-error", {detail: e}))` · App 顶层 ErrorBoundary 或全局 toast 订阅 · 给"实时数据已断 · 请刷新"降级 UI
-- **触发关闭**：实测 listener throw 用户反馈 / App 加全局 toast 系统时
-- **优先级**：LOW
-- **来源**：5/26 第五轮 ui-fluency-auditor MID-2
+- **触发关闭**：App 加全局 toast 系统 / 第 1 个真 listener throw 用户反馈
+- **优先级**：**MID** (从 LOW 升 · 第六轮 arch MID-4 提 · 用户可见非 cosmetic)
+- **来源**：5/26 第五轮 ui-fluency-auditor MID-2 + 第六轮 architecture-reviewer MID-4
 
 ---
 
@@ -1640,3 +1640,49 @@
 - **触发关闭**：实测有 async listener consumer 出现 / 第 N 个 consumer 误用
 - **优先级**：LOW
 - **来源**：5/26 第五轮 code-reviewer LOW-3
+
+---
+
+## DEBT-075 · `lib/ws.ts` module-level mutable hook 拐点 watchdog (≥ 4 时评估 DI 重构)
+
+- **现象** (5/26 第六轮 arch MID-3)：lib/ws.ts 累计了 3 个 module-level mutable state + 对应 test hook:
+  - `pool: Map<string, PoolEntry>` (+`__resetPoolForTests`)
+  - `listenerErrorHandler` (+`__setListenerErrorHandlerForTests`)
+  - `nowMs` (+`__setNowProviderForTests`)
+  test hook 命名越来越长 (`__setListenerErrorHandlerForTests` 31 字符) · 开始难看。
+- **影响**：再加 1 个 hook (DEBT-073 全局 toast / DEBT-074 async listener) 到 4 个时 · spec 测试隔离越来越依赖"调用方记得 restore" · 模式脆弱
+- **建议方案**：
+  - 现在不做 (DI 重构 = `createPool({now, onListenerError, ...})` factory · 改 caller 签名 · 1 caller 成本 vs 3 hook 成本不对等)
+  - watchdog 触发条件: lib/ws.ts module-level mutable hook ≥ 4 时立刻评估
+  - 重构 sketch (作 watchdog 参考): lib/ws.ts 改 `createPool({...deps})` factory · caller 持 pool ref · test 直接 `new` pool 不共享 module-level
+- **触发关闭**：第 4 个 hook 加入时启动 DI 重构 / 或 architecture-reviewer 第 N 轮再判
+- **优先级**：LOW (watchdog 性 · 不修)
+- **来源**：5/26 第六轮 architecture-reviewer MID-3
+
+---
+
+## DEBT-076 · features/*/__tests__/helpers.ts 通用 page spec mock-reset helper
+
+- **现象** (5/26 第六轮 arch LOW)：AS-4 PlaygroundPage.component.test.tsx 抽 `DEFAULT_USE_*_IMPL` + `resetMockImpls()` 是好模式 · 但 spec 文件 643 行 · 接近"该拆"临界。同款模式其他 page spec (Dashboard / Audit / Inspect) 也该用 · 现状各自重复。
+- **影响**：spec helper 重复 · 改 mock 默认形状要扫多文件
+- **建议方案**：
+  - 抽 `web/src/features/__tests__/spec-helpers.ts` · 暴露 `withDefaultHookMocks(mockMap, resetters)` 或类似 API
+  - 各 page spec 文件 import helper · spec 文件回降至 < 500 行
+  - 或更激进: vitest config `setupFilesAfterEach` 集中 reset 公共 mock
+- **触发关闭**：第 2 个 page spec 用同款 default impl 模式 (DashboardPage spec 加 useApp/useBackends mock 时)
+- **优先级**：LOW
+- **来源**：5/26 第六轮 architecture-reviewer LOW + code-reviewer LOW-6 (PlaygroundPage spec 633 行临界)
+
+---
+
+## DEBT-077 · cachedSnapshot stale skip + 服务器静默 = UI 死锁兜底 watchdog
+
+- **现象** (5/26 第六轮 ui-f MID-2)：AS-2 stale snapshot 触发 force-fresh send · 期望服务器回新 snapshot。但若服务器静默 (不响应 send config · 服务端 bug / 异常) · 晚到 view 永远 stuck 在"open + 0 行" UI · 用户看死。AR-1 之前不存在这 failure mode (cachedSnapshot 总有兜底 even if stale)。
+- **影响**：罕见服务器异常路径 · 用户 0 反馈
+- **建议方案**：
+  - subscribe 触发 force-fresh 时启 watchdog: 5s 内仍 0 server snapshot → listener emit `{kind:"error", message:"snapshot timeout"}` 走现有 error UI · 不引入新视觉契约
+  - 或: lib 不管 · useAuditStream 自加 timeout 兜底
+  - 评估: lib 是 protocol-agnostic · 不应假设"snapshot 必到" · 建议 useAuditStream 实施
+- **触发关闭**：服务器 snapshot 静默 bug 实测 / useAuditStream 加 status="timeout" 状态时
+- **优先级**：LOW
+- **来源**：5/26 第六轮 ui-fluency-auditor MID-2

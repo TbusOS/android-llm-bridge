@@ -1575,11 +1575,24 @@ config → 回 N 次 snapshot → fan-out N×N = N² setState。
   payload · 每次序列化都不同 · dedup 永不命中 · 退化为无 dedup ·
   silent perf 退化 (但功能 0 影响)
 
+**5/26 AT-2 修正 (第六轮 code/arch HIGH-2)**: 原 AS-2 实现把
+"stale-snapshot 路径 force re-send" 信号塞到 `entry.lastSentPayload
+= null` · 这是 **entry 级状态** · view A 触发 clear 把 dedup tracker
+撕掉 · 影响所有 sibling view 的下一次 send · 等效于 N view × N 次
+force-send → N² snapshot 重发 · **正好打掉本 ADR 想省的那部分**。
+AT-2 改为 **per-view `forceNextSendFresh` flag** · 只让"观察到 stale
+cache 的那个 view" 跳 dedup 一次 · sibling view 的 dedup tracker
+不被破坏。dedup 不变量重新闭合: same `(epoch, payload)` 跨 view 仍只
+到服务器 1 次 (除非有 view 显式 force-fresh)。
+
 **Enforcement**:
 
 - 任何 lib/ws.ts send dedup 行为变更必须先改本 ADR
 - 新增 `send(opt)` 字段要在 Options interface JSDoc 标 "see ADR-046"
 - ws.test.ts 7 spec 是契约 baseline · 删除任何一条要更 ADR-046 推翻
+- **新增 entry-level mutable state 必须先评估 "view 间 side-effect"** ·
+  AT-2 教训: pool entry 是共享的 · 单 view 操作不该 implicitly 影响
+  sibling view 的决策状态 · force-flag 等"一次性触发器"必须 per-view
 
 **触发推翻条件**:
 
@@ -1589,6 +1602,8 @@ config → 回 N 次 snapshot → fan-out N×N = N² setState。
   `send(data, {forceFresh: true})` opt
 - 服务端引入 application-level dedup → 客户端 dedup 退化为 no-op
   · 删 send dedup 简化
+  · **协调成本**: 撤销前需后端 PR 同步落地 + 前端发版滞后 ≥ 1 release ·
+    避免窗口期"前后端双重 dedup" 或 "双不 dedup" 错位
 
 **关联**:
 

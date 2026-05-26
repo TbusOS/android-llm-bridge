@@ -103,12 +103,19 @@ class FakeWebSocket {
 // failing test already finished).
 let capturedListenerErrors: unknown[] = [];
 let prevListenerErrorHandler: ((e: unknown) => void) | null = null;
+// AT-4 (5/26 第六轮 code LOW-4): default nowMs reset in beforeEach so
+// any spec that swaps the provider (cachedSnapshot age check tests)
+// can't leak its frozen clock into the next spec. Pattern mirrors
+// `resetMockImpls` in PlaygroundPage.component.test.tsx — cleanup is
+// the framework's job, not the spec author's.
+const DEFAULT_NOW = (): number => Date.now();
 
 beforeEach(() => {
   capturedListenerErrors = [];
   prevListenerErrorHandler = __setListenerErrorHandlerForTests((e) => {
     capturedListenerErrors.push(e);
   });
+  __setNowProviderForTests(DEFAULT_NOW);
   FakeWebSocket.instances = [];
   __resetPoolForTests();
   vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -117,6 +124,7 @@ beforeEach(() => {
 afterEach(() => {
   __resetPoolForTests();
   vi.unstubAllGlobals();
+  __setNowProviderForTests(DEFAULT_NOW);
   if (prevListenerErrorHandler) {
     __setListenerErrorHandlerForTests(prevListenerErrorHandler);
     prevListenerErrorHandler = null;
@@ -437,80 +445,164 @@ describe("lib/ws · listener-throw isolation (AR-3 / code MID-1)", () => {
 });
 
 describe("lib/ws · cachedSnapshot age check (AS-2 / DEBT-065 MID fix)", () => {
-  it("fresh snapshot (< STALE_SNAPSHOT_MS) → microtask replays it", async () => {
+  // AT-4 (5/26 第六轮 code LOW-4): nowMs cleanup moved to beforeEach,
+  // so these specs swap the provider via __setNowProviderForTests
+  // without per-spec try/finally bookkeeping.
+  it("fresh snapshot (< staleSnapshotMs) → microtask replays it", async () => {
     let t = 1_000_000_000_000;
-    const restoreNow = __setNowProviderForTests(() => t);
-    try {
-      connect("/audit/stream", { shareKey: "k1" });
-      fakeAt(0).simulateOpen();
-      fakeAt(0).simulateJson({ type: "snapshot", events: ["fresh"] });
+    __setNowProviderForTests(() => t);
+    connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["fresh"] });
 
-      // Advance clock by 4 minutes — still under the 5 min ceiling.
-      t += 4 * 60 * 1000;
-      const late = connect("/audit/stream", { shareKey: "k1" });
-      const events: WsEvent[] = [];
-      late.subscribe((ev) => events.push(ev));
-      await Promise.resolve();
+    // Advance clock by 4 minutes — still under the 5 min default.
+    t += 4 * 60 * 1000;
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    const events: WsEvent[] = [];
+    late.subscribe((ev) => events.push(ev));
+    await Promise.resolve();
 
-      expect(events.length).toBe(2);
-      expect(events[0]).toEqual({ kind: "open" });
-      expect((events[1] as { data: { events: string[] } }).data.events).toEqual([
-        "fresh",
-      ]);
-    } finally {
-      __setNowProviderForTests(restoreNow);
-    }
+    expect(events.length).toBe(2);
+    expect(events[0]).toEqual({ kind: "open" });
+    expect((events[1] as { data: { events: string[] } }).data.events).toEqual([
+      "fresh",
+    ]);
   });
 
-  it("stale snapshot (> STALE_SNAPSHOT_MS) → microtask skips replay · late joiner sees synth open only", async () => {
+  it("stale snapshot (> staleSnapshotMs) → microtask skips replay · late joiner sees synth open only", async () => {
     let t = 1_000_000_000_000;
-    const restoreNow = __setNowProviderForTests(() => t);
-    try {
-      connect("/audit/stream", { shareKey: "k1" });
-      fakeAt(0).simulateOpen();
-      fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+    __setNowProviderForTests(() => t);
+    connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
 
-      // Advance clock by 6 minutes — past the 5 min stale ceiling.
-      t += 6 * 60 * 1000;
-      const late = connect("/audit/stream", { shareKey: "k1" });
-      const events: WsEvent[] = [];
-      late.subscribe((ev) => events.push(ev));
-      await Promise.resolve();
+    // Advance clock by 6 minutes — past the 5 min default.
+    t += 6 * 60 * 1000;
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    const events: WsEvent[] = [];
+    late.subscribe((ev) => events.push(ev));
+    await Promise.resolve();
 
-      // Only the synth open — cached snapshot is too old to replay.
-      expect(events).toEqual([{ kind: "open" }]);
-    } finally {
-      __setNowProviderForTests(restoreNow);
-    }
+    expect(events).toEqual([{ kind: "open" }]);
   });
 
-  it("stale snapshot path → lastSentPayload cleared so late joiner's open-handler send bypasses dedup (forces fresh server snapshot)", async () => {
+  it("stale path → late joiner's forceNextSendFresh flag bypasses dedup ONCE (per-view · not entry-wide)", async () => {
     let t = 1_000_000_000_000;
-    const restoreNow = __setNowProviderForTests(() => t);
-    try {
-      const first = connect("/audit/stream", { shareKey: "k1" });
-      fakeAt(0).simulateOpen();
-      first.send({ minutes: 30 });
-      fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+    __setNowProviderForTests(() => t);
+    const first = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    first.send({ minutes: 30 });
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
 
-      // The first send put `{minutes:30}` into lastSentPayload; without
-      // the AS-2 clear, the late joiner's identical send would be
-      // deduped and the server wouldn't broadcast a fresh snapshot.
-      t += 10 * 60 * 1000; // 10 min — definitely stale
+    t += 10 * 60 * 1000; // 10 min — definitely stale
 
-      const late = connect("/audit/stream", { shareKey: "k1" });
-      late.subscribe((ev) => {
-        if (ev.kind === "open") late.send({ minutes: 30 });
-      });
-      await Promise.resolve();
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    late.subscribe((ev) => {
+      if (ev.kind === "open") late.send({ minutes: 30 });
+    });
+    await Promise.resolve();
 
-      // Two sends reached the underlying socket: the original one and
-      // the late joiner's. The stale-snapshot path cleared the dedup
-      // tracker so the second send went through.
-      expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
-    } finally {
-      __setNowProviderForTests(restoreNow);
-    }
+    // Two sends reached the wire: the original AND the late joiner's
+    // (per-view force flag let it bypass dedup once).
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("stale path is per-VIEW: late joiner's force-fresh does NOT let sibling views re-send same payload (AT-2 / HIGH-2 fix)", async () => {
+    let t = 1_000_000_000_000;
+    __setNowProviderForTests(() => t);
+    const first = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    first.send({ minutes: 30 });
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+
+    t += 10 * 60 * 1000;
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    late.subscribe((ev) => {
+      if (ev.kind === "open") late.send({ minutes: 30 });
+    });
+    await Promise.resolve();
+
+    // After the late joiner's force-fresh send: 2 total.
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+
+    // Now the FIRST view re-sends the same payload. The stale path
+    // only flipped the LATE view's per-view flag — `first` still sees
+    // entry.lastSentPayload === {minutes:30} from its prior send AND
+    // the late joiner's fresh send updated it again to the same value.
+    // first's resend is a dedup hit · MUST NOT reach the wire.
+    first.send({ minutes: 30 });
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("Options.staleSnapshotMs override: caller raises ceiling to 30 min → 6 min-old snapshot is still fresh", async () => {
+    let t = 1_000_000_000_000;
+    __setNowProviderForTests(() => t);
+    connect("/audit/stream", {
+      shareKey: "k1",
+      staleSnapshotMs: 30 * 60 * 1000,
+    });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["v"] });
+
+    t += 6 * 60 * 1000; // past the 5 min default · still under custom 30 min
+    const late = connect("/audit/stream", {
+      shareKey: "k1",
+      staleSnapshotMs: 30 * 60 * 1000,
+    });
+    const events: WsEvent[] = [];
+    late.subscribe((ev) => events.push(ev));
+    await Promise.resolve();
+
+    expect(events.length).toBe(2);
+    expect((events[1] as { data: { events: string[] } }).data.events).toEqual([
+      "v",
+    ]);
+  });
+
+  it("Options.staleSnapshotMs override: caller lowers to 1 min → 90 s-old snapshot is stale", async () => {
+    let t = 1_000_000_000_000;
+    __setNowProviderForTests(() => t);
+    connect("/audit/stream", {
+      shareKey: "k1",
+      staleSnapshotMs: 60 * 1000,
+    });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+
+    t += 90 * 1000; // 90 s · past 1 min custom ceiling
+    const late = connect("/audit/stream", {
+      shareKey: "k1",
+      staleSnapshotMs: 60 * 1000,
+    });
+    const events: WsEvent[] = [];
+    late.subscribe((ev) => events.push(ev));
+    await Promise.resolve();
+
+    expect(events).toEqual([{ kind: "open" }]);
+  });
+
+  it("Options.staleSnapshotMs first-caller-wins: 2nd connect with different staleSnapshotMs is ignored", async () => {
+    let t = 1_000_000_000_000;
+    __setNowProviderForTests(() => t);
+    connect("/audit/stream", {
+      shareKey: "k1",
+      staleSnapshotMs: 60 * 1000, // first caller pins 1 min
+    });
+    fakeAt(0).simulateOpen();
+    fakeAt(0).simulateJson({ type: "snapshot", events: ["v"] });
+
+    t += 90 * 1000;
+    // Second caller WANTS 30 min ceiling, but pool entry already
+    // exists with 1 min → 90s is still stale, replay skipped.
+    const late = connect("/audit/stream", {
+      shareKey: "k1",
+      staleSnapshotMs: 30 * 60 * 1000,
+    });
+    const events: WsEvent[] = [];
+    late.subscribe((ev) => events.push(ev));
+    await Promise.resolve();
+
+    expect(events).toEqual([{ kind: "open" }]);
   });
 
   it("no cachedSnapshot at all → microtask synth-open fires · no skip-snapshot side effect", async () => {
@@ -524,6 +616,18 @@ describe("lib/ws · cachedSnapshot age check (AS-2 / DEBT-065 MID fix)", () => {
     await Promise.resolve();
 
     expect(events).toEqual([{ kind: "open" }]);
+  });
+});
+
+describe("lib/ws · SharedArrayBuffer payload routes through binary path (AS-3 code LOW-4 regression)", () => {
+  it("SAB send bypasses dedup (binary path) · 2 identical sends both reach the wire", () => {
+    if (typeof SharedArrayBuffer === "undefined") return; // env-skip
+    const a = connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+    const sab = new SharedArrayBuffer(16);
+    a.send(sab);
+    a.send(sab);
+    expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
   });
 });
 
