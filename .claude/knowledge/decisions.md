@@ -13,7 +13,7 @@
 
 ---
 
-## 索引（按主题 · 45 ADR + 5 seed · 2026-05-26 update）
+## 索引（按主题 · 46 ADR + 5 seed · 2026-05-26 update）
 
 **核心架构（transport / backend / event）**
 - ADR-001 · Transport 抽象 + 4 实现
@@ -34,6 +34,7 @@
 - ADR-036 · 流式文件传输用 WS 而非 SSE / Job-Model（MID-6）
 - ADR-037 (seed) · transport 配置常量（retry / timeout / backoff）用 class attribute
 - ADR-045 · `lib/ws.ts` shareKey opt-in pool + late-joiner microtask replay（关 DEBT-047）
+- ADR-046 · `lib/ws.ts` pool view.send() epoch-scoped payload dedup（5/26 AR-1 · 关 ui-f HIGH-1 reconnect storm）
 
 **Web Tier / 前端**
 - ADR-017 · Web Tier 1 技术栈
@@ -1463,11 +1464,22 @@ cachedSnapshot 只在 JSON `data.type === "snapshot"` 时更新 · delta
 
 **Trade-off**:
 
-- 放弃：晚到 view 第一次仍走 `useAuditStream` 的 open handler · 触发
-  `client.send({minutes, include_metrics})` · 服务器**再发一次 snapshot
-  广播给所有 view** · 已有 view setState 重渲一次。冗余 1 帧。React
-  19 structural sharing + 17 spec 验过的 ref 稳定让重渲很轻。
-- 获得：N→1 socket / N→1 server fan-out / 晚到 view 0 延迟 converge
+- 放弃 (历史 · 5/26 AR-1 后已消除)：~~晚到 view 第一次仍走
+  `useAuditStream` 的 open handler · 触发 `client.send({minutes,
+  include_metrics})` · 服务器**再发一次 snapshot 广播给所有 view** ·
+  已有 view setState 重渲一次。冗余 1 帧。~~
+- **5/26 AR-1 修正**：AR-1 给 pool 加 send dedup-by-payload-per-epoch
+  (见 ADR-046)。晚到 view 的 synth-open handler 调 `client.send(config)`
+  时 · 若同 epoch 内首 view 已发同 payload · 直接 drop · 服务器不重发
+  snapshot · 那 1 帧冗余消除。**新 trade-off**: 晚到 view 必须靠
+  `cachedSnapshot` 微任务回放 bootstrap · cachedSnapshot 可能已过期
+  (数小时未刷新) · 引入"stale snapshot + 未来 delta" 视觉短暂不一致。
+  风险面从"罕见"(原: 偶发 reconnect 风暴期) 升为"必然" (任何 N≥2
+  shared view 的 bootstrap)。见 **DEBT-065** (5/26 第五轮 arch HIGH-1
+  + ui-f MID-1 提) · LOW→MID 升级 · 建议加 `cachedSnapshotAt` +
+  age check (e.g. >5min 不回放 · 强制 send 跳 dedup) 治本。
+- 获得：N→1 socket / N→1 server fan-out / N→1 server-bound send
+  (AR-1 加强) / 晚到 view 0 延迟 converge
 - 协议 0 改 · backend 0 改 · useAuditStream 0 改 (AM-3 已 pre-wire)
 
 **Enforcement** (写进 architecture-reviewer agent grep checklist):
@@ -1489,14 +1501,104 @@ cachedSnapshot 只在 JSON `data.type === "snapshot"` 时更新 · delta
 - 微任务回放仍跟 useState 时序竞 (实测 race) → 改 task / 改 sync
 - WS server 端引入 真 server-side dedup → 客户端 pool 退化为 no-op
   · 删 makeView 简化
+- **DEBT-065 真实命中** (stale cachedSnapshot 被用户 visible) → 重
+  evaluate dedup vs fresh snapshot 取舍 · 可能要把 dedup 改成
+  payload-equality + age 双键
 
 **关联**:
 
 - DEBT-047 (CLOSED by AP-1 / AP-2 / AP-3)
+- DEBT-065 (MID · cachedSnapshot 过期路径 · AR-1 后 risk 放大)
 - ADR-022 (Dashboard 同页双 WS 实例 · pool 不能跨 metric 配置共享)
 - ADR-041 + ADR-043 + ADR-044 (hook layer 三槽 + N≥2 wrapper + 复
   合 return useMemo · 同源工程化主题)
+- ADR-046 (5/26 AR-1 send dedup-by-epoch 单独决策 · 备选 A/B/C +
+  推翻条件)
 - AM-3 commit (`useAuditStream` shareKey pre-wire) · L-055 (pre-wire
   让 DEBT 落地变 1-file diff)
+- L-056 (lib 行为契约修改即使 caller 0 改也需 ADR · ADR-046 案例)
 - `web/src/lib/ws.ts:80` (`PoolEntry`) / `web/src/lib/ws.test.ts`
-  (17 spec)
+  (28 spec)
+
+---
+
+## ADR-046 · `lib/ws.ts` pool view.send() epoch-scoped payload dedup
+
+**Status**: accepted · 关 ui-f HIGH-1 (5/26 第四轮) · AR-1 落地
+
+**Context**:
+
+ADR-045 落地 (5/26 AP-1) 后 · 第四轮 ui-fluency-auditor 实测 reconnect
+风暴: N view 共 1 pool entry · underlying socket 网抖 reconnect →
+"open" event fan-out 给 N listener → N 个 `useAuditStream` listener
+各自调 `client.send({minutes, include_metrics})` → 服务器收 N 次同
+config → 回 N 次 snapshot → fan-out N×N = N² setState。
+
+需要把 N 次冗余 send 收敛到 1 次 · 但不能改 caller 协议 · 也不能改
+后端。
+
+**Decision**:
+
+`makeView.send(data)` 在 view 层做 **per-epoch payload dedup**:
+
+- `PoolEntry` 加 `currentEpoch: number` · underlying 每次 "open"
+  事件 (含 reconnect) bump 1
+- `PoolEntry` 加 `lastSentPayload: {epoch, payload: string} | null`
+  tracker
+- view.send() 流程:
+  1. binary 帧 (ArrayBuffer / typed array / Blob / SharedArrayBuffer)
+     完全 pass through · 不 dedup
+  2. text-shape (string / object) 序列化为 string · 与 tracker 比对:
+     若 `tracker.epoch === currentEpoch && tracker.payload === payload`
+     → drop
+  3. 否则更新 tracker · forward 到 underlying.send()
+- 新 epoch 来时 tracker.epoch !== currentEpoch · 自然 mismatch ·
+  payload 被 re-send · 服务器拿到新 config
+
+**备选**:
+
+1. ✅ **A (当前 · 选)**: pool 内部记 epoch · view 透明 dedup · caller
+   0 改 · 复杂度内聚在 ws.ts
+2. ❌ **B**: 让 caller 显式标 `send(data, {idempotent: true})` · 更
+   灵活但每个 caller 都要思考 idempotency · 增加心智负担 · YAGNI
+   今天
+3. ❌ **C**: 服务端 dedup 配置消息 (服务器侧改) · 后端复杂 + 多进程
+   去重难 · 拒
+
+**Trade-off**:
+
+- 放弃: 灵活性 — 若未来 caller 需要"不同 payload 也算重复" (e.g.
+  不同 minutes 都该幂等) 或"同 payload 跨 epoch 主动 force-send" ·
+  A 不直接支持 · 需扩 send opt (升级备选 B)
+- 获得: caller 0 改 · 复杂度全在 ws.ts · 1 文件 diff · 7 spec 钉契约
+- 放弃: 极端 corner case · 若 caller 不慎传含 `{时间戳: now()}` 的
+  payload · 每次序列化都不同 · dedup 永不命中 · 退化为无 dedup ·
+  silent perf 退化 (但功能 0 影响)
+
+**Enforcement**:
+
+- 任何 lib/ws.ts send dedup 行为变更必须先改本 ADR
+- 新增 `send(opt)` 字段要在 Options interface JSDoc 标 "see ADR-046"
+- ws.test.ts 7 spec 是契约 baseline · 删除任何一条要更 ADR-046 推翻
+
+**触发推翻条件**:
+
+- 出现真需"不同 payload 也想 idempotent"caller → 升级到备选 B 加
+  `send(data, {idempotent: true | "same-payload-same-epoch"})` opt
+- 出现真需"同 payload 跨 epoch force-send"caller → 加
+  `send(data, {forceFresh: true})` opt
+- 服务端引入 application-level dedup → 客户端 dedup 退化为 no-op
+  · 删 send dedup 简化
+
+**关联**:
+
+- ADR-045 (shareKey opt-in pool · 上层决策 · trade-off 节已更新指向
+  本 ADR)
+- DEBT-065 (MID · cachedSnapshot 过期 · AR-1 后 risk 放大 · 本决策
+  的副作用)
+- DEBT-068 (LOW · pool dedup 真实命中率追踪 · 验证本决策实际收益)
+- AR-1 commit (5/26 落地)
+- L-056 (5/26 新写 · "lib 行为契约修改即使 caller 0 改也需 ADR"
+  · 本 ADR 是案例)
+- `web/src/lib/ws.ts` (`makeView.send` 实现) / `web/src/lib/ws.test.ts`
+  (7 dedup spec)

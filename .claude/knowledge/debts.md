@@ -1512,14 +1512,15 @@
 
 ## DEBT-065 · `lib/ws.ts` cachedSnapshot 永不过期策略
 
-- **现象** (5/26 第四轮 ui-f MID-2)：pool entry 长寿 (refcount > 0) · cachedSnapshot 可能持有数小时未更新的 snapshot (服务端只在显式 send config 时回 snapshot · 期间只发 delta)。late-joiner 用过期 snapshot bootstrap → 立刻收 live delta · view 短暂处于"过期 snapshot + 未来 delta"不一致态。
-- **影响**：late-joiner 视觉短暂错乱 (rare path · 用户开 N 个 tab 长时间挂)
-- **建议方案** (二选一):
-  - (a) entry 加 `cachedSnapshotAt: number` · subscribe 时若 `Date.now() - cachedSnapshotAt > 5min` 则不回放 · 让 view 等真服务器响应 (代价: 用户看 5min 后开新 tab 要等几百 ms snapshot)
-  - (b) 接受现状 · 文档明记 trade-off (late-joiner 已经在 ADR-045 trade-off 节 ack 1 帧 redundancy · 这条只是说"那 1 帧可能是过期数据")
-- **触发关闭**：实测 late-joiner 用户 visible 不一致 / 第 2 个 pool consumer 进来时再 evaluate
-- **优先级**：LOW · 不阻塞
-- **来源**：5/26 第四轮 ui-fluency-auditor MID-2
+- **现象** (5/26 第四轮 ui-f MID-2 · 第五轮 arch HIGH-1 + ui-f MID-1 升级)：pool entry 长寿 (refcount > 0) · cachedSnapshot 可能持有数小时未更新的 snapshot (服务端只在显式 send config 时回 snapshot · 期间只发 delta)。late-joiner 用过期 snapshot bootstrap → 立刻收 live delta · view 短暂处于"过期 snapshot + 未来 delta"不一致态。
+- **AR-1 后风险放大** (5/26)：AR-1 加了 send dedup-by-epoch (ADR-046) · 晚到 view 的 synth-open send 被 drop · **服务器不再重发 fresh snapshot** · 晚到 view 必走 cachedSnapshot 回放路径。此前是"罕见 visible 不一致" (服务器重发 fresh 兜底) · 现在是"每次 late-join 都吃 stale" (无兜底)。影响面 1 → N。
+- **影响**：late-joiner 视觉短暂错乱 (用户开 N 个 tab 长时间挂的场景 · 每次新 tab bootstrap 都吃过期数据 + 几条最新 delta 拼接 1-3 帧)
+- **建议方案** (建议 (a) · 不再"二选一"):
+  - (a) **推荐 · AR-1 后从可选升级为推荐**: entry 加 `cachedSnapshotAt: number` · subscribe 时若 `Date.now() - cachedSnapshotAt > 5min` 则不回放 · 让 view 等真服务器响应 (代价: 用户看 5min 后开新 tab 要等几百 ms snapshot · 但 dedup 现在 drop 同 epoch 同 payload · 需要 force-send 跳 dedup · 或 caller 自己变更 payload 触发 fresh)
+  - (b) ~~接受现状~~ — AR-1 后此选项不再合理
+- **触发关闭**：AS-2 实施 · 或下次 audit 实测 stale 命中
+- **优先级**：**MID** (从 LOW 升 · 第五轮 arch HIGH-1 提)
+- **来源**：5/26 第四轮 ui-fluency-auditor MID-2 + 第五轮 arch HIGH-1 + ui-f MID-1
 
 ---
 
@@ -1573,3 +1574,69 @@
 - **触发关闭**：spec 加 1 条 · 或 backend/model 选择逻辑下次改动时
 - **优先级**：LOW
 - **来源**：5/26 第四轮 code-reviewer LOW-6
+
+---
+
+## DEBT-070 · PlaygroundPage 5 项流式 UI spec 仍未覆盖
+
+- **现象** (5/26 第五轮 ui-f LOW-1)：AR-2 spec 覆盖了 4/9 上轮 ui-f 列的漏洞 (settled-ref / shortcuts / !backend / lang=zh basic) · 剩 5 项流式 UI 仍裸奔:
+  - `.playground-msg--streaming` cursor `▍` 渲染 (line 421)
+  - `.playground-chat__metrics` 指标条 + finish_reason 显示 (line 426-437)
+  - `.playground-chat__jump` 按钮 + stickToBottom 联动出现/消失 (line 441-452)
+  - 空态 + 流式空态瞬间 (`chat.status==="streaming" && log.length===0`)
+  - `chat.reset` 后 `settled→null` → `handledSettledRef.current = null` 的 reset cycle (现在用 chatState.settled=null 模拟 · 没真调 chat.reset)
+- **影响**：改流式 cursor / metrics / jump 联动 / reset 时无回归保护 · 改 i18n 文案 / 流式 placeholder 也是
+- **建议方案**：1 commit 加 5 spec · 部分需 jsdom + ResizeObserver / IntersectionObserver mock (stickToBottom scroll 联动可能需 ImageData mock)
+- **触发关闭**：下次 PlaygroundPage 改 streaming UI / metrics / jump 逻辑前
+- **优先级**：LOW
+- **来源**：5/26 第五轮 ui-fluency-auditor LOW-1
+
+---
+
+## DEBT-071 · PlaygroundPage lang='zh' i18n 完整覆盖 (4/8 → 8/8)
+
+- **现象** (5/26 第五轮 ui-f LOW-2)：AR-2 lang=zh spec 只验 4 个中文 label (`发送` / `清空` / `输入消息` / `已取消（未发给模型）`) · 漏 4 个:
+  - `错误（未发给模型）` (errored label · PlaygroundPage.tsx:409)
+  - `生成中 · Esc 取消` (streaming placeholder · line 481)
+  - `回到最新 ↓` (jump button · line 450)
+  - `回到最新消息` (jump aria-label · line 447)
+- **影响**：未来重构改文案静默英文化 0 测试 fire
+- **建议方案**：lang=zh spec block 内加 4 spec · 或用 `it.each([['en'], ['zh']])` 参数化原 spec
+- **触发关闭**：DEBT-070 一并修 / i18n 文案重构前
+- **优先级**：LOW
+- **来源**：5/26 第五轮 ui-fluency-auditor LOW-2
+
+---
+
+## DEBT-072 · `listenerErrorHandler` scoped helper (`__withListenerErrorHandlerForTests`)
+
+- **现象** (5/26 第五轮 code MID-4)：`listenerErrorHandler` module-level mutable singleton · `__setListenerErrorHandlerForTests` 让 test 改 + restore 用 `afterEach` · 模式正确但 boilerplate (capturedListenerErrors 全局变量 + beforeEach 装 + afterEach 恢复 + 3 行 boilerplate × N spec)。
+- **影响**：spec 写法脆弱 · 任何 spec 漏 restore 跨 spec 污染 · 现状 ws.test.ts 集中管理 OK · 新 spec 文件 import 该 hook 会复制 boilerplate
+- **建议方案**：导出 `__withListenerErrorHandlerForTests(handler, fn)` scoped helper · 自动 setup + cleanup · spec 内 `__withListenerErrorHandlerForTests(myHandler, async () => { ... })` 无需手写 beforeEach/afterEach
+- **触发关闭**：第 2 个 spec 文件需要捕获 listener error / 实测漏 restore 跨 spec 污染
+- **优先级**：LOW
+- **来源**：5/26 第五轮 code-reviewer MID-4 / arch LOW-4
+
+---
+
+## DEBT-073 · listener throw 后视觉降级 UI (window CustomEvent / global toast)
+
+- **现象** (5/26 第五轮 ui-f MID-2)：AR-3 listener throw 不再饿 sibling · 但该 view 自己处于"半 state" (setState 没跑完 · UI 卡 stale)。用户看到"A 面板冻结 · B 面板活的"会以为 A 坏了 · 0 降级反馈 (无 error banner / 无"重连"按钮 / 无 console 给非 dev)。
+- **影响**：罕见 listener-bug 场景 · 用户体验差
+- **建议方案**：`listenerErrorHandler` 默认行为加 `window.dispatchEvent(new CustomEvent("ws-listener-error", {detail: e}))` · App 顶层 ErrorBoundary 或全局 toast 订阅 · 给"实时数据已断 · 请刷新"降级 UI
+- **触发关闭**：实测 listener throw 用户反馈 / App 加全局 toast 系统时
+- **优先级**：LOW
+- **来源**：5/26 第五轮 ui-fluency-auditor MID-2
+
+---
+
+## DEBT-074 · listener async throws bypass `listenerErrorHandler` · 加 runtime 检测
+
+- **现象** (5/26 第五轮 code LOW-3)：AR-3 `try { l(ev) } catch` 只接同步 throw · async listener (`async (ev) => { throw ... }`) 抛错走 unhandled promise rejection · 不路由到 listenerErrorHandler。WsEvent listener 类型签名是 `(ev) => void` · TS 不强 ban async function。
+- **影响**：consumer 写 async listener 抛错 · 不被 lib 捕获 · 难诊断
+- **建议方案** (二选一):
+  - (a) listener 调用包 `Promise.resolve(l(ev)).catch(handler)` · 也捕获 async throws · 但每 listener call 多 1 个 microtask · perf 微影响
+  - (b) 仅 JSDoc 警告 "listener MUST be synchronous" (AS-3 已做) + lint rule 检测 async function 传 .subscribe()
+- **触发关闭**：实测有 async listener consumer 出现 / 第 N 个 consumer 误用
+- **优先级**：LOW
+- **来源**：5/26 第五轮 code-reviewer LOW-3

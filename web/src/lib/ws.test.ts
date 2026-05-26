@@ -18,7 +18,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   connect,
   __resetPoolForTests,
-  _setListenerErrorHandler,
+  __setListenerErrorHandlerForTests,
+  __setNowProviderForTests,
   type WsEvent,
 } from "./ws";
 
@@ -105,7 +106,7 @@ let prevListenerErrorHandler: ((e: unknown) => void) | null = null;
 
 beforeEach(() => {
   capturedListenerErrors = [];
-  prevListenerErrorHandler = _setListenerErrorHandler((e) => {
+  prevListenerErrorHandler = __setListenerErrorHandlerForTests((e) => {
     capturedListenerErrors.push(e);
   });
   FakeWebSocket.instances = [];
@@ -117,7 +118,7 @@ afterEach(() => {
   __resetPoolForTests();
   vi.unstubAllGlobals();
   if (prevListenerErrorHandler) {
-    _setListenerErrorHandler(prevListenerErrorHandler);
+    __setListenerErrorHandlerForTests(prevListenerErrorHandler);
     prevListenerErrorHandler = null;
   }
 });
@@ -432,6 +433,97 @@ describe("lib/ws · listener-throw isolation (AR-3 / code MID-1)", () => {
     fakeAt(0).simulateOpen();
     expect(okEvents).toEqual([{ kind: "open" }]);
     expect(capturedListenerErrors.length).toBe(1);
+  });
+});
+
+describe("lib/ws · cachedSnapshot age check (AS-2 / DEBT-065 MID fix)", () => {
+  it("fresh snapshot (< STALE_SNAPSHOT_MS) → microtask replays it", async () => {
+    let t = 1_000_000_000_000;
+    const restoreNow = __setNowProviderForTests(() => t);
+    try {
+      connect("/audit/stream", { shareKey: "k1" });
+      fakeAt(0).simulateOpen();
+      fakeAt(0).simulateJson({ type: "snapshot", events: ["fresh"] });
+
+      // Advance clock by 4 minutes — still under the 5 min ceiling.
+      t += 4 * 60 * 1000;
+      const late = connect("/audit/stream", { shareKey: "k1" });
+      const events: WsEvent[] = [];
+      late.subscribe((ev) => events.push(ev));
+      await Promise.resolve();
+
+      expect(events.length).toBe(2);
+      expect(events[0]).toEqual({ kind: "open" });
+      expect((events[1] as { data: { events: string[] } }).data.events).toEqual([
+        "fresh",
+      ]);
+    } finally {
+      __setNowProviderForTests(restoreNow);
+    }
+  });
+
+  it("stale snapshot (> STALE_SNAPSHOT_MS) → microtask skips replay · late joiner sees synth open only", async () => {
+    let t = 1_000_000_000_000;
+    const restoreNow = __setNowProviderForTests(() => t);
+    try {
+      connect("/audit/stream", { shareKey: "k1" });
+      fakeAt(0).simulateOpen();
+      fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+
+      // Advance clock by 6 minutes — past the 5 min stale ceiling.
+      t += 6 * 60 * 1000;
+      const late = connect("/audit/stream", { shareKey: "k1" });
+      const events: WsEvent[] = [];
+      late.subscribe((ev) => events.push(ev));
+      await Promise.resolve();
+
+      // Only the synth open — cached snapshot is too old to replay.
+      expect(events).toEqual([{ kind: "open" }]);
+    } finally {
+      __setNowProviderForTests(restoreNow);
+    }
+  });
+
+  it("stale snapshot path → lastSentPayload cleared so late joiner's open-handler send bypasses dedup (forces fresh server snapshot)", async () => {
+    let t = 1_000_000_000_000;
+    const restoreNow = __setNowProviderForTests(() => t);
+    try {
+      const first = connect("/audit/stream", { shareKey: "k1" });
+      fakeAt(0).simulateOpen();
+      first.send({ minutes: 30 });
+      fakeAt(0).simulateJson({ type: "snapshot", events: ["old"] });
+
+      // The first send put `{minutes:30}` into lastSentPayload; without
+      // the AS-2 clear, the late joiner's identical send would be
+      // deduped and the server wouldn't broadcast a fresh snapshot.
+      t += 10 * 60 * 1000; // 10 min — definitely stale
+
+      const late = connect("/audit/stream", { shareKey: "k1" });
+      late.subscribe((ev) => {
+        if (ev.kind === "open") late.send({ minutes: 30 });
+      });
+      await Promise.resolve();
+
+      // Two sends reached the underlying socket: the original one and
+      // the late joiner's. The stale-snapshot path cleared the dedup
+      // tracker so the second send went through.
+      expect(fakeAt(0).sendMock).toHaveBeenCalledTimes(2);
+    } finally {
+      __setNowProviderForTests(restoreNow);
+    }
+  });
+
+  it("no cachedSnapshot at all → microtask synth-open fires · no skip-snapshot side effect", async () => {
+    // Pool entry exists but server hasn't sent any snapshot yet.
+    connect("/audit/stream", { shareKey: "k1" });
+    fakeAt(0).simulateOpen();
+
+    const late = connect("/audit/stream", { shareKey: "k1" });
+    const events: WsEvent[] = [];
+    late.subscribe((ev) => events.push(ev));
+    await Promise.resolve();
+
+    expect(events).toEqual([{ kind: "open" }]);
   });
 });
 

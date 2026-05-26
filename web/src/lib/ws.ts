@@ -20,15 +20,33 @@
  *      Late joiners (subscribe after the underlying socket has already
  *      opened and received its first snapshot) are queued a microtask
  *      that synthesizes an `{kind:"open"}` event followed by the
- *      cached snapshot — so their state machine converges without
- *      waiting for the next real event. The consumer's open handler
- *      still fires `client.send(config)`, which round-trips through
- *      the server and broadcasts a fresh snapshot to all views; that
- *      is a small known redundancy on the late-join path (rare event,
- *      structural sharing absorbs most of the React cost).
+ *      cached snapshot (if fresh — see STALE_SNAPSHOT_MS). The
+ *      consumer's open handler fires `client.send(config)`, which is
+ *      then deduped per-epoch (ADR-046) so the server doesn't re-
+ *      broadcast an identical config. AS-2 (DEBT-065): if the cache
+ *      is too old, the microtask skips the replay AND clears the
+ *      dedup tracker so the late joiner's send DOES reach the server
+ *      and triggers a fresh snapshot broadcast.
  *
  *      Used by `useAuditStream` where 2+ tabs / sub-pages open the
  *      same `/audit/stream` with identical (minutes, includeMetrics).
+ *
+ * **Test-hook naming convention** (AS-3 / sec LOW-1 + arch LOW-4):
+ *   Module-level mutable state used ONLY for tests is exposed via
+ *   `__xxxForTests` (double-underscore prefix + `ForTests` suffix).
+ *   Examples: `__resetPoolForTests`, `___setListenerErrorHandlerForTestsForTests`,
+ *   `___setNowProviderForTests`. The double-underscore marks the
+ *   surface as not-stable-API; the `ForTests` suffix makes
+ *   bundler grep / code review trivially spot misuse. Prod callers
+ *   touching any `__*ForTests` export = failed code review.
+ *
+ * **Listener contract** (AS-3 / code LOW-3):
+ *   Subscribers MUST be synchronous functions. Async listeners
+ *   (`async (ev) => ...`) that throw bypass the synchronous
+ *   try/catch and surface as unhandled promise rejections (NOT
+ *   routed through `listenerErrorHandler`). If you need async work,
+ *   schedule it inside the listener via `queueMicrotask` / `setTimeout`
+ *   and handle its rejection there.
  */
 
 export type WsEvent =
@@ -60,10 +78,15 @@ interface Options {
    *
    *  SECURITY (AR-4 / sec LOW): shareKey is held verbatim in module-
    *  global Map keys AND closed-over inside view send-dedup state for
-   *  the lifetime of the pool entry. DO NOT pass tokens, session IDs,
-   *  user IDs, or other PII / secrets — hash them or omit shareKey
-   *  entirely. Today's only caller (`useAuditStream`) serializes
-   *  `{minutes, includeMetrics}` which are pure UI config, no PII.
+   *  the lifetime of the pool entry. AS-3 (sec LOW-2): the SAME
+   *  warning applies to `send(payload)` — text-shape payloads are
+   *  serialized to string and stored in `lastSentPayload.payload`
+   *  for the current epoch (cleared on reconnect or first different
+   *  payload). DO NOT pass tokens, session IDs, user IDs, or other
+   *  PII / secrets in EITHER `shareKey` OR `send()` payloads — hash
+   *  them or omit shareKey entirely. Today's only caller
+   *  (`useAuditStream`) serializes `{minutes, includeMetrics}` for
+   *  both, which are pure UI config, no PII.
    *
    *  Wire-format-style contract: changing the serialization shape of
    *  shareKey silently re-keys existing callers. `useAuditStream.
@@ -100,6 +123,17 @@ interface PoolEntry {
    *  helper stays protocol-agnostic — only paths that ACTUALLY emit
    *  `{type:"snapshot"}` benefit. */
   cachedSnapshot: WsEvent | null;
+  /** Wall-clock ms when `cachedSnapshot` was last updated. Used by the
+   *  late-joiner replay path to refuse stale snapshots — pre-AR-1 the
+   *  server would re-send a fresh snapshot in response to the late
+   *  joiner's redundant config send; AR-1 dedup drops that send, so
+   *  the cache is now the ONLY bootstrap. AS-2 (5/26 第五轮 arch
+   *  HIGH-1 / DEBT-065 MID): if `Date.now() - cachedSnapshotAt`
+   *  exceeds `STALE_SNAPSHOT_MS`, the microtask replay skips the
+   *  cached snapshot AND clears `lastSentPayload` so the late
+   *  joiner's open-handler config send bypasses dedup, forcing a
+   *  fresh server-side snapshot. 0 = never set. */
+  cachedSnapshotAt: number;
   /** Incremented every time the underlying socket re-opens (initial
    *  open + every auto-reconnect). Drives per-epoch payload dedup so
    *  the same config message sent by N view-listeners in response to
@@ -125,7 +159,7 @@ const pool = new Map<string, PoolEntry>();
 
 /** Default listener-error handler: re-throw on a microtask so dev-tools
  *  / window.onerror still see the stack but the synchronous fan-out
- *  loop isn't truncated. Tests stub this via `_setListenerErrorHandler`
+ *  loop isn't truncated. Tests stub this via `__setListenerErrorHandlerForTests`
  *  to capture errors without crashing the test runner. */
 let listenerErrorHandler: (e: unknown) => void = (e) => {
   queueMicrotask(() => {
@@ -135,11 +169,36 @@ let listenerErrorHandler: (e: unknown) => void = (e) => {
 
 /** Test hook: swap the listener-error handler. Returns the prior
  *  handler so tests can restore it in afterEach. */
-export function _setListenerErrorHandler(
+export function __setListenerErrorHandlerForTests(
   handler: (e: unknown) => void,
 ): (e: unknown) => void {
   const prev = listenerErrorHandler;
   listenerErrorHandler = handler;
+  return prev;
+}
+
+/** Cached snapshot age limit before the late-joiner microtask skips
+ *  the replay and forces a fresh server round-trip. AS-2 / DEBT-065
+ *  MID: AR-1 send dedup means the server doesn't auto-re-send a
+ *  snapshot on the late joiner's redundant config send, so cache age
+ *  needs an explicit ceiling — otherwise a tab opened 6h after the
+ *  pool entry bootstrapped would render 6h-old timeline state for
+ *  the first few frames. 5 min is the common tab-idle threshold. */
+const STALE_SNAPSHOT_MS = 5 * 60 * 1000;
+
+/** Wall-clock provider — separate function so tests can swap it via
+ *  `__setNowProviderForTests` without monkey-patching Date.now globally
+ *  (which leaks across test files). */
+let nowMs: () => number = () => Date.now();
+
+/** Test hook: swap the wall-clock provider for time-dependent specs
+ *  (e.g. the cachedSnapshot age check). Returns the prior provider
+ *  so tests can restore it in afterEach. */
+export function __setNowProviderForTests(
+  provider: () => number,
+): () => number {
+  const prev = nowMs;
+  nowMs = provider;
   return prev;
 }
 
@@ -158,6 +217,7 @@ function createPoolEntry(
     refCount: 0,
     subscribers: new Set(),
     cachedSnapshot: null,
+    cachedSnapshotAt: 0,
     currentEpoch: 0,
     lastSentPayload: null,
   };
@@ -173,6 +233,7 @@ function createPoolEntry(
     // else is a delta and shouldn't replace the cached snapshot.
     if (ev.kind === "json" && isSnapshotPayload(ev.data)) {
       entry.cachedSnapshot = ev;
+      entry.cachedSnapshotAt = nowMs();
     }
     // Snapshot the listener set before iterating: a listener handler
     // that calls .close() (refCount → 0) deletes its own subscription
@@ -216,10 +277,18 @@ function makeView(entry: PoolEntry): WsClient {
       // Binary frames are content-addressed at the application layer;
       // dedup would need a hash + a payload-equality contract the WS
       // helper has no opinion on. Pass them through unfiltered.
+      // AS-3 (code LOW-4): SharedArrayBuffer is part of the
+      // ArrayBufferLike type the send() signature accepts, and is
+      // NOT covered by `instanceof ArrayBuffer` or
+      // `ArrayBuffer.isView`. Probe via typeof to avoid ReferenceError
+      // in environments that disable SAB (post-Spectre browsers
+      // require `crossOriginIsolated`).
       const isBinary =
         data instanceof ArrayBuffer ||
         ArrayBuffer.isView(data) ||
-        data instanceof Blob;
+        data instanceof Blob ||
+        (typeof SharedArrayBuffer !== "undefined" &&
+          data instanceof SharedArrayBuffer);
       if (isBinary) {
         entry.client.send(data);
         return;
@@ -264,14 +333,26 @@ function makeView(entry: PoolEntry): WsClient {
       // Guard against the view closing or the listener unsubscribing
       // during the microtask gap — both are legal user actions.
       if (entry.client.readyState === WebSocket.OPEN) {
+        // AS-2 (5/26 DEBT-065 MID fix): refuse to replay a snapshot
+        // older than STALE_SNAPSHOT_MS. Stale cache + live deltas
+        // would render "snapshot from hours ago + few latest events"
+        // until the next real server-side snapshot arrives. Skipping
+        // the cache also clears `lastSentPayload` so the late
+        // joiner's open-handler config send BYPASSES dedup and
+        // forces the server to broadcast a fresh snapshot.
         const cached = entry.cachedSnapshot;
+        const age = cached ? nowMs() - entry.cachedSnapshotAt : Infinity;
+        const cachedForReplay = age <= STALE_SNAPSHOT_MS ? cached : null;
+        if (cachedForReplay === null && cached !== null) {
+          entry.lastSentPayload = null;
+        }
         queueMicrotask(() => {
           if (viewClosed) return;
           if (!entry.subscribers.has(listener)) return;
           listener({ kind: "open" });
           if (viewClosed) return;
           if (!entry.subscribers.has(listener)) return;
-          if (cached !== null) listener(cached);
+          if (cachedForReplay !== null) listener(cachedForReplay);
         });
       }
       return () => {

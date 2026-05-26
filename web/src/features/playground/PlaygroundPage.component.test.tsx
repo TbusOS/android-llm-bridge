@@ -37,7 +37,13 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import type { WsChatSettled } from "../../lib/hooks/useWsChatStream";
 import type { DoneEvent, PlaygroundRequest } from "./usePlaygroundChat";
 
-// Hoisted mock state — tests mutate `chatState` between renders.
+// Default mock implementations — captured once at module load so
+// beforeEach can reset every hook back to a clean baseline without
+// per-spec try/finally bookkeeping. AS-4 (5/26 第五轮 code MID-3):
+// the prior version relied on each customising spec to manually
+// restore via try/finally, which only worked because every spec
+// remembered to. New specs that forget will silently leak state into
+// subsequent specs.
 const { chatState, chatActions, useApp, useBackends, useBackendModels } =
   vi.hoisted(() => {
     type ChatStatus = "idle" | "streaming" | "done" | "error";
@@ -61,21 +67,27 @@ const { chatState, chatActions, useApp, useBackends, useBackendModels } =
     return {
       chatState,
       chatActions,
-      useApp: vi.fn((sel?: (s: { lang: "en" | "zh" }) => unknown) =>
-        sel ? sel({ lang: "en" }) : { lang: "en" },
-      ),
-      useBackends: vi.fn(() => ({
-        data: { backends: [{ name: "ollama", host_compute_type: "gpu" }] },
-        isLoading: false,
-        isError: false,
-      })),
-      useBackendModels: vi.fn(() => ({
-        data: { models: ["llama3"] },
-        isLoading: false,
-        isError: false,
-      })),
+      useApp: vi.fn(),
+      useBackends: vi.fn(),
+      useBackendModels: vi.fn(),
     };
   });
+
+const DEFAULT_USE_APP_IMPL = (
+  sel?: (s: { lang: "en" | "zh" }) => unknown,
+) => (sel ? sel({ lang: "en" }) : { lang: "en" });
+
+const DEFAULT_USE_BACKENDS_IMPL = () => ({
+  data: { backends: [{ name: "ollama", host_compute_type: "gpu" }] },
+  isLoading: false,
+  isError: false,
+});
+
+const DEFAULT_USE_BACKEND_MODELS_IMPL = () => ({
+  data: { models: ["llama3"] },
+  isLoading: false,
+  isError: false,
+});
 
 vi.mock("../../stores/app", () => ({ useApp }));
 vi.mock("./usePlayground", () => ({
@@ -107,6 +119,15 @@ function resetChat() {
   chatActions.reset.mockClear();
 }
 
+/** Reset all 3 hook mocks back to default implementations. Run at the
+ *  top of every `beforeEach` so a spec that overrides one of them
+ *  (e.g. lang=zh, no-backend) doesn't leak into the next spec. */
+function resetMockImpls() {
+  useApp.mockImplementation(DEFAULT_USE_APP_IMPL);
+  useBackends.mockImplementation(DEFAULT_USE_BACKENDS_IMPL);
+  useBackendModels.mockImplementation(DEFAULT_USE_BACKEND_MODELS_IMPL);
+}
+
 // jsdom doesn't ship a ResizeObserver — PlaygroundPage's
 // --chat-bar-height effect uses it. Stub with a no-op so the effect
 // doesn't crash; we don't assert anything about the CSS var.
@@ -118,6 +139,7 @@ class FakeResizeObserver {
 
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  resetMockImpls();
   resetChat();
 });
 
@@ -565,30 +587,28 @@ describe("PlaygroundPage · send button disabled paths (AR-2 / ui-f HIGH-3)", ()
     // useBackends multiple times during render commit / effect flush;
     // Once-mocks revert to the default after the first call and leak
     // the populated backends list back into the second render.
+    //
+    // AS-4 (5/26 第五轮 code MID-3): cleanup is automatic — beforeEach
+    // re-installs DEFAULT_USE_BACKENDS_IMPL on every spec start, no
+    // try/finally needed here.
     useBackends.mockImplementation(() => ({
       data: { backends: [] },
       isLoading: false,
       isError: false,
     }));
-    try {
-      render(<PlaygroundPage />);
-      const textarea = screen.getByPlaceholderText(/Message…/);
-      fireEvent.change(textarea, { target: { value: "hi" } });
-      // disabled = !input.trim() || !backend → empty backend list → !backend
-      expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
-    } finally {
-      // Restore the default mock so downstream tests get the populated backend list.
-      useBackends.mockImplementation(() => ({
-        data: { backends: [{ name: "ollama", host_compute_type: "gpu" }] },
-        isLoading: false,
-        isError: false,
-      }));
-    }
+    render(<PlaygroundPage />);
+    const textarea = screen.getByPlaceholderText(/Message…/);
+    fireEvent.change(textarea, { target: { value: "hi" } });
+    // disabled = !input.trim() || !backend → empty backend list → !backend
+    expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
   });
 });
 
 describe("PlaygroundPage · i18n zh path (AR-2 / ui-f HIGH-3)", () => {
   it("lang='zh' renders 发送 / 取消 / 清空 buttons + cancelled label in Chinese", () => {
+    // AS-4 (5/26 第五轮 code MID-3): override lang to zh; cleanup is
+    // automatic via beforeEach → resetMockImpls re-installs the
+    // DEFAULT_USE_APP_IMPL (lang=en) before the next spec runs.
     useApp.mockImplementation(
       (sel?: (s: { lang: "en" | "zh" }) => unknown) =>
         sel ? sel({ lang: "zh" }) : { lang: "zh" },
@@ -609,11 +629,5 @@ describe("PlaygroundPage · i18n zh path (AR-2 / ui-f HIGH-3)", () => {
     rerender(<PlaygroundPage />);
 
     expect(screen.getByText(/已取消（未发给模型）/)).toBeInTheDocument();
-
-    // Switch back to en for downstream tests (useApp is shared mock state).
-    useApp.mockImplementation(
-      (sel?: (s: { lang: "en" | "zh" }) => unknown) =>
-        sel ? sel({ lang: "en" }) : { lang: "en" },
-    );
   });
 });

@@ -2755,3 +2755,61 @@ export function connect(path, opts) {
   落地时才看出价值"主题)
 - DEBT-064 (useWsChatStream return useMemo 候选 · 类似 pre-wire
   可行 · 但 N=1 暂不付)
+
+## L-056 · lib 层行为契约修改即使 caller 0 改也需 ADR · "零耦合 ≠ 零责任"
+
+**症状**: 5/26 AR-1 给 lib/ws.ts 加了 view.send() per-epoch dedup ·
+caller (useAuditStream) 0 行改 · 看起来是纯 lib 内部优化。但实际是
+**wire-level 行为契约修改** — 同 epoch 同 payload 第 N 次发不到服务器
+是个 silent 行为差异 · 影响所有现有和未来 caller。第五轮
+architecture-reviewer 实测发现 ADR-045 trade-off 节描述已和代码事实
+矛盾 · 没人想起更新文档 · 后人读 ADR 会基于过期 trade-off 做错决策。
+
+**根因**: AR commit message 把 dedup 当 "HIGH-1 reconnect 风暴的修法"
+描述 · 没意识到这是**新的 wire-level 决策**。caller 不改 ≠ 不需要 ADR
+· 因为契约对所有未来 caller 生效。
+
+**Fix pattern** (commit AS-1):
+
+```
+任何 lib 层行为修改 checklist (即使 caller 0 改):
+  [ ] caller 0 改吗? → 是 → 不代表无需文档
+  [ ] 是否引入新 send/return/throw 时机? → 是 → 需 ADR
+  [ ] 是否改变现有行为的输出条件? → 是 → 需 ADR
+  [ ] 是否给 lib 加了 hidden state (mutable singleton)? → 是 → 需 ADR
+  [ ] 仅文档/JSDoc/注释? → 否 → 不需 ADR
+  [ ] 仅消除 dead code / 内联? → 否 → 不需 ADR
+有任一"是" → 写 ADR (即使是小段 · 列 A/B/C 备选 + 选项理由 + 推翻条件)
+```
+
+**关联 ADR-045 trade-off 更新** (5/26 AS-1):
+- 原 trade-off: "晚到 view 触发服务器重发 1 帧 snapshot"
+- AR-1 dedup 后此 trade-off 消除 (服务器不重发) · 但
+- **新 trade-off**: 晚到 view 必走 cachedSnapshot (可能 stale)
+- 没更新 ADR-045 文档的话 · reviewer 下次评判会基于过期 trade-off
+- DEBT-065 优先级会被误判为 LOW (实际 MID)
+
+**触发 pattern**:
+
+- lib 层引入新 module-level state (`let X = ...; export setX`)
+- lib 层在现有 API 路径上加 早返 / 条件 drop / 缓存
+- lib 层加新 event / 新 signal / 新 timing 边界 (microtask / setTimeout)
+- lib 层修改 retry / dedup / batch 行为
+
+任一触发 → 不仅要写 spec 钉新行为 · 还要写 ADR 记决策 · 同时巡视
+所有引用过老行为的 ADR/L 看有没有过期描述。
+
+**禁止的写法**:
+
+- ❌ "caller 没改 · 没必要 ADR" — 是 lib 行为变就需要
+- ❌ commit message 描述了 dedup 但 ADR 没立 — commit message 不
+  是 ADR (会被 squash · 不进决策树)
+- ❌ 更新 lib 不巡视相邻 ADR/L 是否需要 cross-reference 更新
+
+**关联**:
+
+- ADR-045 trade-off 节 (5/26 AS-1 更新)
+- ADR-046 (5/26 新写 · 本 lesson 的直接案例)
+- DEBT-065 (LOW → MID 升级 · AR-1 dedup 副作用放大 stale 风险)
+- L-055 (contract pre-wire 减少 caller 改动 · 同款"看似无 caller
+  影响"主题)
