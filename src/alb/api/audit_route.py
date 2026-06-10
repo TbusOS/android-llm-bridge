@@ -86,6 +86,9 @@ def _project(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
+    """Pure sync — async callers must wrap in `asyncio.to_thread` per
+    L-033 (events.jsonl grows unbounded until DEBT-006 rotation lands;
+    a full read + json.loads pass can stall the loop for 100s of ms)."""
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []
@@ -104,6 +107,31 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _scan_window_in_thread(
+    path: Path,
+    *,
+    since: datetime,
+    until: datetime,
+    include_metrics: bool,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Sync helper: full-file scan + window filter + sort + truncate.
+
+    The whole pipeline (not just the read) runs in the worker thread —
+    wrapping only `_read_events` would still parse/sort thousands of
+    rows on the loop. Pure sync, call via `asyncio.to_thread` (L-033).
+    """
+    in_window: list[dict[str, Any]] = []
+    for e in _read_events(path):
+        if not include_metrics and e["kind"] in METRIC_KINDS:
+            continue
+        ts = _parse_ts(e["ts"])
+        if ts is not None and since <= ts <= until:
+            in_window.append(e)
+    in_window.sort(key=lambda e: e["ts"], reverse=True)
+    return in_window[:limit]
+
+
 @router.get("/audit")
 async def list_audit(
     minutes: int = Query(30, ge=1, le=1440),
@@ -118,21 +146,20 @@ async def list_audit(
     until = datetime.now(timezone.utc)
     since = until - timedelta(minutes=minutes)
 
-    in_window: list[dict[str, Any]] = []
-    for e in _read_events(events_log_path()):
-        if not include_metrics and e["kind"] in METRIC_KINDS:
-            continue
-        ts = _parse_ts(e["ts"])
-        if ts is not None and since <= ts <= until:
-            in_window.append(e)
-    in_window.sort(key=lambda e: e["ts"], reverse=True)
-    events = in_window
+    events = await asyncio.to_thread(
+        _scan_window_in_thread,
+        events_log_path(),
+        since=since,
+        until=until,
+        include_metrics=include_metrics,
+        limit=limit,
+    )
 
     return {
         "ok": True,
         "since": since.isoformat(),
         "until": until.isoformat(),
-        "events": events[:limit],
+        "events": events,
     }
 
 
@@ -183,15 +210,14 @@ async def audit_stream(ws: WebSocket) -> None:
     # 1. Snapshot
     until = datetime.now(timezone.utc)
     since = until - timedelta(minutes=minutes)
-    snapshot: list[dict[str, Any]] = []
-    for e in _read_events(events_log_path()):
-        if not include_metrics and e["kind"] in METRIC_KINDS:
-            continue
-        ts = _parse_ts(e["ts"])
-        if ts is not None and since <= ts <= until:
-            snapshot.append(e)
-    snapshot.sort(key=lambda e: e["ts"], reverse=True)
-    snapshot = snapshot[:_SNAPSHOT_LIMIT]
+    snapshot = await asyncio.to_thread(
+        _scan_window_in_thread,
+        events_log_path(),
+        since=since,
+        until=until,
+        include_metrics=include_metrics,
+        limit=_SNAPSHOT_LIMIT,
+    )
     try:
         await ws.send_json({
             "type": "snapshot",

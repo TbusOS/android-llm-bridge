@@ -38,6 +38,7 @@ Schema (response):
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -80,7 +81,12 @@ def _read_tps_samples(
     until: datetime,
     session_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Stream-read events.jsonl, keep only tps_sample rows in window."""
+    """Stream-read events.jsonl, keep only tps_sample rows in window.
+
+    Pure sync — async callers must wrap in `asyncio.to_thread` per
+    L-033 (this endpoint is polled every 30s by the Dashboard; a sync
+    full-file scan on the loop freezes every WS stream while it runs).
+    """
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []
@@ -120,7 +126,8 @@ async def metrics_summary(
     until = datetime.now(timezone.utc)
     since = until - timedelta(seconds=window_seconds)
 
-    samples = _read_tps_samples(
+    samples = await asyncio.to_thread(
+        _read_tps_samples,
         events_log_path(),
         since=since,
         until=until,
