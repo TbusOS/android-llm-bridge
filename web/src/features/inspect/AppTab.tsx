@@ -179,15 +179,30 @@ function NameOpsCard({ device }: { device: string | null }) {
   // start (ok) then stop (ok) would still display "start ok" because
   // startM.data is left truthy and `.find` picks the first slot.
   const [lastOp, setLastOp] = useState<NameOpKey | null>(null);
+  // clear data wipes ALL user data of the target app (pm clear) — at
+  // least as destructive as uninstall (a reinstall restores the app;
+  // wiped data is gone). Same two-step arm as the uninstall button.
+  const clearArmed = useArmedAction(() => {
+    setLastOp("clear");
+    clearM.mutate(name.trim());
+  });
   // Device-change reset: previous device's result should not bleed into
   // the new device's idle state.
   useEffect(() => {
     setLastOp(null);
+    clearArmed.disarm();
     startM.reset();
     stopM.reset();
     clearM.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device]);
+  // Editing the name while armed must disarm — confirming would
+  // otherwise clear whatever the field says NOW, not what the user
+  // armed against.
+  useEffect(() => {
+    clearArmed.disarm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
 
   const fire = useCallback(
     (op: NameOpKey, fn: () => void) => {
@@ -243,12 +258,29 @@ function NameOpsCard({ device }: { device: string | null }) {
         </button>
         <button
           type="button"
-          className="app-btn app-btn--danger"
+          className={`app-btn app-btn--danger${clearArmed.armed ? " is-armed" : ""}`}
           disabled={!device || !name.trim() || pending}
-          onClick={() => fire("clear", () => clearM.mutate(name.trim()))}
+          onClick={clearArmed.trigger}
         >
-          clear data
+          {clearM.isPending
+            ? lang === "zh"
+              ? "清除中…"
+              : "clearing…"
+            : clearArmed.armed
+              ? lang === "zh"
+                ? "⚠ 再点确认（8 秒）"
+                : "⚠ click again to confirm (8 s)"
+              : "clear data"}
         </button>
+        {clearArmed.armed && (
+          <button
+            type="button"
+            className="app-btn app-btn--ghost"
+            onClick={clearArmed.disarm}
+          >
+            {lang === "zh" ? "取消" : "cancel"}
+          </button>
+        )}
       </div>
       {last?.ok && (
         <div className="app-result" data-status="ok">
@@ -288,6 +320,12 @@ function PackageDetail({
     setLastOp("uninstall");
     uninstallM.mutate(pkg!);
   });
+  // clear data is at least as destructive as uninstall (reinstall
+  // restores the app; wiped data is gone) — same two-step arm.
+  const clearArmed = useArmedAction(() => {
+    setLastOp("clear");
+    clearM.mutate(pkg!);
+  });
 
   // Reset everything on pkg OR device change. Without the device leg,
   // switching device while a package is selected would carry the old
@@ -295,6 +333,7 @@ function PackageDetail({
   useEffect(() => {
     setLastOp(null);
     uninstall.disarm();
+    clearArmed.disarm();
     [startM, stopM, clearM, uninstallM].forEach((m) => m.reset());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg, device]);
@@ -402,12 +441,29 @@ function PackageDetail({
         </button>
         <button
           type="button"
-          className="app-btn app-btn--danger"
+          className={`app-btn app-btn--danger${clearArmed.armed ? " is-armed" : ""}`}
           disabled={pending}
-          onClick={() => fire("clear", () => clearM.mutate(pkg))}
+          onClick={clearArmed.trigger}
         >
-          clear data
+          {clearM.isPending
+            ? lang === "zh"
+              ? "清除中…"
+              : "clearing…"
+            : clearArmed.armed
+              ? lang === "zh"
+                ? "⚠ 再点确认（8 秒）"
+                : "⚠ click again to confirm (8 s)"
+              : "clear data"}
         </button>
+        {clearArmed.armed && (
+          <button
+            type="button"
+            className="app-btn app-btn--ghost"
+            onClick={clearArmed.disarm}
+          >
+            {lang === "zh" ? "取消" : "cancel"}
+          </button>
+        )}
         <button
           type="button"
           className={`app-btn app-btn--danger${uninstall.armed ? " is-armed" : ""}`}
