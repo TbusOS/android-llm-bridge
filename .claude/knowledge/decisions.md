@@ -1658,6 +1658,24 @@ JSDoc 文字契约 + 0 个 ADR 强制 = 一致性靠 reviewer 偶然发现"。
   破 (chat 一次 ping 锁死 entry · 持续监听 view 拿不回 reconnect ·
   ADR-047 必须重审)
 
+**未验证字段处置** (AW-2 / 5/27 第九轮 arch MID-2):
+"0 场景验证"标注只是观察 · 不是结论。`noReconnect` 字段不能永远停在
+这个状态 — **下一次 audit cycle · 或第一次真出现 chat+listener 共 entry
+case (无论哪个先到)**，必须从以下 2 选 1 落槌:
+
+- **方案 X (推荐 · 字段降级 ViewOptions)**: `noReconnect` 从
+  pool-level Options 移除 · 改走 per-view state (chat 的真实语义就是
+  per-view 一次性 · 不该是 entry 字段)。配合 DEBT-078 PoolOptions /
+  ViewOptions 拆分一起做。
+- **方案 Y (字段保留 + 显式拒绝合并)**: `noReconnect` 留在 Options ·
+  但 connect 命中现有 entry 时若 `opts.noReconnect !== entry.noReconnect`
+  立即 throw (不走 first-caller-wins silent ignore)。比 X 改动小 · 但
+  违反 ADR-047 主条款 (entry value silently win) · 需要给 noReconnect
+  开特例条款 · 复杂度增量真实。
+
+**禁止**: 不允许在 noReconnect 字段上保持当前的"first-caller-wins 但
+未经验证"状态超过一个 audit cycle。下一轮 (或触发事件) 必须落子。
+
 **Decision**:
 
 `lib/ws.ts Pool-level Options` 的 **value 字段** (`maxBackoffMs` /

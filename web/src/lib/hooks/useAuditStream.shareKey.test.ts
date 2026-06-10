@@ -54,7 +54,7 @@ const { mockConnect, lastConnect } = vi.hoisted((): {
 
 vi.mock("../ws", () => ({ connect: mockConnect }));
 
-import { useAuditStream } from "./useAuditStream";
+import { AUDIT_STREAM_DEFAULT_STALE_MS, useAuditStream } from "./useAuditStream";
 
 beforeEach(() => {
   mockConnect.mockClear();
@@ -78,7 +78,10 @@ describe("useAuditStream · shareKey contract", () => {
     // AV-2: hook owns the default (AUDIT_STREAM_DEFAULT_STALE_MS),
     // so caller-side coordination is free — pinning the default
     // here means every audit-stream consumer agrees by construction.
-    expect(lastConnect.opts?.staleSnapshotMs).toBe(30 * 60 * 1000);
+    // AW-1 (5/27 第九轮 code/arch MID-1): pin against the exported
+    // constant so future changes to its value cause one localized
+    // spec failure here (with a clear cause) instead of silent drift.
+    expect(lastConnect.opts?.staleSnapshotMs).toBe(AUDIT_STREAM_DEFAULT_STALE_MS);
   });
 
   it("includeMetrics=true differs in shareKey → cannot share socket with false", () => {
@@ -117,7 +120,7 @@ describe("useAuditStream · shareKey contract", () => {
 
   it("staleSnapshotMs is passed through as a SEPARATE opt · NOT part of shareKey (AU-3 / ADR-047 first-caller-wins)", () => {
     renderHook(() =>
-      useAuditStream({ staleSnapshotMs: 30 * 60 * 1000 }),
+      useAuditStream({ staleSnapshotMs: AUDIT_STREAM_DEFAULT_STALE_MS }),
     );
     // shareKey stays canonical: only minutes + includeMetrics drive
     // socket sharing. Two callers with different staleSnapshotMs MUST
@@ -125,7 +128,7 @@ describe("useAuditStream · shareKey contract", () => {
     expect(lastConnect.opts?.shareKey).toBe(
       JSON.stringify({ minutes: 30, includeMetrics: false }),
     );
-    expect(lastConnect.opts?.staleSnapshotMs).toBe(30 * 60 * 1000);
+    expect(lastConnect.opts?.staleSnapshotMs).toBe(AUDIT_STREAM_DEFAULT_STALE_MS);
   });
 
   it("two callers with different staleSnapshotMs produce IDENTICAL shareKey (pool entry shared)", () => {
@@ -134,7 +137,7 @@ describe("useAuditStream · shareKey contract", () => {
 
     mockConnect.mockClear();
     lastConnect.opts = undefined as ConnectCapture["opts"];
-    renderHook(() => useAuditStream({ staleSnapshotMs: 30 * 60 * 1000 }));
+    renderHook(() => useAuditStream({ staleSnapshotMs: AUDIT_STREAM_DEFAULT_STALE_MS }));
     const keyB = lastConnect.opts?.shareKey;
 
     expect(keyA).toBe(keyB);
