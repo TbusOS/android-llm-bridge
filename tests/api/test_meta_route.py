@@ -74,6 +74,52 @@ def test_schema_endpoints_match_registered_routes(client) -> None:
         assert r.status_code != 404, f"{e['path']} is in schema but returns 404"
 
 
+# Meta endpoints intentionally NOT in REST_ENDPOINTS: /api/version is
+# documented (it IS the contract); these two are its plumbing aliases.
+_SCHEMA_DOC_EXEMPT = {"/api/ping", "/api/schema"}
+
+
+def test_mounted_routes_are_documented(client) -> None:
+    """Reverse parity (AR9-1 第十轮): every mounted route must appear in
+    REST_ENDPOINTS / WS_ENDPOINTS / the explicit exempt set.
+
+    The forward direction (documented → mounted) is covered above; this
+    direction is what let 17 endpoints from the 5/18 batch ship without
+    contract documentation while CI stayed green for 14+ days. The
+    schema docstring promises clients can feature-detect via these
+    lists, so "mounted but undocumented" is a contract bug.
+    """
+    import re
+
+    from fastapi.routing import APIRoute, APIWebSocketRoute
+
+    def _norm(path: str) -> str:
+        # FastAPI route paths carry converter suffixes ({path:path});
+        # the documented contract uses the bare {param} form.
+        return re.sub(r"\{([^}:]+):[^}]+\}", r"{\1}", path)
+
+    documented_rest = {e["path"] for e in REST_ENDPOINTS}
+    documented_ws = {w["path"] for w in WS_ENDPOINTS}
+
+    for route in client.app.routes:
+        if isinstance(route, APIWebSocketRoute):
+            assert _norm(route.path) in documented_ws, (
+                f"WS {route.path} is mounted but missing from "
+                "schema.WS_ENDPOINTS — document it (it IS the contract)"
+            )
+        elif isinstance(route, APIRoute):
+            path = _norm(route.path)
+            if path in _SCHEMA_DOC_EXEMPT:
+                continue
+            assert path in documented_rest, (
+                f"{sorted(route.methods)} {path} is mounted but "
+                "missing from schema.REST_ENDPOINTS — document it "
+                "(it IS the contract)"
+            )
+        # Mount (static /app UI) and Starlette built-ins (openapi/docs)
+        # are not APIRoute/APIWebSocketRoute — skipped implicitly.
+
+
 def test_schema_lists_consistent_constants() -> None:
     # Sanity: the data that the server would serialize matches the
     # module-level constants.

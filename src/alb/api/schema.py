@@ -8,6 +8,16 @@ the contract.
 Bumping API_VERSION means a breaking change for clients that pin
 against a specific version. Add / remove endpoints freely within the
 same version — clients should feature-detect via the returned lists.
+
+Path conventions (two coexisting generations, frozen by decision):
+    - root-path endpoints (`/devices`, `/uart/...`, `/workspace/...`,
+      `/sessions`, `/chat`, `/playground/...`) are the v1 legacy set.
+      They stay where they are — moving them breaks shipped clients
+      and would force an API_VERSION bump for zero functional gain.
+    - every endpoint added since the 5/18 batch lives under
+      `/api/<domain>/...` (`/api/app`, `/api/diag`, `/api/power`,
+      `/api/log`, `/api/doctor`). New endpoints MUST follow this
+      prefix form; do not start a third convention.
 """
 
 from __future__ import annotations
@@ -47,10 +57,14 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Registered LLM backends with capabilities"},
     {"method": "GET",  "path": "/playground/backends/{backend}/models",
      "description": "Models installed on the given backend"},
+    {"method": "GET",  "path": "/playground/backends/{name}/health",
+     "description": "Reachability probe for one backend (Dashboard LlmBackendCards)"},
     {"method": "POST", "path": "/playground/chat",
      "description": "Raw LLM chat (no agent loop), non-streaming"},
     {"method": "GET",  "path": "/sessions",
      "description": "List recent ChatSession dirs (Dashboard feed)"},
+    {"method": "GET",  "path": "/sessions/{session_id}",
+     "description": "Full session detail — meta + every message (SessionDetailPage replay)"},
     {"method": "GET",  "path": "/devices",
      "description": "Devices visible through the active transport"},
     {"method": "GET",  "path": "/audit",
@@ -93,6 +107,39 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Stream a workspace file as a download (PR-H)"},
     {"method": "GET",  "path": "/workspace/files/preview/{path}",
      "description": "Inline UTF-8 text preview of a small workspace file (LOW-3)"},
+    # ---- /api/<domain>/* generation (5/18 batch) -------------------
+    {"method": "GET",  "path": "/api/app/list",
+     "description": "Installed packages (pm list), optional name filter / system apps"},
+    {"method": "GET",  "path": "/api/app/info",
+     "description": "Single-package detail — version, install times, requested perms"},
+    {"method": "POST", "path": "/api/app/start",
+     "description": "Launch a package (am start for pkg/Activity, monkey for bare package)"},
+    {"method": "POST", "path": "/api/app/stop",
+     "description": "Force-stop a package (am force-stop)"},
+    {"method": "POST", "path": "/api/app/clear-data",
+     "description": "Wipe a package's user data (pm clear) — destructive, irreversible"},
+    {"method": "POST", "path": "/api/app/uninstall",
+     "description": "Uninstall a package; keep_data opt-in"},
+    {"method": "POST", "path": "/api/app/install",
+     "description": "Install an uploaded APK (multipart, 500 MB cap)"},
+    {"method": "POST", "path": "/api/diag/bugreport",
+     "description": "Capture a full bugreport into the workspace (long-running)"},
+    {"method": "POST", "path": "/api/diag/anr",
+     "description": "Pull /data/anr traces into the workspace"},
+    {"method": "POST", "path": "/api/diag/tombstone",
+     "description": "Pull /data/tombstones into the workspace"},
+    {"method": "GET",  "path": "/api/diag/artifacts",
+     "description": "List previously captured diag artifacts (bugreport / anr / tombstone)"},
+    {"method": "GET",  "path": "/api/power/battery",
+     "description": "Parsed dumpsys battery snapshot"},
+    {"method": "POST", "path": "/api/power/reboot",
+     "description": "Reboot the device; non-normal modes require allow_dangerous"},
+    {"method": "POST", "path": "/api/power/sleep-wake",
+     "description": "N sleep→wake cycles via KEYCODE_POWER / WAKEUP key events"},
+    {"method": "GET",  "path": "/api/log/search",
+     "description": "Regex search over logcat (bounded window + match cap)"},
+    {"method": "GET",  "path": "/api/doctor",
+     "description": "Six-layer environment health probe (concurrent, ~worst single probe)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [
