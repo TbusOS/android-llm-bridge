@@ -88,6 +88,16 @@ export function PlaygroundPage() {
   const [system, setSystem] = useState<string>("");
 
   const [log, setLog] = useState<ChatMessage[]>([]);
+  // Per-turn metrics survive chat.reset() here (UIF-01 第十轮): the
+  // settled effect resets the stream right after promoting the done
+  // content, so anything rendered off `chat.status === "done"` lives
+  // for ≤1 frame. NOT stored on ChatMessage.meta — meta is the
+  // "strip from LLM payload" marker and would drop the real reply
+  // from conversation history.
+  const [lastMetrics, setLastMetrics] = useState<{
+    metrics: Record<string, unknown>;
+    finishReason: string | null;
+  } | null>(null);
   const [input, setInput] = useState<string>("");
 
   const chat = usePlaygroundChat();
@@ -149,6 +159,9 @@ export function PlaygroundPage() {
     lastPromptRef.current = text;
     setInput("");
     setStickToBottom(true);
+    // New turn — the previous turn's metrics no longer describe the
+    // bottom of the log.
+    setLastMetrics(null);
     const req: PlaygroundRequest = {
       backend,
       model: model || null,
@@ -186,6 +199,14 @@ export function PlaygroundPage() {
             return l;
           }
           return [...l, { role: "assistant", content }];
+        });
+      }
+      // Stash metrics BEFORE reset — reset nulls chat.done, and the
+      // metrics block must outlive it (UIF-01).
+      if (chat.done?.metrics) {
+        setLastMetrics({
+          metrics: chat.done.metrics,
+          finishReason: chat.done.finish_reason || null,
         });
       }
       chat.reset();
@@ -235,6 +256,7 @@ export function PlaygroundPage() {
 
   const onClear = () => {
     setLog([]);
+    setLastMetrics(null);
     chat.reset();
     setStickToBottom(true);
   };
@@ -422,16 +444,16 @@ export function PlaygroundPage() {
               </pre>
             </div>
           )}
-          {chat.status === "done" && chat.done && chat.done.metrics && (
+          {lastMetrics && (
             <div className="playground-chat__metrics">
-              {Object.entries(chat.done.metrics).map(([k, v]) => (
+              {Object.entries(lastMetrics.metrics).map(([k, v]) => (
                 <span key={k} className="playground-chat__metric">
                   {k}: {String(v)}
                 </span>
               ))}
-              {chat.done.finish_reason && (
+              {lastMetrics.finishReason && (
                 <span className="playground-chat__metric">
-                  finish: {chat.done.finish_reason}
+                  finish: {lastMetrics.finishReason}
                 </span>
               )}
             </div>

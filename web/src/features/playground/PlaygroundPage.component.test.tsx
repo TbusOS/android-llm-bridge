@@ -631,3 +631,63 @@ describe("PlaygroundPage · i18n zh path (AR-2 / ui-f HIGH-3)", () => {
     expect(screen.getByText(/已取消（未发给模型）/)).toBeInTheDocument();
   });
 });
+
+describe("PlaygroundPage · per-turn metrics survive reset (UIF-01 第十轮)", () => {
+  it("metrics stay visible after chat.reset() wipes status/done back to idle", () => {
+    const { rerender } = render(<PlaygroundPage />);
+    sendPrompt("hi");
+
+    // Turn settles with metrics attached.
+    chatState.status = "done";
+    chatState.settled = { kind: "done" };
+    chatState.done = {
+      ok: true,
+      content: "hi back",
+      finish_reason: "stop",
+      model: "llama3",
+      backend: "ollama",
+      metrics: { tps: 42.5 },
+    };
+    rerender(<PlaygroundPage />);
+    expect(chatActions.reset).toHaveBeenCalled();
+
+    // Simulate the real post-reset state: stream back to idle, done
+    // nulled, settled cleared. Pre-fix the metrics block was keyed on
+    // `chat.status === "done" && chat.done` — both gone here — so it
+    // unmounted after ≤1 frame and the user never saw it.
+    chatState.status = "idle";
+    chatState.settled = null;
+    chatState.done = null;
+    rerender(<PlaygroundPage />);
+
+    expect(screen.getByText("tps: 42.5")).toBeInTheDocument();
+    expect(screen.getByText("finish: stop")).toBeInTheDocument();
+  });
+
+  it("metrics cleared on next send — stale numbers never describe a new turn", () => {
+    const { rerender } = render(<PlaygroundPage />);
+    sendPrompt("hi");
+
+    chatState.status = "done";
+    chatState.settled = { kind: "done" };
+    chatState.done = {
+      ok: true,
+      content: "hi back",
+      finish_reason: "stop",
+      model: "llama3",
+      backend: "ollama",
+      metrics: { tps: 42.5 },
+    };
+    rerender(<PlaygroundPage />);
+    chatState.status = "idle";
+    chatState.settled = null;
+    chatState.done = null;
+    rerender(<PlaygroundPage />);
+    expect(screen.getByText("tps: 42.5")).toBeInTheDocument();
+
+    // Next turn starts — metrics block must go.
+    chatActions.send.mockClear();
+    sendPrompt("again");
+    expect(screen.queryByText("tps: 42.5")).not.toBeInTheDocument();
+  });
+});
