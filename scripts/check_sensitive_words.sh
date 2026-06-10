@@ -56,10 +56,12 @@ ALLOWED=(
   '.pre-commit-config.yaml'
   '.gitignore'
   # agents 团队元文档：security-and-neutrality-auditor 引用禁用词清单
-  # 让 agent 知道要扫什么；lessons.md 解释历史教训为什么禁用。两份都
-  # 是定义规则本身，不是泄露。
+  # 让 agent 知道要扫什么。这是定义规则本身，不是泄露。
+  # lessons.md 之前也整文件豁免，但 lessons 是持续增长的 journal，叙事
+  # 写法易把真实识别符（真邮箱 / 真路径 / 真 SoC SKU）混进操作示例中
+  # 流到公网。改为不豁免，lessons 写作必须用 generic 占位符
+  # （<vendor 名> / <SoC SKU> / ~/<project> / COMxx 等）。
   '.claude/agents/security-and-neutrality-auditor.md'
-  '.claude/knowledge/lessons.md'
 )
 
 is_allowed() {

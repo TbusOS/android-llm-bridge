@@ -42,7 +42,7 @@
 - L-030 · NaN 钳位行为按"语言 + 顺序"分级 · explicit NaN check 是唯一跨语言可移植安全写法
 
 **流程 / 协作 / 安全**
-- L-004 · 公开仓 commit message 中文（vendor 规则不适用）
+- L-004 · 公开仓 commit message 中文（内部仓规则不适用）
 - L-005 · 公开仓 vs 内网仓物理分离（不能 sync）
 - L-006 · 95 服务器禁止 adb kill-server
 - L-007 · 外发内容必须脱敏 + 双 grep 自检
@@ -111,7 +111,7 @@ visual-audit-runner agent 的 prompt 里专门列了 6 个盲区类型，每次
 
 ---
 
-## L-004 · 公开仓 commit message 中文（vendor 规则不适用）
+## L-004 · 公开仓 commit message 中文（内部仓规则不适用）
 
 **坑**：2026-04-24 用户明确要求公开仓（`TbusOS/android-llm-bridge`）的
 commit message 用中文叙述，技术关键词保留英文。
@@ -121,8 +121,8 @@ commit message 用中文叙述，技术关键词保留英文。
   Dashboard 真实数据后端 step 3`）
 - commit body：中文为主，必要时穿插英文术语
 - 不带 `Co-Authored-By: Claude` 署名（全局禁用）
-- 不带 `Co-authored-by: dev@vendor`（vendor 内网仓规则，不适用本
-  公开仓）
+- 不带内部仓约定的 `Co-authored-by: <maintainer-internal-email>`
+  （内部仓规则，不适用本公开仓）
 
 **应用到 agents**：code-reviewer 看 commit message 时不要建议改成英文。
 
@@ -140,7 +140,7 @@ commit message 用中文叙述，技术关键词保留英文。
 - 两边手动 cherry-pick / patch 转移，不脚本同步
 
 **应用到 agents**：security-and-neutrality-auditor 看公开仓 diff 时
-要 grep 任何 vendor / RK / 内网 IP 痕迹。
+要 grep 任何内部 vendor 名 / 内部 SoC SKU / 内网 IP 痕迹。
 
 ---
 
@@ -160,8 +160,8 @@ Windows 那一头的 adb daemon，整个调试链断掉。
 ## L-007 · 外发内容必须脱敏 + 双 grep 自检
 
 **坑**：2026-04-23 给 `TbusOS/android-llm-bridge` 提 issue 时，自以为
-脱敏过但实际放过 7 处敏感词（Rockchip / arm-soc / RKDevTool /
-upgrade_tool / `~/...` / COM27）。issue 已发公网，删了重发
+脱敏过但实际放过 7 处敏感词（vendor 名 / SoC SKU / vendor flashing
+tool / vendor upgrade tool / 真 home 路径 / 真串口号）。issue 已发公网，删了重发
 干净版（#3）。但旧版可能已被 GitHub 邮件订阅 / 爬虫抓走。
 
 **规则**：任何外发到公网的内容（GitHub issue / PR / discussion / wiki /
@@ -191,7 +191,7 @@ gist / Stack Overflow / 公开邮件列表 / 在线 paste），发布前**必须
 ## L-009 · 代码事实禁止 hedge
 
 **坑**：2026-04-22 Task 15 defconfig 分析，第一轮回复"嫌疑这 5 个 vendor
-符号多年静默失效"，被用户打回："啥叫幽灵，有就有没有就没有，不确定
+配置符号多年静默失效"，被用户打回："啥叫幽灵，有就有没有就没有，不确定
 就去看代码"。事实是 5 个符号全部有定义，完全正常。
 
 **规则**：代码事实类判断（"符号有没有定义" / "函数是不是被调用" /
@@ -208,7 +208,7 @@ gist / Stack Overflow / 公开邮件列表 / 在线 paste），发布前**必须
 
 **坑**：2026-04-21 Task 15 FIT_SIGNATURE 分析，只看 Kconfig select 链 +
 cmd #ifdef 保护就下结论"不是必须"。后来发现没查运行时路径 / vendor 三级
-信任架构 / PCI 7.0 合规要求。
+信任架构 / 行业合规要求。
 
 **规则**：任何"删除/禁用某段代码"判断必须从 4 维度完整分析：
 1. 编译/链接（最低要求）
@@ -227,7 +227,7 @@ cmd #ifdef 保护就下结论"不是必须"。后来发现没查运行时路径 
 整支 3 行，被用户打回，改为加宏 gate 保留。
 
 **规则**：对上游代码（RK / kernel / U-Boot 等）做定制改动时，**默认**
-保留上游原码 + 加下游宏 gate（如 `CONFIG_vendor_<purpose>`）卡一下，而
+保留上游原码 + 加下游宏 gate（如 `CONFIG_<VENDOR>_<purpose>`）卡一下，而
 不是删除上游代码。注释里标 `RK_ORIGINAL` / `UPSTREAM_ORIGINAL`。
 
 > 备注：这条规则在 alb 项目（纯应用层 Python/TS）几乎不触发。但留在
@@ -292,7 +292,7 @@ WS 各连"在 ADR-018 被显式否决（理由"浪费连接"），但 ADR-021 �
 
 **坑**：F.4 加 `GET /tools` 后，`fn.__doc__` 第一行被作为 description
 公开到 Web UI Dashboard。任何后续 PR 在 `src/alb/mcp/tools/*.py` 给
-`@mcp.tool()` 函数加首行 docstring 写了 `arm-soc` / `vendor` / 内部 IP /
+`@mcp.tool()` 函数加首行 docstring 写了 `<SoC SKU>` / `<vendor 名>` / 内部 IP /
 内部安全策略细节（如"DENY: rm -rf, reboot bootloader"），都会**直接
 通过 GET /tools 流到外部**。`scripts/check_sensitive_words.sh` 是全文
 grep 能拦中立性，但**安全策略细节不在禁用词清单里**，会被静默放行。
@@ -2112,8 +2112,8 @@ cwd 锁在内部仓 · Edit/Write/Read 用绝对路径仍走对的 · 但 bash �
 
 **规则**：内部仓 + 公开仓双副本场景下:
 
-1. **Edit / Write / Read 一律走绝对路径**指向公开仓（`~/
-   android-llm-bridge/...`），不依赖 cwd
+1. **Edit / Write / Read 一律走绝对路径**指向公开仓（`~/android-llm-bridge/...`
+   展开后的绝对路径），不依赖 cwd
 2. **bash 跑命令时必须显式 `cd ~/android-llm-bridge && ...`**
    或用绝对路径 · 否则 `grep -rn ...` / `npm` / `pytest` 全在内部仓跑
 3. **验证命令** （`./scripts/check_sensitive_words.sh` / `npm run
@@ -2127,7 +2127,7 @@ cwd 锁在内部仓 · Edit/Write/Read 用绝对路径仍走对的 · 但 bash �
 
 **触发条件**：
 
-- 任何 vendor/PXX 内部仓 + 开源公开仓双副本工作流
+- 任何 vendor 内部仓 + 开源公开仓双副本工作流
 - 任何 worktree / submodule / vendor copy 场景
 - 任何 `~/...` 别名指向不固定时
 
