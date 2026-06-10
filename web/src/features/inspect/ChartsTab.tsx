@@ -18,8 +18,6 @@ import { NoDeviceCard } from "../../components/NoDeviceCard";
 import { Sparkline } from "../dashboard/Sparkline";
 import { type MetricSample, useMetricsStream } from "./useMetricsStream";
 
-const SPARK_HEIGHT = 88;
-
 export function ChartsTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
@@ -160,21 +158,25 @@ interface ChartCardProps {
 }
 
 function ChartCard({ title, big, unit, spark, color, caption }: ChartCardProps) {
+  // Structure mirrors mockup docs/webui-preview-v2.html chart-card
+  // (L-028): .chart-head > .chart-title + .chart-now > .unit, then
+  // svg.chart-spark directly under the card. The svg height comes
+  // from the .chart-spark CSS rule — no inline height double-write.
   return (
     <div className="chart-card">
-      <h3>{title}</h3>
-      <div className="chart-num">
-        {big}
-        <span className="chart-unit">{unit}</span>
+      <div className="chart-head">
+        <span className="chart-title">{title}</span>
+        <span className="chart-now">
+          {big}
+          <span className="unit">{unit}</span>
+        </span>
       </div>
-      <div style={{ height: SPARK_HEIGHT }}>
-        <Sparkline
-          points={spark}
-          color={color}
-          className="chart-spark"
-          ariaLabel={title}
-        />
-      </div>
+      <Sparkline
+        points={spark}
+        color={color}
+        className="chart-spark"
+        ariaLabel={title}
+      />
       {caption && <div className="chart-foot">{caption}</div>}
     </div>
   );
