@@ -72,6 +72,11 @@ export function useLogcatStream(): LogcatStreamApi {
       const ws = new WebSocket(wsUrl("/logcat/stream"));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
+      // Stale-socket guard: connect() tears the previous socket down
+      // first, but its queued message/error/close events still fire
+      // afterwards. Every handler bails unless this socket is still the
+      // current one (same pattern as useWsChatStream's myClient guard).
+      const myWs = ws;
 
       ws.addEventListener("open", () => {
         const config: Record<string, unknown> = {};
@@ -86,6 +91,7 @@ export function useLogcatStream(): LogcatStreamApi {
       });
 
       ws.addEventListener("message", (ev) => {
+        if (wsRef.current !== myWs) return;
         if (typeof ev.data === "string") {
           try {
             const msg = JSON.parse(ev.data);
@@ -115,15 +121,18 @@ export function useLogcatStream(): LogcatStreamApi {
       });
 
       ws.addEventListener("error", () => {
+        if (wsRef.current !== myWs) return;
         setState("error");
         setError("WebSocket error");
       });
 
       ws.addEventListener("close", () => {
+        // cleanup() nulls wsRef before close() — a cleanup-path or
+        // superseded socket's close event lands here and must not
+        // touch the (already reset / new) state.
+        if (wsRef.current !== myWs) return;
+        wsRef.current = null;
         setState((s) => (s === "ready" || s === "connecting" ? "ended" : s));
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
       });
     },
     [cleanup],

@@ -82,6 +82,11 @@ export function useUartStream(): UartStreamApi {
       const ws = new WebSocket(wsUrl("/uart/stream"));
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
+      // Stale-socket guard: connect() tears the previous socket down
+      // first, but its queued message/error/close events still fire
+      // afterwards. Every handler bails unless this socket is still the
+      // current one (same pattern as useWsChatStream's myClient guard).
+      const myWs = ws;
 
       ws.addEventListener("open", () => {
         // First-frame config (server timeout 1.5s, optional)
@@ -96,6 +101,7 @@ export function useUartStream(): UartStreamApi {
       });
 
       ws.addEventListener("message", (ev) => {
+        if (wsRef.current !== myWs) return;
         if (typeof ev.data === "string") {
           try {
             const msg = JSON.parse(ev.data);
@@ -127,16 +133,19 @@ export function useUartStream(): UartStreamApi {
       });
 
       ws.addEventListener("error", () => {
+        if (wsRef.current !== myWs) return;
         setState("error");
         setError("WebSocket error");
       });
 
       ws.addEventListener("close", () => {
+        // cleanup() nulls wsRef before close() — a cleanup-path or
+        // superseded socket's close event lands here and must not
+        // touch the (already reset / new) state.
+        if (wsRef.current !== myWs) return;
+        wsRef.current = null;
         // Only step state down if we weren't already in a terminal state.
         setState((s) => (s === "ready" || s === "connecting" ? "ended" : s));
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
       });
     },
     [cleanup],
