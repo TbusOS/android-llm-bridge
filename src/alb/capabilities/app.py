@@ -57,6 +57,27 @@ _COMPONENT_RE = re.compile(
 
 
 # ─── install / uninstall ───────────────────────────────────────────
+_SAFE_APK_NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_remote_apk_name(name: str) -> str:
+    """Sanitize an APK basename before it lands in a device shell command.
+
+    The local filename is attacker-influenced on the CLI / MCP paths (the
+    web upload path already spools to a server-generated temp name). The
+    name is interpolated into ``pm install .../<name>`` and
+    ``rm -f .../<name>``, both run via ``sh -c`` on the device / remote —
+    a name like ``x.apk; reboot #`` or ``$(id).apk`` would otherwise
+    execute. Collapsing everything outside ``[A-Za-z0-9._-]`` to ``_``
+    keeps the name readable on-device while making shell breakout
+    impossible (SEC-1)."""
+    base = Path(name).name
+    cleaned = _SAFE_APK_NAME_RE.sub("_", base) or "app"
+    if not cleaned.endswith(".apk"):
+        cleaned += ".apk"
+    return cleaned
+
+
 async def install(
     transport: Transport,
     apk: Path,
@@ -74,6 +95,10 @@ async def install(
             category="io",
         )
 
+    # SEC-1: never interpolate the raw local filename into a device shell
+    # command — sanitize the on-device basename first.
+    remote = f"/data/local/tmp/{_safe_remote_apk_name(apk.name)}"
+
     if transport.name == "adb":
         flags = []
         if replace:
@@ -83,7 +108,7 @@ async def install(
         if downgrade:
             flags.append("-d")
         # adb install is a special command, not `adb shell`
-        result = await transport.push(apk, f"/data/local/tmp/{apk.name}")
+        result = await transport.push(apk, remote)
         if not result.ok:
             return fail(
                 code=result.error_code or "ADB_COMMAND_FAILED",
@@ -91,9 +116,8 @@ async def install(
                 suggestion="Check device storage",
                 category="transport",
             )
-        shell_cmd = f"pm install {' '.join(flags)} /data/local/tmp/{apk.name}"
+        shell_cmd = f"pm install {' '.join(flags)} {remote}"
     elif transport.name == "ssh":
-        remote = f"/data/local/tmp/{apk.name}"
         push_r = await transport.push(apk, remote)
         if not push_r.ok:
             return fail(
@@ -119,7 +143,7 @@ async def install(
         )
 
     r = await transport.shell(shell_cmd, timeout=180)
-    await transport.shell(f"rm -f /data/local/tmp/{apk.name}", timeout=10)
+    await transport.shell(f"rm -f {remote}", timeout=10)
 
     if not r.ok:
         return fail(

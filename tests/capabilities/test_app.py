@@ -11,7 +11,9 @@ from alb.capabilities.app import (
     _classify_install_error,
     _grep_first,
     _grep_permissions,
+    _safe_remote_apk_name,
     info,
+    install,
     list_apps,
     start,
     stop,
@@ -156,6 +158,56 @@ async def test_start_rejects_shell_metachar_in_component() -> None:
         assert not r.ok, f"component should be rejected: {bad!r}"
         assert r.error is not None
         assert r.error.code == "COMPONENT_INVALID", bad
+
+
+# ─── install · APK filename sanitization (round11 SEC-1) ───────────
+def test_safe_remote_apk_name_sanitizes() -> None:
+    assert _safe_remote_apk_name("x; reboot #.apk") == "x__reboot__.apk"
+    assert _safe_remote_apk_name("$(reboot).apk") == "__reboot_.apk"
+    assert _safe_remote_apk_name("/path/to/clean.apk") == "clean.apk"
+    assert _safe_remote_apk_name("noext") == "noext.apk"
+    assert _safe_remote_apk_name("") == "app.apk"
+
+
+@pytest.mark.parametrize("raw", ["a;b.apk", "a b.apk", "a|b.apk", "a`b`.apk", "a$b.apk"])
+def test_safe_remote_apk_name_strips_shell_metachars(raw: str) -> None:
+    safe = _safe_remote_apk_name(raw)
+    for ch in ";| `$()&<>\n\t":
+        assert ch not in safe
+    assert safe.endswith(".apk")
+
+
+@pytest.mark.asyncio
+async def test_install_never_passes_raw_name_to_shell(tmp_path: Path) -> None:
+    """A malicious local APK basename must not reach the device shell."""
+    apk = tmp_path / "evil; reboot #.apk"
+    apk.write_bytes(b"PK\x03\x04")
+
+    shell_cmds: list[str] = []
+    pushed: list[str] = []
+
+    t = AsyncMock()
+    t.name = "adb"
+
+    async def push(local: Path, remote: str) -> ShellResult:
+        pushed.append(str(remote))
+        return ShellResult(ok=True)
+
+    async def shell(cmd: str, timeout: int = 30) -> ShellResult:
+        shell_cmds.append(cmd)
+        return ShellResult(ok=True, stdout="Success\n")
+
+    t.push = push
+    t.shell = shell
+
+    r = await install(t, apk)
+    assert r.ok
+    assert shell_cmds, "install should issue at least the pm install command"
+    for cmd in shell_cmds:
+        for ch in ";|`$()&<>":
+            assert ch not in cmd, f"metachar {ch!r} leaked into shell: {cmd!r}"
+    assert pushed and pushed[0].endswith(".apk")
+    assert ";" not in pushed[0] and " " not in pushed[0]
 
 
 @pytest.mark.asyncio
