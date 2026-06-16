@@ -1,7 +1,35 @@
-# 当前架构快照 · 2026-04-28
+# 当前架构快照 · 2026-06-16
 
 > 每次重大重构 / 新模块 ship 后由主对话更新。agents 评审时这是它们
 > 拿到的"项目地图"。
+>
+> **权威端点列表**：本文档的树是导览，不是合约。REST/WS 的真实清单见
+> `src/alb/api/schema.py`（`REST_ENDPOINTS` / `WS_ENDPOINTS`）+ 运行时
+> `GET /api/version`；反向 parity test（`tests/api/test_meta_route.py`
+> `test_mounted_routes_are_documented`）保证"已挂载即已登记"。
+
+## 2026-06-16 刷新增量（round11 后）
+
+04-28 那版已显著过时，本次据代码核对更正：
+
+- **api 路由 21 个模块**（不是早期的 ~10）：chat / audit / sessions /
+  devices / metrics / metrics_summary / playground / terminal / meta /
+  doctor / tools / app / diag / power / files / screenshots / log_search /
+  **info（round11 新增 · GET /api/info/{panel}）** / uart / uart_stream /
+  logcat_stream。schema.py `REST_ENDPOINTS` 当前 ~46 条。新端点一律
+  `/api/<domain>/*`，根路径端点为 v1 冻结（ADR · round10 AR9-1）。
+- **inspect 12 个 sub tab**（不是 5）：System Info / Charts / Logcat /
+  Log Search / Shell / UART / Screenshot / UI Dump / App / Files / Power /
+  Diag，走 InspectPage 嵌套路由。
+- **5 个 inspect 流式 hook 直接裸用 WebSocket**（useUartStream /
+  useLogcatStream / useTerminalSession / useMetricsStream /
+  useFileTransferStream），绕过 `lib/ws.ts` 池化客户端；都带 stale-socket
+  身份守护（round10 CR-1 + round11 UI-3）。该边界尚无 ADR（AR9-4 backlog）。
+- **`lib/ws.ts` 双模**（DEBT-047/065/078 · ADR-046/047）：SoloOptions
+  （一 socket 一 connect，可 noReconnect）vs PoolOptions（shareKey 去重 +
+  cached-snapshot late-join），按 shareKey 是否存在分流；useAuditStream 用池。
+- **MCP 33 tools**（不是 21）。
+- round11 还补了 **POST /api/log/dmesg**（web 端 dmesg 采集入口）。
 
 ## 顶层组成
 
@@ -41,8 +69,8 @@ android-llm-bridge/
 │   │   ├── prompt_builder.py         # 静态/动态 prompt 分界
 │   │   ├── env_loader.py             # .env / .env.local
 │   │   ├── config.py registry.py process.py
-│   ├── mcp/                          # MCP server（21 tools）
-│   │   ├── server.py executor.py transport_factory.py
+│   ├── mcp/                          # MCP server（33 tools）
+│   │   ├── server.py executor.py transport_factory.py（→ shim，工厂已迁 transport/factory.py · AR9-5）
 │   │   └── tools/                    # shell / logging / info / diagnose / app / power / metrics / ui / devices
 │   └── cli.py                        # alb CLI（typer）
 ├── web/                              # 前端（React 18.3 + Vite + TS strict）
@@ -50,9 +78,9 @@ android-llm-bridge/
 │       ├── lib/                      # ws.ts api.ts
 │       ├── stores/app.ts             # Zustand 全局 state（lang / theme / device）
 │       ├── features/                 # 按模块组织
-│       │   ├── chat/                 # ChatPage + useChatStream
-│       │   ├── dashboard/            # DashboardPage + 6 卡 + 5 hooks（real）
-│       │   └── inspect/              # InspectPage + 5 sub tabs
+│       │   ├── chat/ playground/ audit/ sessions/ doctor/
+│       │   ├── dashboard/            # DashboardPage + 6 卡 + hooks（real，含 useBackends 健康探测）
+│       │   └── inspect/              # InspectPage + 12 sub tabs + 5 流式 hook（裸 WS）
 │       ├── components/SubNav.tsx     # 模块内子导航（共享）
 │       ├── styles/components.css     # class-based 样式（不引 Tailwind）
 │       └── routes/                   # TanStack Router
@@ -62,7 +90,7 @@ android-llm-bridge/
 │   ├── on-device-*.html              # 设备端 Agent 介绍
 │   ├── methods/                      # 技术方法论 markdown
 │   └── app/                          # 编译后 React UI
-├── tests/                            # pytest（601+ tests，全 green）
+├── tests/                            # pytest（1095 passed）+ web vitest（218 passed），全 green
 ├── scripts/                          # check_sensitive_words.sh / check_offline_purity.sh / smoke_*
 └── workspace/                        # 运行时数据（gitignore）
     └── sessions/<sid>/
@@ -76,7 +104,7 @@ android-llm-bridge/
 
 1. **Transport 抽象 + 4 实现**：adb / ssh / serial / hybrid，由 build_transport
    工厂选择
-2. **MCP 21 tools 是 capability layer 的 tool 化包装**，不是独立实现
+2. **MCP 33 tools 是 capability layer 的 tool 化包装**，不是独立实现
 3. **Agent 层 ABC + 多 backend**：当前 Ollama，未来 OpenAI-compat / Llama.cpp
 4. **Result envelope 全局**：`{ok, data?, error?}` 跨 CLI/MCP/HTTP 一致
 5. **事件总线（C 档重构）**：in-process EventBroadcaster + events.jsonl 持久化 +
