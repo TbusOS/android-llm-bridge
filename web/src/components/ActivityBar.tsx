@@ -21,6 +21,10 @@ import {
   Timer,
 } from "lucide-react";
 import { useApp } from "../stores/app";
+import {
+  deriveOverallBackendStatus,
+  useBackends,
+} from "../features/dashboard/useBackends";
 
 interface NavItem {
   to: string;
@@ -48,6 +52,21 @@ export function ActivityBar() {
   const setTheme = useApp((s) => s.setTheme);
   const setLang = useApp((s) => s.setLang);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  // UI-2: the LLM pill reflects real backend health (was hard-coded "up").
+  const llmStatus = deriveOverallBackendStatus(useBackends());
+  const llmTitle =
+    llmStatus === "up"
+      ? lang === "zh"
+        ? "LLM 后端在线"
+        : "LLM backend up"
+      : llmStatus === "down"
+        ? lang === "zh"
+          ? "LLM 后端不可达"
+          : "LLM backend unreachable"
+        : lang === "zh"
+          ? "LLM 后端检测中…"
+          : "LLM backend — checking…";
 
   const nextTheme =
     theme === "light" ? "dark" : theme === "dark" ? "auto" : "light";
@@ -81,8 +100,16 @@ export function ActivityBar() {
       <span className="ab-spacer" />
 
       <span
-        className="ab-status"
-        title={lang === "zh" ? "LLM 后端在线" : "LLM backend up"}
+        className={
+          llmStatus === "down"
+            ? "ab-status is-down"
+            : llmStatus === "checking"
+              ? "ab-status is-checking"
+              : "ab-status"
+        }
+        title={llmTitle}
+        role="status"
+        aria-label={llmTitle}
       >
         <span className="swatch" />
         LLM
@@ -115,11 +142,15 @@ export function ActivityBar() {
 
       <span className="ab-divider" aria-hidden={true} />
 
+      {/* UI-1: no settings page exists yet — render disabled rather than a
+          clickable control that silently does nothing. */}
       <button
         type="button"
-        className="ab-item"
-        aria-label={lang === "zh" ? "设置" : "Settings"}
-        title={lang === "zh" ? "设置" : "Settings"}
+        className="ab-item is-disabled"
+        disabled={true}
+        aria-disabled={true}
+        aria-label={lang === "zh" ? "设置（即将推出）" : "Settings (coming soon)"}
+        title={lang === "zh" ? "设置（即将推出）" : "Settings (coming soon)"}
       >
         <Settings size={20} aria-hidden={true} />
       </button>

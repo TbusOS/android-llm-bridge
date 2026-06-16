@@ -101,6 +101,11 @@ export function useMetricsStream(maxSamples = 120): MetricsApi {
 
       const ws = new WebSocket(wsUrl("/metrics/stream"));
       wsRef.current = ws;
+      // Stale-socket guard (UI-3): connect() tears the previous socket
+      // down first, but its queued message/error/close events still fire
+      // afterwards. Every handler bails unless this socket is still the
+      // current one (same pattern as the other inspect stream hooks).
+      const myWs = ws;
 
       ws.addEventListener("open", () => {
         const config: Record<string, unknown> = { history_seconds: historySeconds };
@@ -113,6 +118,7 @@ export function useMetricsStream(maxSamples = 120): MetricsApi {
       });
 
       ws.addEventListener("message", (ev) => {
+        if (wsRef.current !== myWs) return;
         if (typeof ev.data !== "string") return;
         try {
           const msg = JSON.parse(ev.data);
@@ -140,13 +146,18 @@ export function useMetricsStream(maxSamples = 120): MetricsApi {
       });
 
       ws.addEventListener("error", () => {
+        if (wsRef.current !== myWs) return;
         setState("error");
         setError("WebSocket error");
       });
 
       ws.addEventListener("close", () => {
+        // cleanup() nulls wsRef before close() — a cleanup-path or
+        // superseded socket's close event lands here and must not
+        // touch the (already reset / new) state.
+        if (wsRef.current !== myWs) return;
+        wsRef.current = null;
         setState((s) => (s === "ready" || s === "connecting" ? "ended" : s));
-        if (wsRef.current === ws) wsRef.current = null;
       });
     },
     [cleanup, maxSamples],

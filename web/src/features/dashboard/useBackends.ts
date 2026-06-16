@@ -119,6 +119,26 @@ export interface UseBackendsResult {
   error: unknown;
 }
 
+/** Coarse status for the global LLM pill (UI-2). "up" if any backend is
+ *  reachable, "down" if the manifest failed or every probeable backend is
+ *  down/errored, "checking" while we genuinely don't know yet. Kept pure +
+ *  exported for unit tests. */
+export type OverallLlmStatus = "up" | "down" | "checking";
+
+export function deriveOverallBackendStatus(
+  r: UseBackendsResult,
+): OverallLlmStatus {
+  if (r.isError) return "down";
+  if (r.isLoading) return "checking";
+  const states = Object.values(r.runtime).filter((s) => s.kind !== "planned");
+  if (states.some((s) => s.kind === "up")) return "up";
+  if (states.some((s) => s.kind === "loading")) return "checking";
+  if (states.some((s) => s.kind === "down" || s.kind === "error")) {
+    return "down";
+  }
+  return "checking"; // only unprobed / nothing registered → unknown
+}
+
 export function useBackends(): UseBackendsResult {
   const manifestQuery = useDashboardQuery<BackendsResponse>({
     queryKey: ["backends"],

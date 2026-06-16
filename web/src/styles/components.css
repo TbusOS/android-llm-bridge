@@ -95,6 +95,19 @@ html[lang^="zh"] h3 {
   background: var(--anth-bg-subtle);
 }
 
+/* UI-1: disabled nav control (no settings page yet) — clearly inert. */
+.ab-item.is-disabled,
+.ab-item:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.ab-item.is-disabled:hover,
+.ab-item:disabled:hover {
+  color: var(--anth-text-secondary);
+  background: transparent;
+}
+
 .ab-item.is-active {
   color: #ffffff;
   background: var(--anth-orange);
@@ -170,6 +183,11 @@ html[lang^="zh"] h3 {
 
 .ab-status.is-down .swatch {
   background: var(--anth-danger);
+}
+
+/* UI-2: backend health unknown / probing — neutral, not a false green. */
+.ab-status.is-checking .swatch {
+  background: var(--anth-text-secondary);
 }
 
 /* ----- Top bar ----- */

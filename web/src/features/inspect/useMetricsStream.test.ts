@@ -5,10 +5,10 @@
  * lib/ws.test.ts); tests drive server frames via fireJson so timing
  * is fully controlled.
  *
- * NOTE: unlike its uart/logcat/terminal siblings, this hook has no
- * stale-socket guard yet (its handlers don't check wsRef against the
- * socket that fired) — so there is deliberately no connect-while-
- * connected race spec here. Add one when the guard lands.
+ * The hook now carries the same stale-socket guard as its
+ * uart/logcat/terminal siblings (UI-3): handlers bail unless wsRef still
+ * points at the socket that fired. The connect-while-connected race spec
+ * below locks that in.
  */
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -207,5 +207,30 @@ describe("useMetricsStream", () => {
     act(() => result.current.connect());
     expect(result.current.samples).toEqual([]);
     expect(result.current.state).toBe("connecting");
+  });
+
+  it("stale socket's late close/error does not clobber the new connection (UI-3)", () => {
+    const { result } = renderHook(() => useMetricsStream());
+    act(() => result.current.connect("d1"));
+    act(() => sock(0).fireOpen());
+    act(() => sock(0).fireJson({ type: "history", interval_s: 1, samples: [sample(1)] }));
+    expect(result.current.state).toBe("ready");
+
+    // Reconnect (e.g. device switch) → connect() tears down sock(0), opens sock(1).
+    act(() => result.current.connect("d2"));
+    expect(result.current.state).toBe("connecting");
+
+    // The OLD socket's queued close + error events must be ignored now.
+    act(() => sock(0).fireClose(1006, "stale"));
+    expect(result.current.state).toBe("connecting");
+    act(() => sock(0).fireError());
+    expect(result.current.state).toBe("connecting");
+    expect(result.current.error).toBeNull();
+
+    // The NEW socket still drives state.
+    act(() => sock(1).fireOpen());
+    act(() => sock(1).fireJson({ type: "history", interval_s: 1, samples: [sample(9)] }));
+    expect(result.current.state).toBe("ready");
+    expect(result.current.samples.map((s) => s.ts_ms)).toEqual([9]);
   });
 });
