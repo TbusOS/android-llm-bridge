@@ -138,6 +138,10 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "N sleep→wake cycles via KEYCODE_POWER / WAKEUP key events"},
     {"method": "GET",  "path": "/api/log/search",
      "description": "Regex search over logcat (bounded window + match cap)"},
+    {"method": "POST", "path": "/api/log/dmesg",
+     "description": "Collect a fresh kernel dmesg snapshot into the workspace"},
+    {"method": "GET",  "path": "/api/info/{panel}",
+     "description": "Per-panel device info (security/gpu/processes/cpu/…) — reuses the CLI/MCP info panels"},
     {"method": "GET",  "path": "/api/doctor",
      "description": "Six-layer environment health probe (concurrent, ~worst single probe)"},
 ]

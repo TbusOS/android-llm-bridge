@@ -14,7 +14,7 @@ import { useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { useApp } from "../../stores/app";
-import { fetchLogSearch, type LogSearchMatch } from "../../lib/api";
+import { fetchLogSearch, postDmesg, type LogSearchMatch } from "../../lib/api";
 
 /** Split `content` into [text, hit?, text, hit?, ...] segments so we
  *  can wrap matches in <span class="log-search__hit"> for visual highlight.
@@ -75,6 +75,41 @@ export function LogSearchTab() {
     mutationFn: ({ p, max }: { p: string; max: number }) =>
       fetchLogSearch(p, { device, max }),
   });
+
+  // ARCH-1: dmesg was reachable from CLI/MCP but had no web entry, so the
+  // Log Search tab could only ever find an empty result for kernel logs.
+  // This button collects a fresh dmesg artifact, then auto-runs the search.
+  const collect = useMutation({
+    mutationFn: () => postDmesg(device, 10),
+    onSuccess: (res) => {
+      if (res.ok && pattern.trim()) {
+        search.mutate({ p: pattern.trim(), max: maxMatches });
+      }
+    },
+  });
+
+  const collectNote = (() => {
+    if (collect.isPending) {
+      return lang === "zh" ? "采集 dmesg 中…" : "collecting dmesg…";
+    }
+    if (collect.isError) {
+      const msg =
+        collect.error instanceof Error
+          ? collect.error.message
+          : String(collect.error);
+      return (lang === "zh" ? "dmesg 采集失败：" : "dmesg collect failed: ") + msg;
+    }
+    const d = collect.data;
+    if (d && !d.ok) {
+      return `${d.error?.code ?? "ERROR"}: ${d.error?.message ?? ""}`;
+    }
+    if (d?.ok && d.data) {
+      return lang === "zh"
+        ? `已采集 dmesg：${d.data.lines} 行（${d.data.errors} 处错误）`
+        : `dmesg collected: ${d.data.lines} lines (${d.data.errors} errors)`;
+    }
+    return null;
+  })();
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,6 +205,25 @@ export function LogSearchTab() {
               ? "搜索"
               : "search"}
         </button>
+        <button
+          type="button"
+          className="link-arrow link-arrow--btn"
+          onClick={() => collect.mutate()}
+          disabled={!device || collect.isPending}
+          title={
+            lang === "zh"
+              ? "采集一次内核 dmesg 到工作区，便于搜索"
+              : "Collect a kernel dmesg snapshot into the workspace to search"
+          }
+        >
+          {collect.isPending
+            ? lang === "zh"
+              ? "采集中…"
+              : "collecting…"
+            : lang === "zh"
+              ? "采集 dmesg"
+              : "collect dmesg"}
+        </button>
         <span className={statusClass} role="status" aria-live="polite">
           {statusText}
           {search.data?.ok && search.data.data?.truncated && (
@@ -177,6 +231,12 @@ export function LogSearchTab() {
           )}
         </span>
       </form>
+
+      {collectNote && (
+        <div className="log-search__status" role="status" aria-live="polite">
+          {collectNote}
+        </div>
+      )}
 
       {!device && (
         <div className="log-search__empty">

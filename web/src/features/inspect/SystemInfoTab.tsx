@@ -16,8 +16,14 @@
 import { Fragment } from "react";
 import { RefreshCw } from "lucide-react";
 import { useApp } from "../../stores/app";
-import type { ApiDeviceSystem } from "../../lib/api";
+import type {
+  ApiDeviceSystem,
+  ApiGpuInfo,
+  ApiProcessesInfo,
+  ApiSecurityInfo,
+} from "../../lib/api";
 import { useDeviceSystem } from "./useDeviceSystem";
+import { useDeviceInfoPanels, type DeviceInfoPanels } from "./useDeviceInfoPanels";
 
 function fmtKb(kb: number | undefined): string {
   if (!kb || kb <= 0) return "—";
@@ -26,10 +32,23 @@ function fmtKb(kb: number | undefined): string {
   return `${kb} KB`;
 }
 
+function fmtHz(hz: number | undefined): string {
+  if (!hz || hz <= 0) return "—";
+  if (hz >= 1e9) return `${(hz / 1e9).toFixed(2)} GHz`;
+  if (hz >= 1e6) return `${(hz / 1e6).toFixed(0)} MHz`;
+  if (hz >= 1e3) return `${(hz / 1e3).toFixed(0)} kHz`;
+  return `${hz} Hz`;
+}
+
+function yesNo(b: boolean | undefined, lang: string): string {
+  return b ? (lang === "zh" ? "是" : "yes") : lang === "zh" ? "否" : "no";
+}
+
 export function SystemInfoTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const q = useDeviceSystem(device);
+  const panels = useDeviceInfoPanels(device);
 
   if (!device) {
     return (
@@ -100,12 +119,22 @@ export function SystemInfoTab() {
         </div>
       )}
 
-      {q.data?.system && <Snapshot system={q.data.system} lang={lang} />}
+      {q.data?.system && (
+        <Snapshot system={q.data.system} lang={lang} panels={panels} />
+      )}
     </>
   );
 }
 
-function Snapshot({ system, lang }: { system: ApiDeviceSystem; lang: string }) {
+function Snapshot({
+  system,
+  lang,
+  panels,
+}: {
+  system: ApiDeviceSystem;
+  lang: string;
+  panels: DeviceInfoPanels;
+}) {
   const p = system.props;
   return (
     <div className="sys-grid">
@@ -188,7 +217,116 @@ function Snapshot({ system, lang }: { system: ApiDeviceSystem; lang: string }) {
         rows={system.thermal.map((t) => [`${t.zone} · ${t.type}`, `${t.temp_c}°C`])}
         empty={lang === "zh" ? "无温度传感器读数" : "no thermal readings"}
       />
+
+      {/* ARCH-2: panels previously CLI/MCP-only — security / gpu / processes. */}
+      <SecurityCard env={panels.security} lang={lang} />
+      <GpuCard env={panels.gpu} lang={lang} />
+      <ProcessesCard env={panels.processes} lang={lang} />
     </div>
+  );
+}
+
+type PanelEnv<T> = { ok: boolean; data?: T; error?: { message: string } } | undefined;
+
+function PanelError({ env, lang }: { env: PanelEnv<unknown>; lang: string }) {
+  return (
+    <p className="section-sub" style={{ marginBottom: 0 }}>
+      {env && !env.ok
+        ? env.error?.message || (lang === "zh" ? "采集失败" : "failed")
+        : lang === "zh"
+          ? "加载中…"
+          : "loading…"}
+    </p>
+  );
+}
+
+function SecurityCard({
+  env,
+  lang,
+}: {
+  env: PanelEnv<ApiSecurityInfo>;
+  lang: string;
+}) {
+  const s = env?.ok ? env.data : undefined;
+  if (!s) {
+    return (
+      <div className="sys-card">
+        <h3>{lang === "zh" ? "安全 / 启动" : "Security / Boot"}</h3>
+        <PanelError env={env} lang={lang} />
+      </div>
+    );
+  }
+  return (
+    <KvCard
+      title={lang === "zh" ? "安全 / 启动" : "Security / Boot"}
+      rows={[
+        ["Verified boot", s.verified_boot_state || "—"],
+        ["AVB version", s.avb_version || "—"],
+        ["Verity mode", s.verity_mode || "—"],
+        ["Crypto", [s.crypto_state, s.crypto_type].filter(Boolean).join(" · ") || "—"],
+        ["File encryption", s.file_encryption || "—"],
+        ["SELinux", s.selinux_mode || "—"],
+        ["SELinux policy", s.selinux_policy_version || "—"],
+        ["OEM unlock allowed", yesNo(s.oem_unlock_allowed, lang)],
+        ["adb secure", yesNo(s.adb_secure, lang)],
+      ]}
+    />
+  );
+}
+
+function GpuCard({ env, lang }: { env: PanelEnv<ApiGpuInfo>; lang: string }) {
+  const g = env?.ok ? env.data : undefined;
+  if (!g) {
+    return (
+      <div className="sys-card">
+        <h3>GPU</h3>
+        <PanelError env={env} lang={lang} />
+      </div>
+    );
+  }
+  return (
+    <KvCard
+      title="GPU"
+      rows={[
+        ["Name", g.name || "—"],
+        ["Vendor", g.vendor || "—"],
+        ["Renderer", g.renderer || "—"],
+        ["Governor", g.governor || "—"],
+        ["Freq (cur)", fmtHz(g.freq_hz_current)],
+        ["Freq (max)", fmtHz(g.freq_hz_max)],
+        ["Util", g.util_pct >= 0 ? `${g.util_pct}%` : "—"],
+      ]}
+    />
+  );
+}
+
+function ProcessesCard({
+  env,
+  lang,
+}: {
+  env: PanelEnv<ApiProcessesInfo>;
+  lang: string;
+}) {
+  const pr = env?.ok ? env.data : undefined;
+  if (!pr) {
+    return (
+      <div className="sys-card">
+        <h3>{lang === "zh" ? "进程（CPU Top）" : "Processes (top CPU)"}</h3>
+        <PanelError env={env} lang={lang} />
+      </div>
+    );
+  }
+  return (
+    <BlockCard
+      title={
+        (lang === "zh" ? "进程（CPU Top）· 共 " : "Processes (top CPU) · ") +
+        pr.count
+      }
+      rows={pr.top_cpu
+        .slice(0, 8)
+        .map((proc) => [`${proc.name} (${proc.pid})`, `${proc.cpu_pct}% · ${fmtKb(proc.rss_kb)}`])}
+      empty={lang === "zh" ? "无进程数据" : "no process data"}
+    />
   );
 }
 

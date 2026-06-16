@@ -1,13 +1,15 @@
-"""Tests for GET /api/log/search — historical regex search REST."""
+"""Tests for /api/log/* — historical regex search + dmesg collect REST."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from alb.api.server import create_app
+from alb.transport.base import ShellResult
 
 
 @pytest.fixture
@@ -117,6 +119,48 @@ def test_search_returns_pattern_timeout_envelope(
     assert body["ok"] is False
     assert body["error"]["code"] == "PATTERN_TIMEOUT"
     assert body["error"]["category"] == "timeout"
+
+
+# ─── ARCH-1: POST /api/log/dmesg (collect for later search) ────────
+class _FakeDmesgTransport:
+    name = "adb"
+
+    async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+        return ShellResult(ok=True)
+
+    async def stream_read(self, source: str, **kwargs: Any):  # noqa: ANN001
+        if source != "dmesg":
+            return
+        yield b"[    0.000000] kernel boot\n"
+        yield b"[    0.123456] kernel panic - test\n"
+
+
+def test_dmesg_collects_artifact_and_is_searchable(client, workspace, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "alb.api.log_search_route.build_transport",
+        lambda **_: _FakeDmesgTransport(),
+    )
+    r = client.post("/api/log/dmesg?device=abc123", json={"duration": 1})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["data"]["lines"] >= 1
+
+    # The collected dmesg artifact must now be findable via search —
+    # this is the real end-to-end proof the file landed in the workspace.
+    found = client.get("/api/log/search?pattern=panic&device=abc123").json()
+    assert found["ok"] is True
+    assert found["data"]["match_count"] >= 1
+
+
+def test_dmesg_unsafe_device_400(client) -> None:
+    r = client.post("/api/log/dmesg?device=has%20space", json={"duration": 1})
+    assert r.status_code == 400
+
+
+def test_dmesg_duration_out_of_range_422(client) -> None:
+    r = client.post("/api/log/dmesg?device=abc123", json={"duration": 99999})
+    assert r.status_code == 422
 
 
 def test_search_outer_wait_for_timeout_returns_envelope(

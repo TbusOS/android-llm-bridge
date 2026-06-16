@@ -1214,6 +1214,109 @@ export async function fetchLogSearch(
   return parseEnvelope<LogSearchResponse>(r);
 }
 
+export interface DmesgData {
+  lines: number;
+  errors: number;
+  duration_captured_ms: number;
+}
+
+export interface DmesgResponse {
+  ok: boolean;
+  data?: DmesgData;
+  error?: { code: string; message: string; suggestion?: string };
+  artifacts?: string[];
+  timing_ms?: number;
+}
+
+/** Collect a fresh kernel dmesg snapshot into the workspace (ARCH-1), so
+ *  the Log Search tab has a dmesg artifact to search. Mirrors `alb dmesg`. */
+export async function postDmesg(
+  device: string | null | undefined,
+  duration = 10,
+): Promise<DmesgResponse> {
+  const r = await fetch(`/api/log/dmesg${_qDevice(device)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ duration }),
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /api/log/dmesg returned ${r.status}`,
+      r.status,
+      "DMESG_FAILED",
+    );
+  }
+  return parseEnvelope<DmesgResponse>(r);
+}
+
+/* ─── Info panels (security / gpu / processes / …) — ARCH-2 ─────── */
+
+export interface ApiSecurityInfo {
+  verified_boot_state: string;
+  avb_version: string;
+  verity_mode: string;
+  crypto_state: string;
+  crypto_type: string;
+  file_encryption: string;
+  selinux_mode: string;
+  selinux_policy_version: string;
+  oem_unlock_allowed: boolean;
+  oem_unlock_supported: boolean;
+  adb_secure: boolean;
+}
+
+export interface ApiGpuInfo {
+  name: string;
+  vendor: string;
+  renderer: string;
+  freq_hz_current: number;
+  freq_hz_max: number;
+  freq_hz_min: number;
+  governor: string;
+  util_pct: number;
+}
+
+export interface ApiProcessEntry {
+  pid: number;
+  user: string;
+  cpu_pct: number;
+  mem_pct: number;
+  rss_kb: number;
+  name: string;
+}
+
+export interface ApiProcessesInfo {
+  count: number;
+  top_cpu: ApiProcessEntry[];
+  top_mem: ApiProcessEntry[];
+}
+
+export interface InfoPanelEnvelope<T> {
+  ok: boolean;
+  data?: T;
+  error?: { code: string; message: string; suggestion?: string };
+  timing_ms?: number;
+}
+
+/** Fetch one device-info panel. `panel` ∈ security|gpu|processes|cpu|… */
+export async function fetchInfoPanel<T>(
+  panel: string,
+  device: string | null | undefined,
+  signal?: AbortSignal,
+): Promise<InfoPanelEnvelope<T>> {
+  const r = await fetch(`/api/info/${encodeURIComponent(panel)}${_qDevice(device)}`, {
+    signal,
+  });
+  if (!r.ok && r.status !== 422 && r.status !== 400 && r.status !== 404 && r.status !== 503) {
+    throw new AlbApiError(
+      `GET /api/info/${panel} returned ${r.status}`,
+      r.status,
+      "INFO_PANEL_FAILED",
+    );
+  }
+  return parseEnvelope<InfoPanelEnvelope<T>>(r);
+}
+
 /* ─── Power (battery / reboot / sleep-wake) ────────────────────── */
 
 export interface BatteryData {

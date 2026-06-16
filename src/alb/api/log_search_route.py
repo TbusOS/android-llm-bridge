@@ -21,10 +21,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
-from alb.capabilities.logging import search_logs
-from alb.infra.result import envelope_dict
+from alb.capabilities.logging import collect_dmesg, search_logs
+from alb.infra.result import envelope_dict, envelope_transport_init_error
 from alb.infra.workspace import is_safe_device
+from alb.transport.factory import build_transport
 
 router = APIRouter(prefix="/api/log", tags=["log"])
 
@@ -45,4 +47,31 @@ async def get_log_search(
         # L-051: no-echo on reject (sec MID-1). See diag_route._resolve_transport.
         raise HTTPException(status_code=400, detail="invalid device serial")
     r = await search_logs(pattern, device=device, max_matches=max)
+    return envelope_dict(r)
+
+
+class DmesgRequest(BaseModel):
+    duration: int = Field(10, ge=1, le=3600)
+
+
+@router.post("/dmesg")
+async def post_dmesg(
+    body: DmesgRequest,
+    device: str | None = Query(None, max_length=128),
+) -> dict[str, Any]:
+    """Collect a fresh kernel dmesg snapshot into the workspace (ARCH-1).
+
+    The Log Search tab can only search artifacts that already exist; the
+    dmesg capability was reachable from CLI / MCP but had no web entry, so
+    web-only users could never produce a dmesg artifact to search. Mirrors
+    ``alb dmesg`` / ``alb_dmesg`` — collect then search.
+    """
+    if device and not is_safe_device(device):
+        # L-051: no-echo on reject. See diag_route._resolve_transport.
+        raise HTTPException(status_code=400, detail="invalid device serial")
+    try:
+        transport = build_transport(device_serial=device)
+    except Exception as e:  # noqa: BLE001
+        return envelope_transport_init_error(e, device=device)
+    r = await collect_dmesg(transport, duration=body.duration, device=device)
     return envelope_dict(r)
