@@ -418,6 +418,61 @@ async def test_shutdown_all_streamers_clears_registry() -> None:
     await shutdown_all_streamers()
 
 
+# ─── lifecycle + per-subscriber rate (round11 CODE-1 / CODE-3) ─────
+
+
+@pytest.mark.asyncio
+async def test_streamer_stops_after_last_subscriber() -> None:
+    """CODE-1: the sampling task must stop once the final subscriber
+    leaves, so a viewer-less streamer stops polling the device."""
+    t = _mk_transport([_combined_stdout()])
+    s = MetricsStreamer(t, interval_s=0.05)
+    await s.start()
+    assert s._task is not None
+    async with s.subscribe() as q:
+        await asyncio.wait_for(q.get(), timeout=1.0)
+        assert not s._task.done()
+    assert s._task is None  # last subscriber gone → stopped
+
+
+@pytest.mark.asyncio
+async def test_streamer_keeps_running_while_a_subscriber_remains() -> None:
+    t = _mk_transport([_combined_stdout()])
+    s = MetricsStreamer(t, interval_s=0.05)
+    async with s.subscribe() as q1:
+        await s.start()
+        async with s.subscribe() as q2:  # noqa: F841
+            await asyncio.wait_for(q1.get(), timeout=1.0)
+        # q2 gone but q1 remains → still sampling
+        assert s._task is not None and not s._task.done()
+    assert s._task is None
+
+
+@pytest.mark.asyncio
+async def test_set_subscriber_interval_drives_min_rate() -> None:
+    """CODE-3: shared rate follows the fastest live subscriber; a slow
+    client never throttles a fast one, a leaving fast client restores it."""
+    t = _mk_transport([_combined_stdout()])
+    s = MetricsStreamer(t, interval_s=1.0)
+    async with s.subscribe() as q1:  # noqa: F841
+        assert s.interval_s == 1.0
+        async with s.subscribe() as q2:
+            assert s.set_subscriber_interval(q2, 0.25) == 0.25
+            assert s.interval_s == 0.25  # min(1.0, 0.25)
+        assert s.interval_s == 1.0  # q2 gone → back to q1's default
+
+
+@pytest.mark.asyncio
+async def test_set_subscriber_interval_clamps_and_rejects_nan() -> None:
+    t = _mk_transport([_combined_stdout()])
+    s = MetricsStreamer(t, interval_s=1.0)
+    async with s.subscribe() as q:
+        assert s.set_subscriber_interval(q, 1e9) == 60.0
+        assert s.set_subscriber_interval(q, 0.001) == 0.1
+        assert s.set_subscriber_interval(q, float("nan")) is None
+        assert s.set_subscriber_interval(q, "x") is None
+
+
 # ─── MetricSample serialization ──────────────────────────────────
 
 

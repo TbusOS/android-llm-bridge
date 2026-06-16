@@ -160,3 +160,12 @@ def test_metrics_ws_set_interval_nan_no_change(client) -> None:
                 assert "clamped" not in m
                 return
         raise AssertionError("never received set_interval ack")
+
+
+# ─── round11 SEC-2: malformed serial rejected before build_transport ──
+def test_metrics_bad_device_rejected(client) -> None:
+    with client.websocket_connect("/metrics/stream") as ws:
+        ws.send_json({"device": "bad; reboot"})
+        msg = ws.receive_json()
+        assert msg["type"] == "closed"
+        assert msg["reason"] == "bad_device"

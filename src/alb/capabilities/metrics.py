@@ -189,10 +189,16 @@ class MetricsStreamer:
     ) -> None:
         self.sampler = MetricSampler(transport)
         self._interval_s = interval_s
+        # The configured floor used when no live subscriber requests a
+        # faster rate. The effective `_interval_s` is min(per-sub desired)
+        # so one client speeding up never slows another, and one client
+        # slowing down never starves another (CODE-3 per-connection rate).
+        self._base_interval_s = interval_s
         self.ring: collections.deque[MetricSample] = collections.deque(
             maxlen=ring_size
         )
         self._subs: set[asyncio.Queue[MetricSample]] = set()
+        self._sub_intervals: dict[asyncio.Queue[MetricSample], float] = {}
         self._task: asyncio.Task[None] | None = None
         self._paused = False
         self._stopping = False
@@ -200,6 +206,11 @@ class MetricsStreamer:
     @property
     def interval_s(self) -> float:
         return self._interval_s
+
+    @property
+    def base_interval_s(self) -> float:
+        """Configured default rate — a new subscriber's initial desire."""
+        return self._base_interval_s
 
     @interval_s.setter
     def interval_s(self, value: float) -> None:
@@ -214,6 +225,38 @@ class MetricsStreamer:
         if v != v:  # NaN check
             return
         self._interval_s = max(0.1, min(60.0, v))
+
+    def _recompute_interval(self) -> None:
+        """Effective sample rate = fastest (min) live per-sub request,
+        falling back to the configured base when nobody is subscribed."""
+        if self._sub_intervals:
+            self._interval_s = max(
+                0.1, min(60.0, min(self._sub_intervals.values()))
+            )
+        else:
+            self._interval_s = self._base_interval_s
+
+    def set_subscriber_interval(
+        self, q: asyncio.Queue[MetricSample], value: object
+    ) -> float | None:
+        """Set THIS subscriber's desired interval (clamped to [0.1, 60]),
+        then recompute the shared sampling rate to the fastest request.
+
+        Returns the clamped value, or None for NaN / non-numeric input
+        (caller leaves the interval untouched). Scoping the request to one
+        subscriber is what stops a control frame from one client changing
+        another client's data rate (CODE-3)."""
+        try:
+            v = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if v != v:  # NaN
+            return None
+        clamped = max(0.1, min(60.0, v))
+        if q in self._sub_intervals:
+            self._sub_intervals[q] = clamped
+            self._recompute_interval()
+        return clamped
 
     @property
     def paused(self) -> bool:
@@ -248,10 +291,22 @@ class MetricsStreamer:
     async def subscribe(self) -> AsyncIterator[asyncio.Queue[MetricSample]]:
         q: asyncio.Queue[MetricSample] = asyncio.Queue(maxsize=20)
         self._subs.add(q)
+        self._sub_intervals[q] = self._base_interval_s
+        self._recompute_interval()
         try:
             yield q
         finally:
             self._subs.discard(q)
+            self._sub_intervals.pop(q, None)
+            self._recompute_interval()
+            # No viewers left → stop hammering the device. The ring +
+            # registry entry persist, so a later subscriber restarts
+            # sampling (get_streamer reuses this instance, _run is
+            # re-created by start()) and still replays recent history.
+            # Without this the sampling task ran a 1 Hz adb/shell loop
+            # for the device's lifetime even with zero subscribers.
+            if not self._subs:
+                await self.stop()
 
     async def _run(self) -> None:
         while not self._stopping:
