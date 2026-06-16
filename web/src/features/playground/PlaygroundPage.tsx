@@ -32,6 +32,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useApp } from "../../stores/app";
 import {
   useBackendModels,
@@ -133,10 +134,26 @@ export function PlaygroundPage() {
 
   const SCROLL_THRESHOLD_PX = 40;
 
+  // PERF-3 (第十轮): chat.delta updates once per WS token — far faster
+  // than the display refreshes. While streaming, coalesce the
+  // scrollHeight read + scrollTop write into at most one rAF callback
+  // per frame so each token doesn't force a fresh layout. Outside
+  // streaming (send / terminal-path log growth) scroll synchronously.
+  const scrollRafRef = useRef<number>(0);
+  useEffect(() => () => cancelAnimationFrame(scrollRafRef.current), []);
+
   useEffect(() => {
     const el = logRef.current;
     if (!el) return;
     if (!stickToBottom) return;
+    if (chat.status === "streaming") {
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = requestAnimationFrame(() => {
+        const node = logRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+      });
+      return;
+    }
     el.scrollTop = el.scrollHeight;
     // deps cover what grows the log; we omit other PlaygroundPage
     // state (model / sampling knobs) on purpose.
@@ -285,6 +302,17 @@ export function PlaygroundPage() {
             disabled={backendsQ.isLoading}
           >
             {backendsQ.isLoading && <option>loading…</option>}
+            {!backendsQ.isLoading && backends.length === 0 && (
+              <option value="">
+                {backendsQ.isError
+                  ? lang === "zh"
+                    ? "（拉取失败）"
+                    : "(failed to load)"
+                  : lang === "zh"
+                    ? "（无后端）"
+                    : "(none)"}
+              </option>
+            )}
             {backends.map((b) => (
               <option key={b.name} value={b.name}>
                 {b.name}
@@ -293,6 +321,25 @@ export function PlaygroundPage() {
             ))}
           </select>
         </label>
+
+        {/* UIF-06 (第十轮): without backends the send button stays
+            disabled — surface the fetch failure + a retry path instead
+            of a silently dead form. Copy mirrors DashboardPage's
+            backends error placeholder. */}
+        {backendsQ.isError && (
+          <SectionPlaceholder styleKey="be-card" kind="error">
+            {lang === "zh"
+              ? "无法获取后端列表，检查 alb-api 是否在运行"
+              : "Could not fetch backends — is alb-api running?"}{" "}
+            <button
+              type="button"
+              className="link-arrow link-arrow--btn"
+              onClick={() => void backendsQ.refetch()}
+            >
+              {lang === "zh" ? "重试" : "retry"}
+            </button>
+          </SectionPlaceholder>
+        )}
 
         <label className="playground-rail__field">
           <span>model</span>

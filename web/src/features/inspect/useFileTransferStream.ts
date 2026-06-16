@@ -67,6 +67,10 @@ export interface UseFileTransferStream {
   progress: TransferProgress | null;
   result: TransferResult | null;
   error: string | null;
+  /** Args of the transfer currently in flight — set by start(), cleared
+   * on every terminal state. Callers branch busy UI (direction-specific
+   * labels) on this instead of guessing from the previous result. */
+  inflight: StartArgs | null;
   /** Start a new transfer. Aborts any in-flight one. */
   start: (args: StartArgs) => void;
   /** Cancel the in-flight transfer (sends cancel control frame). */
@@ -77,13 +81,15 @@ export interface UseFileTransferStream {
 
 export function useFileTransferStream(): UseFileTransferStream {
   const wsRef = useRef<WebSocket | null>(null);
-  // Track the args of the in-flight transfer so the result can carry
-  // direction / local / remote without the caller re-tracking them.
-  const inflightRef = useRef<StartArgs | null>(null);
   const [state, setState] = useState<TransferState>("idle");
   const [progress, setProgress] = useState<TransferProgress | null>(null);
   const [result, setResult] = useState<TransferResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Args of the in-flight transfer, exposed so callers can render
+  // direction-aware busy UI. The closed-frame handler reads the
+  // per-socket `args` closure instead, so a stale socket can never
+  // attribute its result to a newer transfer's args.
+  const [inflight, setInflight] = useState<StartArgs | null>(null);
 
   const cleanup = useCallback(() => {
     const ws = wsRef.current;
@@ -108,7 +114,7 @@ export function useFileTransferStream(): UseFileTransferStream {
     setProgress(null);
     setResult(null);
     setError(null);
-    inflightRef.current = null;
+    setInflight(null);
   }, [cleanup]);
 
   const cancel = useCallback(() => {
@@ -133,7 +139,7 @@ export function useFileTransferStream(): UseFileTransferStream {
       setResult(null);
       setError(null);
       setState("connecting");
-      inflightRef.current = args;
+      setInflight(args);
 
       const path = `/devices/${encodeURIComponent(args.serial)}/files/${args.direction}/stream`;
       const ws = new WebSocket(wsUrl(path));
@@ -151,6 +157,10 @@ export function useFileTransferStream(): UseFileTransferStream {
       });
 
       ws.addEventListener("message", (ev) => {
+        // Frames from a socket superseded by a newer start() (or one
+        // that already delivered its `closed` frame) must not touch
+        // the current transfer's state.
+        if (wsRef.current !== ws) return;
         if (typeof ev.data !== "string") return;
         let msg: Record<string, unknown>;
         try {
@@ -186,19 +196,16 @@ export function useFileTransferStream(): UseFileTransferStream {
             typeof msg.duration_ms === "number" ? (msg.duration_ms as number) : 0;
           const err = typeof msg.error === "string" ? (msg.error as string) : null;
 
-          const inflight = inflightRef.current;
-          if (inflight) {
-            setResult({
-              reason,
-              ok,
-              bytes_transferred: bt,
-              duration_ms: dur,
-              error: err,
-              direction: inflight.direction,
-              remote: inflight.remote,
-              local: inflight.local || "",
-            });
-          }
+          setResult({
+            reason,
+            ok,
+            bytes_transferred: bt,
+            duration_ms: dur,
+            error: err,
+            direction: args.direction,
+            remote: args.remote,
+            local: args.local || "",
+          });
 
           if (reason === "done" && ok) {
             setState("done");
@@ -213,21 +220,25 @@ export function useFileTransferStream(): UseFileTransferStream {
             setState("error");
             setError(err || reason);
           }
+          setInflight(null);
           // Server already closed (or will close right after); release
           // our handle so the next start() doesn't see a stale ref.
-          if (wsRef.current === ws) wsRef.current = null;
+          wsRef.current = null;
         }
       });
 
       ws.addEventListener("error", () => {
+        if (wsRef.current !== ws) return;
         // Browser-level WS error (DNS / TCP / handshake). Server-side
         // protocol errors come through `closed` with a reason instead.
         setState("error");
         setError("WebSocket error");
+        setInflight(null);
       });
 
       ws.addEventListener("close", () => {
-        if (wsRef.current === ws) wsRef.current = null;
+        if (wsRef.current !== ws) return;
+        wsRef.current = null;
         // If the socket closed without a `closed` frame (proxy drop /
         // server crash), step the UI to error. Don't step from a
         // terminal state ("done"/"cancelled"/"error") — those wins.
@@ -235,10 +246,11 @@ export function useFileTransferStream(): UseFileTransferStream {
           s === "connecting" || s === "running" ? "error" : s,
         );
         setError((e) => e ?? "connection closed unexpectedly");
+        setInflight(null);
       });
     },
     [cleanup],
   );
 
-  return { state, progress, result, error, start, cancel, reset };
+  return { state, progress, result, error, inflight, start, cancel, reset };
 }

@@ -301,9 +301,11 @@ type PkgOpKey = "start" | "stop" | "clear" | "uninstall";
 function PackageDetail({
   device,
   pkg,
+  onUninstalled,
 }: {
   device: string | null;
   pkg: string | null;
+  onUninstalled?: () => void;
 }) {
   const lang = useApp((s) => s.lang);
   const info = useAppInfo(device, pkg);
@@ -337,6 +339,13 @@ function PackageDetail({
     [startM, stopM, clearM, uninstallM].forEach((m) => m.reset());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pkg, device]);
+
+  // After a confirmed uninstall the package is gone — keeping the
+  // detail panel up would offer start/stop/clear against a package
+  // that no longer exists. Tell the parent to drop the selection.
+  useEffect(() => {
+    if (uninstallM.isSuccess && uninstallM.data?.ok) onUninstalled?.();
+  }, [uninstallM.isSuccess, uninstallM.data, onUninstalled]);
 
   const fire = useCallback(
     (op: PkgOpKey, fn: () => void) => {
@@ -512,10 +521,12 @@ function PackageList({
   device,
   selected,
   onSelect,
+  onUninstalled,
 }: {
   device: string | null;
   selected: string | null;
   onSelect: (p: string) => void;
+  onUninstalled?: () => void;
 }) {
   const lang = useApp((s) => s.lang);
   const [filter, setFilter] = useState("");
@@ -691,7 +702,11 @@ function PackageList({
             </div>
           )}
         </div>
-        <PackageDetail device={device} pkg={selected} />
+        <PackageDetail
+          device={device}
+          pkg={selected}
+          onUninstalled={onUninstalled}
+        />
       </div>
     </section>
   );
@@ -700,6 +715,9 @@ function PackageList({
 export function AppTab() {
   const device = useApp((s) => s.device);
   const [selected, setSelected] = useState<string | null>(null);
+  // Stable identity — the PackageDetail success effect lists it in
+  // its deps, so a fresh arrow each render would re-fire the effect.
+  const onUninstalled = useCallback(() => setSelected(null), []);
 
   return (
     <div className="app-tab">
@@ -707,7 +725,12 @@ export function AppTab() {
         <InstallCard device={device} />
         <NameOpsCard device={device} />
       </aside>
-      <PackageList device={device} selected={selected} onSelect={setSelected} />
+      <PackageList
+        device={device}
+        selected={selected}
+        onSelect={setSelected}
+        onUninstalled={onUninstalled}
+      />
     </div>
   );
 }

@@ -86,7 +86,10 @@ export function useAppStopMutation(device: string | null | undefined) {
 
 export function useAppClearDataMutation(device: string | null | undefined) {
   return useMutation({
-    mutationFn: (pkg: string) => postAppClearData(device, pkg),
+    // allow_dangerous: the armed two-step confirm in the UI is the
+    // user's authorisation — same contract as uninstall below.
+    mutationFn: (pkg: string) =>
+      postAppClearData(device, pkg, { allow_dangerous: true }),
   });
 }
 

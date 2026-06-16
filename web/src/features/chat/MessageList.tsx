@@ -4,7 +4,7 @@
  * .tool-call cards and followed by .artifact-row chips.
  */
 import { Paperclip, Slash, AlertTriangle } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useApp } from "../../stores/app";
 import { ToolCallCard } from "./ToolCallCard";
 import type { ChatTurn } from "./types";
@@ -18,9 +18,18 @@ export function MessageList({ turns, showPending }: Props) {
   const lang = useApp((s) => s.lang);
   const tailRef = useRef<HTMLDivElement>(null);
 
+  // While a turn is in flight this effect fires on every token; a
+  // "smooth" scroll would restart each time and never finish, so jump
+  // instantly and keep the smooth glide for the final settled scroll.
+  const last = turns[turns.length - 1];
+  const inFlight = last?.status === "pending" || last?.status === "streaming";
+
   useEffect(() => {
-    tailRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, showPending]);
+    tailRef.current?.scrollIntoView({
+      behavior: inFlight ? "auto" : "smooth",
+      block: "end",
+    });
+  }, [turns, showPending, inFlight]);
 
   if (turns.length === 0) {
     return (
@@ -50,7 +59,16 @@ export function MessageList({ turns, showPending }: Props) {
   );
 }
 
-function TurnView({ turn, lang }: { turn: ChatTurn; lang: "en" | "zh" }) {
+// memo: useChatStream's updateTurn only replaces the turn object being
+// streamed into, so every settled turn keeps its reference and skips
+// re-rendering on each token of the active turn.
+const TurnView = memo(function TurnView({
+  turn,
+  lang,
+}: {
+  turn: ChatTurn;
+  lang: "en" | "zh";
+}) {
   if (turn.role === "user") {
     return <div className="bubble bubble--user">{turn.content}</div>;
   }
@@ -91,7 +109,7 @@ function TurnView({ turn, lang }: { turn: ChatTurn; lang: "en" | "zh" }) {
         )}
     </>
   );
-}
+});
 
 function ArtifactChip({ path }: { path: string }) {
   const name = path.split("/").pop() || path;

@@ -16,10 +16,11 @@
  *     replay of the cached snapshot. Per-page sockets only fork when
  *     configs diverge.
  */
-import { useDeferredValue, useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 
 import { useApp } from "../../stores/app";
 import { useAuditStream } from "../../lib/hooks/useAuditStream";
+import type { AuditEvent } from "../../lib/api";
 
 const SOURCE_OPTIONS = ["all", "chat", "terminal"] as const;
 type SourceFilter = (typeof SOURCE_OPTIONS)[number];
@@ -28,17 +29,31 @@ function shortSid(sid: string): string {
   return sid.length <= 10 ? sid : `${sid.slice(0, 8)}…`;
 }
 
-function formatTs(iso: string, lang: "en" | "zh"): string {
+// Formatters are cached at module level: `Date.toLocaleString` builds a
+// fresh Intl.DateTimeFormat on every call, which dominates row-render
+// cost. `.format()` with the same locale + options is spec'd to produce
+// the identical string (toLocaleString is defined as
+// `new Intl.DateTimeFormat(locales, options).format(this)`), so the
+// output is unchanged — guarded by AuditPage.test.ts.
+const TS_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+};
+
+const TS_FORMAT: Record<"en" | "zh", Intl.DateTimeFormat> = {
+  en: new Intl.DateTimeFormat("en-US", TS_FORMAT_OPTIONS),
+  zh: new Intl.DateTimeFormat("zh-CN", TS_FORMAT_OPTIONS),
+};
+
+export function formatTs(iso: string, lang: "en" | "zh"): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(lang === "zh" ? "zh-CN" : "en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  // lang 经 zustand persist 回灌，运行时可能是域外残留值——回退 en 而不是抛 TypeError
+  return (TS_FORMAT[lang] ?? TS_FORMAT.en).format(d);
 }
 
 function statusBadge(
@@ -74,6 +89,44 @@ function statusBadge(
       };
   }
 }
+
+// memo is effective here because useAuditStream only unshifts new
+// events at the head of rawEvents and never rebuilds existing event
+// objects, so `event` references stay stable across renders — only
+// freshly arrived rows re-render.
+const AuditRow = memo(function AuditRow({
+  event: e,
+  lang,
+}: {
+  event: AuditEvent;
+  lang: "en" | "zh";
+}) {
+  return (
+    <div
+      className="audit-table__row"
+      role="row"
+      data-source={e.source}
+      data-kind={e.kind}
+    >
+      <span className="audit-table__ts" role="cell">
+        {formatTs(e.ts, lang)}
+        {e.ts_approx ? "~" : ""}
+      </span>
+      <span className="audit-table__source" role="cell">
+        {e.source}
+      </span>
+      <span className="audit-table__kind" role="cell">
+        {e.kind}
+      </span>
+      <span className="audit-table__sid" role="cell">
+        {shortSid(e.session_id)}
+      </span>
+      <span className="audit-table__summary" role="cell">
+        {e.summary || "(empty)"}
+      </span>
+    </div>
+  );
+});
 
 export function AuditPage() {
   const lang = useApp((s) => s.lang);
@@ -243,7 +296,7 @@ export function AuditPage() {
             </span>
           </div>
           {visible.map((e) => (
-            <div
+            <AuditRow
               // 5/25 code-r MID-5: the previous `-${i}` tiebreaker
               // meant every filter / new-event re-shift mutated all
               // row keys → React remounted the entire table (loses
@@ -254,28 +307,9 @@ export function AuditPage() {
               // business cadence (DEBT-055 if/when server starts
               // emitting event_id).
               key={`${e.ts}|${e.session_id}|${e.kind}|${e.source}|${(e.summary ?? "").slice(0, 30)}`}
-              className="audit-table__row"
-              role="row"
-              data-source={e.source}
-              data-kind={e.kind}
-            >
-              <span className="audit-table__ts" role="cell">
-                {formatTs(e.ts, lang)}
-                {e.ts_approx ? "~" : ""}
-              </span>
-              <span className="audit-table__source" role="cell">
-                {e.source}
-              </span>
-              <span className="audit-table__kind" role="cell">
-                {e.kind}
-              </span>
-              <span className="audit-table__sid" role="cell">
-                {shortSid(e.session_id)}
-              </span>
-              <span className="audit-table__summary" role="cell">
-                {e.summary || "(empty)"}
-              </span>
-            </div>
+              event={e}
+              lang={lang}
+            />
           ))}
         </div>
       )}

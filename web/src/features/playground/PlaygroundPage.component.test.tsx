@@ -604,6 +604,72 @@ describe("PlaygroundPage · send button disabled paths (AR-2 / ui-f HIGH-3)", ()
   });
 });
 
+describe("PlaygroundPage · backends fetch failure (UIF-06 第十轮)", () => {
+  const failedBackendsImpl = (refetch: () => void) => () => ({
+    data: undefined,
+    isLoading: false,
+    isError: true,
+    refetch,
+  });
+
+  it("error row visible · retry wired to refetch · select shows placeholder option · send stays disabled", () => {
+    const refetch = vi.fn();
+    useBackends.mockImplementation(failedBackendsImpl(refetch));
+    render(<PlaygroundPage />);
+
+    // Actionable error copy (mirrors DashboardPage's backends error).
+    expect(
+      screen.getByText(/Could not fetch backends — is alb-api running\?/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    // Select no longer renders empty — placeholder option explains.
+    expect(
+      screen.getByRole("option", { name: "(failed to load)" }),
+    ).toBeInTheDocument();
+
+    // Send still gated on !backend — but the rail now says why.
+    const textarea = screen.getByPlaceholderText(/Message…/);
+    fireEvent.change(textarea, { target: { value: "hi" } });
+    expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
+    expect(chatActions.send).not.toHaveBeenCalled();
+  });
+
+  it("lang='zh' renders the error row + retry + placeholder option in Chinese", () => {
+    useApp.mockImplementation(
+      (sel?: (s: { lang: "en" | "zh" }) => unknown) =>
+        sel ? sel({ lang: "zh" }) : { lang: "zh" },
+    );
+    const refetch = vi.fn();
+    useBackends.mockImplementation(failedBackendsImpl(refetch));
+    render(<PlaygroundPage />);
+
+    expect(
+      screen.getByText(/无法获取后端列表，检查 alb-api 是否在运行/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "（拉取失败）" }),
+    ).toBeInTheDocument();
+  });
+
+  it("empty-but-ok backends list → neutral placeholder option, no error row", () => {
+    useBackends.mockImplementation(() => ({
+      data: { backends: [] },
+      isLoading: false,
+      isError: false,
+    }));
+    render(<PlaygroundPage />);
+
+    expect(screen.getByRole("option", { name: "(none)" })).toBeInTheDocument();
+    expect(screen.queryByText(/alb-api/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "retry" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("PlaygroundPage · i18n zh path (AR-2 / ui-f HIGH-3)", () => {
   it("lang='zh' renders 发送 / 取消 / 清空 buttons + cancelled label in Chinese", () => {
     // AS-4 (5/26 第五轮 code MID-3): override lang to zh; cleanup is

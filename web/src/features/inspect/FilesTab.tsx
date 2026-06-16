@@ -176,6 +176,7 @@ export function FilesTab() {
           }}
           onRefresh={() => deviceQ.refetch()}
           isFetching={deviceQ.isFetching}
+          pending={devicePath !== debouncedDevicePath}
           loading={deviceQ.isLoading}
           error={
             deviceQ.error
@@ -207,7 +208,7 @@ export function FilesTab() {
             onClick={onPull}
           >
             <ArrowDownToLine size={12} className="icon-inline" />{" "}
-            {xferRunning && xfer.result?.direction !== "push"
+            {xferRunning && xfer.inflight?.direction === "pull"
               ? lang === "zh" ? "拉取中…" : "Pulling…"
               : lang === "zh" ? "拉到工作区" : "Pull"}
           </button>
@@ -228,6 +229,7 @@ export function FilesTab() {
           }}
           onRefresh={() => workspaceQ.refetch()}
           isFetching={workspaceQ.isFetching}
+          pending={workspacePath !== debouncedWorkspacePath}
           loading={workspaceQ.isLoading}
           error={
             workspaceQ.error
@@ -263,7 +265,7 @@ export function FilesTab() {
             onClick={() => onPush(false)}
           >
             <ArrowUpFromLine size={12} className="icon-inline" />{" "}
-            {xferRunning && xfer.result?.direction !== "pull"
+            {xferRunning && xfer.inflight?.direction === "push"
               ? lang === "zh" ? "推送中…" : "Pushing…"
               : lang === "zh" ? "推到设备" : "Push"}
           </button>
@@ -349,6 +351,11 @@ export function FilesTab() {
               />
             </div>
             <span className="files-tab__progress-meta">
+              {xfer.inflight
+                ? xfer.inflight.direction === "pull"
+                  ? (lang === "zh" ? "拉取 · " : "Pull · ")
+                  : (lang === "zh" ? "推送 · " : "Push · ")
+                : ""}
               {xfer.progress?.percent != null
                 ? `${Math.round(xfer.progress.percent)}%`
                 : (lang === "zh" ? "传输中…" : "transferring…")}
@@ -424,7 +431,7 @@ export function FilesTab() {
           lang === "zh" ? "确认覆写（force）" : "Confirm push (force)"
         }
         approveDanger
-        pending={xferRunning && xfer.result?.direction !== "pull"}
+        pending={xferRunning && xfer.inflight?.direction === "push"}
         onCancel={() => setPendingPush(null)}
         onApprove={confirmPush}
       />
@@ -448,6 +455,9 @@ interface FilePaneProps {
   onUp: () => void;
   onRefresh: () => void;
   isFetching: boolean;
+  /** Path edited but the debounce hasn't fired yet — a fetch is
+   * imminent. Spins the refresh icon so the 300ms gap isn't dead air. */
+  pending: boolean;
   loading: boolean;
   error: string | null;
   truncated: boolean;
@@ -486,7 +496,7 @@ function FilePane(p: FilePaneProps) {
           >
             <RefreshCw
               size={12}
-              className={`icon-inline${p.isFetching ? " spin" : ""}`}
+              className={`icon-inline${p.pending || p.isFetching ? " spin" : ""}`}
             />
           </button>
         </div>

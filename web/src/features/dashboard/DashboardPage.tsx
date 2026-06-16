@@ -13,6 +13,7 @@
  * real fetcher once /devices /tunnels /sessions /metrics ship.
  */
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import { useMemo } from "react";
 import type { Lang } from "../../stores/app";
@@ -151,9 +152,16 @@ export function DashboardPage() {
             <RefreshCw size={12} className="icon-inline" />{" "}
             {lang === "zh" ? "刷新" : "Refresh"}
           </button>
-          <a className="link-arrow" href="#all-devices">
+          {/* No standalone devices page yet — System Info is the
+              closest device-detail surface (same target family as
+              QuickActionRow's inspect deep-links). */}
+          <Link
+            className="link-arrow"
+            to="/inspect/$tabKey"
+            params={{ tabKey: "system" }}
+          >
             {lang === "zh" ? "所有设备" : "All devices"}
-          </a>
+          </Link>
         </span>
       </div>
       {devices.isLoading ? (
@@ -211,9 +219,9 @@ export function DashboardPage() {
           <div className="group-head" style={{ marginTop: 0 }}>
             <h2>{lang === "zh" ? "近期会话" : "Recent sessions"}</h2>
             <span className="right">
-              <a className="link-arrow" href="#sessions">
+              <Link className="link-arrow" to="/sessions">
                 {lang === "zh" ? "查看全部" : "Open Sessions"}
-              </a>
+              </Link>
             </span>
           </div>
           {recent.isLoading ? (
@@ -245,10 +253,9 @@ export function DashboardPage() {
         <span className="right">
           <button
             type="button"
-            className="link-arrow"
+            className="link-arrow link-arrow--btn"
             onClick={audit.paused ? audit.resume : audit.pause}
             disabled={audit.status !== "open"}
-            style={{ background: "none", border: "none", cursor: "pointer" }}
           >
             {audit.paused
               ? lang === "zh" ? "恢复实时" : "Resume"

@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../../stores/app";
 import type { RebootRequest } from "../../lib/api";
 import { useArmedAction } from "../../lib/hooks/useArmedAction";
+import { useElapsedSeconds } from "../../lib/hooks/useElapsedSeconds";
 import { useBattery, useRebootMutation, useSleepWakeMutation } from "./usePower";
 
 type RebootMode = RebootRequest["mode"];
@@ -303,6 +304,9 @@ function SleepWakeCard({ device }: { device: string | null }) {
   const [cycles, setCycles] = useState(1);
   const [holdSec, setHoldSec] = useState(5);
   const mut = useSleepWakeMutation(device);
+  // Worst case runs cycles×(hold+wake) — up to tens of minutes. Without
+  // an elapsed counter the user can't tell "stuck" from "still running".
+  const elapsed = useElapsedSeconds(mut.isPending);
   // Device-change reset — see RebootCard.
   useEffect(() => {
     mut.reset();
@@ -352,8 +356,8 @@ function SleepWakeCard({ device }: { device: string | null }) {
         >
           {mut.isPending
             ? lang === "zh"
-              ? "执行中…"
-              : "running…"
+              ? `执行中… ${elapsed}s`
+              : `running… ${elapsed}s`
             : lang === "zh"
               ? "运行"
               : "run"}
