@@ -31,6 +31,14 @@
  *      Used by `useAuditStream` where 2+ tabs / sub-pages open the
  *      same `/audit/stream` with identical (minutes, includeMetrics).
  *
+ * **Option shapes mirror the mode split** (DEBT-078 / ADR-047 AW-2):
+ *   `PoolOptions` carries the entry-level fields (shareKey + the
+ *   first-caller-wins value fields), `SoloOptions` carries the
+ *   solo-only `noReconnect`. `connect()` accepts the structural
+ *   superset of both so pre-split call sites compile unchanged;
+ *   `noReconnect` alongside `shareKey` is warned about (dev) and
+ *   ignored — see `ConnectOptions`.
+ *
  * **Test-hook naming convention** (AS-3 / sec LOW-1 + arch LOW-4):
  *   Module-level mutable state used ONLY for tests is exposed via
  *   `__xxxForTests` (double-underscore prefix + `ForTests` suffix).
@@ -63,11 +71,30 @@ export interface WsClient {
   get readyState(): number;
 }
 
-interface Options {
+/** Knobs honoured by every underlying socket, whichever mode owns it. */
+interface CommonOptions {
   /** Backoff ceiling in ms (default 30_000). */
   maxBackoffMs?: number;
-  /** Disable auto-reconnect (default false — we do reconnect). */
+}
+
+/** Solo-mode options (no `shareKey`) — one socket per `connect()`. */
+interface SoloOptions extends CommonOptions {
+  /** Disable auto-reconnect (default false — we do reconnect).
+   *
+   *  Solo-mode ONLY (ADR-047 AW-2 · 方案 X): a pool entry is shared by
+   *  N views with independent lifetimes, so "never reconnect" cannot
+   *  be an entry-wide value — the first caller's one-shot wish would
+   *  lock every later view out of reconnect for the entry's lifetime.
+   *  `connect()` warns (dev) and ignores this field when `shareKey`
+   *  is also set; pool-backed sockets always auto-reconnect. */
   noReconnect?: boolean;
+}
+
+/** Pool-mode options (`shareKey` present). `shareKey` is the entry
+ *  key; every other field is an entry VALUE captured from the first
+ *  caller to mint the pool entry — subsequent callers' values are
+ *  silently ignored (first-caller-wins · ADR-047). */
+interface PoolOptions extends CommonOptions {
   /** Pool dedup key (DEBT-047 · AP-1 implemented).
    *
    *  Two callers passing the SAME `(path, shareKey)` share one socket.
@@ -92,7 +119,7 @@ interface Options {
    *  shareKey silently re-keys existing callers. `useAuditStream.
    *  shareKey.test.ts` pins the exact byte sequence — bump that spec
    *  when intentionally changing. */
-  shareKey?: string;
+  shareKey: string;
   /** Cached-snapshot age ceiling (ms) for late-joiner replay (AT-3 /
    *  5/26 第六轮 MID-1 · DEBT-065 follow-up). When the late-joiner
    *  microtask checks the pool entry's cached snapshot, anything
@@ -127,6 +154,14 @@ interface Options {
    *  rebuild. Don't expose this option as user-tunable UI state. */
   staleSnapshotMs?: number;
 }
+
+/** What `connect()` accepts: the structural superset of both modes,
+ *  with `shareKey` optional as the mode discriminator. Pre-split call
+ *  sites (which typed against the old merged `Options`) compile
+ *  unchanged. The one cross-mode combination — `noReconnect` together
+ *  with `shareKey` — is warned about (dev) and `noReconnect` is
+ *  ignored (see `SoloOptions.noReconnect`). */
+type ConnectOptions = SoloOptions & Partial<PoolOptions>;
 
 /** Build an absolute ws:// / wss:// URL for a path relative to the
  *  current origin. In dev Vite proxies the path; in prod FastAPI
@@ -169,10 +204,10 @@ interface PoolEntry {
    *  0 = never set. */
   cachedSnapshotAt: number;
   /** Caller-configurable stale-snapshot age ceiling for this entry
-   *  (AT-3 / Options.staleSnapshotMs). Captured from the FIRST
+   *  (AT-3 / PoolOptions.staleSnapshotMs). Captured from the FIRST
    *  caller to mint the pool entry; subsequent callers' values are
    *  ignored (matches the existing first-caller-wins semantics of
-   *  pool-level options like maxBackoffMs / noReconnect). */
+   *  pool-level options like maxBackoffMs). */
   staleSnapshotMs: number;
   /** Incremented every time the underlying socket re-opens (initial
    *  open + every auto-reconnect). Drives per-epoch payload dedup so
@@ -225,7 +260,7 @@ export function __setListenerErrorHandlerForTests(
  *  after the pool entry bootstrapped would render 6h-old timeline
  *  state for the first few frames. 5 min is the common tab-idle
  *  threshold. AT-3 (5/26 第六轮 MID-1): callers can override per-
- *  entry via `Options.staleSnapshotMs` for streams with different
+ *  entry via `PoolOptions.staleSnapshotMs` for streams with different
  *  freshness budgets. AV-5 (5/26 第八轮 code LOW): declared BEFORE
  *  `sanitizeStaleSnapshotMs` (the only consumer) so module init can
  *  never hit a TDZ — pure ordering hygiene, no functional change. */
@@ -287,10 +322,12 @@ export function __setNowProviderForTests(
  *  views are just Set entries. */
 function createPoolEntry(
   path: string,
-  options: Omit<Options, "shareKey">,
+  options: Omit<PoolOptions, "shareKey">,
   key: string,
 ): PoolEntry {
-  const underlying = soloConnect(path, options);
+  // Pool-backed sockets always auto-reconnect: `noReconnect` is not a
+  // PoolOptions field (ADR-047 AW-2 · see SoloOptions.noReconnect).
+  const underlying = soloConnect(path, { maxBackoffMs: options.maxBackoffMs });
   const entry: PoolEntry = {
     client: underlying,
     key,
@@ -484,19 +521,29 @@ export function __resetPoolForTests(): void {
   pool.clear();
 }
 
-export function connect(path: string, opts: Options = {}): WsClient {
+export function connect(path: string, opts: ConnectOptions = {}): WsClient {
   if (opts.shareKey === undefined) {
     // Solo mode — preserve every pre-DEBT-047 caller's semantics.
     return soloConnect(path, opts);
   }
+  // Pool mode. `noReconnect` is solo-only (SoloOptions.noReconnect):
+  // warn (dev) + ignore rather than throw, since the pre-split merged
+  // Options shape accepted the combination without complaint.
+  if (opts.noReconnect !== undefined && import.meta.env.DEV) {
+    console.warn(
+      `lib/ws: noReconnect is a solo-mode option and is ignored when ` +
+        `shareKey is set (path=${path}) — pooled sockets always ` +
+        `auto-reconnect`,
+    );
+  }
   const key = `${path}|${opts.shareKey}`;
   let entry = pool.get(key);
   if (entry === undefined) {
-    // Strip shareKey before handing options to soloConnect — the
-    // underlying client doesn't need (or know about) the pool key.
-    const { shareKey: _unused, ...rest } = opts;
-    void _unused;
-    entry = createPoolEntry(path, rest, key);
+    entry = createPoolEntry(
+      path,
+      { maxBackoffMs: opts.maxBackoffMs, staleSnapshotMs: opts.staleSnapshotMs },
+      key,
+    );
     pool.set(key, entry);
   }
   return makeView(entry);
@@ -505,7 +552,7 @@ export function connect(path: string, opts: Options = {}): WsClient {
 /** The pre-DEBT-047 implementation, factored out so connect() can pick
  *  it directly when shareKey is omitted AND so pool entries can wrap
  *  exactly one of these per underlying socket. */
-function soloConnect(path: string, opts: Omit<Options, "shareKey">): WsClient {
+function soloConnect(path: string, opts: SoloOptions): WsClient {
   const { maxBackoffMs = 30_000, noReconnect = false } = opts;
   const url = wsUrl(path);
   const listeners = new Set<(ev: WsEvent) => void>();
