@@ -16,6 +16,32 @@ export class AlbApiError extends Error {
   }
 }
 
+/**
+ * Parse a JSON body the endpoint whitelists as an `{ ok, ... }`
+ * envelope even on 4xx/503.  FastAPI request-validation rejects (422)
+ * bypass the envelope wrapper and return a bare `{ detail }` body —
+ * passing those through as-is renders an empty "ERROR: " in the UI.
+ * Bodies without an `ok` field are normalised into a synthetic error
+ * envelope carrying the HTTP status and the detail text.
+ */
+export async function parseEnvelope<T extends { ok: boolean }>(
+  r: Response,
+): Promise<T> {
+  const body: unknown = await r.json();
+  if (body !== null && typeof body === "object" && "ok" in body) {
+    return body as T;
+  }
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  return {
+    ok: false,
+    error: {
+      code: `HTTP_${r.status}`,
+      message:
+        typeof detail === "string" ? detail : JSON.stringify(detail ?? ""),
+    },
+  } as unknown as T;
+}
+
 export interface ApiEndpoint {
   method: string;
   path: string;
@@ -933,7 +959,7 @@ export async function fetchAppList(
       "APP_LIST_FAILED",
     );
   }
-  return (await r.json()) as AppEnvelope<AppListData>;
+  return parseEnvelope<AppEnvelope<AppListData>>(r);
 }
 
 export async function fetchAppInfo(
@@ -951,7 +977,7 @@ export async function fetchAppInfo(
       "APP_INFO_FAILED",
     );
   }
-  return (await r.json()) as AppEnvelope<AppInfoData>;
+  return parseEnvelope<AppEnvelope<AppInfoData>>(r);
 }
 
 async function _postApp(
@@ -971,7 +997,7 @@ async function _postApp(
       "APP_OP_FAILED",
     );
   }
-  return (await r.json()) as AppEnvelope<unknown>;
+  return parseEnvelope<AppEnvelope<unknown>>(r);
 }
 
 export const postAppStart = (
@@ -987,7 +1013,12 @@ export const postAppStop = (
 export const postAppClearData = (
   device: string | null | undefined,
   pkg: string,
-) => _postApp("clear-data", device, { package: pkg });
+  opts: { allow_dangerous?: boolean } = {},
+) =>
+  _postApp("clear-data", device, {
+    package: pkg,
+    allow_dangerous: opts.allow_dangerous ?? false,
+  });
 
 export const postAppUninstall = (
   device: string | null | undefined,
@@ -1023,7 +1054,7 @@ export async function postAppInstall(
       "APP_INSTALL_FAILED",
     );
   }
-  return (await r.json()) as AppEnvelope<unknown>;
+  return parseEnvelope<AppEnvelope<unknown>>(r);
 }
 
 /* ─── Diag (bugreport / anr / tombstone) ───────────────────────── */
@@ -1083,7 +1114,7 @@ export async function postDiagBugreport(
       "BUGREPORT_FAILED",
     );
   }
-  return (await r.json()) as DiagEnvelope<DiagBugreportResult>;
+  return parseEnvelope<DiagEnvelope<DiagBugreportResult>>(r);
 }
 
 export async function postDiagAnr(
@@ -1102,7 +1133,7 @@ export async function postDiagAnr(
       "ANR_FAILED",
     );
   }
-  return (await r.json()) as DiagEnvelope<DiagPullBundleResult>;
+  return parseEnvelope<DiagEnvelope<DiagPullBundleResult>>(r);
 }
 
 export async function postDiagTombstone(
@@ -1121,7 +1152,7 @@ export async function postDiagTombstone(
       "TOMBSTONE_FAILED",
     );
   }
-  return (await r.json()) as DiagEnvelope<DiagPullBundleResult>;
+  return parseEnvelope<DiagEnvelope<DiagPullBundleResult>>(r);
 }
 
 export async function fetchDiagArtifacts(
@@ -1180,7 +1211,7 @@ export async function fetchLogSearch(
       "LOG_SEARCH_FAILED",
     );
   }
-  return (await r.json()) as LogSearchResponse;
+  return parseEnvelope<LogSearchResponse>(r);
 }
 
 /* ─── Power (battery / reboot / sleep-wake) ────────────────────── */
@@ -1218,7 +1249,7 @@ export async function fetchBattery(
       "BATTERY_FETCH_FAILED",
     );
   }
-  return (await r.json()) as PowerEnvelope<BatteryData>;
+  return parseEnvelope<PowerEnvelope<BatteryData>>(r);
 }
 
 export interface RebootRequest {
@@ -1249,7 +1280,7 @@ export async function postReboot(
       "REBOOT_FAILED",
     );
   }
-  return (await r.json()) as PowerEnvelope<RebootResult>;
+  return parseEnvelope<PowerEnvelope<RebootResult>>(r);
 }
 
 export interface SleepWakeRequest {
@@ -1279,7 +1310,7 @@ export async function postSleepWake(
       "SLEEP_WAKE_FAILED",
     );
   }
-  return (await r.json()) as PowerEnvelope<SleepWakeResult>;
+  return parseEnvelope<PowerEnvelope<SleepWakeResult>>(r);
 }
 
 /* ─── Doctor (env health snapshot) ─────────────────────────────── */
