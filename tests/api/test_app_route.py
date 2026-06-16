@@ -130,8 +130,9 @@ def test_stop_invokes_capability(monkeypatch, client) -> None:
 def test_clear_data_invokes_capability(monkeypatch, client) -> None:
     received: dict[str, Any] = {}
 
-    async def _clear(_t, package):
+    async def _clear(_t, package, *, allow_dangerous):
         received["package"] = package
+        received["allow_dangerous"] = allow_dangerous
         return ok(data={"cleared": package}, timing_ms=2)
 
     monkeypatch.setattr("alb.api.app_route.app_cap.clear_data", _clear)
@@ -139,6 +140,25 @@ def test_clear_data_invokes_capability(monkeypatch, client) -> None:
         "/api/app/clear-data?device=abc", json={"package": "com.example.a"}
     )
     assert r.status_code == 200
+    assert received["package"] == "com.example.a"
+    # Field omitted in the body → defaults to False.
+    assert received["allow_dangerous"] is False
+
+
+def test_clear_data_passes_allow_dangerous(monkeypatch, client) -> None:
+    received: dict[str, Any] = {}
+
+    async def _clear(_t, package, *, allow_dangerous):
+        received.update(package=package, allow_dangerous=allow_dangerous)
+        return ok(data={"cleared": package}, timing_ms=2)
+
+    monkeypatch.setattr("alb.api.app_route.app_cap.clear_data", _clear)
+    r = client.post(
+        "/api/app/clear-data?device=abc",
+        json={"package": "com.example.a", "allow_dangerous": True},
+    )
+    assert r.status_code == 200
+    assert received["allow_dangerous"] is True
 
 
 def test_uninstall_passes_flags(monkeypatch, client) -> None:

@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException, Query
 from alb.capabilities.logging import capture_uart
 from alb.infra.safe_path import resolve_under
 from alb.infra.workspace import is_safe_device, workspace_root
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 router = APIRouter()
 

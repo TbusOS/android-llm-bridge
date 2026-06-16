@@ -59,7 +59,7 @@ from alb.api.schema import API_VERSION
 from alb.capabilities.logging import _reconnecting_serial_stream
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.workspace import is_safe_device
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 
 def _safe_device(raw: object) -> str | None:

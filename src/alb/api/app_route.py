@@ -10,7 +10,7 @@ Endpoints:
   GET  /api/app/info?device=...&package=...
   POST /api/app/start          body {component}
   POST /api/app/stop           body {package}
-  POST /api/app/clear-data     body {package}
+  POST /api/app/clear-data     body {package, allow_dangerous}
   POST /api/app/uninstall      body {package, keep_data, allow_dangerous}
   POST /api/app/install        multipart: apk file
       query: ?device=...&replace=bool&grant_runtime=bool&downgrade=bool
@@ -22,6 +22,7 @@ push + ``pm install`` flow.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -33,7 +34,7 @@ from pydantic import BaseModel, Field
 from alb.capabilities import app as app_cap
 from alb.infra.result import envelope_dict, envelope_transport_init_error
 from alb.infra.workspace import is_safe_device
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 router = APIRouter(prefix="/api/app", tags=["app"])
 
@@ -70,6 +71,11 @@ class StartRequest(BaseModel):
 class UninstallRequest(BaseModel):
     package: str = Field(..., min_length=1, max_length=256)
     keep_data: bool = False
+    allow_dangerous: bool = False
+
+
+class ClearDataRequest(BaseModel):
+    package: str = Field(..., min_length=1, max_length=256)
     allow_dangerous: bool = False
 
 
@@ -126,13 +132,15 @@ async def post_stop(
 
 @router.post("/clear-data")
 async def post_clear_data(
-    body: PackageRequest,
+    body: ClearDataRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
     transport, err = _resolve_transport(device)
     if err is not None:
         return err
-    r = await app_cap.clear_data(transport, body.package)
+    r = await app_cap.clear_data(
+        transport, body.package, allow_dangerous=body.allow_dangerous
+    )
     return envelope_dict(r)
 
 
@@ -226,7 +234,9 @@ async def post_install(
                 written += len(chunk)
                 if written > _APK_MAX_BYTES:
                     return _too_large_envelope()
-                f.write(chunk)
+                # Up to 500 sync 1 MiB writes — keep each off the loop
+                # (L-033).
+                await asyncio.to_thread(f.write, chunk)
         r = await app_cap.install(
             transport,
             Path(tmp_path),
@@ -237,6 +247,6 @@ async def post_install(
         return envelope_dict(r)
     finally:
         try:
-            os.unlink(tmp_path)
+            await asyncio.to_thread(os.unlink, tmp_path)
         except OSError:
             pass

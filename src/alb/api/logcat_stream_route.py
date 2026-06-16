@@ -37,7 +37,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 router = APIRouter()
 

@@ -52,7 +52,7 @@ from alb.api.schema import API_VERSION
 from alb.capabilities.filesync import pull as filesync_pull
 from alb.capabilities.filesync import push as filesync_push
 from alb.infra.workspace import iso_timestamp, workspace_root
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 from alb.transport.base import TransferEvent
 
 router = APIRouter()

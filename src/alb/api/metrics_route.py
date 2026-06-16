@@ -34,7 +34,7 @@ from alb.capabilities.metrics import (
     MetricsStreamer,
     get_streamer,
 )
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 router = APIRouter()
 

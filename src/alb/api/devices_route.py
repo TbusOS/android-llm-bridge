@@ -21,12 +21,13 @@ from typing import Any
 
 from fastapi import APIRouter
 
+import asyncio
 import base64
 from pathlib import Path
 
 from alb.capabilities.diagnose import device_system, devinfo
 from alb.capabilities.ui import screenshot, ui_dump
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 router = APIRouter()
 
@@ -216,6 +217,16 @@ async def device_system_endpoint(serial: str) -> dict[str, Any]:
     }
 
 
+def _read_png_b64_in_thread(path: Path) -> str:
+    """Sync helper: read + base64-encode the PNG in one hop.
+
+    Both steps run in the worker thread — wrapping only `read_bytes`
+    would still b64-encode multiple MB on the loop. Pure sync, call via
+    `asyncio.to_thread` (L-033).
+    """
+    return base64.b64encode(path.read_bytes()).decode("ascii")
+
+
 @router.post("/devices/{serial}/screenshot")
 async def device_screenshot(serial: str) -> dict[str, Any]:
     """Capture a fresh PNG framebuffer + return base64 inline (PR-G).
@@ -258,8 +269,9 @@ async def device_screenshot(serial: str) -> dict[str, Any]:
         }
 
     try:
-        png_bytes = Path(r.data.path).read_bytes()
-        png_b64 = base64.b64encode(png_bytes).decode("ascii")
+        png_b64 = await asyncio.to_thread(
+            _read_png_b64_in_thread, Path(r.data.path)
+        )
     except OSError as exc:
         return {
             "ok": False,

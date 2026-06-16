@@ -47,7 +47,7 @@ class _FakeTransport:
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    # Replace transport_factory's build_transport so the WS route gets
+    # Replace the transport factory's build_transport so the WS route gets
     # our fake instead of trying to talk to a real device.
     monkeypatch.setattr(
         "alb.api.metrics_route.build_transport",

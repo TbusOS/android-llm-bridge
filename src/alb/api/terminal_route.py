@@ -41,7 +41,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from alb.api.schema import API_VERSION
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.workspace import InvalidSessionId, iso_timestamp, session_path
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 from alb.transport.interactive import InteractiveShell
 from alb.transport.terminal_guard import TerminalGuard
 

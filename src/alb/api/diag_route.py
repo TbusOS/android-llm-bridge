@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from alb.capabilities import diagnose as diag_cap
 from alb.infra.result import envelope_dict, envelope_transport_init_error
 from alb.infra.workspace import is_safe_device, workspace_root
-from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import build_transport
 
 router = APIRouter(prefix="/api/diag", tags=["diag"])
 
