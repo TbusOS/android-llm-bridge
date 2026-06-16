@@ -398,3 +398,12 @@ def test_pty_immediate_exit_forwards_stdout_then_close_with_exit_code(
     assert b"Permission denied" in saw_bytes, (
         f"expected stderr bytes in stream, got {saw_bytes!r}"
     )
+
+
+# ─── round11 SEC-2: malformed serial rejected before build_transport ──
+def test_terminal_bad_device_rejected(client) -> None:
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": "bad; reboot", "rows": 24, "cols": 80})
+        msg = ws.receive_json()
+        assert msg["type"] == "closed"
+        assert msg["error"]["code"] == "INVALID_DEVICE"

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from alb.api.server import create_app
 from alb.transport.base import ShellResult, Transport
@@ -201,6 +203,73 @@ def test_good_filter_specs_pass(monkeypatch, tmp_path) -> None:
             for _ in range(3):
                 ws.receive_bytes()
     assert captured_kwargs.get("filter") == "MyApp.Net:v Other-Tag:I *:S"
+
+
+# ─── round11 CODE-2: single close frame on mid-stream error ─────────
+class _RaisingLogcatTransport(Transport):
+    """Yields one line, then raises mid-stream."""
+
+    name = "adb"
+
+    async def shell(self, cmd: str, *, timeout: int = 30) -> ShellResult:
+        return ShellResult(ok=True)
+
+    async def stream_read(self, source: str, **kwargs: Any):  # noqa: ANN001
+        if source != "logcat":
+            return
+        yield b"line1\n"
+        raise RuntimeError("boom mid-stream")
+
+    async def push(self, local, remote):  # noqa: ANN001
+        return ShellResult(ok=True)
+
+    async def pull(self, remote, local):  # noqa: ANN001
+        return ShellResult(ok=True)
+
+    async def reboot(self, mode: str = "normal") -> ShellResult:
+        return ShellResult(ok=True)
+
+    async def health(self) -> dict[str, Any]:
+        return {"ok": True}
+
+
+def test_midstream_error_sends_single_stream_error_frame(monkeypatch, tmp_path) -> None:
+    """A mid-stream pump error must surface as exactly ONE close frame with
+    reason=stream_error — not get clobbered by a trailing `ended` (L-026)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.logcat_stream_route.build_transport",
+        lambda **_: _RaisingLogcatTransport(),
+    )
+    app = create_app()
+    closes: list[dict] = []
+    with TestClient(app) as c:
+        with c.websocket_connect("/logcat/stream") as ws:
+            assert ws.receive_json()["type"] == "ready"
+            try:
+                for _ in range(50):
+                    msg = ws.receive()
+                    if msg.get("type") == "websocket.close":
+                        break
+                    text = msg.get("text")
+                    if text:
+                        obj = json.loads(text)
+                        if obj.get("type") == "closed":
+                            closes.append(obj)
+            except WebSocketDisconnect:
+                pass
+    assert len(closes) == 1, f"expected exactly one close frame, got {closes}"
+    assert closes[0]["reason"] == "stream_error"
+    assert "boom" in closes[0].get("error", "")
+
+
+# ─── round11 SEC-2: malformed serial rejected before build_transport ──
+def test_bad_device_rejected_with_close_frame(client) -> None:
+    with client.websocket_connect("/logcat/stream") as ws:
+        ws.send_json({"device": "bad; reboot"})
+        msg = ws.receive_json()
+        assert msg["type"] == "closed"
+        assert msg["reason"] == "bad_device"
 
 
 def test_empty_filter_passes(monkeypatch, tmp_path) -> None:

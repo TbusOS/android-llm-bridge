@@ -166,7 +166,8 @@ async def _run_read_only(
     ws: WebSocket, transport: Any, *, device: str | None = None,
 ) -> None:
     """v1 PR-C.b path — stream_read iterator, no write."""
-    pump_task = asyncio.create_task(_pump_uart_to_ws(ws, transport))
+    cs = _CloseState()
+    pump_task = asyncio.create_task(_pump_uart_to_ws(ws, transport, cs))
     recv_task = asyncio.create_task(_recv_loop(ws, link=None, device=device))
     try:
         _, pending = await asyncio.wait(
@@ -178,8 +179,13 @@ async def _run_read_only(
             with contextlib.suppress(asyncio.CancelledError):
                 await t
     finally:
+        # Single close frame — a mid-stream stream_error (set by the pump)
+        # is no longer clobbered by an unconditional `ended` (CODE-2 / L-026).
+        payload: dict[str, Any] = {"type": "closed", "reason": cs.reason}
+        if cs.error:
+            payload["error"] = cs.error
         with contextlib.suppress(Exception):
-            await ws.send_json({"type": "closed", "reason": "ended"})
+            await ws.send_json(payload)
         with contextlib.suppress(Exception):
             await ws.close()
 
@@ -274,7 +280,9 @@ async def _run_bidirectional(
             await ws.close()
 
 
-async def _pump_uart_to_ws(ws: WebSocket, transport: Any) -> None:
+async def _pump_uart_to_ws(
+    ws: WebSocket, transport: Any, cs: _CloseState
+) -> None:
     """Async iterator over UART bytes → ws.send_bytes per chunk.
 
     Read-only PR-C.b path — wraps ``transport.stream_read("uart")`` in
@@ -298,15 +306,9 @@ async def _pump_uart_to_ws(ws: WebSocket, transport: Any) -> None:
                 return
     except (asyncio.CancelledError, WebSocketDisconnect):
         raise
-    except Exception as e:  # noqa: BLE001 — turn into closed frame, don't crash
-        with contextlib.suppress(Exception):
-            await ws.send_json(
-                {
-                    "type": "closed",
-                    "reason": "stream_error",
-                    "error": f"{type(e).__name__}: {e}",
-                }
-            )
+    except Exception as e:  # noqa: BLE001 — record for the single close frame
+        cs.reason = "stream_error"
+        cs.error = f"{type(e).__name__}: {e}"
 
 
 async def _pump_link_to_ws(

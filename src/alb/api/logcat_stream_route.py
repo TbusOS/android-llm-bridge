@@ -32,14 +32,27 @@ import asyncio
 import contextlib
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
+from alb.infra.workspace import is_safe_device
 from alb.transport.factory import build_transport
 
 router = APIRouter()
+
+
+@dataclass
+class _CloseState:
+    """Shared between pump + recv so they DON'T each send a close frame
+    (L-026). The outer finally reads this and sends exactly one frame —
+    a mid-stream `stream_error` is no longer clobbered by a trailing
+    `ended` (functional audit CODE-2)."""
+
+    reason: str = "ended"
+    error: str | None = None
 
 _FILTER_TOKEN = re.compile(r"^[A-Za-z0-9_.*-]+:[VDIWEFSvdiwefs]$")
 
@@ -84,6 +97,16 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
     # mirrors alb_logcat MCP tool ergonomics.
     if not filter_spec and isinstance(tags, list) and tags:
         filter_spec = " ".join([f"{t}:V" for t in tags] + ["*:S"])
+
+    # SEC-2: reject a malformed serial before build_transport (clean
+    # closed frame, matches the REST routes' is_safe_device gate).
+    if device is not None and not is_safe_device(device):
+        await ws.send_json(
+            {"type": "closed", "reason": "bad_device", "error": "invalid device serial"}
+        )
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
 
     spec_err = _validate_filter_spec(filter_spec)
     if spec_err is not None:
@@ -140,8 +163,9 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
         }
     )
 
+    cs = _CloseState()
     pump_task = asyncio.create_task(
-        _pump_logcat_to_ws(ws, transport, filter_spec)
+        _pump_logcat_to_ws(ws, transport, filter_spec, cs)
     )
     recv_task = asyncio.create_task(_recv_loop(ws))
     try:
@@ -154,14 +178,19 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await t
     finally:
+        # Single close frame — stream_error (set by the pump) survives
+        # instead of being overwritten by an unconditional `ended`.
+        payload: dict[str, Any] = {"type": "closed", "reason": cs.reason}
+        if cs.error:
+            payload["error"] = cs.error
         with contextlib.suppress(Exception):
-            await ws.send_json({"type": "closed", "reason": "ended"})
+            await ws.send_json(payload)
         with contextlib.suppress(Exception):
             await ws.close()
 
 
 async def _pump_logcat_to_ws(
-    ws: WebSocket, transport: Any, filter_spec: str | None
+    ws: WebSocket, transport: Any, filter_spec: str | None, cs: _CloseState
 ) -> None:
     """Iterate transport.stream_read('logcat', filter=...) and forward
     each chunk as a binary WS frame."""
@@ -178,15 +207,9 @@ async def _pump_logcat_to_ws(
                 return
     except (asyncio.CancelledError, WebSocketDisconnect):
         raise
-    except Exception as e:  # noqa: BLE001
-        with contextlib.suppress(Exception):
-            await ws.send_json(
-                {
-                    "type": "closed",
-                    "reason": "stream_error",
-                    "error": f"{type(e).__name__}: {e}",
-                }
-            )
+    except Exception as e:  # noqa: BLE001 — record for the single close frame
+        cs.reason = "stream_error"
+        cs.error = f"{type(e).__name__}: {e}"
 
 
 async def _recv_loop(ws: WebSocket) -> None:

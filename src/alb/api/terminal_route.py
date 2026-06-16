@@ -40,7 +40,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
 from alb.infra.event_bus import get_bus, make_event
-from alb.infra.workspace import InvalidSessionId, iso_timestamp, session_path
+from alb.infra.workspace import (
+    InvalidSessionId,
+    is_safe_device,
+    iso_timestamp,
+    session_path,
+)
 from alb.transport.factory import build_transport
 from alb.transport.interactive import InteractiveShell
 from alb.transport.terminal_guard import TerminalGuard
@@ -88,6 +93,22 @@ async def terminal_ws(ws: WebSocket) -> None:
                 "code": "INVALID_SESSION_ID",
                 "message": str(e),
                 "suggestion": "use [A-Za-z0-9][A-Za-z0-9_-]* (<= 128 chars)",
+            },
+        })
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
+
+    # SEC-2: reject a malformed serial before build_transport (build is
+    # unwrapped here, so a bad serial would otherwise raise uncaught).
+    if device is not None and not is_safe_device(device):
+        await ws.send_json({
+            "type": "closed",
+            "exit_code": -1,
+            "error": {
+                "code": "INVALID_DEVICE",
+                "message": "invalid device serial",
+                "suggestion": "use a valid adb serial",
             },
         })
         with contextlib.suppress(Exception):
