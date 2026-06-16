@@ -287,34 +287,31 @@ async def device_files(
     }
 
 
-@router.get("/workspace/files")
-async def workspace_files(
-    path: str = Query("", description="Workspace-root-relative path"),
-) -> dict[str, Any]:
-    """List a workspace directory. Symlinks resolved against ws root."""
-    try:
-        target = _resolve_workspace_path(path)
-    except HTTPException as exc:
-        return {"ok": False, "path": path, "entries": [], "error": exc.detail}
+def _scan_workspace_dir(
+    target: Path,
+) -> tuple[str, list[dict[str, Any]], bool]:
+    """Sync FS work for workspace_files — run via asyncio.to_thread (L-033).
 
+    scandir + sort + up to ``_MAX_ENTRIES`` lstat() calls all run in the
+    worker thread, so a large workspace directory can't stall the event
+    loop (and with it every live chat / uart / logcat / terminal WS).
+
+    Returns ``(status, entries, truncated)``; status is ``"ok"`` /
+    ``"not_found"`` / ``"not_dir"``. Raises ``OSError`` if the directory
+    can't be scanned (caller turns it into an error envelope).
+
+    MID-3: scandir's DirEntry caches is_dir / is_symlink from readdir(),
+    so we sort + slice on cheap metadata and only lstat the entries we
+    keep. lstat (follow_symlinks=False) so symlinks pointing OUT of the
+    workspace don't leak target size / mtime (security audit 2026-05-02
+    MID 3)."""
     if not target.exists():
-        return {"ok": False, "path": path, "entries": [],
-                "error": "path does not exist"}
+        return ("not_found", [], False)
     if not target.is_dir():
-        return {"ok": False, "path": path, "entries": [],
-                "error": "path is not a directory"}
+        return ("not_dir", [], False)
 
-    # MID-3: use os.scandir so 50k-file directories don't pay 50k
-    # extra stat() calls before truncation — DirEntry caches is_dir /
-    # is_symlink from the readdir() syscall, so we sort + slice on
-    # cheap metadata and only lstat the entries we keep.
-    truncated = False
-    try:
-        with os.scandir(target) as it:
-            scanned = list(it)
-    except OSError as exc:
-        return {"ok": False, "path": path, "entries": [],
-                "error": f"{type(exc).__name__}: {exc}"}
+    with os.scandir(target) as it:
+        scanned = list(it)
 
     def _sort_key(e: os.DirEntry[str]) -> tuple[bool, str]:
         try:
@@ -324,6 +321,7 @@ async def workspace_files(
         return (not is_dir, e.name.lower())
 
     scanned.sort(key=_sort_key)
+    truncated = False
     if len(scanned) > _MAX_ENTRIES:
         truncated = True
         scanned = scanned[:_MAX_ENTRIES]
@@ -331,16 +329,9 @@ async def workspace_files(
     entries: list[dict[str, Any]] = []
     for child in scanned:
         try:
-            # lstat (not stat) so symlinks pointing OUT of workspace
-            # don't leak target file size / mtime to the client.
-            # security audit 2026-05-02 finding MID 3.
             stat = child.stat(follow_symlinks=False)
         except OSError:
             continue
-        # Only follow symlinks for is_dir / is_file determination if
-        # they resolve inside workspace_root — otherwise treat the
-        # symlink itself as the entry (won't be opened anyway since
-        # workspace_download has its own resolve+relative_to gate).
         try:
             is_link = child.is_symlink()
         except OSError:
@@ -358,6 +349,33 @@ async def workspace_files(
             "size": stat.st_size if is_file else 0,
             "mtime_epoch": stat.st_mtime,
         })
+    return ("ok", entries, truncated)
+
+
+@router.get("/workspace/files")
+async def workspace_files(
+    path: str = Query("", description="Workspace-root-relative path"),
+) -> dict[str, Any]:
+    """List a workspace directory. Symlinks resolved against ws root."""
+    try:
+        target = _resolve_workspace_path(path)
+    except HTTPException as exc:
+        return {"ok": False, "path": path, "entries": [], "error": exc.detail}
+
+    try:
+        status, entries, truncated = await asyncio.to_thread(
+            _scan_workspace_dir, target
+        )
+    except OSError as exc:
+        return {"ok": False, "path": path, "entries": [],
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    if status == "not_found":
+        return {"ok": False, "path": path, "entries": [],
+                "error": "path does not exist"}
+    if status == "not_dir":
+        return {"ok": False, "path": path, "entries": [],
+                "error": "path is not a directory"}
 
     root = workspace_root().resolve()
     rel_to_root = str(target.relative_to(root)) if target != root else ""
