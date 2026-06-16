@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 from alb.infra.config import ActiveSettings, load_active
+from alb.infra.workspace import InvalidDeviceSerial, is_safe_device
 from alb.transport.adb import AdbTransport
 from alb.transport.base import Transport
 from alb.transport.serial import SerialTransport
@@ -33,7 +34,15 @@ def build_transport(
     """Build a transport using current settings + optional overrides.
 
     Precedence: explicit `override` > ALB_TRANSPORT env > profile.primary_transport.
+
+    A non-empty ``device_serial`` is gated through ``is_safe_device`` here
+    so every entry point (api / cli / mcp) is protected at the root — a
+    malformed serial never reaches a transport's argv. ``None`` (the
+    env-default device) is always allowed.
     """
+    if device_serial is not None and not is_safe_device(device_serial):
+        raise InvalidDeviceSerial(f"unsafe device serial: {device_serial!r}")
+
     settings = active_settings()
     which = override or os.environ.get("ALB_TRANSPORT") or settings.primary_transport
 
