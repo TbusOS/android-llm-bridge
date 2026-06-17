@@ -520,7 +520,10 @@ export async function captureUiDump(
 export interface AuditEvent {
   ts: string;
   session_id: string;
-  source: "chat" | "terminal";
+  // "playground" (ADR-049): Playground throughput events carry this so the
+  // live-session card (which folds only source==="chat") ignores them while
+  // they still feed the cross-backend KPI + be-card sparkline.
+  source: "chat" | "terminal" | "playground";
   kind: string;
   summary: string;
   /** Kind-specific payload — `rate_per_s` for tps_sample, `id`/`name`
@@ -731,6 +734,49 @@ export async function fetchBackendHealth(
     );
   }
   return (await r.json()) as BackendHealth;
+}
+
+/** One backend's throughput series (ADR-049). `samples` is the mean
+ * tok/s per time bucket, oldest → newest, for the be-card sparkline. */
+export interface BackendThroughput {
+  samples: number[];
+  total_tokens: number;
+  tps:
+    | { mean: number; p50: number; p95: number; max: number; min: number }
+    | null;
+  sample_count: number;
+}
+
+export interface BackendThroughputResponse {
+  ok: boolean;
+  window_s: number;
+  bucket_s: number;
+  group_by: "backend";
+  source: string;
+  backends: Record<string, BackendThroughput>;
+}
+
+/** Per-backend throughput for the dashboard be-card sparkline (ADR-049).
+ * Hits the read-model-backed `/metrics/summary?group_by=backend`. Served
+ * from the in-memory MetricStore; on a cold start it's partial/empty,
+ * which renders as a flat baseline. */
+export async function fetchBackendThroughput(
+  windowSeconds = 300,
+  buckets = 15,
+  signal?: AbortSignal,
+): Promise<BackendThroughputResponse> {
+  const r = await fetch(
+    `/metrics/summary?group_by=backend&window_seconds=${windowSeconds}&buckets=${buckets}`,
+    { signal },
+  );
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /metrics/summary?group_by=backend returned ${r.status}`,
+      r.status,
+      "BACKEND_THROUGHPUT_FAILED",
+    );
+  }
+  return (await r.json()) as BackendThroughputResponse;
 }
 
 // ─── Files browser (PR-H) ─────────────────────────────────────────

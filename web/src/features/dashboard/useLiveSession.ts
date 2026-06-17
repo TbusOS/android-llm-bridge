@@ -15,6 +15,7 @@
 import { useMemo } from "react";
 
 import type { AuditEvent } from "../../lib/api";
+import { scaleSparkPoints as scaleToHeight } from "./sparkScale";
 import type { LiveSessionData, LiveToolCallData } from "./types";
 
 interface ToolAccum extends LiveToolCallData {
@@ -182,13 +183,9 @@ export function selectActiveSession(
  * NOT NaN-safe in JS (unlike Python's max/min in the same order).
  */
 function scaleSparkPoints(samples: number[]): number[] {
-  const finite = samples.filter(Number.isFinite);
-  if (finite.length === 0) return [];
-  const peak = Math.max(SPARK_MIN_CEILING, ...finite);
-  return finite.map((rate) => {
-    const norm = peak > 0 ? rate / peak : 0;
-    return Math.max(0, Math.min(SPARK_HEIGHT, SPARK_HEIGHT * (1 - norm)));
-  });
+  // Delegates to the shared per-series scaler (ADR-049 extracted it so the
+  // be-card throughput spark reuses the identical mapping).
+  return scaleToHeight(samples, SPARK_HEIGHT, SPARK_MIN_CEILING);
 }
 
 function formatElapsed(ms: number): string {

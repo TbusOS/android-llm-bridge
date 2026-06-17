@@ -2,10 +2,14 @@
  * LLM backend health grid (be-grid + be-card).
  *
  * Each card: name + model + a 1- or 3-stat row that depends on the
- * runtime state (DEBT-017 closed). All inline styles were lifted into
- * BEM modifiers in `components.css` (`be-stat--full`,
- * `be-stat-value--ellipsis`) so the React layout matches the v2.html
- * mockup baseline 1:1.
+ * runtime state (DEBT-017 closed), plus a per-backend token-throughput
+ * sparkline at the bottom for reachable backends (ADR-049 / round10
+ * MBC-3) — fed by the MetricStore read model via useBackends; a
+ * reachable backend with no recent samples shows the flat dashed
+ * baseline (the mockup's "no recent throughput" state). All inline
+ * styles were lifted into BEM modifiers in `components.css`
+ * (`be-stat--full`, `be-stat-value--ellipsis`) so the React layout
+ * matches the v2.html mockup baseline 1:1.
  *
  * Six runtime states, all six covered in the mockup:
  *   - up (reachable=true): latency ping (ms or "—") · status=reachable · model
@@ -16,8 +20,17 @@
  *   - loading (probe in flight): "probing… —"
  */
 import { useApp } from "../../stores/app";
+import { Sparkline } from "./Sparkline";
+import { scaleSparkPoints } from "./sparkScale";
 import type { BackendRuntimeState } from "./useBackends";
 import type { BackendCardData } from "./types";
+
+// be-spark viewBox dims (CSS .be-spark sizes the display to 100% × 32px).
+const BE_SPARK_W = 280;
+const BE_SPARK_H = 32;
+// Floor on the dynamic ceiling so a quiet backend (a few tok/s) still
+// shows a profile rather than amplifying noise (mirrors the live card).
+const BE_SPARK_MIN_CEILING = 10;
 
 interface Props {
   backends: BackendCardData[];
@@ -38,6 +51,31 @@ export function LlmBackendCards({ backends, runtime }: Props) {
               <span className="be-model">{be.model}</span>
             </div>
             <div className="be-grid-stats">{renderStats(rt, lang)}</div>
+            {rt.kind === "up" && (
+              // Per-backend token throughput, last 5 min (ADR-049). A
+              // reachable backend with no recent samples renders the flat
+              // dashed baseline (Sparkline `empty`) — the mockup's "no
+              // recent throughput" state.
+              <Sparkline
+                className="be-spark"
+                points={scaleSparkPoints(
+                  rt.throughput ?? [],
+                  BE_SPARK_H,
+                  BE_SPARK_MIN_CEILING,
+                )}
+                width={BE_SPARK_W}
+                height={BE_SPARK_H}
+                color="blue"
+                strokeWidth={2}
+                fillTint
+                empty={!rt.throughput || rt.throughput.length === 0}
+                ariaLabel={
+                  lang === "zh"
+                    ? "近 5 分钟 token 吞吐"
+                    : "Token throughput, last 5 min"
+                }
+              />
+            )}
           </article>
         );
       })}
