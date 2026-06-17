@@ -103,6 +103,34 @@ async def test_anr_pull_several(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_anr_pull_basenames_hostile_names(monkeypatch, tmp_path) -> None:
+    """round11 SEC-3: a device-supplied ls name with path traversal must be
+    reduced to its basename so it can't escape the destination dir."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    pulled: list = []
+    t = _mk_transport({
+        "ls /data/anr": ShellResult(
+            ok=True, exit_code=0,
+            stdout="../../../etc/evil.txt good.txt\n", stderr="", duration_ms=1,
+        ),
+    })
+    orig_pull = t.pull
+
+    async def pull(remote, local):  # noqa: ANN001, ANN202
+        pulled.append(local)
+        return await orig_pull(remote, local)
+
+    t.pull = pull
+    r = await anr_pull(t, device="abc")
+    assert r.ok
+    assert pulled, "expected at least one pull"
+    # No '..' segment survives → the traversal name was basenamed.
+    for p in pulled:
+        assert ".." not in p.parts
+    assert any(p.name == "evil.txt" for p in pulled)
+
+
+@pytest.mark.asyncio
 async def test_devinfo_happy() -> None:
     props_output = (
         "[ro.product.model]: [Pixel 7]\n"

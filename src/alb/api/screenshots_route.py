@@ -121,6 +121,10 @@ def _list_screenshots_entries(base: Path) -> list[dict[str, Any]]:
         return []
     entries: list[dict[str, Any]] = []
     for p in base.glob("*.png"):
+        # SEC-3: skip symlinks so a planted link can't leak stat() metadata
+        # (size / mtime) of a file outside the workspace.
+        if p.is_symlink():
+            continue
         try:
             stat = p.stat()
         except OSError:

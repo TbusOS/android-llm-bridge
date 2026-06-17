@@ -10,6 +10,7 @@ See docs/capabilities/ui.md.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import struct
 import xml.etree.ElementTree as ET
@@ -173,7 +174,9 @@ async def screenshot(
         )
 
     try:
-        png_bytes = local_path.read_bytes()
+        # PERF-3 / L-033: a screenshot can be multiple MB — read off the
+        # event loop so a large pull doesn't stall every other WS stream.
+        png_bytes = await asyncio.to_thread(local_path.read_bytes)
     except OSError as e:
         return fail(
             code="SCREENSHOT_READ_FAILED",
@@ -273,7 +276,8 @@ async def ui_dump(
         )
 
     try:
-        xml_bytes = local_path.read_bytes()
+        # PERF-3 / L-033: read off the event loop (ui dump XML can be large).
+        xml_bytes = await asyncio.to_thread(local_path.read_bytes)
     except OSError as e:
         return fail(
             code="UIDUMP_READ_FAILED",

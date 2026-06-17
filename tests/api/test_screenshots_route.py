@@ -98,6 +98,21 @@ def test_list_skips_unrelated_files(client, workspace) -> None:
     assert names == ["shot.png"]
 
 
+def test_list_skips_symlinks(client, workspace) -> None:
+    """SEC-3: a symlink in the screenshots dir must not be stat()'d (would
+    leak size/mtime of a file outside the workspace)."""
+    d = _shots_dir(workspace)
+    (d / "real.png").write_bytes(_make_png())
+    outside = workspace / "outside-secret.png"
+    outside.write_bytes(_make_png(width=1234, height=5678))
+    (d / "link.png").symlink_to(outside)
+
+    r = client.get(f"/devices/{SERIAL}/screenshots")
+    names = [e["name"] for e in r.json()["screenshots"]]
+    assert "real.png" in names
+    assert "link.png" not in names
+
+
 def test_list_dims_none_for_corrupt_png(client, workspace) -> None:
     """A truncated/non-PNG file with .png suffix → entry kept but dims null."""
     d = _shots_dir(workspace)

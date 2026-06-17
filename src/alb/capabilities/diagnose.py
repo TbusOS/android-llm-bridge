@@ -216,7 +216,13 @@ async def _pull_bundle(
     saved: list[str] = []
     for n in names:
         rem = f"{remote_glob}/{n}"
-        local = dst_dir / n
+        # round11 SEC-3: `n` comes from the device's `ls` output — basename
+        # it so a hostile / malformed name (e.g. "../../etc/x") can't escape
+        # dst_dir when building the local write path. Skip empties / dotdirs.
+        safe = Path(n).name
+        if not safe or safe in {".", ".."}:
+            continue
+        local = dst_dir / safe
         r = await transport.pull(rem, local)
         if r.ok:
             saved.append(str(local))

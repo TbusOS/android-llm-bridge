@@ -197,6 +197,18 @@ def test_chat_ws_invalid_request_emits_error_done(client):
     assert ev["error"]["code"] == "INVALID_REQUEST"
 
 
+def test_chat_ws_non_json_first_frame_rejected(client):
+    """SEC-2: a non-JSON first frame must yield a clean INVALID_REQUEST
+    done event, not an uncaught JSONDecodeError that crashes the handler."""
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_text("this is not json {{{")
+        ev = ws.receive_json()
+
+    assert ev["type"] == "done"
+    assert ev["ok"] is False
+    assert ev["error"]["code"] == "INVALID_REQUEST"
+
+
 def test_chat_ws_session_not_found(client, monkeypatch):
     monkeypatch.setattr(
         "alb.api.chat_route.get_backend",

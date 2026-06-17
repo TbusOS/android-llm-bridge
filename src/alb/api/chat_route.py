@@ -38,6 +38,8 @@ Response (error) — still HTTP 200 (follows our Result envelope):
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,8 @@ from alb.infra.prompt_builder import default_agent_prompt
 from alb.infra.workspace import InvalidSessionId
 
 _SUMMARY_MAX = 120
+# SEC-2: bound how long the chat WS waits for its first (request) frame.
+_FIRST_FRAME_TIMEOUT_S = 30.0
 
 router = APIRouter()
 
@@ -157,7 +161,27 @@ async def chat_ws(ws: WebSocket) -> None:
     """
     await ws.accept()
     try:
-        raw = await ws.receive_json()
+        # SEC-2: the first frame must be valid JSON and arrive promptly.
+        # Without this a client that sends garbage raises JSONDecodeError
+        # (uncaught), and one that connects but never sends holds the
+        # socket open indefinitely.
+        try:
+            raw = await asyncio.wait_for(
+                ws.receive_json(), timeout=_FIRST_FRAME_TIMEOUT_S
+            )
+        except (json.JSONDecodeError, asyncio.TimeoutError):
+            await ws.send_json(
+                {
+                    "type": "done",
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "expected a JSON ChatRequest as the first frame",
+                    },
+                    "session_id": "",
+                }
+            )
+            return
         try:
             req = ChatRequest.model_validate(raw)
         except ValidationError as e:
