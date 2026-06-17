@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -46,6 +48,33 @@ from alb.infra.env_loader import load_env_files
 load_env_files()
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """App startup / shutdown (ADR-049 migrates the old @app.on_event
+    shutdown hooks here — single ordered teardown, no deprecation).
+
+    Startup: attach the MetricStore read model to the event bus so it
+    projects every `tps_sample` for the dashboard's O(window) metric
+    queries. attach() is idempotent, so a per-test create_app() that
+    re-enters the lifespan against a shared bus can't double-register.
+    """
+    from alb.infra.event_bus import get_bus
+    from alb.infra.metric_store import get_metric_store
+
+    get_metric_store().attach(get_bus())
+    try:
+        yield
+    finally:
+        from alb.capabilities.metrics import shutdown_all_streamers
+        await shutdown_all_streamers()
+        # DEBT-019: backends keep a long-lived httpx.AsyncClient open for
+        # connection reuse; close on shutdown so we don't leave half-open
+        # TCP sockets in tests / dev reload.
+        from alb.agent.backends import close_probe_cache
+        await close_probe_cache()
+        get_metric_store().detach()
+
+
 def create_app() -> FastAPI:
     """Build the FastAPI app (kept as a factory so tests can get a fresh instance)."""
     app = FastAPI(
@@ -56,6 +85,7 @@ def create_app() -> FastAPI:
             "Pairs with the MCP server (`alb-mcp`) and CLI (`alb`) — same "
             "underlying capability layer."
         ),
+        lifespan=_lifespan,
     )
 
     @app.get("/health")
@@ -88,20 +118,6 @@ def create_app() -> FastAPI:
     # fresh clone before `cd web && npm run build`; silently skip so
     # the API keeps working.
     mount_ui(app)
-
-    @app.on_event("shutdown")
-    async def _stop_streamers() -> None:  # noqa: ANN001 — FastAPI hook
-        from alb.capabilities.metrics import shutdown_all_streamers
-        await shutdown_all_streamers()
-
-    @app.on_event("shutdown")
-    async def _close_backend_clients() -> None:  # noqa: ANN001 — FastAPI hook
-        # DEBT-019: backends in alb.agent.backends._PROBE_CACHE keep
-        # a long-lived httpx.AsyncClient open against their daemon
-        # for connection reuse. Close on app shutdown so we don't
-        # leave half-open TCP sockets behind in tests / dev reload.
-        from alb.agent.backends import close_probe_cache
-        await close_probe_cache()
 
     return app
 
