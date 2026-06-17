@@ -1,1 +1,0 @@
-import{c as i,j as e}from"./index-Cfa-WGBH.js";function o({titleZh:c,titleEn:a}){const s=i(r=>r.lang);return e.jsxs("div",{className:"mock-card",children:[e.jsx("h1",{style:{fontSize:22},children:s==="zh"?c:a}),e.jsx("p",{className:"section-sub",children:s==="zh"?"顶栏选一台设备再回这里。":"Pick a device from the top-bar picker, then come back."})]})}export{o as N};
