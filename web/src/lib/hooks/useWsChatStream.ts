@@ -162,8 +162,15 @@ export function useWsChatStream<TReq>(
       settledRef.current = true;
       setSettled(info);
       setPhase("settled");
-      onSettledRef.current?.(info);
-      teardown();
+      // CR-7: teardown must run even if a consumer's onSettled throws —
+      // otherwise the socket + subscription leak into the next start() /
+      // unmount. finally keeps the close guaranteed; the callback error
+      // still propagates (we don't swallow consumer bugs).
+      try {
+        onSettledRef.current?.(info);
+      } finally {
+        teardown();
+      }
     },
     [teardown],
   );

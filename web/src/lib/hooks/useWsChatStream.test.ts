@@ -107,6 +107,32 @@ describe("useWsChatStream", () => {
     expect(currentClients[0]?.closed).toBe(true);
   });
 
+  it("CR-7: a throwing onSettled still tears the socket down (no leak)", () => {
+    const onSettled = vi.fn(() => {
+      throw new Error("consumer boom");
+    });
+    const { result } = renderHook(() =>
+      useWsChatStream<TestReq>({
+        path: "/test/ws",
+        onJson: (raw, { markSettled }) => {
+          if ((raw as { type?: string }).type === "done") {
+            markSettled({ kind: "done" });
+          }
+        },
+        onSettled,
+      }),
+    );
+
+    act(() => result.current.start({ prompt: "hi" }));
+    act(() => emit(0, { kind: "open" }));
+    // The consumer callback throws — settle() must still run teardown
+    // (finally) before the error propagates.
+    expect(() =>
+      act(() => emit(0, { kind: "json", data: { type: "done", ok: true } })),
+    ).toThrow("consumer boom");
+    expect(currentClients[0]?.closed).toBe(true);
+  });
+
   it("markSettled({kind:'error',source:'server'}) → settled with that variant", () => {
     const onSettled = vi.fn();
     const { result } = renderHook(() =>

@@ -12,6 +12,7 @@
  * control frames the metrics_route protocol exposes.
  */
 
+import { useEffect } from "react";
 import { CircleStop, Pause, Play } from "lucide-react";
 import { useApp } from "../../stores/app";
 import { NoDeviceCard } from "../../components/NoDeviceCard";
@@ -22,6 +23,14 @@ export function ChartsTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const m = useMetricsStream();
+
+  // UI-4: on device switch, drop the stream so we stop painting the
+  // previous device's telemetry; the user reconnects to the new one
+  // explicitly (disconnect is a stable useCallback).
+  const { disconnect } = m;
+  useEffect(() => {
+    disconnect();
+  }, [device, disconnect]);
 
   if (!device) {
     return <NoDeviceCard titleZh="实时图表" titleEn="Charts" />;
@@ -75,6 +84,15 @@ export function ChartsTab() {
           <span className="uart-tab__last uart-tab__last--err">{m.error}</span>
         )}
       </div>
+
+      {/* UIF-11: first-load guidance — the 6 cards read "—" until connected. */}
+      {!isLive && m.samples.length === 0 && (
+        <p className="section-sub">
+          {lang === "zh"
+            ? "点「连接」开始采集实时图表。"
+            : "Press Connect to start streaming live charts."}
+        </p>
+      )}
 
       <div className="charts-grid">
         <ChartCard
@@ -230,5 +248,10 @@ function labelState(
   lang: string,
 ): string {
   if (paused) return lang === "zh" ? "暂停" : "paused";
-  return s;
+  // UIF-11: localize the state label in zh instead of leaking the raw
+  // English enum.
+  if (lang !== "zh") return s;
+  return (
+    { idle: "空闲", connecting: "连接中", ready: "实时", ended: "已结束", error: "错误" } as const
+  )[s] ?? s;
 }

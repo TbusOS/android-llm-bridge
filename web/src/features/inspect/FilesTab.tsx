@@ -395,6 +395,19 @@ export function FilesTab() {
           </span>
         ) : null}
 
+        {/* UIF-09: after dismissing the sensitive-path HITL modal the
+            transfer stays in needs_confirm — surface it instead of going
+            silent so the user knows nothing was written + how to retry. */}
+        {!xferRunning &&
+        xfer.state === "needs_confirm" &&
+        pendingPush === null ? (
+          <span className="files-tab__msg">
+            {lang === "zh"
+              ? "已取消 · 敏感路径未写入（如需写入请重试并确认 force）"
+              : "Cancelled · sensitive path not written (retry and confirm to force)"}
+          </span>
+        ) : null}
+
         {!xferRunning && xfer.state === "error" && xfer.error ? (
           <span className="files-tab__msg files-tab__msg--err">
             {xfer.result?.direction === "pull"

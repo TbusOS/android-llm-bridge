@@ -122,6 +122,13 @@ export function LogcatTab() {
     connect({ device, filter: f || null });
   }, [connect, device, filter, level]);
   const onClear = () => termRef.current?.clear();
+  // UI-5: recover from error / ended cleanly — wipe stale bytes from xterm
+  // before reopening so fresh output isn't conflated with the pre-error
+  // line that triggered the failure (mirrors UartLiveStream).
+  const onClearAndReconnect = () => {
+    termRef.current?.clear();
+    onConnect();
+  };
 
   // Debounced auto-reconnect: when the user edits filter while a stream
   // is already live, wait FILTER_DEBOUNCE_MS for typing to settle then
@@ -258,6 +265,22 @@ export function LogcatTab() {
           <Eraser size={12} className="icon-inline" />{" "}
           {lang === "zh" ? "清屏" : "Clear"}
         </button>
+        {(state === "error" || state === "ended") && (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={onClearAndReconnect}
+            disabled={!device}
+            title={
+              lang === "zh"
+                ? "清屏并重连，避免残留字节误读"
+                : "wipe stale bytes and reopen the stream"
+            }
+          >
+            <Eraser size={12} className="icon-inline" />{" "}
+            {lang === "zh" ? "清屏并重连" : "Clear & reconnect"}
+          </button>
+        )}
         <span className={stateClass[state]}>● {stateLabel[state]}</span>
         {error && (
           <span className="uart-tab__last uart-tab__last--err">{error}</span>
