@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Screenshot — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect Screenshot tab — capture sidebar + viewer + fullscreen zoom overlay. React class names must mirror this baseline (L-001).">
+    <meta property="og:title" content="Screenshot — webui preview v2">
+    <meta property="og:description" content="Mockup baseline for the Inspect Screenshot tab: capture sidebar, viewer, and the fullscreen zoom overlay.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      :root {
+        --anth-cream: var(--anth-bg, #faf9f5);
+        --anth-border: var(--anth-light-gray, #e6e1d7);
+        --anth-text-tertiary: var(--anth-text-secondary, #6b6760);
+        --anth-red: #b94545;
+      }
+      body { background: var(--anth-bg); padding: 0; margin: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .mockup-topbar { display: flex; justify-content: flex-end; padding: 8px var(--space-5) 0; }
+      .lang-toggle { background: #ffffff; border: 1px solid var(--anth-light-gray); border-radius: var(--radius-pill); padding: 4px 12px; font-family: var(--font-heading); font-size: 12px; cursor: pointer; color: var(--anth-text-secondary); }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+      .shot-wrap { padding: var(--space-3) var(--space-5) var(--space-6); max-width: 1100px; margin: 0 auto; }
+      .h-title { font-family: var(--font-heading); font-size: 28px; font-weight: 700; margin: 0 0 var(--space-2); color: var(--anth-text); }
+      .h-sub { color: var(--anth-text-secondary); font-size: 15px; margin: 0 0 var(--space-4); }
+      .mockup-note { font-family: var(--font-heading); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--anth-text-secondary); margin: var(--space-5) 0 10px; }
+      .icon-inline { vertical-align: -1px; }
+
+      /* shared bar + button + capture-list (mirror of components.css) */
+      .uart-tab__bar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--anth-cream); border: 1px solid var(--anth-border); border-radius: var(--radius-md); }
+      .btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; font-family: var(--font-heading); font-size: 13px; font-weight: 500; border: 1px solid var(--anth-border); border-radius: var(--radius-sm); background: white; color: var(--anth-text); cursor: pointer; }
+      .btn--primary { background: var(--anth-orange); color: white; border-color: var(--anth-orange); }
+      .uart-tab__last { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--anth-text-tertiary); }
+      .uart-tab__last--err { color: var(--anth-red, #b94545); }
+
+      .uart-tab__body { display: grid; grid-template-columns: minmax(220px, 280px) 1fr; gap: var(--space-3); min-height: 480px; }
+      .uart-tab__list { border: 1px solid var(--anth-border); border-radius: var(--radius-md); background: var(--anth-cream); overflow: hidden; display: flex; flex-direction: column; }
+      .uart-tab__list-head { display: flex; justify-content: space-between; align-items: center; padding: var(--space-2) var(--space-3); font-family: var(--font-heading); font-size: 12px; font-weight: 600; color: var(--anth-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--anth-border); }
+      .uart-tab__count { font-family: var(--font-mono); font-size: 11px; color: var(--anth-text-tertiary); letter-spacing: 0; text-transform: none; }
+      .uart-tab__list ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 480px; }
+      .uart-tab__list li { position: relative; border-bottom: 1px solid var(--anth-border); }
+      .uart-tab__list li.is-active { background: white; border-left: 3px solid var(--anth-orange); }
+      .uart-tab__cap-name { font-size: 11px; color: var(--anth-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .uart-tab__cap-meta { font-size: 10px; color: var(--anth-text-tertiary); margin-top: 2px; }
+      .uart-tab__empty { padding: var(--space-3); font-family: var(--font-mono); font-size: 12px; color: var(--anth-text-tertiary); text-align: center; }
+      .uart-tab__empty--err { color: var(--anth-red, #b94545); }
+
+      /* screenshot-specific */
+      .screenshot-tab { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3); }
+      .screenshot-tab__viewer { background: #1e1e1e; border: 1px solid var(--anth-border); border-radius: var(--radius-md); padding: var(--space-3); min-height: 480px; display: flex; align-items: center; justify-content: center; }
+      .screenshot-tab__img { max-width: 100%; max-height: 720px; object-fit: contain; border-radius: var(--radius-sm); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
+
+      .screenshot-row { display: flex; align-items: center; gap: 4px; }
+      .screenshot-row__select { flex: 1; background: none; border: 0; text-align: left; padding: 6px 8px; cursor: pointer; border-radius: var(--radius-sm); }
+      .screenshot-row__select:hover { background: var(--anth-bg-subtle); }
+      .screenshot-row__del { background: none; border: 0; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; color: var(--anth-text-secondary); opacity: 0; transition: opacity 120ms ease, color 120ms ease, background 120ms ease; }
+      li:hover .screenshot-row__del,
+      .screenshot-row__del:focus-visible,
+      .screenshot-row__del.is-armed { opacity: 1; }
+      .screenshot-row__del:hover { color: #b54b3d; background: rgba(181, 75, 61, 0.08); }
+      .screenshot-row__del.is-armed { color: #b54b3d; background: rgba(181, 75, 61, 0.18); animation: alb-armed-pulse 0.9s ease-in-out infinite; }
+      @keyframes alb-armed-pulse { 0%, 100% { background: rgba(181, 75, 61, 0.18); } 50% { background: rgba(181, 75, 61, 0.32); } }
+      @media (prefers-reduced-motion: reduce) { .screenshot-row__del.is-armed { animation: none; } }
+      .screenshot-row__del:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      /* zoom overlay — scoped to a demo frame so the mockup shows it inline
+         instead of covering the whole page (real app uses position:fixed) */
+      .zoom-demo { position: relative; height: 460px; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--anth-border); }
+      .zoom-demo .screenshot-zoom { position: absolute; }
+      .screenshot-zoom { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: flex; align-items: center; justify-content: center; z-index: 1000; overflow: hidden; }
+      .screenshot-zoom__img { max-width: 96vw; max-height: 92vh; user-select: none; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); }
+      .zoom-demo .screenshot-zoom__img { max-height: 400px; }
+      .screenshot-zoom__close { position: absolute; top: 16px; right: 16px; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.25); color: #ffffff; padding: 6px 10px; border-radius: var(--radius-md); cursor: pointer; }
+      .screenshot-zoom__close:hover { background: rgba(255, 255, 255, 0.24); }
+      .screenshot-zoom__hint { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.6); color: #ffffff; padding: 4px 12px; border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="shot-wrap">
+      <h1 class="h-title">
+        <span class="lang-en">Screenshot</span><span class="lang-zh">截图</span>
+      </h1>
+      <p class="h-sub">
+        <span class="lang-en">Capture device framebuffers, browse the history sidebar, zoom fullscreen.</span>
+        <span class="lang-zh">采集设备帧缓冲、浏览历史侧栏、全屏缩放查看。</span>
+      </p>
+
+      <div class="screenshot-tab">
+        <div class="uart-tab__bar">
+          <button type="button" class="btn btn--primary">
+            <svg class="icon-inline" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="13" r="4"/><path d="M4 8h3l2-3h6l2 3h3v11H4z"/></svg>
+            <span class="lang-en">capture</span><span class="lang-zh">采集</span>
+          </button>
+          <span class="uart-tab__last">04:21:07 · 1080×2400</span>
+        </div>
+
+        <div class="uart-tab__body">
+          <aside class="uart-tab__list">
+            <div class="uart-tab__list-head">
+              <span class="lang-en">screenshots</span><span class="lang-zh">截图</span>
+              <span class="uart-tab__count">3</span>
+            </div>
+            <ul>
+              <li class="is-active">
+                <div class="screenshot-row">
+                  <button type="button" class="screenshot-row__select">
+                    <div class="uart-tab__cap-name">screen-042107.png</div>
+                    <div class="uart-tab__cap-meta">04:21:07 · 412 KB</div>
+                  </button>
+                  <button type="button" class="screenshot-row__del" aria-label="delete">
+                    <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                  </button>
+                </div>
+              </li>
+              <li>
+                <div class="screenshot-row">
+                  <button type="button" class="screenshot-row__select">
+                    <div class="uart-tab__cap-name">screen-041955.png</div>
+                    <div class="uart-tab__cap-meta">04:19:55 · 398 KB</div>
+                  </button>
+                  <button type="button" class="screenshot-row__del is-armed" aria-label="confirm delete">
+                    <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                  </button>
+                </div>
+              </li>
+              <li>
+                <div class="screenshot-row">
+                  <button type="button" class="screenshot-row__select">
+                    <div class="uart-tab__cap-name">screen-041830.png</div>
+                    <div class="uart-tab__cap-meta">04:18:30 · 405 KB</div>
+                  </button>
+                  <button type="button" class="screenshot-row__del" aria-label="delete">
+                    <svg class="icon-inline" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </aside>
+
+          <section class="screenshot-tab__viewer">
+            <img class="screenshot-tab__img" alt="device screenshot" src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='640'%3E%3Crect%20width='320'%20height='640'%20fill='%2315171a'/%3E%3Crect%20width='320'%20height='36'%20fill='%230d0f11'/%3E%3Ccircle%20cx='160'%20cy='150'%20r='46'%20fill='%23d97757'/%3E%3Crect%20x='60'%20y='320'%20width='200'%20height='14'%20rx='7'%20fill='%233a3f45'/%3E%3Crect%20x='60'%20y='350'%20width='140'%20height='14'%20rx='7'%20fill='%232a2e33'/%3E%3Ctext%20x='160'%20y='600'%20fill='%236b7178'%20font-family='monospace'%20font-size='14'%20text-anchor='middle'%3E1080%20x%202400%3C/text%3E%3C/svg%3E">
+          </section>
+        </div>
+
+        <!-- empty / error sidebar states -->
+        <p class="mockup-note">
+          <span class="lang-en">state variants · empty / error</span>
+          <span class="lang-zh">状态变体 · 空 / 错误</span>
+        </p>
+        <div class="mockup-row" style="display:grid; grid-template-columns: 1fr 1fr; gap: var(--space-3);">
+          <div class="uart-tab__list">
+            <div class="uart-tab__empty">
+              <span class="lang-en">No screenshots yet — press Capture above</span>
+              <span class="lang-zh">还没有截图 — 点上方采集</span>
+            </div>
+          </div>
+          <div class="uart-tab__list">
+            <div class="uart-tab__empty uart-tab__empty--err">
+              <span class="lang-en">device offline</span><span class="lang-zh">设备离线</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- fullscreen zoom overlay (scoped to a demo frame) -->
+      <p class="mockup-note">
+        <span class="lang-en">zoom overlay · fullscreen modal (shown inline)</span>
+        <span class="lang-zh">缩放覆盖层 · 全屏模态（此处内联展示）</span>
+      </p>
+      <div class="zoom-demo">
+        <div class="screenshot-zoom" role="dialog" aria-label="Screenshot zoom">
+          <button type="button" class="screenshot-zoom__close" aria-label="close">✕</button>
+          <img class="screenshot-zoom__img" alt="zoomed device screenshot" src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='640'%3E%3Crect%20width='320'%20height='640'%20fill='%2315171a'/%3E%3Crect%20width='320'%20height='36'%20fill='%230d0f11'/%3E%3Ccircle%20cx='160'%20cy='150'%20r='46'%20fill='%23d97757'/%3E%3Crect%20x='60'%20y='320'%20width='200'%20height='14'%20rx='7'%20fill='%233a3f45'/%3E%3C/svg%3E">
+          <div class="screenshot-zoom__hint">
+            <span class="lang-en">scroll to zoom · drag to pan · Esc to close</span>
+            <span class="lang-zh">滚轮缩放 · 拖动平移 · Esc 关闭</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>

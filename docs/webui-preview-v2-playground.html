@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Playground — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Playground page — backend/model/sampling rail + streaming chat log. React class names must mirror this baseline (L-001).">
+    <meta property="og:title" content="Playground — webui preview v2">
+    <meta property="og:description" content="Mockup baseline for the Playground page: backend/model/sampling rail + streaming chat log.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; margin: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .visually-hidden { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+      .mockup-topbar {
+        display: flex; justify-content: flex-end; align-items: center;
+        padding: 8px var(--space-5) 0;
+      }
+      .lang-toggle {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill); padding: 4px 12px;
+        font-family: var(--font-heading); font-size: 12px; cursor: pointer;
+        color: var(--anth-text-secondary);
+      }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+      .playground-wrap { padding: 0 var(--space-5) var(--space-5); }
+
+      /* shared classes referenced by the page (defined minimally so this
+         standalone mockup carries no undefined class) */
+      .h-title { font-family: var(--font-heading); font-weight: 600; }
+      .link-arrow {
+        background: none; border: 0; padding: 0;
+        font: inherit; color: var(--anth-orange); cursor: pointer;
+      }
+      .link-arrow--btn { text-decoration: underline; font-size: 12px; }
+      .section-placeholder {
+        padding: 10px 12px; border-radius: var(--radius-sm); font-size: 12px;
+        margin-bottom: 12px;
+      }
+      .section-placeholder--err {
+        background: rgba(181, 75, 61, 0.08); color: #b54b3d;
+        border: 1px solid rgba(181, 75, 61, 0.25);
+      }
+      /* retry link reads as the error-red inside the error box (AA on cream) */
+      .section-placeholder--err .link-arrow--btn { color: #a33a2d; }
+
+      /* ---- Playground page (mirror of web/src/styles/components.css) ---- */
+      .playground-page {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: var(--space-4);
+        height: calc(100vh - 72px);
+        min-height: 500px;
+      }
+      @media (max-width: 900px) {
+        .playground-page { grid-template-columns: 1fr; height: auto; min-height: 0; }
+        .playground-rail { max-height: 280px; }
+      }
+
+      .playground-rail {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        padding: 14px;
+        overflow-y: auto;
+      }
+      .playground-rail__title {
+        font-family: var(--font-heading);
+        font-size: 11px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--anth-text-secondary);
+        margin: 0 0 10px 0;
+      }
+      .playground-rail__title--mt { margin-top: 18px; }
+      .playground-rail__field {
+        display: flex; flex-direction: column; gap: 4px;
+        margin-bottom: 12px; font-size: 12px; color: var(--anth-text);
+      }
+      .playground-rail__field > span {
+        font-family: var(--font-heading);
+        color: var(--anth-text-secondary); font-size: 11px;
+      }
+      .playground-rail__field input,
+      .playground-rail__field select,
+      .playground-rail__field textarea {
+        padding: 6px 8px; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-sm); font-size: 12px; font-family: var(--font-body);
+      }
+      .playground-rail__field input[type="range"] { padding: 0; border: 0; }
+
+      .playground-chat {
+        position: relative;
+        display: flex; flex-direction: column;
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        --chat-bar-height: 72px;
+      }
+      .playground-chat__jump {
+        position: absolute; right: 16px;
+        bottom: calc(var(--chat-bar-height) + 8px);
+        z-index: 2; background: var(--anth-orange); color: #ffffff;
+        border: 0; border-radius: var(--radius-pill);
+        padding: 6px 14px; font-family: var(--font-heading);
+        font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+        cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      }
+      .playground-chat__jump:hover { background: color-mix(in srgb, var(--anth-orange) 88%, black); }
+
+      .playground-chat__head {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 16px; border-bottom: 1px solid var(--anth-light-gray);
+      }
+      .playground-chat__head h1 { margin: 0; font-size: 16px; }
+      .playground-chat__clear {
+        background: none; border: 1px solid var(--anth-light-gray);
+        padding: 4px 10px; border-radius: var(--radius-sm);
+        font-size: 11px; cursor: pointer;
+      }
+      .playground-chat__log {
+        flex: 1; overflow-y: auto; padding: 16px;
+        display: flex; flex-direction: column; gap: 12px;
+      }
+      .playground-chat__empty { margin: auto; color: var(--anth-text-secondary); font-style: italic; }
+
+      .playground-msg {
+        display: flex; flex-direction: column; gap: 4px;
+        padding: 10px 14px; border-radius: var(--radius-md);
+        background: var(--anth-bg-subtle);
+      }
+      .playground-msg--user { background: rgba(217, 119, 87, 0.08); }
+      .playground-msg--assistant { background: var(--anth-bg-subtle); }
+      .playground-msg--streaming { border: 1px dashed var(--anth-orange); }
+      .playground-msg--cancelled {
+        opacity: 0.7; border-left: 3px solid var(--anth-mid-gray); padding-left: 10px;
+      }
+      .playground-msg--errored {
+        opacity: 0.85; border-left: 3px solid #b54b3d; padding-left: 10px;
+        background: rgba(181, 75, 61, 0.05);
+      }
+      .playground-msg--cancelled .playground-msg__role,
+      .playground-msg--errored .playground-msg__role { font-size: 11px; letter-spacing: 0.04em; }
+      .playground-msg__role {
+        font-family: var(--font-heading); font-size: 10px;
+        text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--anth-text-secondary);
+      }
+      .playground-msg__body {
+        margin: 0; font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 13px; white-space: pre-wrap; word-break: break-word; color: var(--anth-text);
+      }
+      .playground-msg__cursor {
+        display: inline-block; color: var(--anth-orange);
+        animation: pg-cursor-blink 1s steps(2, end) infinite;
+      }
+      @keyframes pg-cursor-blink { to { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .playground-msg__cursor { animation: none; } }
+
+      .playground-chat__metrics {
+        display: flex; gap: 14px; flex-wrap: wrap;
+        padding: 6px 10px; background: var(--anth-bg-subtle);
+        border-radius: var(--radius-sm);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 11px; color: var(--anth-text-secondary);
+      }
+      .playground-chat__metric { white-space: nowrap; }
+
+      .playground-chat__bar {
+        display: flex; gap: 8px; padding: 12px 16px;
+        border-top: 1px solid var(--anth-light-gray);
+      }
+      .playground-chat__input {
+        flex: 1; padding: 8px 10px; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-sm); resize: vertical;
+        font-family: var(--font-body); font-size: 13px;
+      }
+      .playground-chat__send, .playground-chat__cancel {
+        padding: 6px 16px; border-radius: var(--radius-md); border: 0;
+        font-family: var(--font-heading); font-size: 13px; font-weight: 500; cursor: pointer;
+      }
+      .playground-chat__send { background: var(--anth-orange); color: #ffffff; }
+      .playground-chat__send:disabled { background: var(--anth-mid-gray); cursor: not-allowed; }
+      .playground-chat__cancel { background: rgba(181, 75, 61, 0.12); color: #b54b3d; }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="playground-wrap">
+      <section class="playground-page">
+        <!-- ============ left rail: backend / model / sampling ============ -->
+        <aside class="playground-rail">
+          <h2 class="playground-rail__title">
+            <span class="lang-en">backend · model</span>
+            <span class="lang-zh">后端 / 模型</span>
+          </h2>
+
+          <label class="playground-rail__field">
+            <span>backend</span>
+            <select>
+              <option>ollama · cpu</option>
+              <option>llamacpp · gpu</option>
+            </select>
+          </label>
+
+          <!-- UIF-06 backends-fetch-failed state (rail error tri-state) -->
+          <div class="section-placeholder section-placeholder--err">
+            <span class="lang-en">Could not fetch backends — is alb-api running?</span>
+            <span class="lang-zh">无法获取后端列表，检查 alb-api 是否在运行</span>
+            <button type="button" class="link-arrow link-arrow--btn">
+              <span class="lang-en">retry</span><span class="lang-zh">重试</span>
+            </button>
+          </div>
+
+          <label class="playground-rail__field">
+            <span>model</span>
+            <select>
+              <option>(default)</option>
+              <option>qwen2.5:7b</option>
+              <option>llama3.1:8b</option>
+            </select>
+          </label>
+
+          <h2 class="playground-rail__title playground-rail__title--mt">
+            <span class="lang-en">sampling</span>
+            <span class="lang-zh">采样</span>
+          </h2>
+
+          <label class="playground-rail__field">
+            <span>temperature (0.70)</span>
+            <input type="range" min="0" max="2" step="0.05" value="0.7">
+          </label>
+          <label class="playground-rail__field">
+            <span>top_p (0.95)</span>
+            <input type="range" min="0" max="1" step="0.01" value="0.95">
+          </label>
+          <label class="playground-rail__field">
+            <span>num_predict</span>
+            <input type="number" min="1" max="8192" value="512">
+          </label>
+          <label class="playground-rail__field">
+            <span>system</span>
+            <textarea rows="3" placeholder="system prompt · optional"></textarea>
+          </label>
+        </aside>
+
+        <!-- ============ chat column ============ -->
+        <main class="playground-chat">
+          <header class="playground-chat__head">
+            <h1 class="h-title">
+              <span class="lang-en">Playground</span>
+              <span class="lang-zh">Playground 调试台</span>
+            </h1>
+            <button type="button" class="playground-chat__clear">
+              <span class="lang-en">clear</span><span class="lang-zh">清空</span>
+            </button>
+          </header>
+
+          <div class="playground-chat__log">
+            <div class="playground-msg playground-msg--user">
+              <span class="playground-msg__role">user</span>
+              <pre class="playground-msg__body">List the running services on the board.</pre>
+            </div>
+
+            <div class="playground-msg playground-msg--assistant">
+              <span class="playground-msg__role">assistant</span>
+              <pre class="playground-msg__body">Here are the active services reported by the device's init manager: networkd, sshd, the UART bridge, and the metrics sampler.</pre>
+            </div>
+
+            <div class="playground-msg playground-msg--cancelled">
+              <span class="playground-msg__role">
+                assistant
+                <span class="lang-en"> · cancelled (not sent to model)</span>
+                <span class="lang-zh"> · 已取消（未发给模型）</span>
+              </span>
+              <pre class="playground-msg__body">Partial answer that was interrupted with Esc before it fini</pre>
+            </div>
+
+            <div class="playground-msg playground-msg--errored">
+              <span class="playground-msg__role">
+                assistant
+                <span class="lang-en"> · error (not sent to model)</span>
+                <span class="lang-zh"> · 错误（未发给模型）</span>
+              </span>
+              <pre class="playground-msg__body">backend unreachable: connection refused</pre>
+            </div>
+
+            <div class="playground-msg playground-msg--assistant playground-msg--streaming">
+              <span class="playground-msg__role">assistant</span>
+              <pre class="playground-msg__body">Streaming the next token<span class="playground-msg__cursor">▍</span></pre>
+            </div>
+
+            <div class="playground-chat__metrics">
+              <span class="playground-chat__metric">tok/s: 42.7</span>
+              <span class="playground-chat__metric">prompt: 38</span>
+              <span class="playground-chat__metric">completion: 256</span>
+              <span class="playground-chat__metric">finish: stop</span>
+            </div>
+          </div>
+
+          <button type="button" class="playground-chat__jump">
+            <span class="lang-en">Latest ↓</span><span class="lang-zh">回到最新 ↓</span>
+          </button>
+
+          <form class="playground-chat__bar">
+            <textarea class="playground-chat__input" rows="2" placeholder="Message… · ⌘+Enter to send"></textarea>
+            <button type="submit" class="playground-chat__send">
+              <span class="lang-en">send</span><span class="lang-zh">发送</span>
+            </button>
+            <button type="button" class="playground-chat__cancel">
+              <span class="lang-en">cancel</span><span class="lang-zh">取消</span>
+            </button>
+          </form>
+        </main>
+      </section>
+
+      <!-- ============ state variant: empty log ============ -->
+      <section style="margin-top: var(--space-5); max-width: 1fr;">
+        <h2 class="playground-rail__title">
+          <span class="lang-en">state variant · empty log</span>
+          <span class="lang-zh">状态变体 · 空对话</span>
+        </h2>
+        <div class="playground-chat" style="height: 140px;">
+          <div class="playground-chat__log">
+            <div class="playground-chat__empty">
+              <span class="lang-en">No messages yet — type below to start.</span>
+              <span class="lang-zh">没有消息 · 试试在下方输入。</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>

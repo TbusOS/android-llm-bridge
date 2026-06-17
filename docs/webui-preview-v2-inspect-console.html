@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Inspect consoles — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect xterm consoles (Shell / Logcat / UART live) — shared uart-tab chrome, write toggle, mode switch.">
+    <meta property="og:title" content="Inspect consoles — webui preview v2">
+    <meta property="og:description" content="Mockup baseline for the Inspect Shell / Logcat / UART-live consoles: uart-tab bar, write toggle, state pills, xterm body, mode switch.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      /* tokens used by components.css uart-tab block but absent from the
+         linked anthropic.css — pin to the app's palette via fallback chains */
+      :root {
+        --anth-cream: var(--anth-bg, #faf9f5);
+        --anth-border: var(--anth-light-gray, #e6e1d7);
+        --anth-text-tertiary: var(--anth-text-secondary, #6b6760);
+        --anth-red: #b94545;
+      }
+      body { background: var(--anth-bg); padding: 0; margin: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .mockup-topbar { display: flex; justify-content: flex-end; padding: 8px var(--space-5) 0; }
+      .lang-toggle {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill); padding: 4px 12px;
+        font-family: var(--font-heading); font-size: 12px; cursor: pointer;
+        color: var(--anth-text-secondary);
+      }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+      .console-wrap { padding: var(--space-3) var(--space-5) var(--space-6); max-width: 1100px; margin: 0 auto; }
+      .h-title { font-family: var(--font-heading); font-size: 28px; font-weight: 700; margin: 0 0 var(--space-2); color: var(--anth-text); }
+      .h-sub { color: var(--anth-text-secondary); font-size: 15px; margin: 0 0 var(--space-4); }
+      .mockup-note {
+        font-family: var(--font-heading); font-size: 11px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--anth-text-secondary); margin: var(--space-5) 0 10px;
+      }
+      .mockup-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      /* sample terminal text inside the (normally xterm.js-rendered) area */
+      .xterm-sample { color: #d4d4d4; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; margin: 0; }
+      .xterm-sample .ok { color: #5fd35f; }
+      .xterm-sample .warn { color: #e6b450; }
+
+      /* ---- uart-tab console family (mirror of web/src/styles/components.css) ---- */
+      .uart-tab { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3); }
+      .uart-tab__bar {
+        display: flex; align-items: center; gap: var(--space-3);
+        padding: var(--space-2) var(--space-3); background: var(--anth-cream);
+        border: 1px solid var(--anth-border); border-radius: var(--radius-md); flex-wrap: wrap;
+      }
+      .uart-tab__duration { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--font-mono); font-size: 12px; color: var(--anth-text-secondary); }
+      .uart-tab__duration input { width: 64px; padding: 4px 6px; font-family: var(--font-mono); font-size: 13px; border: 1px solid var(--anth-border); border-radius: var(--radius-sm); background: white; }
+      .uart-tab .btn {
+        display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px;
+        font-family: var(--font-heading); font-size: 13px; font-weight: 500;
+        border: 1px solid var(--anth-border); border-radius: var(--radius-sm);
+        background: white; color: var(--anth-text); cursor: pointer;
+      }
+      .uart-tab .btn:hover:not(:disabled) { border-color: var(--anth-orange); }
+      .uart-tab .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+      .uart-tab .btn--primary { background: var(--anth-orange); color: white; border-color: var(--anth-orange); }
+      .uart-tab .btn--primary:hover:not(:disabled) { background: var(--anth-orange-hover, #c5663f); }
+      .uart-tab__last { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--anth-text-tertiary); }
+      .uart-tab__last--err { color: var(--anth-red, #b94545); }
+      .uart-tab__last--ok { color: #1f7a4d; }
+      .uart-tab__body { display: grid; grid-template-columns: minmax(220px, 280px) 1fr; gap: var(--space-3); min-height: 480px; }
+      .uart-tab__body--single { grid-template-columns: 1fr; }
+      .uart-tab__xterm { background: #1e1e1e; border-radius: var(--radius-md); border: 1px solid var(--anth-border); padding: var(--space-2); height: 540px; overflow: hidden; }
+      .uart-tab__state { font-family: var(--font-mono); font-size: 11px; color: var(--anth-text-tertiary); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--anth-border); }
+      .uart-tab__state--ok { color: #1f7a4d; border-color: #b9dec9; background: #ecf7f0; }
+      .uart-tab__state--warn { color: var(--anth-orange); border-color: #f0c8b0; background: #fbe9dd; }
+      .uart-tab__state--err { color: var(--anth-red, #b94545); border-color: #e6b4b4; background: #f7e3e3; }
+      .uart-tab__state--write-on { background: var(--anth-red, #b94545); color: white; border-color: #a23a3a; font-weight: 600; }
+      .uart-tab__write-toggle { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; color: var(--anth-text-secondary); cursor: pointer; user-select: none; }
+      .uart-tab__write-toggle input[type="checkbox"] { margin: 0; cursor: pointer; }
+      .uart-tab__write-hint { font-family: var(--font-mono); font-size: 10px; color: var(--anth-text-tertiary); margin-left: 4px; }
+
+      .uart-mode { display: inline-flex; gap: 0; margin-top: var(--space-3); border: 1px solid var(--anth-border); border-radius: var(--radius-sm); background: var(--anth-cream); overflow: hidden; }
+      .uart-mode__btn { padding: 6px 14px; font-family: var(--font-heading); font-size: 12px; font-weight: 500; background: transparent; border: 0; color: var(--anth-text-secondary); cursor: pointer; }
+      .uart-mode__btn + .uart-mode__btn { border-left: 1px solid var(--anth-border); }
+      .uart-mode__btn:hover { background: white; }
+      .uart-mode__btn.is-active { background: var(--anth-orange); color: white; }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="console-wrap">
+      <h1 class="h-title">
+        <span class="lang-en">Inspect consoles</span><span class="lang-zh">Inspect 控制台</span>
+      </h1>
+      <p class="h-sub">
+        <span class="lang-en">Shared baseline for the xterm console family — Shell, Logcat and UART-live all reuse the uart-tab chrome.</span>
+        <span class="lang-zh">xterm 控制台家族共享基线 —— Shell / Logcat / UART 实时流复用同一套 uart-tab 外壳。</span>
+      </p>
+
+      <!-- UART tab: capture | live mode switch -->
+      <div class="uart-mode">
+        <button type="button" class="uart-mode__btn">
+          <span class="lang-en">capture</span><span class="lang-zh">采集</span>
+        </button>
+        <button type="button" class="uart-mode__btn is-active">
+          <span class="lang-en">live</span><span class="lang-zh">实时</span>
+        </button>
+      </div>
+
+      <!-- UART live console (bidirectional write enabled) -->
+      <div class="uart-tab">
+        <div class="uart-tab__bar">
+          <button type="button" class="btn btn--primary">▶ <span class="lang-en">connect</span><span class="lang-zh">连接</span></button>
+          <button type="button" class="btn">■ <span class="lang-en">disconnect</span><span class="lang-zh">断开</span></button>
+          <button type="button" class="btn">⌫ <span class="lang-en">clear</span><span class="lang-zh">清屏</span></button>
+          <label class="uart-tab__write-toggle">
+            <input type="checkbox" checked>
+            <span class="lang-en">write</span><span class="lang-zh">写入</span>
+            <span class="uart-tab__write-hint">
+              <span class="lang-en">⚠ keystrokes go to the device</span>
+              <span class="lang-zh">⚠ 键入直达设备</span>
+            </span>
+          </label>
+          <span class="uart-tab__state uart-tab__state--ok">● ready</span>
+          <span class="uart-tab__state uart-tab__state--write-on">WRITE</span>
+          <span class="uart-tab__last uart-tab__last--ok">1.2 MB · 14:02</span>
+        </div>
+        <div class="uart-tab__body uart-tab__body--single">
+          <div class="uart-tab__xterm">
+<pre class="xterm-sample">[    0.000000] Booting Linux on physical CPU 0x0
+[    0.123456] init: starting service 'networkd'
+[    1.004210] mmc0: new HS400 MMC card at address 0001
+<span class="ok">[    2.331900] OK  ] Reached target Multi-User System.</span>
+<span class="warn">[    3.882001] WARN] thermal: zone soc-thermal 78.4C</span>
+root@board:/ # _</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- state variants + Logcat-style capture duration -->
+      <p class="mockup-note">
+        <span class="lang-en">state variants · status pills + last-result + duration</span>
+        <span class="lang-zh">状态变体 · 状态药丸 + 上次结果 + 时长</span>
+      </p>
+      <div class="uart-tab">
+        <div class="uart-tab__bar">
+          <button type="button" class="btn btn--primary">▶ <span class="lang-en">capture</span><span class="lang-zh">采集</span></button>
+          <label class="uart-tab__duration">
+            <span class="lang-en">duration</span><span class="lang-zh">时长</span>
+            <input type="number" value="30"> s
+          </label>
+          <span class="uart-tab__state">● <span class="lang-en">idle</span><span class="lang-zh">空闲</span></span>
+          <span class="uart-tab__state uart-tab__state--warn">● <span class="lang-en">connecting…</span><span class="lang-zh">连接中…</span></span>
+          <span class="uart-tab__state uart-tab__state--err">● <span class="lang-en">error</span><span class="lang-zh">错误</span></span>
+          <span class="uart-tab__last uart-tab__last--err">ENXIO: bridge unreachable</span>
+        </div>
+      </div>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>

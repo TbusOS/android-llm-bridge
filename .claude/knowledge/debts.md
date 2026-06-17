@@ -988,7 +988,12 @@
 
 ---
 
-## DEBT-038 · mockup v2 主基线落后 React 12 tab
+## DEBT-038 · mockup v2 主基线落后 React 12 tab —— **CLOSED 2026-06-17**
+
+> 关闭（MBC-1）：缺基线的主交互页补了 5 个 per-page mockup
+> docs/webui-preview-v2-{playground,audit,sessions,inspect-console,screenshot}.html，
+> 各过 verify/visual-audit/screenshot 三闸 + 人眼审；9 个受影响 React 文件的
+> app-class 全量 grep 收口，均在 docs/*.html 命中。见 L-058 / [[round11-sweep-findings]]。
 
 - **现象**：`docs/webui-preview-v2*.html` 系列 mockup 是 v2 时代（dashboard
   + 4 tab：System / Charts / UART / Logcat），React 实际已扩展到 12 tab
@@ -1362,7 +1367,10 @@
 
 ---
 
-## DEBT-057 · mockup webui-preview-v3 补 Playground / Inspect / Audit / Sessions / Screenshots zoom 全套
+## DEBT-057 · mockup webui-preview-v3 补 Playground / Inspect / Audit / Sessions / Screenshots zoom 全套 —— **CLOSED 2026-06-17**
+
+> 关闭（MBC-1）：见 DEBT-038 关闭说明。playground/audit/sessions/screenshot-zoom/
+> inspect-console 全套 BEM 已画进 docs/webui-preview-v2-*.html 并过三闸。
 
 - **现象**：5/25 mockup MID-1 · `.playground-chat__*` / `.audit-page__*`
   / `.screenshot-zoom__*` / `.sessions-table__*` 全套 BEM 都未画进
@@ -1451,7 +1459,13 @@
 
 ---
 
-## DEBT-062 · mockup webui-preview-v3 真做 · 整 React UI baseline 锚
+## DEBT-062 · mockup webui-preview-v3 真做 · 整 React UI baseline 锚 —— **CLOSED 2026-06-17**
+
+> 关闭（MBC-1）：5 个 per-page mockup 落地（见 DEBT-038）。mockup MID-2 .live-pulse
+> 分叉一并消除：docs/webui-preview-v2.html 的 .live-pulse 改用 currentColor +
+> color-mix、.live-head 设 color:orange，与 components.css 完全一致。
+> 注：.live-card.is-idle / live-empty / live-tps-stale 等 dashboard 状态形态仍归
+> round10 MBC-6（独立 backlog），不在 MBC-1 范围。
 
 - **现象**：DEBT-057 已立 · 整套 .playground-* / .audit-* / .screenshot-
   zoom-* / .sessions-table-* / .live-card.is-idle / .playground-msg

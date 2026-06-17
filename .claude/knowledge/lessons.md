@@ -2865,3 +2865,45 @@ guarantee · 跨度大。reviewer 不区分会把 observation 升级成 contract
   caller 准备 · 不要假设 universal)
 - L-056 (lib 行为契约修改即使 caller 0 改也需 ADR · L-057 是 ADR 写法的
   补充)
+
+
+## L-058 · 补 retroactive mockup baseline = "抓 class 清单 → 码定当前渲染 → 三闸 → baseline-check"
+
+**症状**: 一批主交互页（playground / audit / sessions / inspect 控制台 /
+screenshot）当初绕过 L-001（先 mockup 后 React）直接 ship · React 自创全套 BEM ·
+docs/ 无 mockup 视觉基线 · DEBT-038/057/062 三次立账未还。L-001 是事前流程 · 一旦
+React 先 ship 就无法回溯 · 债越滚越大（dashboard .live-pulse 橙色分叉就是漂移先例）。
+
+**Fix pattern** (MBC-1 · 2026-06-17 · 5 页全过)：补 retroactive baseline 的可复现 recipe：
+
+1. **抓 class 清单**: `grep -oE 'className="[^"]*"'` · 但坑：①状态变体常由
+   `classes.push("x--y")` 算出 · 不在 className 字面里 ②datalist `id=` 不是 class
+   ③docstring 注释里写的 class 是 false positive（如 playground-msg__partial）
+2. **码定当前渲染**: 读 components.css 对应块 + JSX · 写 per-page mockup
+   docs/webui-preview-v2-<page>.html（照 v2-power 范式：link anthropic.css + inline
+   `<style>` 镜像 BEM + 双语 lang-en/zh + **lang-toggle 按钮 + toggleLang() script**
+   —— 缺按钮 verify §G 直接 FAIL）。穷举每个 class + 每个状态变体。
+3. **三闸**: verify.py / visual-audit.mjs / screenshot.mjs（design-review/scripts）+ **人眼审**
+4. **baseline-check**: `React class 集 ∖ mockup class 集 = ∅`（grep 差集）
+5. per-page 或 batch commit
+
+**关键坑**:
+- **工具 token 缺口**: components.css 用的 `--anth-cream/--anth-border/--anth-text-tertiary/--anth-red`
+  不在 docs/assets/anthropic.css（mockup 链的那份）→ mockup `:root` 用 fallback chain 补
+  （`--anth-border: var(--anth-light-gray, #e6e1d7)` 等）· 否则颜色失效。
+- **app 橙底白字 contrast 3.12 是 warn 非 error**: codify-current 忠实保留 · 这是 app
+  既有色不是 mockup 的 bug（v2.html 同款也只 warn）。retry 链等放进彩色框里的可改 scoped 红色过 AA。
+- **共享 class 跨页复用**: sessions-page__* 被 audit 复用 · uart-tab__* 被 shell/logcat/
+  uart-live/screenshot 复用 · h-title/h-sub/live-pulse 到处用 → 每个 standalone mockup
+  各自定义自己用到的（不互相 link）。
+- **旧 mockup 自己也过不了新闸**: v2-power / v2-log-search 无 lang-toggle 按钮 · verify §G
+  FAIL —— 这正是要补的陈旧 · 别拿它们当"通过范本"（v2.html 才是 §G 通过的范本）。
+
+**How to apply**: 任何"React 先 ship、mockup 缺"的页 · 按此 recipe 补 retroactive
+baseline · 不要等"下次重设计"。codify-current（忠实码定现状）· 不顺手重设计已发货 UI ·
+发现明显视觉问题只记不改（留独立任务）。
+
+**关联**:
+- L-001（React UI 必须以 mockup 为基线 · 本条是"事后补救"的可复现解法）
+- DEBT-038/057/062（CLOSED 2026-06-17）· [[round11-sweep-findings]] MBC-1
+- feedback_react_ui_design_baseline · feedback_visual_audit_blind_spots（三闸过 ≠ 人眼 OK）

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sessions — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Sessions list page — filter + session table + paginated footer. React class names must mirror this baseline (L-001).">
+    <meta property="og:title" content="Sessions — webui preview v2">
+    <meta property="og:description" content="Mockup baseline for the Sessions list page: filter, session table, paginated footer.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; margin: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .mockup-topbar { display: flex; justify-content: flex-end; padding: 8px var(--space-5) 0; }
+      .lang-toggle {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill); padding: 4px 12px;
+        font-family: var(--font-heading); font-size: 12px; cursor: pointer;
+        color: var(--anth-text-secondary);
+      }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+      .sessions-wrap { padding: var(--space-4) var(--space-5) var(--space-6); max-width: 1100px; margin: 0 auto; }
+      .mockup-note {
+        font-family: var(--font-heading); font-size: 11px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--anth-text-secondary); margin: var(--space-5) 0 10px;
+      }
+
+      .h-title { font-family: var(--font-heading); font-size: 28px; font-weight: 700; margin: 0 0 var(--space-2); color: var(--anth-text); }
+      .h-sub { color: var(--anth-text-secondary); font-size: 15px; margin: 0 0 var(--space-5); }
+
+      /* ---- Sessions list page (mirror of web/src/styles/components.css) ---- */
+      .sessions-page__header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); flex-wrap: wrap; }
+      .sessions-page__actions { display: flex; gap: 8px; align-items: center; }
+      .sessions-page__filter { min-width: 280px; padding: 6px 10px; border: 1px solid var(--anth-light-gray); border-radius: var(--radius-md); font-size: 13px; }
+      .sessions-page__refresh,
+      .sessions-page__more { padding: 6px 12px; border: 1px solid var(--anth-light-gray); border-radius: var(--radius-md); background: #ffffff; font-size: 12px; cursor: pointer; }
+      .sessions-page__refresh:hover,
+      .sessions-page__more:hover { background: var(--anth-bg-subtle); }
+      .sessions-page__empty { padding: 32px; text-align: center; color: var(--anth-text-secondary); font-style: italic; background: var(--anth-bg-subtle); border-radius: var(--radius-md); }
+      .sessions-page__footer { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-4); font-size: 12px; color: var(--anth-text-secondary); }
+      .sessions-page__count { color: var(--anth-text-secondary); }
+
+      .sessions-table { display: grid; gap: 0; border: 1px solid var(--anth-light-gray); border-radius: var(--radius-md); overflow: hidden; background: #ffffff; }
+      .sessions-table__list { list-style: none; margin: 0; padding: 0; }
+      .sessions-table__head,
+      .sessions-table__row {
+        display: grid; grid-template-columns: 2fr 1.4fr 1.6fr 1fr 0.6fr 1fr;
+        gap: 12px; padding: 10px 14px; font-size: 12.5px; align-items: center;
+      }
+      .sessions-table__head { background: var(--anth-bg-subtle); font-family: var(--font-heading); font-weight: 600; color: var(--anth-text-secondary); text-transform: lowercase; font-size: 11px; letter-spacing: 0.04em; }
+      .sessions-table__row { border-top: 1px solid var(--anth-light-gray); text-decoration: none; color: var(--anth-text); cursor: pointer; }
+      .sessions-table__row:hover { background: var(--anth-bg-subtle); }
+      .sessions-table__id { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--anth-orange); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sessions-table__cell { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--anth-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="sessions-wrap">
+      <section>
+        <header class="sessions-page__header">
+          <div>
+            <h1 class="h-title">
+              <span class="lang-en">Sessions</span><span class="lang-zh">会话历史</span>
+            </h1>
+            <p class="h-sub">
+              <span class="lang-en">Browse / search / replay every JSONL agent session.</span>
+              <span class="lang-zh">所有 JSONL agent session 的浏览 / 搜索 / 回放。</span>
+            </p>
+          </div>
+          <div class="sessions-page__actions">
+            <input type="search" class="sessions-page__filter" placeholder="filter id / backend / model / device" aria-label="filter">
+            <button type="button" class="sessions-page__refresh">
+              <span class="lang-en">refresh</span><span class="lang-zh">刷新</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="sessions-table">
+          <div class="sessions-table__head" aria-hidden="true">
+            <span><span class="lang-en">session</span><span class="lang-zh">会话</span></span>
+            <span><span class="lang-en">created</span><span class="lang-zh">创建时间</span></span>
+            <span>backend · model</span>
+            <span>device</span>
+            <span><span class="lang-en">turns</span><span class="lang-zh">轮次</span></span>
+            <span><span class="lang-en">last event</span><span class="lang-zh">最近活动</span></span>
+          </div>
+          <ul class="sessions-table__list" role="list" aria-label="Sessions">
+            <li>
+              <a class="sessions-table__row" href="#">
+                <span class="sessions-table__id">chat-9f2a1c</span>
+                <span class="sessions-table__cell">06-16 14:02</span>
+                <span class="sessions-table__cell">ollama · qwen2.5:7b</span>
+                <span class="sessions-table__cell">emulator-5554</span>
+                <span class="sessions-table__cell">7</span>
+                <span class="sessions-table__cell">2 min ago</span>
+              </a>
+            </li>
+            <li>
+              <a class="sessions-table__row" href="#">
+                <span class="sessions-table__id">term-3c10ee</span>
+                <span class="sessions-table__cell">06-16 13:40</span>
+                <span class="sessions-table__cell">ollama · llama3.1:8b</span>
+                <span class="sessions-table__cell">—</span>
+                <span class="sessions-table__cell">3</span>
+                <span class="sessions-table__cell">24 min ago</span>
+              </a>
+            </li>
+            <li>
+              <a class="sessions-table__row" href="#">
+                <span class="sessions-table__id">chat-71b0aa</span>
+                <span class="sessions-table__cell">06-15 19:11</span>
+                <span class="sessions-table__cell">llamacpp · default</span>
+                <span class="sessions-table__cell">0123456789ABCDEF</span>
+                <span class="sessions-table__cell">12</span>
+                <span class="sessions-table__cell">yesterday</span>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div class="sessions-page__footer">
+          <span class="sessions-page__count">3 sessions</span>
+          <button type="button" class="sessions-page__more">
+            <span class="lang-en">Show 25 more</span><span class="lang-zh">多看 25 个</span>
+          </button>
+        </div>
+
+        <p class="mockup-note">
+          <span class="lang-en">state variant · empty / loading / error</span>
+          <span class="lang-zh">状态变体 · 空 / 加载 / 错误</span>
+        </p>
+        <div class="sessions-page__empty">
+          <span class="lang-en">No sessions yet — try Chat or Terminal.</span>
+          <span class="lang-zh">暂无会话 — 跑一次 Chat 或 Terminal 试试。</span>
+        </div>
+      </section>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>

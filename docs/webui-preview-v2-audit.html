@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Audit — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Audit page — live status badge + filters + append-only event table. React class names must mirror this baseline (L-001).">
+    <meta property="og:title" content="Audit — webui preview v2">
+    <meta property="og:description" content="Mockup baseline for the Audit page: live status badge, filters, and the append-only event table.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; margin: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .mockup-topbar { display: flex; justify-content: flex-end; padding: 8px var(--space-5) 0; }
+      .lang-toggle {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill); padding: 4px 12px;
+        font-family: var(--font-heading); font-size: 12px; cursor: pointer;
+        color: var(--anth-text-secondary);
+      }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+      .audit-wrap { padding: var(--space-4) var(--space-5) var(--space-6); max-width: 1100px; margin: 0 auto; }
+      .mockup-note {
+        font-family: var(--font-heading); font-size: 11px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--anth-text-secondary); margin: var(--space-5) 0 10px;
+      }
+      .mockup-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+
+      /* ---- shared header / heading classes (mirror components.css) ---- */
+      .h-title { font-family: var(--font-heading); font-size: 28px; font-weight: 700; margin: 0 0 var(--space-2); color: var(--anth-text); }
+      .h-sub { color: var(--anth-text-secondary); font-size: 15px; margin: 0 0 var(--space-5); }
+      .sessions-page__header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); flex-wrap: wrap; }
+      .sessions-page__actions { display: flex; gap: 8px; align-items: center; }
+      .sessions-page__refresh { padding: 6px 12px; border: 1px solid var(--anth-light-gray); border-radius: var(--radius-md); background: #ffffff; font-size: 12px; cursor: pointer; }
+      .sessions-page__refresh:hover { background: var(--anth-bg-subtle); }
+      .sessions-page__empty { padding: 32px; text-align: center; color: var(--anth-text-secondary); font-style: italic; background: var(--anth-bg-subtle); border-radius: var(--radius-md); }
+
+      .live-pulse {
+        display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent);
+        animation: live-pulse 1.6s ease-out infinite;
+      }
+      @keyframes live-pulse {
+        0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent); }
+        80%, 100% { box-shadow: 0 0 0 9px transparent; }
+      }
+      @media (prefers-reduced-motion: reduce) { .live-pulse { animation: none; } }
+
+      /* ---- Audit page (mirror of web/src/styles/components.css) ---- */
+      .audit-page { display: block; }
+      .audit-page__status {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 10px; border-radius: var(--radius-pill);
+        font-size: 11px; font-family: var(--font-heading);
+        font-weight: 600; letter-spacing: 0.04em;
+      }
+      .audit-page__status--live { background: rgba(58, 167, 110, 0.12); color: var(--anth-green); }
+      .audit-page__status--paused { background: rgba(180, 108, 44, 0.12); color: #b46c2c; }
+      .audit-page__status--connecting { background: var(--anth-bg-subtle); color: var(--anth-text-secondary); }
+      .audit-page__status--closed,
+      .audit-page__status--error { background: rgba(181, 75, 61, 0.12); color: #b54b3d; }
+
+      .audit-page__filters {
+        display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center;
+        margin-bottom: var(--space-4); padding: 10px 14px;
+        background: var(--anth-bg-subtle); border-radius: var(--radius-md); font-size: 12px;
+      }
+      .audit-page__filters label { display: inline-flex; align-items: center; gap: 6px; color: var(--anth-text-secondary); }
+      .audit-page__filters select,
+      .audit-page__filters input {
+        padding: 4px 8px; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-sm); background: #ffffff; font-size: 12px;
+      }
+      .audit-page__count { margin-left: auto; color: var(--anth-text-secondary); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
+
+      .audit-table { display: grid; gap: 0; border: 1px solid var(--anth-light-gray); border-radius: var(--radius-md); overflow: hidden; background: #ffffff; }
+      .audit-table__head,
+      .audit-table__row {
+        display: grid; grid-template-columns: 110px 80px 140px 100px 1fr;
+        gap: 10px; padding: 8px 14px; font-size: 12px; align-items: baseline;
+      }
+      .audit-table__head {
+        background: var(--anth-bg-subtle); font-family: var(--font-heading);
+        font-weight: 600; color: var(--anth-text-secondary);
+        text-transform: lowercase; font-size: 11px; letter-spacing: 0.04em;
+      }
+      .audit-table__row { border-top: 1px solid var(--anth-light-gray); }
+      .audit-table__row:hover { background: var(--anth-bg-subtle); }
+      .audit-table__row[data-kind*="deny"] { border-left: 3px solid #b54b3d; }
+      .audit-table__row[data-kind*="approve"] { border-left: 3px solid var(--anth-green); }
+      .audit-table__row[data-kind*="error"] { border-left: 3px solid #b54b3d; }
+      .audit-table__row[data-kind*="warn"] { border-left: 3px solid #b46c2c; }
+      .audit-table__ts,
+      .audit-table__sid { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; color: var(--anth-text-secondary); }
+      .audit-table__source { color: var(--anth-text); font-weight: 500; }
+      .audit-table__kind { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--anth-text); }
+      .audit-table__summary { font-family: var(--font-body); color: var(--anth-text); white-space: normal; word-break: break-word; }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="audit-wrap">
+      <section class="audit-page">
+        <header class="sessions-page__header">
+          <div>
+            <h1 class="h-title">
+              <span class="lang-en">Audit</span><span class="lang-zh">审计日志</span>
+            </h1>
+            <p class="h-sub">
+              <span class="lang-en">Append-only log of every tool call, HITL decision, and session boundary.</span>
+              <span class="lang-zh">所有工具调用、HITL 决策、session 边界的 append-only 日志。</span>
+            </p>
+          </div>
+          <div class="sessions-page__actions">
+            <span class="audit-page__status audit-page__status--live" role="status">
+              <span class="live-pulse" aria-hidden="true"></span>
+              <span class="lang-en">live</span><span class="lang-zh">实时</span>
+            </span>
+            <button type="button" class="sessions-page__refresh">
+              <span class="lang-en">pause</span><span class="lang-zh">暂停</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="audit-page__filters">
+          <label>
+            <span class="lang-en">source</span><span class="lang-zh">来源</span>
+            <select><option>all</option><option>chat</option><option>terminal</option><option>inspect</option></select>
+          </label>
+          <label>
+            <span class="lang-en">kind</span><span class="lang-zh">类型</span>
+            <input type="search" list="audit-kind-options" placeholder="e.g. hitl_deny">
+            <datalist id="audit-kind-options">
+              <option value="tool_call_end"></option>
+              <option value="hitl_deny"></option>
+              <option value="hitl_approve"></option>
+            </datalist>
+          </label>
+          <label>
+            <span class="lang-en">window</span><span class="lang-zh">时间窗口</span>
+            <select><option>5 min</option><option>30 min</option><option>2 h</option><option>12 h</option></select>
+          </label>
+          <label>
+            <input type="checkbox" checked>
+            <span class="lang-en">include metrics</span><span class="lang-zh">含 metric</span>
+          </label>
+          <span class="audit-page__count">128 events</span>
+        </div>
+
+        <div class="audit-table" role="table">
+          <div class="audit-table__head" role="row">
+            <span role="columnheader"><span class="lang-en">ts</span><span class="lang-zh">时间</span></span>
+            <span role="columnheader">source</span>
+            <span role="columnheader">kind</span>
+            <span role="columnheader">session</span>
+            <span role="columnheader"><span class="lang-en">summary</span><span class="lang-zh">摘要</span></span>
+          </div>
+          <div class="audit-table__row" data-kind="tool_call_end" role="row">
+            <span class="audit-table__ts" role="cell">14:02:11</span>
+            <span class="audit-table__source" role="cell">chat</span>
+            <span class="audit-table__kind" role="cell">tool_call_end</span>
+            <span class="audit-table__sid" role="cell">chat-9f2a</span>
+            <span class="audit-table__summary" role="cell">alb_shell · uptime → 0</span>
+          </div>
+          <div class="audit-table__row" data-kind="hitl_deny" role="row">
+            <span class="audit-table__ts" role="cell">14:02:48</span>
+            <span class="audit-table__source" role="cell">terminal</span>
+            <span class="audit-table__kind" role="cell">hitl_deny</span>
+            <span class="audit-table__sid" role="cell">term-3c10</span>
+            <span class="audit-table__summary" role="cell">denied: rm -rf /system/app</span>
+          </div>
+          <div class="audit-table__row" data-kind="hitl_approve" role="row">
+            <span class="audit-table__ts" role="cell">14:03:02</span>
+            <span class="audit-table__source" role="cell">terminal</span>
+            <span class="audit-table__kind" role="cell">hitl_approve</span>
+            <span class="audit-table__sid" role="cell">term-3c10</span>
+            <span class="audit-table__summary" role="cell">approved: pm clear com.example.app</span>
+          </div>
+          <div class="audit-table__row" data-kind="error" role="row">
+            <span class="audit-table__ts" role="cell">14:03:30</span>
+            <span class="audit-table__source" role="cell">inspect</span>
+            <span class="audit-table__kind" role="cell">error</span>
+            <span class="audit-table__sid" role="cell">—</span>
+            <span class="audit-table__summary" role="cell">screenshot failed: device offline</span>
+          </div>
+          <div class="audit-table__row" data-kind="warn" role="row">
+            <span class="audit-table__ts" role="cell">14:04:05</span>
+            <span class="audit-table__source" role="cell">chat</span>
+            <span class="audit-table__kind" role="cell">warn</span>
+            <span class="audit-table__sid" role="cell">chat-9f2a</span>
+            <span class="audit-table__summary" role="cell">token budget 80% reached</span>
+          </div>
+        </div>
+
+        <!-- state variants: status badges + empty -->
+        <p class="mockup-note">
+          <span class="lang-en">state variants · status badges</span>
+          <span class="lang-zh">状态变体 · 状态徽章</span>
+        </p>
+        <div class="mockup-row">
+          <span class="audit-page__status audit-page__status--paused">paused</span>
+          <span class="audit-page__status audit-page__status--connecting">connecting…</span>
+          <span class="audit-page__status audit-page__status--closed">closed</span>
+          <span class="audit-page__status audit-page__status--error">error</span>
+        </div>
+
+        <p class="mockup-note">
+          <span class="lang-en">state variant · empty</span>
+          <span class="lang-zh">状态变体 · 空</span>
+        </p>
+        <div class="sessions-page__empty">
+          <span class="lang-en">No matching events — run a chat / terminal / inspect action.</span>
+          <span class="lang-zh">无匹配事件 — 跑一次 chat / terminal / inspect 操作再看。</span>
+        </div>
+      </section>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>
