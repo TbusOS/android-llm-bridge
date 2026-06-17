@@ -25,7 +25,7 @@ See [CLAUDE.md](./CLAUDE.md) § "Banned words" for the full list and the
 
 Describe hardware / network setups generically. Example:
 
-- ❌ "Tested on arm-soc at <llm-host> from /home/alice"
+- ❌ "Tested on RK3576 at 10.0.25.46 from /home/alice"
 - ✅ "Tested on a 1500000-baud UART target from a remote dev host"
 
 Specific baud rates, protocol names, and public SoC family names

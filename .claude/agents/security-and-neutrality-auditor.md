@@ -1,6 +1,6 @@
 ---
 name: security-and-neutrality-auditor
-description: 合规层 —— 敏感词（vendor/RK/内网IP）/ OWASP / XSS / dangerouslySetInnerHTML / 命令注入 / 凭证泄露 / 开源中立。只读，能跑 grep + check_sensitive_words.sh。
+description: 合规层 —— 敏感词（PAX/RK/内网IP）/ OWASP / XSS / dangerouslySetInnerHTML / 命令注入 / 凭证泄露 / 开源中立。只读，能跑 grep + check_sensitive_words.sh。
 tools: Read, Grep, Bash
 ---
 
@@ -82,10 +82,10 @@ ALB_WORKSPACE=/tmp/ws alb session show ../etc
 绝对禁止出现：
 
 ```
-vendor  vendor  vendor  vendor  com.example
-arm-soc  arm-soc  soc-sdk  soc-sdk  soc-sdk
-dev   (短内部 handle，词边界匹配)
-~  /home/<any-real-username>/<project>
+pax  PAX  paxsz  paxsz.com  com.pax
+rk3576  RK3576  rk-sdk  RK SDK  rockchip-sdk
+zhangbh   (短内部 handle，词边界匹配)
+/home/zhangbh  /home/<any-real-username>/<project>
 10.0.25.*  172.16.*  (任何 RFC1918 内部 IP)
 ```
 

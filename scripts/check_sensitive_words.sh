@@ -25,17 +25,17 @@ fi
 # Pattern list. Each row = ERE regex. Keep case-insensitive — add (?i) inlined as -i flag below.
 PATTERNS=(
   # Company / brand
-  'vendor(sz)?(\.com)?'
-  'com\.vendor'
+  'pax(sz)?(\.com)?'
+  'com\.pax'
   # SoC / vendor-customer specific
-  'arm-soc'
+  'rk3576'
   'rk[-_ ]?sdk'
   'rockchip[-_ ]sdk'
   # Short internal handle (word-bounded so it doesn't match the public
   # github handle skyzhangbinghua which is a legitimate attribution string)
   '\bzhangbh\b'
   # Home-dir leaks
-  '~'
+  '/home/zhangbh'
   '/home/[a-z][a-z0-9_-]*/(android-llm-bridge|adb-via-|\.claude)'
   # Internal RFC1918 IPs belonging to known private networks
   '10\.0\.25\.[0-9]{1,3}'

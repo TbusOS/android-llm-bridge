@@ -17,7 +17,7 @@ repos:
 
       - id: sensitive-words-msg
         name: "Block banned identifiers in commit message"
-        entry: bash -c 'for p in "vendor(sz)?" "arm-soc" "rk[-_ ]?sdk" "dev" "~" "10\\.0\\.25\\." ; do if grep -iE -- "$p" "$1" > /dev/null; then echo "Commit message contains banned pattern: $p"; exit 1; fi; done' --
+        entry: bash -c 'for p in "pax(sz)?" "rk3576" "rk[-_ ]?sdk" "zhangbh" "/home/zhangbh" "10\\.0\\.25\\." ; do if grep -iE -- "$p" "$1" > /dev/null; then echo "Commit message contains banned pattern: $p"; exit 1; fi; done' --
         language: system
         stages: [commit-msg]
 
