@@ -35,17 +35,9 @@ export function ChatPage() {
         <span className="status-pill status-pill--wip">
           {lang === "zh" ? "已就绪" : "Ready"}
         </span>
-        <span
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex",
-            gap: "var(--space-2)",
-            alignItems: "center",
-          }}
-        >
+        <span className="chat-actions">
           <label
-            className="pill-btn"
-            style={{ cursor: "pointer", borderColor: "transparent" }}
+            className="pill-btn chat-tool-toggle"
             title={lang === "zh" ? "开关 MCP 工具" : "Toggle MCP tools"}
           >
             <input
@@ -53,7 +45,6 @@ export function ChatPage() {
               checked={toolsOn}
               onChange={(e) => setToolsOn(e.target.checked)}
               disabled={isStreaming}
-              style={{ marginRight: 4 }}
             />
             <Wrench size={13} />
             {lang === "zh" ? "工具" : "tools"}
@@ -85,32 +76,18 @@ export function ChatPage() {
         {lang === "zh"
           ? "和能操作设备的 LLM 对话。token 流式、tool 调用可折叠、产物内联。"
           : "Talk to an LLM that can drive the device. Streaming tokens, expandable tool calls, inline artifacts."}
-        <span
-          style={{
-            marginLeft: "var(--space-3)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-            color: "var(--anth-text-secondary)",
-          }}
-        >
-          backend={backend}
-          {model ? ` · model=${model}` : ""}
-          {sessionId ? ` · session=${shortId(sessionId)}` : ""}
-        </span>
+      </p>
+      <p className="chat-meta">
+        backend={backend}
+        {model ? ` · model=${model}` : ""}
+        {sessionId ? ` · session=${shortId(sessionId)}` : ""}
       </p>
 
-      <div
-        className="mock-card"
-        style={{
-          minHeight: "min(560px, 60vh)",
-          maxHeight: "calc(100vh - 280px)",
-          overflowY: "auto",
-        }}
-      >
+      <div className="mock-card chat-log">
         <MessageList turns={turns} showPending={showThinking} />
       </div>
 
-      <div style={{ marginTop: "var(--space-4)" }}>
+      <div className="chat-input-row">
         <ChatInput isStreaming={isStreaming} onSend={send} onCancel={cancel} />
       </div>
     </section>

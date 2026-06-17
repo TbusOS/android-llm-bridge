@@ -44,6 +44,23 @@ function yesNo(b: boolean | undefined, lang: string): string {
   return b ? (lang === "zh" ? "是" : "yes") : lang === "zh" ? "否" : "no";
 }
 
+/** "46%" → 46 (clamped 0..100); non-numeric → 0. */
+function parsePct(raw: string | undefined): number {
+  const n = Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+/** Usage → part-fill colour, cool→warm by severity (mirrors the mockup
+ * baseline): blue (very low) → green (healthy) → orange (filling) → red
+ * (critical). Default `.part-fill` is orange (no modifier). */
+function fillTier(pct: number): string {
+  if (pct >= 85) return "part-fill part-fill--red";
+  if (pct >= 60) return "part-fill";
+  if (pct >= 30) return "part-fill part-fill--green";
+  return "part-fill part-fill--blue";
+}
+
 export function SystemInfoTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
@@ -190,13 +207,7 @@ function Snapshot({
         empty={lang === "zh" ? "无" : "none"}
       />
 
-      <KvCard
-        title={lang === "zh" ? "存储用量" : "Storage usage"}
-        rows={Object.entries(system.storage).map(([mount, info]) => [
-          mount,
-          `${info.use_pct} · used ${fmtKb(Number(info.used_kib))} / avail ${fmtKb(Number(info.avail_kib))}`,
-        ])}
-      />
+      <StorageCard storage={system.storage} lang={lang} />
 
       <BlockCard
         title={lang === "zh" ? "网络接口" : "Network"}
@@ -327,6 +338,49 @@ function ProcessesCard({
         .map((proc) => [`${proc.name} (${proc.pid})`, `${proc.cpu_pct}% · ${fmtKb(proc.rss_kb)}`])}
       empty={lang === "zh" ? "无进程数据" : "no process data"}
     />
+  );
+}
+
+/** MBC-4: storage usage as per-partition progress bars (mirrors the
+ * docs/webui-preview-v2.html `part-row` / `part-bar` / `part-fill`
+ * baseline). The `use_pct` data already exists — this replaces the
+ * plain-text KV row with a bar coloured by usage tier. The bar width is
+ * the one legitimately-dynamic inline style (data-driven, same as the
+ * mockup); the colour is a `part-fill--*` class, not inline hex. */
+function StorageCard({
+  storage,
+  lang,
+}: {
+  storage: ApiDeviceSystem["storage"];
+  lang: string;
+}) {
+  const entries = Object.entries(storage);
+  return (
+    <div className="sys-card sys-card--block">
+      <h3>{lang === "zh" ? "存储用量" : "Storage usage"}</h3>
+      {entries.length === 0 ? (
+        <p className="section-sub" style={{ marginBottom: 0 }}>
+          {lang === "zh" ? "无" : "none"}
+        </p>
+      ) : (
+        entries.map(([mount, info]) => {
+          const pct = parsePct(info.use_pct);
+          return (
+            <div
+              className="part-row"
+              key={mount}
+              title={`used ${fmtKb(Number(info.used_kib))} / avail ${fmtKb(Number(info.avail_kib))}`}
+            >
+              <span className="part-name">{mount}</span>
+              <div className="part-bar">
+                <div className={fillTier(pct)} style={{ width: `${pct}%` }} />
+              </div>
+              <span className="part-pct">{info.use_pct}</span>
+            </div>
+          );
+        })
+      )}
+    </div>
   );
 }
 

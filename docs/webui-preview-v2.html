@@ -373,6 +373,21 @@
         color: var(--anth-text-secondary);
         text-align: right;
       }
+      /* MBC-6 baseline: idle / empty / stale live-card states */
+      .live-card.is-idle { border-left-color: var(--anth-mid-gray, #b0aea5); }
+      .live-card.is-idle .live-head { color: var(--anth-text-secondary); }
+      .live-card.is-idle .live-pulse { animation: none; }
+      .live-card.is-idle .live-label { color: var(--anth-text-secondary); }
+      .live-empty {
+        padding: var(--space-5) 0 var(--space-3);
+        font-family: var(--font-body); font-size: 13px;
+        color: var(--anth-text-secondary); text-align: center;
+      }
+      .live-tps-stale {
+        margin-left: var(--space-2);
+        font-family: var(--font-body); font-size: 11px; font-weight: 400;
+        color: var(--anth-danger, #a14238);
+      }
 
       /* ==========================================================
          Stat strip (4 KPI cards)
@@ -756,6 +771,9 @@
         border-radius: var(--radius-pill); overflow: hidden;
       }
       .part-fill { height: 100%; background: var(--anth-orange); }
+      .part-fill--blue { background: #6a9bcc; }
+      .part-fill--green { background: #788c5d; }
+      .part-fill--red { background: #a14238; }
       .part-name { font-family: var(--font-mono); color: var(--anth-text); }
       .part-pct { font-family: var(--font-mono); color: var(--anth-text-secondary); text-align: right; font-size: 11px; }
 
@@ -1341,6 +1359,33 @@
             </div>
           </div>
 
+          <!-- ===== Live-card states (MBC-6 baseline: idle / empty / stale) ===== -->
+          <div class="group-head">
+            <h2><span class="lang-en">Live card states</span><span class="lang-zh">实时卡状态</span></h2>
+            <span class="meta"><span class="lang-en">idle · empty · stale-stream variants</span><span class="lang-zh">空闲 · 无会话 · 流断开三态</span></span>
+          </div>
+          <article class="live-card is-idle" aria-live="polite">
+            <div class="live-head">
+              <span class="live-pulse" aria-hidden="true"></span>
+              <span class="live-label"><span class="lang-en">No live session</span><span class="lang-zh">无活动会话</span></span>
+            </div>
+            <div class="live-empty"><span class="lang-en">Nothing running right now. Start a Chat to see it stream here.</span><span class="lang-zh">当前没有 agent 在跑。新建一个 Chat 试试。</span></div>
+          </article>
+          <article class="live-card" aria-live="polite">
+            <div class="live-head">
+              <span class="live-pulse" aria-hidden="true"></span>
+              <span class="live-label"><span class="lang-en">Live agent session</span><span class="lang-zh">Agent 进行中</span></span>
+              <span class="live-elapsed"><span class="lang-en">turn 1 · 12s</span><span class="lang-zh">第 1 轮 · 12s</span></span>
+            </div>
+            <div class="live-throughput">
+              <span class="live-tps">0<span class="unit"><span class="lang-en">tok/s now</span><span class="lang-zh">tok/s · 现</span></span><span class="live-tps-stale" title="stream offline"><span class="lang-en">● stale</span><span class="lang-zh">● 离线</span></span></span>
+              <svg class="live-tps-spark" viewBox="0 0 280 36" preserveAspectRatio="none" role="img" aria-label="Token throughput (stale stream)">
+                <line x1="0" y1="18" x2="280" y2="18" stroke="#b0aea5" stroke-width="1" stroke-dasharray="2 4"/>
+              </svg>
+              <span class="live-tps-meta">qwen2.5:7b<br>1247 tok</span>
+            </div>
+          </article>
+
           <!-- ============= DEVICES (compact strip) ============= -->
           <div class="group-head">
             <h2><span class="lang-en">Devices</span><span class="lang-zh">设备</span></h2>
@@ -1765,23 +1810,23 @@
             <div class="sys-card">
               <h3><span class="lang-en">Storage</span><span class="lang-zh">存储</span></h3>
               <div class="part-row">
+                <span class="part-name">/cache</span>
+                <div class="part-bar"><div class="part-fill part-fill--blue" style="width:12%;"></div></div>
+                <span class="part-pct">12%</span>
+              </div>
+              <div class="part-row">
                 <span class="part-name">/data</span>
-                <div class="part-bar"><div class="part-fill" style="width:46%;"></div></div>
+                <div class="part-bar"><div class="part-fill part-fill--green" style="width:46%;"></div></div>
                 <span class="part-pct">46%</span>
               </div>
               <div class="part-row">
                 <span class="part-name">/system</span>
-                <div class="part-bar"><div class="part-fill" style="width:78%; background:#788c5d;"></div></div>
+                <div class="part-bar"><div class="part-fill" style="width:78%;"></div></div>
                 <span class="part-pct">78%</span>
               </div>
               <div class="part-row">
-                <span class="part-name">/cache</span>
-                <div class="part-bar"><div class="part-fill" style="width:12%; background:#6a9bcc;"></div></div>
-                <span class="part-pct">12%</span>
-              </div>
-              <div class="part-row">
                 <span class="part-name">/vendor</span>
-                <div class="part-bar"><div class="part-fill" style="width:91%; background:#a14238;"></div></div>
+                <div class="part-bar"><div class="part-fill part-fill--red" style="width:91%;"></div></div>
                 <span class="part-pct">91%</span>
               </div>
             </div>

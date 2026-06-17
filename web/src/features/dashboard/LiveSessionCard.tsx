@@ -126,13 +126,6 @@ export function LiveSessionCard({ data, streamStatus, onInterrupt }: Props) {
                     ? "事件流断开 · 重连中"
                     : "stream offline · reconnecting"
               }
-              style={{
-                marginLeft: "var(--space-2)",
-                fontSize: "11px",
-                color: "var(--anth-danger)",
-                fontFamily: "var(--font-body)",
-                fontWeight: 400,
-              }}
             >
               {lang === "zh" ? "● 离线" : "● stale"}
             </span>

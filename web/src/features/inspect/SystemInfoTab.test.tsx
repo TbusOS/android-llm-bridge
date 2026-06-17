@@ -157,6 +157,23 @@ describe("SystemInfoTab info panels (ARCH-2)", () => {
     expect(screen.getByText("loading…")).toBeInTheDocument();
   });
 
+  it("renders storage usage as per-partition progress bars colored by tier (MBC-4)", () => {
+    system.data.system.storage = {
+      "/data": { used_kib: "1000", avail_kib: "2000", use_pct: "46%", device: "/dev/a" },
+      "/vendor": { used_kib: "900", avail_kib: "100", use_pct: "91%", device: "/dev/b" },
+    };
+    render(<SystemInfoTab />);
+    const rows = document.querySelectorAll(".part-row");
+    expect(rows.length).toBe(2);
+    // 46% → green tier, 91% → red tier; bar width = use_pct.
+    const green = document.querySelector(".part-fill--green") as HTMLElement | null;
+    const red = document.querySelector(".part-fill--red") as HTMLElement | null;
+    expect(green).not.toBeNull();
+    expect(red).not.toBeNull();
+    expect(green!.style.width).toBe("46%");
+    expect(red!.style.width).toBe("91%");
+  });
+
   it("shows the no-device card and no panels when nothing is selected", () => {
     appState.device = null;
     render(<SystemInfoTab />);

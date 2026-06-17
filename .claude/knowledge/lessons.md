@@ -2963,3 +2963,28 @@ knowledge 的约束力不来自"我写过"，来自"它在 HEAD 上"。
 **关联**: ADR-049（物化读模型落地）· ADR-021（metric kind 类 · 扩管线非新 bus）·
 ADR-027（扩字段不扩系统）· DEBT-008（被 ADR-049 关闭的扫文件债）·
 feedback_optimize_for_quality_not_simplicity（性能/扩展性优先于最小 diff 的定调）
+
+## L-061 · 独立 mockup 不 link components.css：React 的 BEM modifier 类必须在 mockup 自己的 inline <style> 里重定义，三闸查不出，必须人眼
+
+**症状**: MBC-4 把 mockup 存储条从 inline `background:#788c5d` 改成 `part-fill--green`
+等 modifier 类后，verify.py + visual-audit 都 exit 0，但截图一看**四条 bar 全是默认橙
+色** —— modifier 没生效。
+
+**根因**: `docs/webui-preview-v*.html` 是**自包含**页，只 link `assets/anthropic.css`
++ 自己的 inline `<style>`，**不 link** React 的 `web/src/styles/components.css`。
+`part-fill--green/blue/red` 只定义在 components.css，mockup 的 inline style 里没有 →
+浏览器找不到 → 回落到 base `.part-fill`（橙）。而 **verify.py 的 BEM 检查把
+`part-fill--green` 当作已存在的 `part-fill` 的合法 modifier，不要求 modifier 单独定义**
+→ 三闸放行。这是 [[feedback_visual_audit_blind_spots]] 的新一例（"undefined modifier
+渲染成 base"）。
+
+**How to apply**:
+- 给独立 mockup 加 React 已有的 modifier 类（`x--variant`）时，必须在 mockup 的 inline
+  `<style>` 里**重定义该 modifier**（mockup 是 React 的镜像，不共享 components.css）。
+- 任何"类生效与否 / 颜色 / 字号"靠 CSS 的改动，**三闸过 ≠ 视觉对**，必须 screenshot
+  人眼复核（截图存 `.claude/reports/*-shots/`，本地 untracked）。
+- 反向：React 侧确认 modifier 在 components.css 有定义（React 链它，所以 React 渲染没
+  这个坑——只有 mockup 有）。
+
+**关联**: MBC-4 · [[feedback_visual_audit_blind_spots]] · L-028（mockup 是 React 基线，
+class 名一致）· L-058（补 baseline recipe · 三闸 + 人眼）

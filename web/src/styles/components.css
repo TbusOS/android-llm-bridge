@@ -879,6 +879,17 @@ html[lang^="zh"] h3 {
   text-align: center;
 }
 
+/* MBC-6: stale-stream badge next to the live tps. Was an inline style on
+   the element (the class was undefined); lifted here so the token-driven
+   styling lives with the rest of the live-card rules. */
+.live-tps-stale {
+  margin-left: var(--space-2);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--anth-danger);
+}
+
 /* ==========================================================
    Stat strip (4 KPI cards)
    ========================================================== */
@@ -1981,6 +1992,29 @@ html[lang^="zh"] h3 {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--anth-text-secondary);
+}
+
+/* MBC-7: ChatPage block visuals lifted off inline style into classes. */
+.chat-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.chat-tool-toggle {
+  cursor: pointer;
+  border-color: transparent;
+}
+.chat-tool-toggle input {
+  margin-right: 4px;
+}
+.chat-log {
+  min-height: min(560px, 60vh);
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+.chat-input-row {
+  margin-top: var(--space-4);
 }
 
 .chat-empty {
