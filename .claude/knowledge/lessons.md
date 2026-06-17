@@ -2932,3 +2932,34 @@ knowledge 的约束力不来自"我写过"，来自"它在 HEAD 上"。
 
 **关联**: AR9-3 · ADR-047（AW-2 落槌条款 · 正是差点丢失的那段）· L-058（同属
 "产物必须落到该落的地方才算数"纪律）
+
+## L-060 · 新 metric/聚合需求：先查现有事件管线能否加字段/投影，且"复用现有"要审被复用物本身的性能
+
+**症状**: per-backend 吞吐 sparkline（round10 MBC-3）第一版设计直接新建
+`infra/throughput.py` 内存分桶环 + 新端点 —— 没发现仓里早有 `tps_sample` 事件 +
+`TokenSampler` + `GET /metrics/summary`（300s 窗口聚合）。架构评审一眼看穿是平行
+重复管线，否。
+
+**根因（两层）**:
+1. 加新 metric 前没 grep 现有事件管线 —— `tps_sample` 只差一个 `backend` 字段就能
+   满足需求，却差点另起一套存储。这与 ADR-021"加 metric kind 类不加新 bus"、
+   ADR-027"扩字段不扩系统"是同一个项目惯例。
+2. 修正成"最小扩字段"后仍不够 —— 因为被复用的 `/metrics/summary` **每次轮询全量扫
+   events.jsonl（O(整个日志)）**，本身是性能债（DEBT-008）。"复用现有/最小 diff"如果
+   复用的是个性能债，不是优点是包袱（见 feedback_optimize_for_quality_not_simplicity）。
+   正解是物化读模型（event bus 加同步 listener → MetricStore 投影 → O(窗口) 读 + 重构
+   读路径），ADR-049。
+
+**How to apply**:
+- 加任何"速率/吞吐/计数/滚动聚合"类 metric 前，先
+  `grep -rn "tps_sample\|metric_store\|metrics_summary\|event_bus" src/` 看现有管线能否
+  加字段/加投影满足。见到自己要写 `infra/*throughput*` / `*rate*` / `*counter*` 内存
+  聚合 —— 停，先确认不是平行管线。
+- 决定"复用现有"前，审被复用物的**性能与扩展性**：它是 O(窗口) 还是 O(全量)？是热路径
+  （被轮询/高频）吗？该重构就重构，别把小 diff 当好架构。
+- 读写分离：durable 写模型（append-only 文件/日志）≠ 热路径读模型；高频滚动读用内存
+  投影（bus listener），不要反复扫日志。
+
+**关联**: ADR-049（物化读模型落地）· ADR-021（metric kind 类 · 扩管线非新 bus）·
+ADR-027（扩字段不扩系统）· DEBT-008（被 ADR-049 关闭的扫文件债）·
+feedback_optimize_for_quality_not_simplicity（性能/扩展性优先于最小 diff 的定调）

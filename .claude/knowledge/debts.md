@@ -21,7 +21,6 @@
 - DEBT-005 · workspace/sessions 没自动清理
 - DEBT-006 · workspace/events.jsonl 没 rotation
 - DEBT-007 · ts_approx 字段语义已无用
-- DEBT-008 (mid) · GET /metrics/summary 缺 short-TTL cache
 - DEBT-009 · Vite base URL 硬编码风险
 - DEBT-010 · /audit/stream WS 协议没预留 session_id / kinds 过滤
 - DEBT-012 · web/ reducer 纯函数无单测
@@ -139,8 +138,11 @@
 
 ---
 
-## DEBT-008 · GET /metrics/summary 缺 short-TTL cache —— severity 升 low → mid
+## DEBT-008 · GET /metrics/summary 缺 short-TTL cache —— **CLOSED 2026-06-17 (ADR-049)**
 
+- **关闭**：ADR-049 物化读模型（2026-06-17）—— `/metrics/summary` 热路径改读内存
+  `MetricStore`（O(窗口)），全量扫 events.jsonl 只剩冷启动 / 长窗口（> 容量 900s）
+  兜底这条罕见路径。short-TTL cache 不再需要（内存投影本身就是缓存）。
 - **severity**：~~low~~ → **mid**（2026-04-29 升级）
 - **引入**：F.3（commit 5dcc018，2026-04-28）
 - **位置**：`src/alb/api/metrics_summary_route.py` 每次请求全量扫

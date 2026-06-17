@@ -1779,3 +1779,63 @@ inspect hook 将来需要 reconnect/backoff，或踩 listener-throw 截断 fan-o
 **关联**: ADR-045（池化 opt-in · 本 ADR 补 features/ 边界）· ADR-046/047（pool 语义）·
 DEBT-081（迁移触发账）· CR-1 / UI-3（5 hook 各修一遍 stale-socket 的代价实例）·
 L-052（thin wrapper 是"提前抽象"反面 · 本 ADR 是"重复未抽象"的有意保留 · 两者区分）
+
+## ADR-049 · metrics 物化读模型：event bus 双消费者 + MetricStore 投影 + per-backend 吞吐
+
+**背景**: Dashboard be-card 要 per-backend token 吞吐 sparkline（round10 MBC-3 ·
+web UI 多后端并发）。现状 `tps_sample` 事件无 backend 维度，`/metrics/summary`
+**每次轮询全量扫 `events.jsonl`**（O(整个日志)，DEBT-008）。两个被否的方案：
+(a) 新建 `infra/throughput.py` 内存分桶环 + 新端点 —— 与已有 `tps_sample` /
+`metrics_summary` 管线平行重复（架构评审 v1 否）；(b) 最小改动只给 tps_sample 加
+backend + `/metrics/summary` 加 `group_by` —— 但保留扫文件读路径，per-backend
+`group_by` 把 O(文件) 放大到分组量级（用户定调"按性能/扩展性最优、该重构就重构"，
+v2 不够）。
+
+**决定（物化读模型 / materialized read model）**:
+
+1. **event bus 第二类消费者** —— `EventBroadcaster.add_listener(fn)` 同步进程内
+   listener，`publish()` 里**先于** queue 扇出 + 落盘调用，每个包 try/except 隔离。
+   契约：cheap · 同步 · 无 IO · 不抛。与原有异步 queue 订阅者（WS streamer，容忍背压、
+   满则 drop）并存。
+2. **`infra/metric_store.py` MetricStore** —— bus 的投影：注册成 listener，维护按
+   `(kind, backend/session)` 的滚动样本窗口。`summary(window, session_id)` +
+   `throughput_series(window, buckets, group_by=backend)`，O(1) ingest / O(窗口) 读。
+   幂等 `attach/detach`，`reset_metric_store()` 供测试。
+3. **重构 `/metrics/summary` 双路径** —— 窗口被读模型覆盖（`is_warm`）走内存；冷启动
+   或窗口 > 容量（900s）走原 `_read_tps_samples` **文件扫兜底**（免 tail 回放，复用
+   现成代码）。新增**非破坏** `source:"memory"|"file"` 字段。`group_by=backend` 始终
+   走内存（live near-window view）。
+4. **`tps_sample` 加 `backend` + `source` 维度** —— chat_route 传 `backend=llm.name`；
+   playground WS 接 sampler（`source="playground"`，补吞吐盲区）。口径 = `on_raw_token`
+   （含工具轮 = "backend 实际吐了多少 token"）。
+5. **前端** —— `fetchBackendThroughput()` → `useBackends` 折进 `BackendRuntimeState`
+   up 变体（非 60s static 的 BackendCardData，消除撕裂态）→ `LlmBackendCards` 用抽出的
+   `scaleSparkPoints`（per-card 归一化）喂 `<Sparkline>`，无数据走 `empty` 平虚线。
+
+**为什么不建平行管线 / 不丢文件持久化**: 读模型是 bus 事件的**投影**（单一源 =
+bus），不是第二个记录点 —— 与 ADR-027"扩字段不扩系统"、ADR-021"加 metric kind 类"
+同源。`tps_sample` **仍落 events.jsonl**（留离线历史 + 文件兜底），写量不变，故
+DEBT-006（rotation）不被本 ADR 加重。
+
+**边界（write model vs read model 解耦）**: `events.jsonl` = durable 写模型（audit
+历史、长窗口兜底）；MetricStore = ephemeral 读模型（近窗口快读）。读模型**永不读文件**；
+重启后空、一个窗口内自填，期间 scalar summary 落文件兜底（`source` 如实标）。
+
+**代价 / 已知**:
+- 单进程假设：同步 listener + 内存投影只在单 worker 成立（uvicorn 当前单 worker）。
+  多 worker 会分裂读模型 —— 上多 worker 前需把读模型移到共享存储或每 worker 各算。
+- 重启后约 1 窗口 scalar summary 走文件兜底、sparkline 部分/空（可接受，自愈）。
+- 长窗口（> 容量 900s）summary 仍走 O(文件) 扫 —— DEBT-008 的扫文件成本只剩这条罕见路径。
+
+**Enforcement**:
+- listener 契约由 `publish()` 的 try/except 隔离兜底（一个坏 listener 不炸 chat 持久化）。
+- **新 metric 需求先查 `tps_sample` / `metric_store` 现有管线能否加字段/投影满足**，
+  再考虑新存储；见到提案新建 `infra/*throughput*` / `*rate*` 内存聚合先 grep
+  `tps_sample` + `metric_store`（L-060）。
+- `conftest.py` autouse fixture 成对有序 `reset_metric_store()+reset_bus()`，防 per-test
+  `create_app()` lifespan 把 listener 重复注册到共享 bus（重复计数）。
+
+**关联**: ADR-021（metric kind 类 · 本 ADR 是其首个 per-backend 消费者）· ADR-018（bus）·
+ADR-027（扩字段不扩系统先例）· DEBT-008（**本 ADR 关闭**：扫文件读路径退到冷/长窗口兜底）·
+DEBT-006（不受影响 · tps 仍持久化）· L-060（先查现有管线 · "复用"要审被复用物性能）·
+round10 MBC-3（关闭）· feedback_optimize_for_quality_not_simplicity（用户定调）
