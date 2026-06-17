@@ -42,4 +42,10 @@ describe("ChatPage layout classes (MBC-7)", () => {
       "backend=ollama",
     );
   });
+
+  it("Ready badge uses the done (green) pill, not wip (orange) (UIF-10)", () => {
+    const { container } = render(<ChatPage />);
+    expect(container.querySelector(".status-pill--done")).not.toBeNull();
+    expect(container.querySelector(".status-pill--wip")).toBeNull();
+  });
 });

@@ -100,7 +100,7 @@ function InstallCard({ device }: { device: string | null }) {
           ) : (
             <>
               {" · "}
-              <span style={{ color: "#b54b3d" }}>
+              <span style={{ color: "var(--anth-danger)" }}>
                 {lang === "zh" ? "不是 .apk?" : "not .apk?"}
               </span>
             </>

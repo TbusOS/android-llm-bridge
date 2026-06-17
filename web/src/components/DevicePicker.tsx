@@ -159,9 +159,14 @@ export function DevicePicker({ lang }: Props) {
   };
 
   const selected = devices.find((d) => d.id === device);
+  // CR-8: `meta` only renders when a device is selected. A persisted
+  // (localStorage) device that's no longer in the list shows a "not found"
+  // hint instead of a hardcoded "adb · usb" that implies it's reachable.
   const meta = selected
     ? `${selected.transportLabelStr} · ${selected.status}`
-    : "adb · usb";
+    : lang === "zh"
+      ? "未找到 · 可能已离线"
+      : "not found · maybe offline";
 
   return (
     <div className="device-picker-wrap" ref={wrapRef}>

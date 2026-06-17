@@ -32,7 +32,7 @@ export function ChatPage() {
     <section>
       <div className="section-head">
         <h1>{lang === "zh" ? "Chat 对话" : "Chat"}</h1>
-        <span className="status-pill status-pill--wip">
+        <span className="status-pill status-pill--done">
           {lang === "zh" ? "已就绪" : "Ready"}
         </span>
         <span className="chat-actions">

@@ -49,13 +49,23 @@ export function ChatInput({ isStreaming, onSend, onCancel }: Props) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
+          // UIF-12: Esc cancels the in-flight stream — works because the
+          // textarea stays focusable (readOnly, not disabled) while
+          // streaming, matching the Playground composer.
+          if (e.key === "Escape" && isStreaming) {
+            e.preventDefault();
+            onCancel();
+            return;
+          }
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             submit();
           }
         }}
         rows={1}
-        disabled={isStreaming}
+        // UIF-12: readOnly (not disabled) keeps focus so Esc-to-cancel
+        // works; submit() already no-ops while streaming so Enter is safe.
+        readOnly={isStreaming}
         placeholder={
           isStreaming
             ? lang === "zh"
