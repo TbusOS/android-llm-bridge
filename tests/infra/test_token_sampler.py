@@ -239,6 +239,37 @@ async def test_observe_caps_runaway_input(workspace) -> None:
     await sampler.close()
 
 
+@pytest.mark.asyncio
+async def test_backend_and_source_fields_in_event(workspace) -> None:
+    """ADR-049: tps_sample carries the backend dimension + a configurable
+    source so the MetricStore can group by backend and the live card can
+    filter Playground (source != 'chat') out of the agent session view."""
+    sampler = TokenSampler(
+        session_id="pg", backend="ollama", source="playground", interval_s=0.05
+    )
+    sampler.start()
+    sampler.observe(7)
+    await sampler.close()
+    samples = [e for e in _read_events(workspace) if e["kind"] == "tps_sample"]
+    assert samples
+    assert samples[-1]["data"]["backend"] == "ollama"
+    assert samples[-1]["source"] == "playground"
+
+
+@pytest.mark.asyncio
+async def test_backend_source_defaults_backward_compatible(workspace) -> None:
+    """Default sampler → backend='' + source='chat' (pre-ADR-049 callers
+    keep emitting the same shape, just with an empty backend dimension)."""
+    sampler = TokenSampler(session_id="s1", interval_s=0.05)
+    sampler.start()
+    sampler.observe(2)
+    await sampler.close()
+    samples = [e for e in _read_events(workspace) if e["kind"] == "tps_sample"]
+    assert samples
+    assert samples[-1]["data"]["backend"] == ""
+    assert samples[-1]["source"] == "chat"
+
+
 def test_interval_from_env(monkeypatch) -> None:
     monkeypatch.setenv("ALB_TPS_SAMPLE_INTERVAL_S", "0.5")
     s = TokenSampler(session_id="s1")

@@ -14,6 +14,7 @@ The CLI / REST / WS / MCP layers all wrap these two functions:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -256,8 +257,15 @@ async def playground_stream(
     *,
     params: PlaygroundParams | None = None,
     system: str | None = None,
+    on_raw_token: Callable[[int], None] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream tokens, then a terminal `done` event with full metrics.
+
+    `on_raw_token` mirrors `AgentLoop.run_stream`: called once per backend
+    token chunk with that chunk's token count, so a `TokenSampler` can feed
+    per-backend throughput into the MetricStore (ADR-049). Callback is
+    best-effort — exceptions are swallowed so a metric hook never breaks
+    the chat stream.
 
     Event shapes:
       {"type": "token",     "delta": "..."}
@@ -297,6 +305,11 @@ async def playground_stream(
         ):
             t = ev.get("type")
             if t == "token":
+                if on_raw_token is not None:
+                    try:
+                        on_raw_token(int(ev.get("tokens", 1)))
+                    except Exception:  # noqa: BLE001 — best-effort metric
+                        pass
                 yield {"type": "token", "delta": ev.get("delta", "")}
             elif t == "done":
                 metrics = PlaygroundMetrics.from_usage(ev.get("usage") or {})

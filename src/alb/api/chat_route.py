@@ -188,7 +188,9 @@ async def chat_ws(ws: WebSocket) -> None:
             session.session_id, "user", _truncate(req.message)
         )
 
-        sampler = TokenSampler(session_id=session.session_id)
+        # ADR-049: tag the sampler with the backend so the MetricStore can
+        # group throughput by backend (dashboard be-card sparkline).
+        sampler = TokenSampler(session_id=session.session_id, backend=llm.name)
         sampler.start()
         try:
             # Hook sampler directly to the backend's raw token events via

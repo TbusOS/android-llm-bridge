@@ -70,6 +70,8 @@ class TokenSampler:
         self,
         *,
         session_id: str,
+        backend: str = "",
+        source: str = "chat",
         bus: "EventBroadcaster | None" = None,
         interval_s: float | None = None,
     ) -> None:
@@ -77,6 +79,15 @@ class TokenSampler:
         if chosen <= 0:
             raise ValueError(f"interval_s must be > 0, got {chosen}")
         self._session_id = session_id
+        # ADR-049: per-backend dimension so MetricStore / metrics_summary can
+        # group throughput by backend (the dashboard's be-card sparkline).
+        # Empty string = unknown backend (legacy callers / tests).
+        self._backend = backend
+        # `source` distinguishes the chat agent stream ("chat") from the
+        # Playground ("playground"). The live-session card filters to
+        # source=="chat" so Playground throughput counts toward the
+        # cross-backend KPI / sparkline without polluting the agent card.
+        self._source = source
         self._bus = bus  # if None, resolved at flush time via get_bus()
         self._interval_s = chosen
         self._tokens_in_window = 0
@@ -156,7 +167,7 @@ class TokenSampler:
             await bus.publish(
                 make_event(
                     session_id=self._session_id,
-                    source="chat",
+                    source=self._source,
                     kind="tps_sample",
                     summary=f"{rate} tok/s",
                     data={
@@ -164,6 +175,7 @@ class TokenSampler:
                         "window_s": self._interval_s,
                         "total_tokens": self._total_tokens,
                         "rate_per_s": rate,
+                        "backend": self._backend,
                     },
                 )
             )

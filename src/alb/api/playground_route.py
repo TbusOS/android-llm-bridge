@@ -30,6 +30,7 @@ from alb.agent.playground import (
     playground_chat,
     playground_stream,
 )
+from alb.infra.metric_sampler import TokenSampler
 from alb.infra.registry import BACKENDS
 
 
@@ -398,12 +399,24 @@ async def playground_chat_ws(ws: WebSocket) -> None:
             await ws.close()
         return
 
+    # ADR-049: record Playground throughput per backend too. source=
+    # "playground" keeps it out of the agent live-session card (which
+    # filters to source=="chat") while still feeding the cross-backend
+    # KPI + be-card sparkline. Playground has no real session, so a single
+    # synthetic session id is fine (per-backend grouping ignores it).
+    sampler = TokenSampler(
+        session_id="playground",
+        backend=req.backend,
+        source="playground",
+    )
+    sampler.start()
     try:
         async for ev in playground_stream(
             backend,
             req.messages_dict(),
             params=req.to_params(),
             system=req.system,
+            on_raw_token=lambda n: sampler.observe(n),
         ):
             await ws.send_json(ev)
     except WebSocketDisconnect:
@@ -427,5 +440,7 @@ async def playground_chat_ws(ws: WebSocket) -> None:
             },
         })
     finally:
+        with contextlib.suppress(Exception):
+            await sampler.close()
         with contextlib.suppress(Exception):
             await ws.close()
