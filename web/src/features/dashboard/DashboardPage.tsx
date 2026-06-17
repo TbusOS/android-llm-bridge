@@ -21,7 +21,7 @@ import { useApp } from "../../stores/app";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { DeviceStripCompact } from "./DeviceStripCompact";
 import { KpiStrip } from "./KpiStrip";
-import { LiveSessionCard } from "./LiveSessionCard";
+import { LiveSessionSection } from "./LiveSessionSection";
 import { LlmBackendCards } from "./LlmBackendCards";
 import { QuickActionRow } from "./QuickActionRow";
 import { RecentSessions } from "./RecentSessions";
@@ -29,7 +29,6 @@ import { SectionPlaceholder } from "../../components/SectionPlaceholder";
 import { useAuditStream } from "../../lib/hooks/useAuditStream";
 import { useDevices } from "../../lib/hooks/useDevices";
 import { useBackends } from "./useBackends";
-import { useLiveSession } from "./useLiveSession";
 import { useMetricsSummary } from "./useMetricsSummary";
 import { useRecentSessions } from "./useSessions";
 import { useTools } from "./useTools";
@@ -92,16 +91,11 @@ export function DashboardPage() {
     devices.refetch?.();
     queryClient.invalidateQueries({ queryKey: ["device-details"] });
   };
-  // Two separate WS subscriptions on /audit/stream — see ADR-022:
-  //   1. timeline view: business events only (tps_sample filtered) →
-  //      inline `useMemo` projects businessRaw into TimelineEventData
-  //      (ADR-043: N=1 consumer · no wrapper hook)
-  //   2. live view: metric events included so LiveSession can drive
-  //      a real tps spark.
-  // Two connections is acceptable for M2 single-tenant; revisit when
-  // M3 adds auth (each WS = handshake + token). On the server side
-  // this means the bus fan-out queue count goes 1× → 2×; acceptable
-  // while N ≤ 4 connections per page.
+  // Timeline view: business events only (tps_sample filtered) → inline
+  // `useMemo` projects businessRaw into TimelineEventData (ADR-043: N=1
+  // consumer · no wrapper hook). The metric (1 Hz) subscription that
+  // drives the live tps spark lives in <LiveSessionSection> (PERF-4) so
+  // its per-second churn doesn't re-render this whole page.
   // AV-2 (5/26 第八轮 MID-3): default staleSnapshotMs (30 min) lives
   // in useAuditStream itself now — no per-caller coordination needed.
   const auditStream = useAuditStream({ includeMetrics: false });
@@ -116,8 +110,6 @@ export function DashboardPage() {
     () => ({ ...auditStream, events: auditEvents }),
     [auditStream, auditEvents],
   );
-  const liveAudit = useAuditStream({ includeMetrics: true });
-  const live = useLiveSession(liveAudit.rawEvents);
   const tools = useTools();
   const metricsSummary = useMetricsSummary(300);
   const backends = useBackends();
@@ -134,7 +126,7 @@ export function DashboardPage() {
 
       {/* === Hero: live session + KPI 2x2 === */}
       <div className="hero-row">
-        <LiveSessionCard data={live} streamStatus={liveAudit.status} />
+        <LiveSessionSection />
         <KpiStrip items={kpis} />
       </div>
 
