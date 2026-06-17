@@ -1,1 +1,0 @@
-import{r}from"./index-57538H5i.js";function d(e){const[s,t]=r.useState(0);return r.useEffect(()=>{if(!e)return;t(0);const n=Date.now(),o=window.setInterval(()=>{t(Math.floor((Date.now()-n)/1e3))},1e3);return()=>{window.clearInterval(o)}},[e]),s}export{d as u};
