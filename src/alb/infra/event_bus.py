@@ -34,14 +34,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import logging
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from alb.infra.workspace import workspace_root
 
+
+_log = logging.getLogger(__name__)
 
 SUBSCRIBER_QUEUE_SIZE = 256
 
@@ -58,22 +61,70 @@ class EventBroadcaster:
     """Process-wide pub-sub for audit events. Construct once, share via
     `get_bus()`. Tests can replace the singleton via `reset_bus()`.
 
+    Two consumer classes (ADR-049):
+      - async queue subscribers (`subscribe()`) — backpressure-tolerant
+        live streams (e.g. /audit/stream WS). Bounded queue, drop-on-full.
+      - synchronous in-process listeners (`add_listener()`) — read-model
+        projections (e.g. MetricStore) that must see every event with
+        zero loss. Called inline on `publish()`, so they MUST be cheap
+        and never block / raise (contract enforced + isolated below).
+
     Thread-safety: this bus runs entirely on the asyncio event loop;
     publishers and subscribers must be async. The `_lock` only guards
-    the subscriber set against concurrent subscribe/unsubscribe."""
+    the subscriber set against concurrent subscribe/unsubscribe.
+    Listeners are added/removed at startup/shutdown, not concurrently
+    with high-frequency publishes, so they need no lock."""
 
     def __init__(self) -> None:
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self._listeners: list[Callable[[dict[str, Any]], None]] = []
         self._lock = asyncio.Lock()
 
-    async def publish(self, event: dict[str, Any]) -> None:
-        """Fan out to live subscribers, then append to events.jsonl.
+    def add_listener(self, fn: Callable[[dict[str, Any]], None]) -> None:
+        """Register a synchronous in-process listener invoked on every
+        publish (BEFORE async fan-out + disk write, so the read model is
+        current the instant publish returns).
 
-        Order matters: live subscribers see the event before the disk
-        write completes, which keeps the WS stream as snappy as
-        possible. A disk failure is logged into the event payload (via
-        the caller's responsibility) but does not block fan-out.
+        Contract — the listener MUST be:
+          - synchronous and cheap (O(1) in-memory work),
+          - non-blocking (no I/O, no awaits),
+          - exception-free (a raise is swallowed + logged, but a noisy
+            listener still wastes every publish).
+        For anything that can block or fall behind, use `subscribe()`
+        (bounded queue, drop-on-full) instead. Idempotent — re-adding the
+        same callable is a no-op (guards against double registration when
+        a per-test `create_app()` re-attaches to a shared bus)."""
+        if fn not in self._listeners:
+            self._listeners.append(fn)
+
+    def remove_listener(self, fn: Callable[[dict[str, Any]], None]) -> None:
+        """Unregister a listener. No-op if not registered."""
+        with suppress(ValueError):
+            self._listeners.remove(fn)
+
+    @property
+    def listener_count(self) -> int:
+        """Diagnostic helper for tests (catches double registration)."""
+        return len(self._listeners)
+
+    async def publish(self, event: dict[str, Any]) -> None:
+        """Notify listeners, fan out to subscribers, then append to disk.
+
+        Order matters:
+          1. synchronous listeners (read-model projections) run FIRST so a
+             query right after publish() reflects this event;
+          2. live queue subscribers see it before the disk write completes,
+             keeping the WS stream snappy;
+          3. the durable append runs off the event loop.
+        Each listener call is isolated — a contract violation (raising)
+        is logged but never breaks fan-out or chat persistence (same
+        philosophy as the QueueFull drop below).
         """
+        for fn in list(self._listeners):
+            try:
+                fn(event)
+            except Exception as e:  # noqa: BLE001 — listener isolation
+                _log.warning("event listener failed: %s", e)
         async with self._lock:
             subs = list(self._subscribers)
         for q in subs:

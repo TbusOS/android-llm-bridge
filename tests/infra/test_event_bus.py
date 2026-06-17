@@ -152,6 +152,59 @@ async def test_publish_does_not_block_when_subscriber_queue_full(workspace) -> N
     assert 0 < len(received) <= 300
 
 
+# ── synchronous in-process listeners (ADR-049) ──────────────────────
+
+@pytest.mark.asyncio
+async def test_listener_invoked_on_publish(workspace) -> None:
+    bus = EventBroadcaster()
+    seen: list[dict] = []
+    bus.add_listener(seen.append)
+    await bus.publish(make_event(
+        session_id="s1", source="chat", kind="tps_sample", summary="x"
+    ))
+    assert len(seen) == 1
+    assert seen[0]["kind"] == "tps_sample"
+
+
+def test_add_listener_is_idempotent() -> None:
+    bus = EventBroadcaster()
+    fn = lambda e: None  # noqa: E731
+    bus.add_listener(fn)
+    bus.add_listener(fn)
+    assert bus.listener_count == 1
+
+
+def test_remove_listener() -> None:
+    bus = EventBroadcaster()
+    fn = lambda e: None  # noqa: E731
+    bus.add_listener(fn)
+    bus.remove_listener(fn)
+    assert bus.listener_count == 0
+    bus.remove_listener(fn)  # no-op, must not raise
+
+
+@pytest.mark.asyncio
+async def test_listener_exception_is_isolated(workspace) -> None:
+    """A raising listener must not break fan-out or the disk append
+    (same philosophy as the QueueFull drop)."""
+    bus = EventBroadcaster()
+    good: list[dict] = []
+
+    def boom(_e):  # noqa: ANN001
+        raise RuntimeError("listener bug")
+
+    bus.add_listener(boom)
+    bus.add_listener(good.append)
+    # Must not raise despite `boom`.
+    await bus.publish(make_event(
+        session_id="s1", source="chat", kind="user", summary="hi"
+    ))
+    # The well-behaved listener still ran, and the disk write completed.
+    assert len(good) == 1
+    assert events_log_path().exists()
+    assert len(events_log_path().read_text().splitlines()) == 1
+
+
 def test_get_bus_is_singleton(workspace) -> None:
     a = get_bus()
     b = get_bus()
