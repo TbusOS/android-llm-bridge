@@ -10,6 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from alb.api.server import create_app
+from alb.infra.event_bus import make_event
+from alb.infra.metric_store import get_metric_store
 
 
 @pytest.fixture
@@ -209,6 +211,81 @@ def test_session_id_empty_string_rejected(client) -> None:
     """Empty session_id should 422 instead of silently filtering to 0."""
     r = client.get("/metrics/summary?session_id=")
     assert r.status_code == 422
+
+
+# ── ADR-049: read-model source + per-backend group_by ───────────────
+
+def _tps_row(rate: float, *, backend: str = "ollama", session_id: str = "s1") -> dict:
+    return make_event(
+        session_id=session_id,
+        source="chat",
+        kind="tps_sample",
+        summary=f"{rate} tok/s",
+        data={
+            "rate_per_s": rate,
+            "tokens_window": int(rate),
+            "window_s": 1.0,
+            "total_tokens": int(rate),
+            "backend": backend,
+        },
+    )
+
+
+def test_scalar_summary_reports_file_source_when_cold(client, workspace) -> None:
+    """Right after startup the store is cold (uptime < window), so the
+    scalar summary falls back to the file scan — and says so via `source`."""
+    _write_samples(workspace, [10, 20])
+    body = client.get("/metrics/summary").json()
+    assert body["source"] == "file"
+    assert body["sample_count"] == 2
+
+
+def test_scalar_summary_uses_memory_when_warm(client, monkeypatch) -> None:
+    """When the store covers the window it answers from memory and ignores
+    the file (no samples written here — a file read would return 0)."""
+    store = get_metric_store()
+    for r in (10, 30):
+        store.ingest(_tps_row(r))
+    monkeypatch.setattr(store, "is_warm", lambda w: True)
+    body = client.get("/metrics/summary").json()
+    assert body["source"] == "memory"
+    assert body["sample_count"] == 2
+    assert body["tps"]["max"] == 30
+
+
+def test_group_by_backend_returns_per_backend_series(client) -> None:
+    """group_by=backend → per-backend bucketed time series from the read
+    model (always memory). Ingest directly to simulate live arrivals."""
+    store = get_metric_store()
+    store.ingest(_tps_row(10, backend="ollama"))
+    store.ingest(_tps_row(20, backend="ollama"))
+    store.ingest(_tps_row(5, backend="lmstudio"))
+
+    body = client.get("/metrics/summary?group_by=backend&buckets=15").json()
+    assert body["ok"] is True
+    assert body["group_by"] == "backend"
+    assert body["source"] == "memory"
+    assert body["bucket_s"] == 300 / 15
+    backs = body["backends"]
+    assert set(backs) == {"ollama", "lmstudio"}
+    assert len(backs["ollama"]["samples"]) == 15
+    assert backs["ollama"]["total_tokens"] == 30
+    assert backs["ollama"]["tps"]["max"] == 20
+
+
+def test_group_by_backend_empty_when_no_activity(client) -> None:
+    body = client.get("/metrics/summary?group_by=backend").json()
+    assert body["group_by"] == "backend"
+    assert body["backends"] == {}
+
+
+def test_group_by_rejects_unknown_dimension(client) -> None:
+    assert client.get("/metrics/summary?group_by=device").status_code == 422
+
+
+def test_buckets_param_bounds(client) -> None:
+    assert client.get("/metrics/summary?group_by=backend&buckets=0").status_code == 422
+    assert client.get("/metrics/summary?group_by=backend&buckets=999").status_code == 422
 
 
 def test_endpoint_listed_in_schema(client) -> None:

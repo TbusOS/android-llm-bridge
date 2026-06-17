@@ -32,7 +32,25 @@ Schema (response):
             "min":  float
         } | null,                  # null when sample_count == 0
         "total_tokens": int,        # sum of tokens_window across samples
-        "sample_count": int
+        "sample_count": int,
+        "source": "memory" | "file" # which read path answered (ADR-049)
+    }
+
+With `?group_by=backend` the shape is instead:
+
+    {
+        "ok": true, "since": ..., "until": ..., "window_s": 300,
+        "bucket_s": float,          # window_s / buckets
+        "group_by": "backend",
+        "source": "memory",
+        "backends": {               # one entry per backend with activity
+            "<name>": {
+                "samples": [float],     # mean rate per bucket, oldest→newest
+                "total_tokens": int,
+                "tps": {mean,p50,p95,max,min} | null,
+                "sample_count": int
+            }
+        }
     }
 """
 
@@ -47,6 +65,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from alb.infra.event_bus import events_log_path
+from alb.infra.metric_store import aggregate_rates, coerce_rate, get_metric_store
 
 router = APIRouter()
 
@@ -59,19 +78,6 @@ def _parse_ts(value: str) -> datetime | None:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return ts
-
-
-def _percentile(sorted_values: list[float], p: float) -> float:
-    """Linear-interpolation percentile. p in [0, 100]."""
-    if not sorted_values:
-        return 0.0
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-    rank = (p / 100.0) * (len(sorted_values) - 1)
-    lo = int(rank)
-    hi = min(lo + 1, len(sorted_values) - 1)
-    frac = rank - lo
-    return sorted_values[lo] * (1 - frac) + sorted_values[hi] * frac
 
 
 def _read_tps_samples(
@@ -114,57 +120,75 @@ def _read_tps_samples(
 async def metrics_summary(
     window_seconds: int = Query(300, ge=10, le=86_400),
     session_id: str | None = Query(None, min_length=1, max_length=128),
+    group_by: str | None = Query(None, pattern="^(backend)$"),
+    buckets: int = Query(15, ge=1, le=120),
 ) -> dict[str, Any]:
     """Aggregate `tps_sample` events over a sliding window.
 
     `window_seconds` defaults to 5 minutes (300s); allowed range
-    10s–24h. `session_id` is optional — when provided the summary
-    only covers that session (useful for a session detail view).
-    Without it the summary is cross-session (used by the Dashboard's
-    LLM throughput KPI).
+    10s–24h. `session_id` is optional — when provided the summary only
+    covers that session (session detail view); without it the summary
+    is cross-session (Dashboard LLM throughput KPI).
+
+    `group_by=backend` (ADR-049) switches to a per-backend bucketed
+    *time series* for the dashboard's be-card sparkline: each backend
+    gets `samples` (one mean rate per `buckets` time bucket, oldest →
+    newest) plus its aggregates.
+
+    Read path: the in-memory MetricStore (read model) serves near-window
+    queries in O(window); the durable `events.jsonl` scan (O(file),
+    DEBT-008) is the fallback for a cold store or a window beyond the
+    store's capacity. The non-breaking `source` field reports which path
+    answered.
     """
     until = datetime.now(timezone.utc)
     since = until - timedelta(seconds=window_seconds)
+    store = get_metric_store()
 
-    samples = await asyncio.to_thread(
-        _read_tps_samples,
-        events_log_path(),
-        since=since,
-        until=until,
-        session_id=session_id,
-    )
-
-    rates: list[float] = []
-    total_tokens = 0
-    for s in samples:
-        data = s.get("data") or {}
-        rate = data.get("rate_per_s")
-        if rate is None:
-            # Backward-compat: derive from tokens_window / window_s
-            tw = data.get("tokens_window")
-            ws = data.get("window_s")
-            if isinstance(tw, (int, float)) and isinstance(ws, (int, float)) and ws > 0:
-                rate = tw / ws
-        if isinstance(rate, (int, float)):
-            rates.append(float(rate))
-        tw = data.get("tokens_window")
-        if isinstance(tw, (int, float)):
-            # Both int and float accepted (rate fallback above is symmetric);
-            # cast to int for the cumulative sum since total_tokens is
-            # documented as int in the response schema.
-            total_tokens += int(tw)
-
-    rates.sort()
-    if rates:
-        tps = {
-            "mean": sum(rates) / len(rates),
-            "p50": _percentile(rates, 50),
-            "p95": _percentile(rates, 95),
-            "max": rates[-1],
-            "min": rates[0],
+    # Per-backend bucketed series — always from the in-memory read model.
+    # It is an inherently live near-window view; after a restart it is
+    # partial until refilled, rendering as a short/empty spark (fine).
+    if group_by == "backend":
+        series = store.throughput_series(
+            window_s=window_seconds, buckets=buckets, group_by="backend"
+        )
+        return {
+            "ok": True,
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+            "window_s": window_seconds,
+            "bucket_s": window_seconds / buckets,
+            "group_by": "backend",
+            "source": "memory",
+            "backends": series,
         }
+
+    # Scalar summary. Fast path = in-memory read model when it fully
+    # covers the window; cold start or window > capacity falls back to
+    # the durable file scan so the answer stays complete across restarts.
+    if store.is_warm(window_seconds):
+        agg = store.summary(window_s=window_seconds, session_id=session_id)
+        source = "memory"
     else:
-        tps = None
+        samples = await asyncio.to_thread(
+            _read_tps_samples,
+            events_log_path(),
+            since=since,
+            until=until,
+            session_id=session_id,
+        )
+        rates: list[float] = []
+        total_tokens = 0
+        for s in samples:
+            data = s.get("data") or {}
+            rate = coerce_rate(data)
+            if rate is not None:
+                rates.append(rate)
+            tw = data.get("tokens_window")
+            if isinstance(tw, (int, float)):
+                total_tokens += int(tw)
+        agg = aggregate_rates(rates, total_tokens)
+        source = "file"
 
     return {
         "ok": True,
@@ -172,7 +196,8 @@ async def metrics_summary(
         "until": until.isoformat(),
         "window_s": window_seconds,
         "session_id": session_id,
-        "tps": tps,
-        "total_tokens": total_tokens,
-        "sample_count": len(rates),
+        "source": source,
+        "tps": agg["tps"],
+        "total_tokens": agg["total_tokens"],
+        "sample_count": agg["sample_count"],
     }
