@@ -12,4 +12,9 @@
  * compatibility with existing dashboard imports.
  */
 export type DeviceStatus = "online" | "warn" | "offline";
-export type Transport = "adb-usb" | "adb-wifi" | "adb-tcp" | "uart" | "ssh";
+// AR9-6: mirrors the transports the backend can actually emit
+// (Adb / Ssh / Serial / Hybrid via type(t).__name__). The old
+// adb-wifi / adb-tcp members had no producer — the backend can't
+// distinguish adb-usb from wifi/tcp (all AdbTransport) — so they were
+// dropped; `hybrid` was added (was being silently mislabeled adb-usb).
+export type Transport = "adb-usb" | "uart" | "ssh" | "hybrid";

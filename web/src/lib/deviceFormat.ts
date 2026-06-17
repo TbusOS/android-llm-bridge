@@ -20,6 +20,9 @@ export function transportFromName(name: string | null | undefined): Transport {
   if (!name) return "adb-usb";
   if (name.includes("Ssh")) return "ssh";
   if (name.includes("Serial")) return "uart";
+  // AR9-6: HybridTransport used to fall through to adb-usb (silent
+  // mislabel) — map it to its own pill.
+  if (name.includes("Hybrid")) return "hybrid";
   return "adb-usb";
 }
 
@@ -27,14 +30,12 @@ export function transportLabel(t: Transport): string {
   switch (t) {
     case "adb-usb":
       return "adb";
-    case "adb-wifi":
-      return "adb wifi";
-    case "adb-tcp":
-      return "adb tcp";
     case "uart":
       return "uart";
     case "ssh":
       return "ssh";
+    case "hybrid":
+      return "hybrid";
   }
 }
 
