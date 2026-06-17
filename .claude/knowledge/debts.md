@@ -27,6 +27,7 @@
 - DEBT-013 · 前端 METRIC_KINDS 与后端 _DEFAULT_METRIC_KINDS 双写不同步
 - DEBT-016 · vite base 在 GH Pages 部署不正确，SPA shell 资源加载 404
 - DEBT-022 (mid) · device card 信息薄 · 缺刷新机制 + 多维元数据
+- DEBT-082 · event_bus.publish 每事件 to_thread + open/close（round11 PERF-5 · 低事件率无影响）
 
 **已关（按时间倒序 · 28 项）**
 
@@ -1774,3 +1775,20 @@
 - **触发关闭**：上述任一条件出现并完成迁移 / 或 5 个全迁完
 - **优先级**：LOW（当前 raw 是有意决定 · ADR-048 已记录边界 · 不影响功能）
 - **来源**：round11 architecture audit AR9-4
+
+## DEBT-082 · event_bus.publish 每事件 to_thread + open/append/close · producer 串行等落盘
+
+- **现象**：`src/alb/infra/event_bus.py` `publish()` 每条事件
+  `await asyncio.to_thread(_append_jsonl, …)`，`_append_jsonl` 每次 `open("a")→write→close`。
+  producer 协程要等这次磁盘写完才继续；每事件一次 open/close 系统调用。
+- **为何现在不修**：`to_thread` 把写挪出事件循环（**loop 不阻塞**，只有 publisher 协程
+  await ~1ms）；事件率低（1Hz tps + 零星 chat/tool/device），本地单用户桥。当前写路径
+  正确 + 有序 + 持久 + 够用。round11 PERF-5（LOW）。
+- **为何不盲改**：① fire-and-forget（不 await）→ 进程退出丢写 + 乱序 + 错误无人看；
+  ② 持久句柄缓存 → 测试 per-test monkeypatch `ALB_WORKSPACE`，缓存句柄会写到上一个
+  workspace（测试污染），需句柄失效生命周期；③ 单 writer task + 批量 I/O = 正经设计但
+  要 lifecycle/flush/ordering/backpressure，且刚为 ADR-049 重构过这条写路径，不该 LOW 顺手叠。
+- **触发修复**（任一）：事件率显著上升（多并发会话 / 更高频 metric）· profiling 实测此处
+  是瓶颈 · 上多 worker（写路径要重做）。届时按 Option B（单 writer + 批量 append）立 ADR 正经做。
+- **优先级**：LOW（本地单用户低事件率下无实际影响）
+- **来源**：round11 PERF-5（2026-06-17 过方案后用户拍 defer）
