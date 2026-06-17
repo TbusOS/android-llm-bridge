@@ -1,6 +1,10 @@
 /**
  * UART live stream hook (PR-C.b/c).
  *
+ * WS boundary (ADR-048): raw WebSocket, NOT lib/ws.ts — bidirectional
+ * binary (xterm) + user-explicit connect + no auto-reconnect by design.
+ * lib/ws.ts is for shared / reconnectable JSON streams.
+ *
  * Wraps a WebSocket connection to `/uart/stream` and exposes a small
  * imperative API for the xterm.js consumer:
  *

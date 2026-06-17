@@ -1,6 +1,11 @@
 /**
  * Live device metrics stream hook (PR-F).
  *
+ * WS boundary (ADR-048): raw WebSocket, NOT lib/ws.ts — per-tab one-shot
+ * stream with per-connection control (pause / interval), not shared across
+ * views, no auto-reconnect. (JSON frames, but the lib/ws sharing model
+ * doesn't fit a user-opens-ChartsTab lifecycle.)
+ *
  * Subscribes to `/metrics/stream` WS — server pushes one
  * MetricSample per interval (default 1 Hz). Hook keeps a rolling
  * ring buffer (last `maxSamples` ticks) for charts to read.

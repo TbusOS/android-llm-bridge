@@ -2,6 +2,9 @@
  * useFileTransferStream — WS-based push/pull with progress + cancel
  * (MID-6 step 3/5).
  *
+ * WS boundary (ADR-048): raw WebSocket, NOT lib/ws.ts — one-shot push/pull
+ * with a progress + cancel protocol, user-initiated, no reconnect.
+ *
  * Wraps `/devices/{serial}/files/push/stream` and `.../pull/stream`.
  * Backend protocol (commit 90):
  *

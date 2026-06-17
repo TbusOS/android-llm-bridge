@@ -1753,3 +1753,22 @@
 - **触发关闭**：第 1 个 first-caller-wins 真冲突 case 出现 / 用户反馈"设了 X 不生效"
 - **优先级**：LOW (debug 性 · 不影响功能)
 - **来源**：5/26 第八轮 architecture-reviewer LOW
+
+---
+
+## DEBT-081 · 5 个 inspect 流式 hook 手写 raw WebSocket · 触发条件到时迁 lib/ws solo
+
+- **现象** (round11 AR9-4): `useUartStream` / `useLogcatStream` / `useMetricsStream` /
+  `useTerminalSession` / `useFileTransferStream` 各自 `new WebSocket` 手写 ~100 行
+  生命周期，不走 `lib/ws.ts`。ADR-048 已立边界规则 + JSDoc 说明为何 raw，当前**有意
+  保留**（协议各异 · 统一重写是 premature）。
+- **影响**：lib 层容错改进（listener try/catch 不截断 fan-out / Blob→ArrayBuffer demux /
+  统一 error）不覆盖这 5 个；stale-socket 守护（CR-1 + UI-3）要在每个 hook 各修一遍。
+- **建议方案**：YAGNI 不现在统一重写。**触发迁移**（任一 hook 命中即迁该 hook 到
+  `lib/ws.ts` solo `noReconnect` 模式，不再手写）：
+  - 该 hook 需要 reconnect / backoff（raw 手写重连易错 · lib 已有）
+  - 踩 listener-throw 截断 fan-out（lib 的 AR-3 容错能救 · raw 不能）
+  - 出现第 6 个流式 hook 想复用前 5 个的某段生命周期逻辑（说明该抽象了）
+- **触发关闭**：上述任一条件出现并完成迁移 / 或 5 个全迁完
+- **优先级**：LOW（当前 raw 是有意决定 · ADR-048 已记录边界 · 不影响功能）
+- **来源**：round11 architecture audit AR9-4

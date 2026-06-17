@@ -1,6 +1,9 @@
 /**
  * adb logcat live stream hook (PR-D).
  *
+ * WS boundary (ADR-048): raw WebSocket, NOT lib/ws.ts — binary log stream
+ * (xterm) + user start/stop, no auto-reconnect; same rationale as useUartStream.
+ *
  * Sibling of useUartStream — same WS state machine, different URL +
  * accepts an optional filter spec ("*:E", "MyApp:V *:S", etc) plus
  * a `tags` shortcut that the server flattens to the same.

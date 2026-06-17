@@ -29,6 +29,11 @@ tools: Read, Grep, Bash, WebFetch
 - 是否引入了新的循环依赖？（`grep` import 链）
 - 新增公共抽象（class / interface）有没有被至少 **两个**实际场景复用？
   （否则是 premature abstraction —— 不应该提前抽象）
+- **WS 消费者边界（ADR-048）**：见到 `web/src/features/**/use*Stream*.ts` /
+  `use*Session.ts` 里 `new WebSocket(`，确认 JSDoc 写明"为何 raw 不走 `lib/ws.ts`"。
+  共享/可重连/JSON 为主的流应走 `lib/ws.ts`（池化或 solo）；一次性·用户显式
+  connect·binary/双向会话流允许 raw 但须 JSDoc 记录。新增第 6 个流式 hook 必须先
+  对照 ADR-048 边界表。（`grep -rn "new WebSocket(" web/src/features`）
 
 ### 2. 依赖方向
 - 高层（API / agent loop）依赖低层（transport / infra），不能反过来

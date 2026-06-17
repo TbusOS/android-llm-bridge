@@ -1,6 +1,9 @@
 /**
  * adb shell PTY session hook (PR-E).
  *
+ * WS boundary (ADR-048): raw WebSocket, NOT lib/ws.ts — bidirectional PTY
+ * + HITL control frames, user-explicit session, no reconnect.
+ *
  * Bidirectional WS to `/terminal/ws` — typing in xterm flows to the
  * shell stdin, shell stdout flows back into xterm.
  *

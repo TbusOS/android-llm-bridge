@@ -2907,3 +2907,28 @@ baseline · 不要等"下次重设计"。codify-current（忠实码定现状）�
 - L-001（React UI 必须以 mockup 为基线 · 本条是"事后补救"的可复现解法）
 - DEBT-038/057/062（CLOSED 2026-06-17）· [[round11-sweep-findings]] MBC-1
 - feedback_react_ui_design_baseline · feedback_visual_audit_blind_spots（三闸过 ≠ 人眼 OK）
+
+
+## L-059 · audit 轮的 knowledge 修订 + spec 绑定必须当轮 commit · 约束力来自在 HEAD 上
+
+**症状**: round10 sweep AR9-3 发现第九轮 audit 的两个修复在 working tree 滞留 14 天
+未 commit —— decisions.md 的 ADR-047 AW-2 段（含 "noReconnect 未验证字段必须在下一
+audit cycle 落槌" 的强约束）+ shareKey.test.ts 改 import 常量绑死 spec 与实现。
+
+**根因**: knowledge 文件（decisions / lessons / debts）是 agent 评审流程的**输入 +
+约束源**。binding 条款只在 working tree、不在 HEAD，意味着任何 fresh checkout /
+session loss / 误 stash 会让 ADR 退回弱版本、spec 绑定一并丢失 —— **约束力归零**。
+knowledge 的约束力不来自"我写过"，来自"它在 HEAD 上"。
+
+**Fix pattern**: audit 轮产物分两类，处置不同：
+
+- **knowledge 修订（decisions/lessons/debts）+ spec 绑定（test 改）** → 必须**当轮
+  commit 入 HEAD**，不允许跨轮滞留 working tree。
+- **报告产物（.claude/reports/*.md / *.json）** → 含真实 home 路径 / 本地快照，按
+  惯例 **untracked**（本地留档，不入仓 · 同 round10/11 sweep JSON）。
+
+**How to apply**: 每轮 audit 收尾 checklist —— ① 相关测试跑绿 ② knowledge + spec
+改动当轮 commit ③ 报告 untracked 留本地。不把"约束条款"留在工作区过夜。
+
+**关联**: AR9-3 · ADR-047（AW-2 落槌条款 · 正是差点丢失的那段）· L-058（同属
+"产物必须落到该落的地方才算数"纪律）

@@ -1741,3 +1741,41 @@ case (无论哪个先到)**，必须从以下 2 选 1 落槌:
 - AU-3 commit (useAuditStream + Dashboard + AuditPage 全部 wire
   30 min · 是 first-caller-wins 跨 caller 协调的样板)
 - L-056 (lib 行为契约修改即使 caller 0 改也需 ADR · 本 ADR 是案例)
+
+
+## ADR-048 · WS 消费者边界：何时走 `lib/ws.ts`、何时允许 raw WebSocket（round11 AR9-4）
+
+**背景**: 全仓 7 个 WebSocket 消费者，只有 2 个走 `lib/ws.ts` 的 `connect()`
+（`useAuditStream` 池化 · `useWsChatStream` solo），其余 5 个 inspect hook
+（`useUartStream` / `useLogcatStream` / `useMetricsStream` / `useTerminalSession` /
+`useFileTransferStream`）各自 `new WebSocket(wsUrl(...))` 手写生命周期（~100 行/个）。
+ADR-045 的 Enforcement 只约束"新 `lib/hooks/*.ts` 用 `connect()` 必须决定是否池化"，
+对 `features/` 下手写 raw WebSocket **零规则** —— 新 contributor 加第 6 个流式 hook
+时无边界可循（round11 AR9-4：decisions/lessons/debts grep 0 命中）。
+
+**决定（边界规则）**:
+
+| 流的特征 | 走哪 |
+|---|---|
+| 共享（多 view 同 URL+参数）/ 可重连 / JSON 帧为主 | **`lib/ws.ts`**（池化 `shareKey` 或 solo `noReconnect`） |
+| 一次性 · 用户显式 connect · binary/双向会话为主（UART 双向 / terminal PTY+HITL / file transfer progress+cancel） | **允许 raw `WebSocket`**，但 hook JSDoc **必须写明为何不走 lib/ws** |
+
+**为什么不现在统一重写这 5 个**: 它们协议各异（UART 双向 binary / terminal HITL /
+file transfer progress+cancel），强行抽成一个 client 是 premature —— 注意这是"5 份
+**重复**未抽象"而非"1 场景提前抽象"，方向与 L-052 相反，所以保留 raw 是对的。但
+"保留 raw" 必须是**有意决定 + JSDoc 记录**，不是默认放任。
+
+**代价 / 已知**: lib 层的容错改进（AR-3 listener try/catch 不截断 fan-out、
+Blob→ArrayBuffer demux、统一 error 事件）不覆盖这 5 个 hook；CR-1 / UI-3 的
+stale-socket 守护就是因此要在 5 个 hook 各修一遍。**触发迁移**见 DEBT-081：任一
+inspect hook 将来需要 reconnect/backoff，或踩 listener-throw 截断 fan-out，就迁到
+`lib/ws.ts` solo 模式（`noReconnect` 可表达"UART 板掉了不自动重连"语义），而不是再
+手写第 N 份。
+
+**Enforcement**: architecture-reviewer grep checklist 加一条 —— 见到
+`features/**/use*Stream*.ts` / `use*Session.ts` 里 `new WebSocket(` 时，确认 JSDoc
+有"为何 raw 不走 lib/ws"说明；新增第 6 个流式 hook 必须先对照本表。
+
+**关联**: ADR-045（池化 opt-in · 本 ADR 补 features/ 边界）· ADR-046/047（pool 语义）·
+DEBT-081（迁移触发账）· CR-1 / UI-3（5 hook 各修一遍 stale-socket 的代价实例）·
+L-052（thin wrapper 是"提前抽象"反面 · 本 ADR 是"重复未抽象"的有意保留 · 两者区分）
