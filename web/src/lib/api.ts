@@ -1497,12 +1497,19 @@ export async function fetchDoctor(signal?: AbortSignal): Promise<DoctorPayload> 
 
 // ── Connection Center (remote device agents) — GET /agent/status ──────
 
+export interface ComPort {
+  port: string;
+  desc?: string;
+}
+
 export interface AgentStatusItem {
   agent_id: string;
   name: string;
   version: number;
   caps: string[];
   current: boolean;
+  adb_devices: string[];
+  com_ports: ComPort[];
 }
 
 export interface ForwarderView {

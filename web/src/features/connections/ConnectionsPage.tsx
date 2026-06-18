@@ -73,6 +73,30 @@ export function ConnectionsPage() {
                           ))}
                         </div>
                       )}
+                      <div className="agent-card__devices">
+                        {a.adb_devices.length === 0 &&
+                        a.com_ports.length === 0 ? (
+                          <span className="agent-dev agent-dev--muted">
+                            {zh ? "未上报设备" : "no devices reported"}
+                          </span>
+                        ) : (
+                          <>
+                            {a.adb_devices.map((d) => (
+                              <span className="agent-dev" key={`adb-${d}`}>
+                                <span className="agent-dev__kind">adb</span>
+                                {d}
+                              </span>
+                            ))}
+                            {a.com_ports.map((cp) => (
+                              <span className="agent-dev" key={`com-${cp.port}`}>
+                                <span className="agent-dev__kind">com</span>
+                                {cp.port}
+                                {cp.desc ? ` · ${cp.desc}` : ""}
+                              </span>
+                            ))}
+                          </>
+                        )}
+                      </div>
                     </article>
                   ))}
                 </div>

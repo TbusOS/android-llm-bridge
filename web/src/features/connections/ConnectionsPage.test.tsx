@@ -25,6 +25,8 @@ const STATUS = {
       version: 1,
       caps: ["adb", "serial"],
       current: true,
+      adb_devices: ["serial-1"],
+      com_ports: [{ port: "COM27", desc: "USB serial" }],
     },
   ],
   forwarders: {
@@ -48,6 +50,30 @@ describe("ConnectionsPage (P2)", () => {
     expect(container.querySelectorAll(".fwd-row").length).toBe(2);
     // both bound → on pills
     expect(container.querySelectorAll(".fwd-row__pill--on").length).toBe(2);
+  });
+
+  it("renders each agent's adb + com devices", () => {
+    mockUseConnections.mockReturnValue({
+      data: STATUS,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ConnectionsPage />);
+    const devs = container.querySelectorAll(".agent-dev");
+    expect(devs.length).toBe(2); // 1 adb serial + 1 com port
+    expect(devs[0]?.textContent).toContain("serial-1");
+    expect(devs[1]?.textContent).toContain("COM27");
+  });
+
+  it("shows 'no devices reported' when an agent has none", () => {
+    const agent = { ...STATUS.agents[0], adb_devices: [], com_ports: [] };
+    mockUseConnections.mockReturnValue({
+      data: { ...STATUS, agents: [agent] },
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ConnectionsPage />);
+    expect(container.querySelector(".agent-dev--muted")).not.toBeNull();
   });
 
   it("shows the empty state when no agent is connected", () => {
