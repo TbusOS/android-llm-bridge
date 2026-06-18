@@ -27,8 +27,14 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from alb.api.schema import API_VERSION
 from alb.remote import protocol
-from alb.remote.forwarder import get_adb_forwarder, get_serial_forwarder, serial_configured
+from alb.remote.forwarder import (
+    forwarder_status,
+    get_adb_forwarder,
+    get_serial_forwarder,
+    serial_configured,
+)
 from alb.remote.protocol import ProtocolError, Verb
 from alb.remote.registry import AgentConnection, get_agent_registry
 
@@ -201,3 +207,18 @@ async def agent_channel(ws: WebSocket) -> None:
     finally:
         with contextlib.suppress(Exception):
             await ws.close()
+
+
+@router.get("/agent/status")
+async def agent_status() -> dict[str, Any]:
+    """Read-only snapshot for the web Connection Center: connected remote
+    agents + adb/serial forwarder state. No side effects."""
+    registry = get_agent_registry()
+    current = registry.current_agent()
+    current_id = current.agent_id if current else None
+    agents = [{**a, "current": a["agent_id"] == current_id} for a in registry.list_agents()]
+    return {
+        "v": API_VERSION,
+        "agents": agents,
+        "forwarders": forwarder_status(),
+    }

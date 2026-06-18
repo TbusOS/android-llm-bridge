@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-
 API_VERSION = "1"
 
 
@@ -144,6 +143,9 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Per-panel device info (security/gpu/processes/cpu/…) — reuses the CLI/MCP info panels"},
     {"method": "GET",  "path": "/api/doctor",
      "description": "Six-layer environment health probe (concurrent, ~worst single probe)"},
+    {"method": "GET",  "path": "/agent/status",
+     "description": "Connected remote device agents + adb/serial forwarder state "
+                    "(web Connection Center)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

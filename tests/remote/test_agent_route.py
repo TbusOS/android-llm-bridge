@@ -123,3 +123,40 @@ def test_heartbeat_timeout_tears_down(monkeypatch):
                 ws.receive_text()  # blocks until server drops us on timeout
         # teardown ran in the finally → no lingering agent
         assert get_agent_registry().agent_count == 0
+
+
+# ── GET /agent/status (P2 Connection Center backend) ─────────────────
+
+
+def test_agent_status_empty(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    with TestClient(create_app()) as c:
+        body = c.get("/agent/status").json()
+    assert body["agents"] == []
+    assert body["forwarders"]["adb"]["bound"] is False
+    assert "serial" in body["forwarders"]
+    assert body["forwarders"]["serial"]["configured"] is False
+
+
+def test_agent_status_shows_connected_agent(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(_hello(None))
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
+            body = c.get("/agent/status").json()
+    assert len(body["agents"]) == 1
+    assert body["agents"][0]["agent_id"] == "agent-1"
+    assert body["agents"][0]["current"] is True
+    assert body["forwarders"]["adb"]["bound"] is True
+
+
+def test_agent_status_serial_configured(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    monkeypatch.setenv("ALB_AGENT_SERIAL_COM", "COM5")
+    monkeypatch.setenv("ALB_AGENT_SERIAL_BAUD", "115200")
+    with TestClient(create_app()) as c:
+        body = c.get("/agent/status").json()
+    assert body["forwarders"]["serial"]["configured"] is True
+    assert body["forwarders"]["serial"]["com"] == "COM5"
+    assert body["forwarders"]["serial"]["baud"] == 115200

@@ -24,6 +24,7 @@ import contextlib
 import logging
 import os
 from collections.abc import Callable
+from typing import Any
 
 from alb.remote.protocol import ADB_TARGET, ChannelRole, ChannelType
 from alb.remote.registry import ChannelOpener, DataChannel
@@ -95,6 +96,11 @@ class ChannelForwarder:
         if self._server is not None and self._server.sockets:
             return int(self._server.sockets[0].getsockname()[1])
         return self._port
+
+    @property
+    def is_bound(self) -> bool:
+        """True once the OS listener is attached."""
+        return self._server is not None
 
     async def attach(self) -> None:
         """Start the OS-level listener. Idempotent."""
@@ -289,3 +295,23 @@ def reset_forwarders() -> None:
             f._server.close()
     _ADB_FORWARDER = None
     _SERIAL_FORWARDER = None
+
+
+def _fwd_view(f: ChannelForwarder | None, default_port: int, env_var: str) -> dict[str, Any]:
+    if f is not None:
+        return {"bound": f.is_bound, "port": f.port}
+    return {"bound": False, "port": _env_int(env_var, default_port)}
+
+
+def forwarder_status() -> dict[str, Any]:
+    """Read-only snapshot of the forwarders for the web Connection Center.
+    Reads the module singletons WITHOUT creating them (no side effects)."""
+    return {
+        "adb": _fwd_view(_ADB_FORWARDER, DEFAULT_ADB_PORT, "ALB_ADB_FORWARD_PORT"),
+        "serial": {
+            **_fwd_view(_SERIAL_FORWARDER, DEFAULT_SERIAL_PORT, "ALB_SERIAL_FORWARD_PORT"),
+            "configured": serial_configured(),
+            "com": serial_com(),
+            "baud": serial_baud(),
+        },
+    }
