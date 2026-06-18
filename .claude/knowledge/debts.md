@@ -1792,3 +1792,38 @@
   是瓶颈 · 上多 worker（写路径要重做）。届时按 Option B（单 writer + 批量 append）立 ADR 正经做。
 - **优先级**：LOW（本地单用户低事件率下无实际影响）
 - **来源**：round11 PERF-5（2026-06-17 过方案后用户拍 defer）
+
+## DEBT-083 · transport/factory 无 host/agent 维度 + serial 端口写死 config（多 host fleet 前置债）
+
+- **现象**：`src/alb/transport/factory.py` `build_transport(device_serial=...)` **没有
+  host/agent 维度**；serial transport 连**固定** `default_tcp_port`（`infra/config.py`）。
+  `workspace.is_safe_device` 正则也不含 host 概念。
+- **背景**：当年（M0/M1）假设"一台 Windows、一条隧道、固定端口（5037/19001）"，
+  `ADB_SERVER_SOCKET` 间接寻址正为此设计。
+- **为何现在不修**：远程 agent P0–P3 只做**单设备单 host**，固定端口（ADR-051 决定 5037
+  adb + 19001 serial）下 keystone invariant 成立，core 零改，不需要 host 维度。
+- **触发修复**：落 **多 host fleet（ADR-050 §代价）/ 多 COM 并发动态端口（P4）** 前必须先消化：
+  ① `build_transport` 加 host/agent 维度（或 hub 端 per-agent 端口映射）；② serial 端口
+  从"读固定 config"改成"接收 per-session 注入端口"；③ 设备寻址 `(agent_id, serial|COM)`。
+- **为何不盲改**：`build_transport` 是 CLI/MCP/API 共用入口，加维度会 ripple 到所有调用点 +
+  `is_safe_device` 校验 + MCP 工具签名；单设备阶段加了纯属空转。
+- **优先级**：MEDIUM（多 host / 动态端口落地的硬前置，单设备阶段无影响）
+- **来源**：ADR-050/051 架构评审（2026-06-18 opus）
+
+## DEBT-084 · remote agent: cid 未绑定 agent_id + current_agent 单 agent 假设（多 agent 前置）
+
+- **现象**：① `src/alb/remote/registry.py` `_pending` 全局只按 cid，`resolve_pending`
+  只验 cid 存在 + token（`agent_route.py /agent/channel`），**不验回拨连接归属哪个 agent**。
+  ② `registry.current_agent()` 返回 epoch 最大的单个 agent（P0 单 agent 假设）。
+- **背景**：P0 范围是单设备单 agent。cid 不可猜（uuid4 122bit）+ token-gated 在单 agent +
+  单信任域下足够；路由"当前 agent"也只有一个。
+- **为何现在不修**：多 agent（P4）才暴露——届时 (a) 一个持有效 token 的进程拿到 live cid
+  可能 resolve 到**别的 agent** 的 data channel（跨 agent 串流）；(b) current_agent 的
+  "最近一个"语义不再够，要按设备/agent_id 选。
+- **触发修复**：多 agent / 多 host fleet 落地前必须：register_pending 带 agent_id、
+  resolve_pending 核验回拨连接的 agent 归属（data WS 需带 agent 身份或复用连接身份）；
+  current_agent 改为按 (agent_id|device) 寻址（与 DEBT-083 一并）。
+- **为何不盲改**：单 agent 阶段实现 per-agent 绑定要给 data WS 加鉴权身份维度，纯空转 +
+  增复杂度；且 protocol/ADR 已据实标注"P0 不绑 agent_id"（不留未兑现安全声明）。
+- **优先级**：MEDIUM（多 agent 的安全前置；单 agent 无实际暴露）
+- **来源**：ADR-050/051 P0 实现后 architecture-reviewer（2026-06-18 opus）

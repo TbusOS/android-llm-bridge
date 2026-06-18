@@ -1839,3 +1839,135 @@ DEBT-006（rotation）不被本 ADR 加重。
 ADR-027（扩字段不扩系统先例）· DEBT-008（**本 ADR 关闭**：扫文件读路径退到冷/长窗口兜底）·
 DEBT-006（不受影响 · tps 仍持久化）· L-060（先查现有管线 · "复用"要审被复用物性能）·
 round10 MBC-3（关闭）· feedback_optimize_for_quality_not_simplicity（用户定调）
+
+## ADR-050 · 远程设备接入：agent 出站拨回家 + 信令/数据面分离 + per-channel 独立连接
+
+**背景**: 北极星 = Linux 上的 alb 中枢让 LLM（经 MCP，含外部 Claude Code / Cursor /
+Codex 等客户端）和人（经 Web UI）调试**物理接在 Windows 主机上**的安卓设备：ADB over
+USB + UART 控制台，Linux 侧驱动、Windows 零 per-session 脚本、COM/baud on-demand、
+不依赖第三方终端工具。现状靠 Windows 发起的 SSH 反向隧道手动建（每会话手跑桥脚本 +
+手配 `-R` 端口）。
+
+候选传输（架构评审压测）：
+- overlay 网（Tailscale/WireGuard）/ tunnel daemon（frp/cloudflared）只解决"网络可达"，
+  **都不能 on-demand 开 COM 口 / 列设备** → agent 控制面无论如何都得写，它们省不掉。
+- agent 管 SSH（`asyncssh` 已是依赖、可 in-process reverse-forward）→ 拿成熟数据面但
+  引入第二信任域（key 分发），且开 COM 仍需自研 RPC。
+- 自造**单 WS 全多路复用**（初稿）→ `adb pull`（MB/s）head-of-line block 掉 UART 交互。
+
+**决定**:
+1. **agent 出站拨回家** —— Windows agent 主动开 `wss://<hub>/agent/connect`（出站，
+   NAT/防火墙友好，无入站端口，无 SSH key，无第三方终端）。复用 alb-api TLS + token
+   鉴权（单信任域）。
+2. **信令面 / 数据面分离** —— 拨回家那条 WS **只跑控制**：`hello`（agent_id/version/
+   caps + token）、`heartbeat`、`list_com`/`list_adb`、`open_channel{type,params}`、
+   `close_channel`。
+3. **per-channel 独立连接** —— `open_channel` 后 agent 为该 channel **回拨一条独立连接**，
+   hub 绑到对应 forwarder。`adb pull` 与 UART 键入物理隔离，消除 HoL。
+4. **channel 类型**：`tcp`（给 adb，target 白名单仅 `127.0.0.1:5037`，防 agent 变开放
+   代理）、`serial`（`{com,baud}`，on-demand，无预分配端口池）。
+5. **agent 形态**：无头服务 + 系统托盘（状态/重连/日志/设置）+ 可选 `127.0.0.1` 只读
+   状态页。**操作面只在 Linux 侧（Web/CLI/MCP）**，Windows 不出现选 COM/连设备的操作
+   UI。agent 静态配置（hub URL/token/name）装一次，COM/baud 是 hub 下发的 per-session 参数。
+
+**为什么不选 SSH / overlay / 单 WS 多路复用**: SSH 引第二信任域且仍需自研控制面；
+overlay/daemon 不解决"开 COM"；单 WS 多路复用对交互流有 HoL。出站 WS 信令 +
+per-channel 连接同时拿到：去第三方终端/SSH、NAT 友好、on-demand COM、交互不被大流量
+饿死、单信任域复用 alb-api 鉴权。`asyncssh` 数据面留作 fallback（若 raw-WS 字节搬运/
+背压实现超预期难）。
+
+**代价 / 已知**:
+- 自己拥有一套 wire 协议（组帧/背压/重连），要配 parity test。
+- 信令面断 → 所有数据 channel 视为失效（agent 重连后重 `hello`，hub 标 offline 拆 forwarder）。
+- 多 host fleet 的设备寻址不在本 ADR（见 ADR-051 / DEBT-083）。
+
+**Enforcement**:
+- channel 必须带显式 role（见 ADR-052），adb 与 serial 不能抹平成统一 `tcp` channel。
+- `tcp` channel target 强制白名单，禁止任意 host:port。
+- agent 代码进公开仓·品牌中立（同 `scripts/windows_serial_bridge.py`）；真实 COM/baud/
+  hub-IP/token 留本地 config 不提交。
+
+**关联**: ADR-051（alb-api 单中枢 + forwarder）· ADR-052（channel retry 角色）·
+ADR-048（WS 消费者边界）· ADR-D 草案（多实例 backend · 独立排）· 设计稿
+`.claude/reports/alb-remote-agent-design-draft.md`
+
+## ADR-051 · alb-api 为设备流量唯一中枢进程：OS 级 loopback forwarder + MCP 新依赖方向
+
+**背景**: dial-home（ADR-050）下 agent 的 WS 只连到一个 hub 端点。但 `alb-api`
+（uvicorn asyncio）和 `alb-mcp`（FastMCP stdio，被 Claude Code/Cursor/Codex 当
+subprocess 拉起）是**两个独立 OS 进程**。若 forwarder 是"alb-api asyncio loop 里的
+对象"，独立的 alb-mcp 进程根本触不到它 → "LLM 经 MCP 调设备"主路断（评审 critical）。
+
+**决定**:
+1. **forwarder = alb-api 进程开的真·OS 级 loopback listener** —— `127.0.0.1:5037`
+   （adb）+ serial 端点。它**就是操作系统资源**，任何本地进程（独立的 alb-mcp / CLI /
+   Web）都能 `connect()`。
+2. **alb-api 成为所有设备流量的唯一中枢进程** —— 持有 agent registry（`{agent_id→WS}`）
+   + forwarder。MCP/CLI/Web 全是它的本地 socket 客户端，**transport / capabilities /
+   MCP 工具零改动**（仍 `ADB_SERVER_SOCKET=tcp:localhost:5037`）。
+3. **依赖方向变更（铁律）** —— dial-home 模式下 **alb-api 必须常驻且先于 MCP 运行**。
+   今天 alb-mcp 可脱离 alb-api 独立连真设备；之后 alb-mcp **强依赖 alb-api 在跑**。这是
+   实质依赖方向变化，不是"plumbing swap"。
+4. **forwarder 生命周期** —— **进程级单例**（`get_adb_forwarder()`，registry 后端，
+   复用 ADR-049 幂等 attach 模式），**不是 per-connection 对象**。`attach()` 幂等绑 OS
+   listener，第一个 agent 连上时懒绑（避免无 agent / 测试场景空绑 5037），重连 / 第二
+   agent 调 `attach()` 是 no-op → **无 EADDRINUSE 竞态**。agent 断开**不** detach（listener
+   常驻，无 active agent 时新本地连接 fail-fast），仅 alb-api lifespan shutdown
+   `shutdown_adb_forwarder()` 真拆。forwarder 经 `registry.current_agent()` 路由到当前
+   agent（P0 单 agent；多 agent 寻址 DEBT-083）。
+5. **单设备单 host 用固定端口** —— `127.0.0.1:5037`（adb）+ `127.0.0.1:19001`（serial），
+   与今隧道端口一致 → MCP/CLI/serial transport **真零配置改**。动态端口只在多 host /
+   多 COM 并发（P4）引入。
+
+**为什么**: OS 级 socket 是唯一能让"独立 MCP 进程"复用"alb-api 持有的 agent 连接"的
+机制（进程间无共享内存/loop）。固定端口让 keystone invariant（呈现成现有本地端点 → 核
+零改）对单设备 adb+serial 双路都成立。
+
+**代价 / 已知**:
+- alb-mcp 多了"alb-api 必须在跑"的运行期前提（文档要写清：先起 alb-api + agent 连上，
+  Claude Code 的 alb-mcp 才能经 forwarder 操作设备）。
+- 一个设备的 agent 连接只能被一个 hub 端点持有 → MCP **不能**各开自己的 forwarder
+  （会与 alb-api 抢同一 agent/COM）。
+- 多 host 时固定 5037 listener 与多 agent 冲突 → 寻址要进 `build_transport`（DEBT-083）。
+
+**Enforcement**:
+- forwarder 必须是真 OS listener，**禁止**做成只在 alb-api loop 内可见的对象（否则 MCP
+  路径不通，评审 critical）。
+- 部署文档明确"alb-api 常驻先行"前提。
+- 多 host 落地前先消化 `factory` 无 host 维度的债（DEBT-083）。
+
+**关联**: ADR-050（dial-home 拓扑）· ADR-052（channel role）· ADR-049（lifespan 幂等
+attach 先例）· `transport/factory.build_transport`（CLI/MCP/API 共用入口）· DEBT-083
+
+## ADR-052 · 反向代理 channel 的 retry 角色：adb=daemon 失败即报 / serial=独占网关 bounded retry（L-034 落地）
+
+**背景**: ADR-050 两类 data channel 在 transport 角色上是**异类**，但初稿抹平成"两种
+tcp channel"并暗示统一 retry。L-034（2026-05-09 part 131）：被代理端是 listen-socket
+daemon 还是 per-connection 独占网关，决定能不能 retry。
+
+**决定**:
+1. **adb channel = listen-socket daemon 语义 → 失败即报，零 retry**。Windows adb server
+   是常驻 daemon；连 5037 的 `ECONNRESET`/`BrokenPipe` 几乎一定是真问题（USB 重授权 /
+   设备掉线 / server crash），retry 会把真错误吸成静默重试，追溯极慢（违反 L-034）。每条
+   adb-client→hub 入站 TCP = 一条独立端到端 channel，连接关即 channel 关，不跨连接复用、
+   不应用层重连。
+2. **serial channel = per-connection 独占网关 → 允许 bounded retry**。ser2net 风格桥有
+   fd-release race（连续两命令间），沿用 `SerialTransport._open_tcp_with_retry` 的
+   bounded backoff（3 次 0.1/0.3/0.6s 自愈）。
+3. **channel spec 带显式 role 字段**（`daemon` | `gateway`），代码按 role 决定 retry
+   策略，不靠 channel type 名隐式推断。
+
+**为什么**: 抹平两类性质相反的端 → 要么给 adb 误加 retry（掩盖真错），要么给 serial 去
+retry（踩 fd race）。显式 role 是唯一不诱导误判的抽象。
+
+**代价 / 已知**: code review 多一条 checklist（新增 channel 类型必须声明 role + 给出
+"被代理端是 daemon 还是独占网关"的判断依据）。
+
+**Enforcement**:
+- code-reviewer checklist 加规则：反向代理新增 channel 类型时，必须按 L-034 分清 daemon
+  （失败即报）vs 独占网关（bounded retry），禁止抹平成统一 `tcp` channel 后误加 retry。
+- adb channel 实现禁止出现重连/retry 循环。
+
+**关联**: ADR-050（channel 模型）· ADR-051（forwarder）· L-034（listen-socket daemon
+反模式 · 本 ADR 扩到反向代理新场景）· `SerialTransport._open_tcp_with_retry`（gateway
+正例来源）
