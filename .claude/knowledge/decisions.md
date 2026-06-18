@@ -1939,6 +1939,13 @@ subprocess 拉起）是**两个独立 OS 进程**。若 forwarder 是"alb-api as
 **关联**: ADR-050（dial-home 拓扑）· ADR-052（channel role）· ADR-049（lifespan 幂等
 attach 先例）· `transport/factory.build_transport`（CLI/MCP/API 共用入口）· DEBT-083
 
+**后续可能推翻条件（P4 multi-agent · 2026-06-18 opus review DEFER）**: 单例 forwarder
+决定在真出现 ≥2 host/≥2 COM 需求 + 单 agent 真机 E2E 跑通前**保持不变**（触发器未到,P4 暂
+不实现）。届时:**agent-0 保 canonical 5037/9001**（保留幂等 attach,不回退本 ADR 修的
+EADDRINUSE 竞态）,agents 1..N 进 registry-keyed forwarder map（不是"全员 per-agent 实例",
+那会让 agent-0 端口也动态化、破坏 keystone invariant + 请回竞态）。寻址前置=先接设备枚举
+（list_adb/com_list → /agent/status）,寻址 key 由真实枚举数据压出。详见 [[L-062]] / DEBT-083。
+
 ## ADR-052 · 反向代理 channel 的 retry 角色：adb=daemon 失败即报 / serial=独占网关 bounded retry（L-034 落地）
 
 **背景**: ADR-050 两类 data channel 在 transport 角色上是**异类**，但初稿抹平成"两种

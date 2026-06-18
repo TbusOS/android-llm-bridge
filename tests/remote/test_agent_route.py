@@ -120,7 +120,10 @@ def test_heartbeat_timeout_tears_down(monkeypatch):
             with c.websocket_connect("/agent/connect") as ws:
                 ws.send_text(_hello(None))
                 assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
-                ws.receive_text()  # blocks until server drops us on timeout
+                # drain any control frames the hub sends (e.g. the list_adb
+                # device-list request) until it drops us on the heartbeat timeout
+                while True:
+                    ws.receive_text()
         # teardown ran in the finally → no lingering agent
         assert get_agent_registry().agent_count == 0
 
@@ -160,3 +163,44 @@ def test_agent_status_serial_configured(monkeypatch):
     assert body["forwarders"]["serial"]["configured"] is True
     assert body["forwarders"]["serial"]["com"] == "COM5"
     assert body["forwarders"]["serial"]["baud"] == 115200
+
+
+# ── device enumeration (_apply_agent_frame + /agent/status) ───────────
+
+
+def test_apply_agent_frame_updates_device_cache():
+    from alb.api.agent_route import _apply_agent_frame
+    from alb.remote.registry import AgentConnection, AgentRegistry
+
+    reg = AgentRegistry()
+
+    async def _send(_m: dict) -> None:
+        return None
+
+    conn = AgentConnection(
+        agent_id="a",
+        name="a",
+        version=1,
+        caps=["adb", "serial"],
+        send_control=_send,
+        registry=reg,
+    )
+    _apply_agent_frame(conn, {"verb": "adb_list", "devices": ["s1", "s2"]})
+    assert conn.adb_devices == ["s1", "s2"]
+    _apply_agent_frame(conn, {"verb": "com_list", "ports": [{"port": "COM3"}]})
+    assert conn.com_ports == [{"port": "COM3"}]
+    # an advisory verb leaves the cache untouched
+    _apply_agent_frame(conn, {"verb": "heartbeat"})
+    assert conn.adb_devices == ["s1", "s2"]
+
+
+def test_agent_status_exposes_device_keys(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(_hello(None))
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
+            body = c.get("/agent/status").json()
+    agent = body["agents"][0]
+    assert "adb_devices" in agent
+    assert "com_ports" in agent

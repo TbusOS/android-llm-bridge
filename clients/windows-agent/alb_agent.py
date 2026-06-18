@@ -275,6 +275,20 @@ async def _reply_adb_list(ws: Any) -> None:
         await ws.send(_frame("adb_list", devices=devices))
 
 
+def _enumerate_com() -> list[dict[str, str]]:
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return []
+    return [{"port": p.device, "desc": (p.description or "")} for p in list_ports.comports()]
+
+
+async def _reply_com_list(ws: Any) -> None:
+    ports = await asyncio.to_thread(_enumerate_com)
+    with contextlib.suppress(Exception):
+        await ws.send(_frame("com_list", ports=ports))
+
+
 async def _run_session(args: argparse.Namespace) -> None:
     async with ws_connect(args.hub_url) as ws:
         await ws.send(_hello(args.agent_id, args.name, args.token))
@@ -317,8 +331,11 @@ async def _run_session(args: argparse.Namespace) -> None:
                     channels.add(task)
                     task.add_done_callback(channels.discard)
                 elif verb == "list_com":
-                    # P1: COM enumeration. For now report empty (instant).
-                    await ws.send(_frame("com_list", ports=[]))
+                    # pyserial enumeration is sync → run as its own task so it
+                    # doesn't block the reader loop.
+                    task = asyncio.create_task(_reply_com_list(ws))
+                    channels.add(task)
+                    task.add_done_callback(channels.discard)
         finally:
             hb.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

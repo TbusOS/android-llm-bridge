@@ -2988,3 +2988,26 @@ feedback_optimize_for_quality_not_simplicity（性能/扩展性优先于最小 d
 
 **关联**: MBC-4 · [[feedback_visual_audit_blind_spots]] · L-028（mockup 是 React 基线，
 class 名一致）· L-058（补 baseline recipe · 三闸 + 人眼）
+
+## L-062 · 跑通单实例真机 E2E + 上游枚举能力之前，不要设计多实例寻址（寻址 key 由真实枚举数据压出，不靠推测）
+
+**症状**: P4 想给远程 agent 做多 host/多 agent 寻址（per-agent 端口 + build_transport 加
+agent 维 + cid 绑定），但当时:① 没有第二台 host 连进来 ② 单 agent 真机 E2E **一次没跑过**
+③ 设备枚举(`list_adb`/`com_list`)在 hub 里还是"log 完丢弃"——hub 根本答不出"agent A 后面
+有哪些设备"。opus arch-review 判 **DEFER**。
+
+**根因**: 寻址(agent_id → device)的 key 必须由**真实枚举数据**决定,在枚举没接 + 真机零运行
+的地基上设计寻址,是凭推测造抽象。还会:build_transport 加维 ripple ~50 调用点（为没人传的
+参数）· per-agent forwarder 实例化会请回 ADR-051 修掉的 EADDRINUSE 竞态 · 寻址模型只对"多
+host"(缺席的场景)有效,对"多设备单 host"(已被 adb `-s serial` 覆盖)是过度设计。
+
+**How to apply**:
+- 设计稿出现 `multi-` / per-X-instance 而**对应的枚举能力或单实例真机 E2E 还没落** → 立刻
+  质疑 scope（这是 [[L-020]] N≥2 抽象阈值 + ADR-029 不为假想需求设计的同源)。
+- 正确顺序:先跑通单实例 E2E → 接上游枚举(让"有哪些可寻址对象"成为真实数据)→ 寻址模型从
+  枚举数据压出 → 最后才动共用入口(factory)加维度。
+- 安全类 deferral 要如实标:DEBT-084 cid 未绑 agent 是 defense-in-depth（uuid4+token 已护,
+  非敞开洞)且 protocol/DEBT 已声明"P0 不绑",不夸大成 blocker。
+
+**关联**: P4 multi-agent（DEFER）· DEBT-083 / DEBT-084 · ADR-051（后续可能推翻条件）·
+[[L-020]]（N≥2 抽象阈值）· architecture_decisions（ADR-029 不为假想需求设计）

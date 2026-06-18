@@ -111,3 +111,57 @@ def test_singleton_reset():
     reset_agent_registry()
     r2 = get_agent_registry()
     assert r1 is not r2
+
+
+# ── device enumeration cache (P4-deferred → enumeration increment) ────
+
+
+async def test_request_device_list_adb_only_without_serial_cap():
+    reg = AgentRegistry()
+    sent: list[str] = []
+
+    async def send(m: dict[str, Any]) -> None:
+        sent.append(m["verb"])
+
+    conn = AgentConnection(
+        agent_id="a",
+        name="a",
+        version=1,
+        caps=["adb"],
+        send_control=send,
+        registry=reg,
+    )
+    await conn.request_device_list()
+    assert "list_adb" in sent
+    assert "list_com" not in sent  # no serial cap → don't ask for COM ports
+
+
+async def test_request_device_list_includes_com_with_serial_cap():
+    reg = AgentRegistry()
+    sent: list[str] = []
+
+    async def send(m: dict[str, Any]) -> None:
+        sent.append(m["verb"])
+
+    conn = AgentConnection(
+        agent_id="a",
+        name="a",
+        version=1,
+        caps=["adb", "serial"],
+        send_control=send,
+        registry=reg,
+    )
+    await conn.request_device_list()
+    assert sent.count("list_adb") == 1
+    assert sent.count("list_com") == 1
+
+
+async def test_list_agents_includes_device_cache():
+    reg = AgentRegistry()
+    conn = _conn(reg, "a")
+    conn.adb_devices = ["serial-1"]
+    conn.com_ports = [{"port": "COM3", "desc": "USB serial"}]
+    await reg.register(conn)
+    a = reg.list_agents()[0]
+    assert a["adb_devices"] == ["serial-1"]
+    assert a["com_ports"] == [{"port": "COM3", "desc": "USB serial"}]

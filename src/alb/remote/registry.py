@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any, Protocol
 
 from alb.remote import protocol
@@ -71,6 +72,19 @@ class AgentConnection:
         self.epoch = 0
         # set by the route once the forwarder is attached (for teardown)
         self.forwarder: Any = None
+        # last-reported device enumeration (updated by the signaling recv loop
+        # from adb_list / com_list replies). Surfaced via GET /agent/status.
+        self.adb_devices: list[str] = []
+        self.com_ports: list[dict[str, Any]] = []
+
+    async def request_device_list(self) -> None:
+        """Fire-and-forget: ask the agent to (re)report its devices. The replies
+        (adb_list / com_list) land on the signaling WS and update the cache. The
+        web Connection Center polls /agent/status, so the next poll reflects it."""
+        with suppress(Exception):
+            await self._send_control(protocol.list_adb())
+            if "serial" in self.caps:
+                await self._send_control(protocol.list_com())
 
     async def open_data_channel(
         self,
@@ -145,9 +159,21 @@ class AgentRegistry:
 
     def list_agents(self) -> list[dict[str, Any]]:
         return [
-            {"agent_id": c.agent_id, "name": c.name, "version": c.version, "caps": c.caps}
+            {
+                "agent_id": c.agent_id,
+                "name": c.name,
+                "version": c.version,
+                "caps": c.caps,
+                "adb_devices": c.adb_devices,
+                "com_ports": c.com_ports,
+            }
             for c in self._agents.values()
         ]
+
+    async def request_device_refresh(self) -> None:
+        """Fire-and-forget a device-list request to every connected agent."""
+        for c in list(self._agents.values()):
+            await c.request_device_list()
 
     @property
     def agent_count(self) -> int:

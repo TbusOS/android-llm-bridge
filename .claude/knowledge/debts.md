@@ -1809,6 +1809,11 @@
   `is_safe_device` 校验 + MCP 工具签名；单设备阶段加了纯属空转。
 - **优先级**：MEDIUM（多 host / 动态端口落地的硬前置，单设备阶段无影响）
 - **来源**：ADR-050/051 架构评审（2026-06-18 opus）
+- **P4 review（2026-06-18 opus）DEFER**：触发器（真实 ≥2 host/≥2 COM 需求 + 单 agent
+  真机 E2E 跑通 + 设备枚举已接）未触发，多 agent 寻址暂不建。落地时与 DEBT-084 **一起**做
+  （共用 agent_id plumbing,不拆）；agent-0 保 canonical 5037/9001（保幂等 attach,不回退
+  EADDRINUSE 修复）、1..N 进 registry-keyed forwarder map；host 轴=端口、device 轴=adb
+  `-s serial`（2 设备 1 host 已被 device_serial 覆盖,无需 P4）。
 
 ## DEBT-084 · remote agent: cid 未绑定 agent_id + current_agent 单 agent 假设（多 agent 前置）
 
@@ -1827,3 +1832,8 @@
   增复杂度；且 protocol/ADR 已据实标注"P0 不绑 agent_id"（不留未兑现安全声明）。
 - **优先级**：MEDIUM（多 agent 的安全前置；单 agent 无实际暴露）
 - **来源**：ADR-050/051 P0 实现后 architecture-reviewer（2026-06-18 opus）
+- **P4 review（2026-06-18 opus）DEFER**：cid 是 uuid4(122bit 不可猜)+ token-gated，hub
+  从不把 A 的 cid 发给 B → 是 defense-in-depth 缺口非"第二 agent 一连即破"的洞,MEDIUM 不变。
+  落地时机制必须用 **per-cid secret**（hub 在 open_channel 时 mint,只下发给 owning agent 的
+  信令 WS,dial-back 必须出示）—— **拒绝 `agent_id`-on-query**(共享 token 下可伪造,theater)。
+  与 DEBT-083 一起做。

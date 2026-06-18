@@ -106,6 +106,16 @@ async def _recv_control(ws: WebSocket, timeout: float) -> dict[str, Any] | None:
         return None
 
 
+def _apply_agent_frame(conn: AgentConnection, frame: dict[str, Any]) -> None:
+    """Update the agent connection's device cache from an agent→hub control
+    frame (adb_list / com_list). Other verbs are advisory (logged by caller)."""
+    verb = frame.get("verb")
+    if verb == Verb.ADB_LIST.value:
+        conn.adb_devices = [str(d) for d in (frame.get("devices") or [])]
+    elif verb == Verb.COM_LIST.value:
+        conn.com_ports = list(frame.get("ports") or [])
+
+
 @router.websocket("/agent/connect")
 async def agent_connect(ws: WebSocket) -> None:
     await ws.accept()
@@ -151,6 +161,8 @@ async def agent_connect(ws: WebSocket) -> None:
         if serial_configured():
             await get_serial_forwarder().attach()
         await send_control(protocol.hello_ok(server_version=protocol.PROTOCOL_VERSION))
+        # populate the device cache so the Connection Center has data right away
+        await conn.request_device_list()
 
         # ── recv loop: heartbeat + agent→hub control frames
         while True:
@@ -161,10 +173,9 @@ async def agent_connect(ws: WebSocket) -> None:
             verb = frame.get("verb")
             if verb == Verb.HEARTBEAT.value:
                 continue
-            # channel_opened / channel_error / channel_closed / adb_list /
-            # com_list: the data-plane correlation happens on /agent/channel,
-            # so for P0 these are advisory — log and continue. (Device
-            # enumeration wiring is P1.)
+            # adb_list / com_list update the device cache; channel_* are advisory
+            # (the data-plane correlation happens on /agent/channel).
+            _apply_agent_frame(conn, frame)
             _log.debug("agent %s control: %s", agent_id, verb)
     except WebSocketDisconnect:
         pass
@@ -211,9 +222,11 @@ async def agent_channel(ws: WebSocket) -> None:
 
 @router.get("/agent/status")
 async def agent_status() -> dict[str, Any]:
-    """Read-only snapshot for the web Connection Center: connected remote
-    agents + adb/serial forwarder state. No side effects."""
+    """Snapshot for the web Connection Center: connected remote agents (with
+    their last-reported devices) + adb/serial forwarder state. Fires a
+    fire-and-forget device refresh so the next poll reflects plug/unplug."""
     registry = get_agent_registry()
+    await registry.request_device_refresh()
     current = registry.current_agent()
     current_id = current.agent_id if current else None
     agents = [{**a, "current": a["agent_id"] == current_id} for a in registry.list_agents()]
