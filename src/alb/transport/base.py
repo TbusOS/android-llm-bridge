@@ -138,6 +138,12 @@ class Transport(ABC):
         """Forward a TCP port. Not supported by serial."""
         raise NotImplementedError(f"{self.name} does not support port forwarding")
 
+    async def send_raw(self, data: bytes) -> ShellResult:
+        """Fire-and-forget raw byte write (no prompt wait). UART-specific —
+        used for u-boot interrupt sequences / injecting keystrokes. The serial
+        transport overrides this; other transports raise NotImplementedError."""
+        raise NotImplementedError(f"{self.name} does not support send_raw()")
+
     # ── Interactive PTY shell (M3 — Web Terminal feeds this) ──────
     async def interactive_shell(
         self,

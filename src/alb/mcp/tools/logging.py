@@ -10,16 +10,19 @@ from alb.capabilities.logging import (
     collect_dmesg,
     collect_logcat,
     search_logs,
+    send_uart,
     tail_log,
+    watch_uart_panic,
 )
+from alb.capabilities.shell import execute as shell_execute
 from alb.mcp.transport_factory import build_transport
 
 
-def register(mcp) -> None:  # noqa: ANN001
+def register(mcp) -> None:
     @mcp.tool()
     async def alb_logcat(
         duration: int = 60,
-        filter: str | None = None,  # noqa: A002
+        filter: str | None = None,
         tags: list[str] | None = None,
         clear_before: bool = False,
         device: str | None = None,
@@ -102,6 +105,83 @@ def register(mcp) -> None:  # noqa: ANN001
         return r.to_dict()
 
     @mcp.tool()
+    async def alb_uart_send(
+        text: str,
+        append_newline: bool = True,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Send raw text to the UART console (fire-and-forget, no read).
+
+        REQUIRES serial transport (method G).
+
+        When to use:
+            - Interrupt u-boot autoboot: text="\\x03" (Ctrl-C), append_newline=False
+            - Type a u-boot / bootloader command, then read with alb_uart_shell
+              or alb_uart_capture
+            - Send a single keypress / control sequence to a hung console
+
+        LLM notes:
+            - Does NOT return the device's response — follow with
+              alb_uart_shell (waits for prompt) or alb_uart_capture (time window).
+            - append_newline=True appends "\\n"; set False for raw control bytes.
+        """
+        t = build_transport(override="serial", device_serial=device)
+        r = await send_uart(t, text, append_newline=append_newline)
+        return r.to_dict()
+
+    @mcp.tool()
+    async def alb_uart_shell(
+        cmd: str,
+        timeout: int = 30,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Run a command on the UART console and return its output.
+
+        REQUIRES serial transport (method G). Unlike alb_uart_send, this waits
+        for the console prompt and strips it, returning the command output. Works
+        on a Linux shell / getty AND on a u-boot prompt (the state machine
+        classifies the console first).
+
+        When to use:
+            - The device is only reachable over UART (adb/ssh dead) but a shell
+              or u-boot prompt is up
+            - Inspect / set u-boot env, run a bootloader command, run a shell
+              command during early boot
+
+        LLM notes:
+            - Maps console state to clear errors: BOARD_PANICKED (with the panic
+              tail in stdout), BOARD_UNREACHABLE, SERIAL_BAUD_MISMATCH,
+              BOARD_BOOTING, BOARD_NEEDS_LOGIN.
+            - For interrupt sequences / raw bytes use alb_uart_send instead.
+        """
+        t = build_transport(override="serial", device_serial=device)
+        r = await shell_execute(t, cmd, timeout=timeout)
+        return r.to_dict()
+
+    @mcp.tool()
+    async def alb_uart_watch_panic(
+        duration: int = 60,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Capture UART for `duration`s and report whether a kernel panic / Oops
+        appeared, with the crash tail.
+
+        REQUIRES serial transport (method G).
+
+        When to use:
+            - Reproduce a crash / watchdog reset and confirm + grab the stack
+            - Reboot a flaky board and watch the boot for a panic
+
+        LLM notes:
+            - Returns {panic_detected, marker, tail, lines}; full log at
+              result.artifacts[0]. Size `duration` to cover the boot / repro.
+            - Captures the whole window then scans (no early return).
+        """
+        t = build_transport(override="serial", device_serial=device)
+        r = await watch_uart_panic(t, duration=duration, device=device)
+        return r.to_dict()
+
+    @mcp.tool()
     async def alb_log_search(
         pattern: str,
         path: str | None = None,
@@ -123,9 +203,7 @@ def register(mcp) -> None:  # noqa: ANN001
             max_matches: cap at 200 by default
         """
         p = Path(path).resolve() if path else None
-        r = await search_logs(
-            pattern, path=p, device=device, max_matches=max_matches
-        )
+        r = await search_logs(pattern, path=p, device=device, max_matches=max_matches)
         return r.to_dict()
 
     @mcp.tool()
@@ -146,7 +224,5 @@ def register(mcp) -> None:  # noqa: ANN001
             lines: tail length (ignored if from_line/to_line given)
             from_line / to_line: 1-based inclusive range
         """
-        r = await tail_log(
-            Path(path), lines=lines, from_line=from_line, to_line=to_line
-        )
+        r = await tail_log(Path(path), lines=lines, from_line=from_line, to_line=to_line)
         return r.to_dict()

@@ -21,10 +21,10 @@ from alb.infra.workspace import (
     is_safe_device,
     iso_timestamp,
     resolve_capture_path,
-    workspace_path,
     workspace_root,
 )
 from alb.transport.base import Transport
+from alb.transport.serial_state import DEFAULT_PATTERNS
 
 
 # ─── Models ────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ async def collect_logcat(
     transport: Transport,
     *,
     duration: int = 60,
-    filter: str | None = None,  # noqa: A002 — mirrors `logcat -s ...` terminology
+    filter: str | None = None,
     tags: list[str] | None = None,
     clear_before: bool = False,
     device: str | None = None,
@@ -167,7 +167,7 @@ async def collect_logcat(
                 line_parser=_parse_logcat_line,
                 topic="logcat.line",
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     duration_ms = int((perf_counter() - start) * 1000)
@@ -234,7 +234,9 @@ async def capture_uart(
         async with asyncio.timeout(duration + 5):
             await _drain_stream(
                 _reconnecting_serial_stream(
-                    transport, "uart", deadline_perf=deadline,
+                    transport,
+                    "uart",
+                    deadline_perf=deadline,
                 ),
                 artifact,
                 stats,
@@ -242,7 +244,7 @@ async def capture_uart(
                 line_parser=_parse_dmesg_line,
                 topic="uart.line",
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     duration_ms = int((perf_counter() - start) * 1000)
@@ -254,6 +256,99 @@ async def capture_uart(
         ),
         artifacts=[artifact],
         timing_ms=duration_ms,
+    )
+
+
+async def send_uart(
+    transport: Transport,
+    text: str,
+    *,
+    append_newline: bool = True,
+) -> Result[dict[str, Any]]:
+    """Fire-and-forget write to the UART console (no prompt wait).
+
+    Use for u-boot interrupt sequences (e.g. text="\\x03" to send Ctrl-C and
+    stop autoboot), sending a single keypress, or injecting a command where
+    there is no shell prompt to wait on. For send-and-read-the-response, use the
+    shell path (`alb_uart_shell`) — its state machine waits for the prompt.
+
+    LLM notes:
+        - `append_newline=True` (default) appends "\\n" so "printenv" runs.
+          Set False for raw control bytes / interrupt chars.
+        - Returns immediately; it does NOT read the response. Follow with
+          `alb_uart_capture` or `alb_uart_shell` to see output.
+    """
+    if transport.name != "serial":
+        return fail(
+            code="TRANSPORT_NOT_SUPPORTED",
+            message=f"send_uart requires serial transport, got {transport.name}",
+            suggestion="Run: alb setup serial (method G)",
+            category="transport",
+        )
+    payload = (text + "\n") if append_newline else text
+    raw = payload.encode("utf-8", errors="replace")
+    r = await transport.send_raw(raw)
+    if not r.ok:
+        return fail(
+            code=r.error_code or "UART_SEND_FAILED",
+            message=r.stderr or "UART write failed",
+            suggestion="Check the serial link (alb doctor)",
+            category="transport",
+        )
+    return ok(data={"sent_bytes": len(raw), "appended_newline": append_newline})
+
+
+async def watch_uart_panic(
+    transport: Transport,
+    *,
+    duration: int = 60,
+    device: str | None = None,
+    output: Path | str | None = None,
+) -> Result[dict[str, Any]]:
+    """Capture UART for up to `duration`s and report whether a kernel panic /
+    fatal Oops appeared, with the crash tail.
+
+    Reuses the panic markers from the serial state machine (DEFAULT_PATTERNS),
+    so detection stays in lockstep with `transport.shell`'s panic routing.
+
+    LLM notes:
+        - `panic_detected` is the headline; `tail` is the text from the marker
+          onward (capped). Full log is at result.artifacts[0].
+        - Captures the whole window then scans (it does not return early on the
+          panic); size `duration` to cover the boot / repro you expect.
+    """
+    cap = await capture_uart(transport, duration=duration, device=device, output=output)
+    if not cap.ok:
+        err = cap.error
+        return fail(
+            code=err.code if err else "UART_CAPTURE_FAILED",
+            message=err.message if err else "UART capture failed",
+            suggestion=err.suggestion if err else "",
+            category=err.category if err else "transport",
+        )
+
+    artifact = cap.artifacts[0] if cap.artifacts else None
+    panic_detected = False
+    marker: str | None = None
+    tail = ""
+    if artifact is not None:
+        data = await asyncio.to_thread(artifact.read_bytes)
+        m = re.compile(DEFAULT_PATTERNS["panic"]).search(data)
+        if m is not None:
+            panic_detected = True
+            marker = m.group(0).decode("utf-8", errors="replace")
+            tail = data[m.start() : m.start() + 8192].decode("utf-8", errors="replace")
+
+    summary = cap.data
+    return ok(
+        data={
+            "panic_detected": panic_detected,
+            "marker": marker,
+            "tail": tail,
+            "lines": summary.lines if summary else 0,
+        },
+        artifacts=cap.artifacts,
+        timing_ms=cap.timing_ms,
     )
 
 
@@ -296,7 +391,7 @@ async def collect_dmesg(
                 line_parser=_parse_dmesg_line,
                 topic="dmesg.line",
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     duration_ms = int((perf_counter() - start) * 1000)
@@ -407,12 +502,10 @@ async def search_logs(
     deadline = perf_counter() + _SEARCH_TIMEOUT_S
     try:
         matches, truncated, timed_out = await asyncio.wait_for(
-            asyncio.to_thread(
-                _scan_files_for_pattern, regex, files, max_matches, deadline
-            ),
+            asyncio.to_thread(_scan_files_for_pattern, regex, files, max_matches, deadline),
             timeout=_SEARCH_TIMEOUT_S + 0.5,  # +0.5s slack for thread join
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return fail(
             code="PATTERN_TIMEOUT",
             message=(
@@ -426,16 +519,12 @@ async def search_logs(
     if timed_out:
         return fail(
             code="PATTERN_TIMEOUT",
-            message=(
-                f"regex search exceeded {_SEARCH_TIMEOUT_S}s during scan"
-            ),
+            message=(f"regex search exceeded {_SEARCH_TIMEOUT_S}s during scan"),
             suggestion="Simplify the regex or narrow with --device / --path",
             category="timeout",
         )
 
-    return ok(
-        data=SearchResults(pattern=pattern, matches=matches, truncated=truncated)
-    )
+    return ok(data=SearchResults(pattern=pattern, matches=matches, truncated=truncated))
 
 
 async def tail_log(
@@ -536,9 +625,7 @@ def _parse_logcat_line(line: bytes) -> dict[str, str]:
 
 def _parse_dmesg_line(line: bytes) -> dict[str, str]:
     text = line.decode("utf-8", errors="replace").lower()
-    is_error = any(
-        kw in text for kw in ("error", "panic", "oops", "bug:", "fail", "warn")
-    )
+    is_error = any(kw in text for kw in ("error", "panic", "oops", "bug:", "fail", "warn"))
     return {"is_error": "1" if is_error else ""}
 
 
@@ -601,6 +688,7 @@ async def _reconnecting_serial_stream(
     exponential growth — we want responsiveness when the bridge starts
     flowing data again; outer cancellation / timeout is the hard cap).
     """
+
     def _expired() -> bool:
         return deadline_perf is not None and perf_counter() >= deadline_perf
 
@@ -612,7 +700,7 @@ async def _reconnecting_serial_stream(
                     return
         except (asyncio.CancelledError, GeneratorExit):
             raise
-        except Exception:  # noqa: BLE001 — survive transient transport errors
+        except Exception:
             # Outer caller (asyncio.timeout / WS cancel) is the hard bound;
             # here we just want to keep trying until the soft deadline.
             pass
