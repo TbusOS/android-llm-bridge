@@ -403,3 +403,4 @@ Co-authored-by: Alice <alice@example.com>
 - [错误码参考](./errors.md)
 - [权限设计](./permissions.md)
 - [项目计划](./project-plan.md)
+- [Git 历史重写记录](./contributing/history-rewrites.md)
