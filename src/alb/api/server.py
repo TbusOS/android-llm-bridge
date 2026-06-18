@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from alb import __version__
+from alb.api.agent_route import router as agent_router
 from alb.api.app_route import router as app_route_router
 from alb.api.audit_route import router as audit_router
 from alb.api.chat_route import router as chat_router
@@ -29,16 +30,16 @@ from alb.api.doctor_route import router as doctor_router
 from alb.api.files_route import router as files_router
 from alb.api.info_route import router as info_router
 from alb.api.log_search_route import router as log_search_router
+from alb.api.logcat_stream_route import router as logcat_stream_router
+from alb.api.meta_route import router as meta_router
 from alb.api.metrics_route import router as metrics_router
 from alb.api.metrics_summary_route import router as metrics_summary_router
 from alb.api.playground_route import router as playground_router
-from alb.api.meta_route import router as meta_router
 from alb.api.power_route import router as power_router
+from alb.api.screenshots_route import router as screenshots_router
 from alb.api.sessions_route import router as sessions_router
 from alb.api.terminal_route import router as terminal_router
 from alb.api.tools_route import router as tools_router
-from alb.api.logcat_stream_route import router as logcat_stream_router
-from alb.api.screenshots_route import router as screenshots_router
 from alb.api.uart_route import router as uart_router
 from alb.api.uart_stream_route import router as uart_stream_router
 from alb.api.ui_static import mount_ui
@@ -73,6 +74,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         from alb.agent.backends import close_probe_cache
         await close_probe_cache()
         get_metric_store().detach()
+        # ADR-051: the adb forwarder is a process-level singleton attached on
+        # first agent connect; close its OS listener on shutdown.
+        from alb.remote.forwarder import shutdown_adb_forwarder
+        await shutdown_adb_forwarder()
 
 
 def create_app() -> FastAPI:
@@ -92,6 +97,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"ok": "true", "version": __version__, "api": "alb"}
 
+    app.include_router(agent_router)
     app.include_router(app_route_router)
     app.include_router(audit_router)
     app.include_router(chat_router)

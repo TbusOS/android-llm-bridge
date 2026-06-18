@@ -314,6 +314,37 @@ WS_ENDPOINTS: list[WSSpec] = [
              "description": "Terminal; reason same as push/stream"},
         ],
     },
+    {
+        "path": "/agent/connect",
+        "description": "Remote device agent dial-home signaling channel "
+                       "(ADR-050/051) — control frames only; data rides "
+                       "per-channel /agent/channel connections.",
+        "messages": [
+            {"type": "hello",            "direction": "C→S",
+             "description": "{agent_id, name, agent_version, caps, token} — "
+                            "first frame; token checked before any registration"},
+            {"type": "hello_ok",         "direction": "S→C",
+             "description": "{server_version} — handshake accepted"},
+            {"type": "heartbeat",        "direction": "C→S",
+             "description": "Liveness ping; hub drops the agent on timeout"},
+            {"type": "open_channel",     "direction": "S→C",
+             "description": "{cid, channel_type, role, params} — hub asks the "
+                            "agent to dial back a data channel"},
+            {"type": "adb_list",         "direction": "C→S",
+             "description": "{devices} — reply to a list_adb request"},
+        ],
+    },
+    {
+        "path": "/agent/channel",
+        "description": "Remote device agent per-channel DATA connection "
+                       "(ADR-050) — raw bytes, correlated to a pending "
+                       "open_channel by the ?cid= query param.",
+        "messages": [
+            {"type": "<raw-bytes>",      "direction": "C↔S",
+             "description": "Bidirectional raw byte shuttle for one channel "
+                            "(e.g. adb 127.0.0.1:5037); no framing"},
+        ],
+    },
 ]
 
 
