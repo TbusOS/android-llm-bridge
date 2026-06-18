@@ -32,14 +32,23 @@ Keep the process running (it auto-reconnects with backoff if the link drops).
 On Windows it can be made a background service / tray app later; for now run it
 in a terminal or via Task Scheduler.
 
-## What it does (P0)
+## What it does
 
 - Maintains the signaling connection (hello + heartbeat + auto-reconnect).
 - On request from the hub, bridges the local **adb server** (`127.0.0.1:5037`)
   to the hub over a per-request data connection.
+- Bridges a **UART / serial port** (the hub picks the COM + baud) to the hub,
+  for boot-log capture and interactive console.
 - Reports attached adb devices on request (`adb devices`).
 
-Serial/UART channels, COM enumeration, and a status tray come in later phases.
+To use serial, set the COM + baud on the **hub** (it drives the agent):
+
+```
+ALB_AGENT_SERIAL_COM=COM27 ALB_AGENT_SERIAL_BAUD=1500000 alb-api
+```
+
+COM enumeration, on-demand COM/baud selection from the web UI, and a status
+tray come in later phases.
 
 ## Security
 

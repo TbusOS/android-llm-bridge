@@ -6,7 +6,7 @@ import pytest
 
 from alb.infra.event_bus import reset_bus
 from alb.infra.metric_store import reset_metric_store
-from alb.remote.forwarder import reset_adb_forwarder
+from alb.remote.forwarder import reset_forwarders
 from alb.remote.registry import reset_agent_registry
 
 
@@ -25,12 +25,12 @@ def _reset_event_infra():
     reset_metric_store()
     reset_bus()
     reset_agent_registry()
-    reset_adb_forwarder()
+    reset_forwarders()
     yield
     reset_metric_store()
     reset_bus()
     reset_agent_registry()
-    reset_adb_forwarder()
+    reset_forwarders()
 
 
 @pytest.fixture

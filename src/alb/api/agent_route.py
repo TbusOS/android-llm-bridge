@@ -28,7 +28,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alb.remote import protocol
-from alb.remote.forwarder import get_adb_forwarder
+from alb.remote.forwarder import get_adb_forwarder, get_serial_forwarder, serial_configured
 from alb.remote.protocol import ProtocolError, Verb
 from alb.remote.registry import AgentConnection, get_agent_registry
 
@@ -136,11 +136,14 @@ async def agent_connect(ws: WebSocket) -> None:
             registry=registry,
         )
         epoch = await registry.register(conn)
-        # The forwarder is a PROCESS-LEVEL singleton (ADR-051): attach() binds
+        # The forwarders are PROCESS-LEVEL singletons (ADR-051): attach() binds
         # the OS listener once and is idempotent, so a reconnecting / second
-        # agent never re-binds the port (no EADDRINUSE race). It routes to the
-        # current agent via the registry, so we do NOT detach it on disconnect.
+        # agent never re-binds the port (no EADDRINUSE race). They route to the
+        # current agent via the registry, so we do NOT detach on disconnect. The
+        # serial forwarder only binds when a COM is configured on this hub.
         await get_adb_forwarder().attach()
+        if serial_configured():
+            await get_serial_forwarder().attach()
         await send_control(protocol.hello_ok(server_version=protocol.PROTOCOL_VERSION))
 
         # ── recv loop: heartbeat + agent→hub control frames

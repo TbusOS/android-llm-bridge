@@ -74,10 +74,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         from alb.agent.backends import close_probe_cache
         await close_probe_cache()
         get_metric_store().detach()
-        # ADR-051: the adb forwarder is a process-level singleton attached on
-        # first agent connect; close its OS listener on shutdown.
-        from alb.remote.forwarder import shutdown_adb_forwarder
-        await shutdown_adb_forwarder()
+        # ADR-051: the adb + serial forwarders are process-level singletons
+        # attached on first agent connect; close their OS listeners on shutdown.
+        from alb.remote.forwarder import shutdown_forwarders
+        await shutdown_forwarders()
 
 
 def create_app() -> FastAPI:

@@ -1,15 +1,20 @@
-"""OS-level loopback forwarder for adb (ADR-051/052).
+"""OS-level loopback forwarders (ADR-051/052).
 
-This is the keystone of the dial-home design: a REAL OS-level listener on
-127.0.0.1:5037 owned by the alb-api process. Because it is an operating-system
-socket (not an in-loop object), the separate alb-mcp / CLI processes reach the
-device by plain connect(127.0.0.1:5037) — alb's transports and MCP tools are
-unchanged.
+The keystone of the dial-home design: REAL OS-level listeners owned by the
+alb-api process — 127.0.0.1:5037 for adb, 127.0.0.1:9001 for serial. Because
+they are operating-system sockets (not in-loop objects), the separate alb-mcp /
+CLI processes reach the device by plain connect() — alb's transports and MCP
+tools are unchanged.
 
 Each accepted local connection opens ONE data channel to the agent and shuttles
-bytes. ADR-052: the adb channel has DAEMON role — fail fast, NO retry. A reset
-is a real error (USB reauth / device drop / adb server crash); retrying would
-silently mask it (L-034).
+bytes. ADR-052 channel roles:
+  - adb    = DAEMON  — proxies the adb server (a listen-socket daemon). Fail
+             fast, NO retry; a reset is a real error (USB reauth / device drop /
+             server crash). L-034.
+  - serial = GATEWAY — proxies a per-connection exclusive bridge (the agent's
+             COM port). The forwarder itself is still single-attempt; the
+             bounded retry lives in alb's SerialTransport._open_tcp_with_retry,
+             which reconnects to this listener.
 """
 
 from __future__ import annotations
@@ -27,39 +32,58 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_ADB_HOST = "127.0.0.1"
 DEFAULT_ADB_PORT = 5037
+DEFAULT_SERIAL_HOST = "127.0.0.1"
+DEFAULT_SERIAL_PORT = 9001  # matches infra.config.SerialConfig.default_tcp_port
+DEFAULT_BAUD = 115200
 DIAL_BACK_TIMEOUT_S = 10.0
 _CHUNK = 65536
 
 
-def forward_port() -> int:
-    """The adb forwarder's bind port. Fixed 5037 by default (so MCP/CLI reach
-    it unchanged); ALB_ADB_FORWARD_PORT overrides it (tests use 0)."""
-    raw = os.environ.get("ALB_ADB_FORWARD_PORT")
+def _env_int(var: str, default: int) -> int:
+    raw = os.environ.get(var)
     if raw is None:
-        return DEFAULT_ADB_PORT
+        return default
     try:
         return int(raw)
     except ValueError:
-        _log.warning("invalid ALB_ADB_FORWARD_PORT=%r; using %d", raw, DEFAULT_ADB_PORT)
-        return DEFAULT_ADB_PORT
+        _log.warning("invalid %s=%r; using %d", var, raw, default)
+        return default
 
 
-class AdbForwarder:
-    """Bridge local TCP (127.0.0.1:5037) <-> the agent's adb server.
+def serial_com() -> str | None:
+    """The COM port the serial forwarder should ask the agent to open, or None
+    if serial is not configured on this hub (ALB_AGENT_SERIAL_COM)."""
+    return os.environ.get("ALB_AGENT_SERIAL_COM") or None
 
-    ADR-051: a process-level singleton owned by the alb-api lifespan, NOT a
-    per-connection object. It resolves the active agent lazily per local
-    connection via `get_agent`, so a reconnecting agent never re-binds the OS
-    port (no EADDRINUSE race)."""
+
+def serial_baud() -> int:
+    return _env_int("ALB_AGENT_SERIAL_BAUD", DEFAULT_BAUD)
+
+
+def serial_configured() -> bool:
+    return serial_com() is not None
+
+
+class ChannelForwarder:
+    """A process-level singleton OS listener (ADR-051) that bridges each local
+    connection to the agent over one data channel. NOT a per-connection object:
+    it resolves the active agent lazily via `get_agent`, so a reconnecting agent
+    never re-binds the port (no EADDRINUSE race)."""
 
     def __init__(
         self,
         get_agent: Callable[[], ChannelOpener | None],
         *,
-        host: str = DEFAULT_ADB_HOST,
-        port: int = DEFAULT_ADB_PORT,
+        channel_type: ChannelType,
+        role: ChannelRole,
+        params: dict[str, object],
+        host: str,
+        port: int,
     ) -> None:
         self._get_agent = get_agent
+        self._channel_type = channel_type
+        self._role = role
+        self._params = params
         self._host = host
         self._port = port
         self._server: asyncio.Server | None = None
@@ -80,7 +104,7 @@ class AdbForwarder:
 
     async def detach(self) -> None:
         """Close the listener + cancel all in-flight connection tasks. Safe
-        on every teardown path (checklist #4) so the port never leaks."""
+        on every teardown path so the port never leaks."""
         server, self._server = self._server, None
         if server is not None:
             server.close()
@@ -113,19 +137,20 @@ class AdbForwarder:
         agent = self._get_agent()
         if agent is None:
             # listener is up but no agent is connected — fail fast.
-            _log.debug("adb connection with no agent connected; closing")
+            _log.debug("%s connection with no agent connected; closing", self._channel_type.value)
             return
-        # DAEMON role (ADR-052): a SINGLE attempt. On any failure, close.
-        # Deliberately NO retry / reconnect loop here.
+        # A SINGLE attempt (ADR-052). The adb (DAEMON) path must never retry;
+        # the serial (GATEWAY) path's bounded retry lives in the alb-side
+        # SerialTransport, not here. So neither role retries in the forwarder.
         try:
             channel = await agent.open_data_channel(
-                ctype=ChannelType.TCP,
-                role=ChannelRole.DAEMON,
-                params={"target": ADB_TARGET},
+                ctype=self._channel_type,
+                role=self._role,
+                params=self._params,
                 timeout=DIAL_BACK_TIMEOUT_S,
             )
         except Exception as e:
-            _log.warning("adb channel open failed (no retry): %s", e)
+            _log.warning("%s channel open failed (no retry): %s", self._channel_type.value, e)
             return
         await self._shuttle(reader, writer, channel)
 
@@ -170,36 +195,97 @@ class AdbForwarder:
                 await channel.aclose()
 
 
-_FORWARDER: AdbForwarder | None = None
+class AdbForwarder(ChannelForwarder):
+    """Bridge local TCP (127.0.0.1:5037) <-> the agent's adb server (DAEMON)."""
+
+    def __init__(
+        self,
+        get_agent: Callable[[], ChannelOpener | None],
+        *,
+        host: str = DEFAULT_ADB_HOST,
+        port: int = DEFAULT_ADB_PORT,
+    ) -> None:
+        super().__init__(
+            get_agent,
+            channel_type=ChannelType.TCP,
+            role=ChannelRole.DAEMON,
+            params={"target": ADB_TARGET},
+            host=host,
+            port=port,
+        )
 
 
-def get_adb_forwarder() -> AdbForwarder:
-    """Process-wide adb forwarder, registry-backed, lazily created.
+class SerialForwarder(ChannelForwarder):
+    """Bridge local TCP (127.0.0.1:9001) <-> the agent's COM port (GATEWAY)."""
 
-    Routes to the current agent via the registry (so it is NOT bound to one
-    agent connection). Bind the OS listener with `await attach()` — idempotent,
-    so a reconnecting / second agent never re-binds the port."""
-    global _FORWARDER
-    if _FORWARDER is None:
+    def __init__(
+        self,
+        get_agent: Callable[[], ChannelOpener | None],
+        *,
+        com: str,
+        baud: int,
+        host: str = DEFAULT_SERIAL_HOST,
+        port: int = DEFAULT_SERIAL_PORT,
+    ) -> None:
+        super().__init__(
+            get_agent,
+            channel_type=ChannelType.SERIAL,
+            role=ChannelRole.GATEWAY,
+            params={"com": com, "baud": baud},
+            host=host,
+            port=port,
+        )
+
+
+_ADB_FORWARDER: ChannelForwarder | None = None
+_SERIAL_FORWARDER: ChannelForwarder | None = None
+
+
+def get_adb_forwarder() -> ChannelForwarder:
+    """Process-wide adb forwarder, registry-backed, lazily created."""
+    global _ADB_FORWARDER
+    if _ADB_FORWARDER is None:
         from alb.remote.registry import get_agent_registry
 
-        _FORWARDER = AdbForwarder(get_agent_registry().current_agent, port=forward_port())
-    return _FORWARDER
+        _ADB_FORWARDER = AdbForwarder(
+            get_agent_registry().current_agent,
+            port=_env_int("ALB_ADB_FORWARD_PORT", DEFAULT_ADB_PORT),
+        )
+    return _ADB_FORWARDER
 
 
-async def shutdown_adb_forwarder() -> None:
-    """Detach + drop the singleton (alb-api lifespan shutdown)."""
-    global _FORWARDER
-    if _FORWARDER is not None:
-        await _FORWARDER.detach()
-    _FORWARDER = None
+def get_serial_forwarder() -> ChannelForwarder:
+    """Process-wide serial forwarder, registry-backed, lazily created. Reads the
+    target COM/baud from the hub env (ALB_AGENT_SERIAL_COM / _BAUD)."""
+    global _SERIAL_FORWARDER
+    if _SERIAL_FORWARDER is None:
+        from alb.remote.registry import get_agent_registry
+
+        _SERIAL_FORWARDER = SerialForwarder(
+            get_agent_registry().current_agent,
+            com=serial_com() or "",
+            baud=serial_baud(),
+            port=_env_int("ALB_SERIAL_FORWARD_PORT", DEFAULT_SERIAL_PORT),
+        )
+    return _SERIAL_FORWARDER
 
 
-def reset_adb_forwarder() -> None:
-    """Sync best-effort reset for tests — closes the listener (skips the async
-    wait_closed) and drops the singleton so the next test starts clean."""
-    global _FORWARDER
-    f = _FORWARDER
-    _FORWARDER = None
-    if f is not None and f._server is not None:
-        f._server.close()
+async def shutdown_forwarders() -> None:
+    """Detach + drop both singletons (alb-api lifespan shutdown)."""
+    global _ADB_FORWARDER, _SERIAL_FORWARDER
+    for f in (_ADB_FORWARDER, _SERIAL_FORWARDER):
+        if f is not None:
+            await f.detach()
+    _ADB_FORWARDER = None
+    _SERIAL_FORWARDER = None
+
+
+def reset_forwarders() -> None:
+    """Sync best-effort reset for tests — closes the listeners (skips the async
+    wait_closed) and drops the singletons so the next test starts clean."""
+    global _ADB_FORWARDER, _SERIAL_FORWARDER
+    for f in (_ADB_FORWARDER, _SERIAL_FORWARDER):
+        if f is not None and f._server is not None:
+            f._server.close()
+    _ADB_FORWARDER = None
+    _SERIAL_FORWARDER = None

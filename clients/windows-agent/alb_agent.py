@@ -3,15 +3,15 @@
 Runs on the machine that physically holds the device (typically a Windows
 host with the device on USB + serial). It dials OUT to the Linux hub over a
 single WebSocket — no inbound port, no SSH, no third-party terminal — and lets
-the hub reach the local adb server (and, in a later phase, serial ports).
+the hub reach the local adb server and the device's serial / UART port.
 
 Design: see the hub's ADR-050/051/052. This file is intentionally standalone:
-it depends only on the stdlib + `websockets`, NOT the alb package, so it can be
-dropped onto a bare host. The wire constants below mirror the hub's
-`alb.remote.protocol` and MUST stay in lockstep with it.
+it depends only on the stdlib + `websockets` (+ `pyserial` for serial channels),
+NOT the alb package, so it can be dropped onto a bare host. The wire constants
+below mirror the hub's `alb.remote.protocol` and MUST stay in lockstep with it.
 
 Usage:
-    pip install websockets
+    pip install -r requirements.txt   # websockets + pyserial
     python alb_agent.py --hub-url wss://<hub>/agent/connect --token <token>
 
 The agent maintains the signaling connection (auto-reconnect with backoff) and,
@@ -115,12 +115,19 @@ async def _adb_devices() -> list[str]:
 async def _handle_open_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
     cid = str(frame.get("cid") or "")
     ctype = frame.get("channel_type")
-    params = frame.get("params") or {}
     if not cid:
         return
-    if ctype != "tcp":
-        _log.warning("unsupported channel type %r (P0 = tcp only)", ctype)
-        return
+    if ctype == "tcp":
+        await _handle_tcp_channel(hub_url, token, frame)
+    elif ctype == "serial":
+        await _handle_serial_channel(hub_url, token, frame)
+    else:
+        _log.warning("unsupported channel type %r", ctype)
+
+
+async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
+    cid = str(frame.get("cid") or "")
+    params = frame.get("params") or {}
     target = str(params.get("target") or "")
     # Re-check the target against our OWN allowlist — do not trust the hub.
     if target not in ALLOWED_TCP_TARGETS:
@@ -151,6 +158,71 @@ async def _handle_open_channel(hub_url: str, token: str | None, frame: dict[str,
         with contextlib.suppress(Exception):
             writer.close()
             await writer.wait_closed()
+
+
+async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
+    cid = str(frame.get("cid") or "")
+    params = frame.get("params") or {}
+    com = str(params.get("com") or "")
+    baud = int(params.get("baud") or 115200)
+    if not com:
+        _log.warning("serial channel %s: no COM specified", cid[:8])
+        return
+    try:
+        import serial  # pyserial
+    except ImportError:
+        _log.error("pyserial not installed; cannot open serial channel (pip install pyserial)")
+        return
+
+    try:
+        ser = serial.Serial(com, baud, timeout=0.05)
+    except Exception as e:
+        _log.warning("serial channel %s: cannot open %s @ %s: %s", cid[:8], com, baud, e)
+        return
+    _log.info("serial channel %s: opened %s @ %s", cid[:8], com, baud)
+
+    url = _channel_url(hub_url, cid, token)
+    try:
+        async with ws_connect(url, max_size=None) as data_ws:
+            await _bridge_serial(ser, data_ws)
+    except Exception as e:
+        _log.warning("serial channel %s ended: %s", cid[:8], e)
+    finally:
+        with contextlib.suppress(Exception):
+            ser.close()
+
+
+async def _bridge_serial(ser: Any, data_ws: Any) -> None:
+    """Shuttle raw bytes between a (blocking) pyserial port and the data WS.
+
+    pyserial is synchronous, so reads/writes run in a worker thread. UART is
+    <200 KB/s, so the per-read thread hop is negligible."""
+
+    async def com_to_ws() -> None:
+        try:
+            while not _shutdown.is_set():
+                data = await asyncio.to_thread(ser.read, _CHUNK)
+                if data:
+                    await data_ws.send(data)
+        except Exception:
+            return
+
+    async def ws_to_com() -> None:
+        try:
+            async for message in data_ws:
+                if isinstance(message, str):
+                    message = message.encode("utf-8", errors="replace")
+                await asyncio.to_thread(ser.write, message)
+        except Exception:
+            return
+
+    t1 = asyncio.create_task(com_to_ws())
+    t2 = asyncio.create_task(ws_to_com())
+    _done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await t
 
 
 async def _bridge(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, data_ws: Any) -> None:

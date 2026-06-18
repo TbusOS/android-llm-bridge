@@ -12,7 +12,8 @@ import asyncio
 import contextlib
 from typing import Any
 
-from alb.remote.forwarder import AdbForwarder
+from alb.remote.forwarder import AdbForwarder, SerialForwarder
+from alb.remote.protocol import ChannelRole, ChannelType
 from alb.remote.registry import DataChannel
 
 
@@ -44,11 +45,17 @@ class _FakeAgent:
         self._port = port
         self.open_calls = 0
         self.fail = False
+        self.last_ctype: Any = None
+        self.last_role: Any = None
+        self.last_params: dict[str, Any] | None = None
 
     async def open_data_channel(
         self, *, ctype: Any, role: Any, params: dict[str, Any], timeout: float
     ) -> DataChannel:
         self.open_calls += 1
+        self.last_ctype = ctype
+        self.last_role = role
+        self.last_params = params
         if self.fail:
             raise ConnectionResetError("simulated reset")
         reader, writer = await asyncio.open_connection(self._host, self._port)
@@ -169,3 +176,67 @@ async def test_no_agent_connected_fails_fast():
             await writer.wait_closed()
     finally:
         await fwd.detach()
+
+
+async def test_adb_forwarder_opens_daemon_tcp_channel():
+    """The adb forwarder asks for a TCP/DAEMON channel to 127.0.0.1:5037."""
+    server, adb_port = await _start_echo_server()
+    agent = _FakeAgent("127.0.0.1", adb_port)
+    fwd = AdbForwarder(lambda: agent, port=0)
+    await fwd.attach()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", fwd.port)
+        writer.write(b"x")
+        await writer.drain()
+        await asyncio.wait_for(reader.readexactly(1), timeout=5)
+        assert agent.last_ctype is ChannelType.TCP
+        assert agent.last_role is ChannelRole.DAEMON
+        assert agent.last_params == {"target": "127.0.0.1:5037"}
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+    finally:
+        await fwd.detach()
+        server.close()
+        with contextlib.suppress(Exception):
+            await server.wait_closed()
+
+
+def test_serial_configured_and_forwarder_reads_env(monkeypatch):
+    from alb.remote import forwarder as fwd_mod
+
+    monkeypatch.delenv("ALB_AGENT_SERIAL_COM", raising=False)
+    assert fwd_mod.serial_configured() is False
+
+    monkeypatch.setenv("ALB_AGENT_SERIAL_COM", "COM9")
+    monkeypatch.setenv("ALB_AGENT_SERIAL_BAUD", "921600")
+    monkeypatch.setenv("ALB_SERIAL_FORWARD_PORT", "0")
+    assert fwd_mod.serial_configured() is True
+    f = fwd_mod.get_serial_forwarder()
+    assert f._params == {"com": "COM9", "baud": 921600}
+
+
+async def test_serial_forwarder_passes_com_baud_and_round_trips():
+    """The serial forwarder asks for a SERIAL/GATEWAY channel carrying the
+    configured COM + baud, and shuttles bytes (P1)."""
+    server, dev_port = await _start_echo_server()
+    agent = _FakeAgent("127.0.0.1", dev_port)
+    fwd = SerialForwarder(lambda: agent, com="COM_X", baud=1500000, port=0)
+    await fwd.attach()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", fwd.port)
+        writer.write(b"u-boot=> ")
+        await writer.drain()
+        got = await asyncio.wait_for(reader.readexactly(len(b"u-boot=> ")), timeout=5)
+        assert got == b"u-boot=> "
+        assert agent.last_ctype is ChannelType.SERIAL
+        assert agent.last_role is ChannelRole.GATEWAY
+        assert agent.last_params == {"com": "COM_X", "baud": 1500000}
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+    finally:
+        await fwd.detach()
+        server.close()
+        with contextlib.suppress(Exception):
+            await server.wait_closed()
