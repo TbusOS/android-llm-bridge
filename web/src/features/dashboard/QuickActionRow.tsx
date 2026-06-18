@@ -13,6 +13,7 @@ import {
   HeartPulse,
   type LucideIcon,
   MessageSquare,
+  Network,
   ScrollText,
   SquareTerminal,
 } from "lucide-react";
@@ -39,6 +40,10 @@ const ACTIONS: Record<string, { Icon: LucideIcon; target: ActionTarget }> = {
     target: { kind: "inspect", tab: "screenshot" },
   },
   doctor: { Icon: HeartPulse, target: { kind: "plain", to: "/doctor" } },
+  connections: {
+    Icon: Network,
+    target: { kind: "plain", to: "/connections" },
+  },
 };
 
 const FALLBACK = ACTIONS["new-chat"]!;

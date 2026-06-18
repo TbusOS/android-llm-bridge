@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Connection Center — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Connection Center — connected remote device agents + adb/serial forwarder state. React class names must mirror this baseline.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .mockup-topbar { display: flex; justify-content: flex-end; padding: 8px var(--space-6) 0; }
+      .lang-toggle {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill); padding: 4px 12px;
+        font-family: var(--font-heading); font-size: 12px; cursor: pointer;
+        color: var(--anth-text-secondary);
+      }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+
+      .conn-wrap { padding: var(--space-6); }
+      .conn {
+        max-width: 980px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-5);
+      }
+
+      /* ---- header ---- */
+      .conn-head { display: flex; flex-direction: column; gap: var(--space-1); }
+      .conn-head__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--anth-text);
+      }
+      .conn-head__sub {
+        margin: 0;
+        font-size: 14px;
+        color: var(--anth-text-secondary);
+      }
+
+      /* ---- section ---- */
+      .conn-section { display: flex; flex-direction: column; gap: var(--space-3); }
+      .conn-section__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--anth-text-secondary);
+      }
+
+      /* ---- agent cards ---- */
+      .conn-agents {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: var(--space-3);
+      }
+      .agent-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+      }
+      .agent-card__top {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+      .agent-card__dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--anth-green);
+        flex: none;
+      }
+      .agent-card__dot--off { background: var(--anth-mid-gray); }
+      .agent-card__name {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--anth-text);
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .agent-card__badge {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--anth-orange);
+        border: 1px solid var(--anth-orange);
+        border-radius: 999px;
+        padding: 1px 8px;
+        white-space: nowrap;
+      }
+      .agent-card__meta {
+        margin: 0;
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        font-variant-numeric: tabular-nums;
+      }
+      .agent-card__caps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-1);
+      }
+      .agent-cap {
+        font-size: 11px;
+        color: var(--anth-text-secondary);
+        background: var(--anth-bg-subtle);
+        border-radius: 6px;
+        padding: 1px 7px;
+      }
+
+      /* ---- empty state ---- */
+      .conn-empty {
+        background: var(--anth-bg-subtle);
+        border: 1px dashed var(--anth-light-gray);
+        border-radius: 12px;
+        padding: var(--space-6);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        align-items: center;
+      }
+      .conn-empty__title {
+        margin: 0;
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--anth-text);
+      }
+      .conn-empty__hint {
+        margin: 0;
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        max-width: 460px;
+      }
+
+      /* ---- forwarder rows ---- */
+      .fwd-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+      }
+      .fwd-row {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 10px;
+        padding: var(--space-3) var(--space-4);
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+      }
+      .fwd-row__label {
+        font-family: "Poppins", system-ui, sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--anth-text);
+        min-width: 84px;
+      }
+      .fwd-row__pill {
+        font-size: 11px;
+        font-weight: 600;
+        border-radius: 999px;
+        padding: 2px 10px;
+        white-space: nowrap;
+      }
+      .fwd-row__pill--on {
+        color: var(--anth-green);
+        border: 1px solid var(--anth-green);
+      }
+      .fwd-row__pill--off {
+        color: var(--anth-text-secondary);
+        border: 1px solid var(--anth-mid-gray);
+      }
+      .fwd-row__detail {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        font-variant-numeric: tabular-nums;
+        margin-left: auto;
+      }
+
+      /* ---- how-to-connect hint ---- */
+      .conn-hint {
+        background: var(--anth-bg-subtle);
+        border-left: 3px solid var(--anth-orange);
+        border-radius: 0 8px 8px 0;
+        padding: var(--space-3) var(--space-4);
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+      }
+      .conn-hint__code {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 12px;
+        color: var(--anth-text);
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 6px;
+        padding: 6px 10px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="conn-wrap">
+      <div class="conn">
+        <header class="conn-head">
+          <h1 class="conn-head__title">
+            <span class="lang-en">Connection Center</span>
+            <span class="lang-zh">连接中心</span>
+          </h1>
+          <p class="conn-head__sub">
+            <span class="lang-en">Remote device agents dialed in to this hub, and the adb / serial forwarders they expose.</span>
+            <span class="lang-zh">拨入本中枢的远程设备 agent，以及它们暴露的 adb / 串口转发器。</span>
+          </p>
+        </header>
+
+        <!-- ===== connected agents ===== -->
+        <section class="conn-section">
+          <h2 class="conn-section__title">
+            <span class="lang-en">Connected agents</span>
+            <span class="lang-zh">已连 agent</span>
+          </h2>
+          <div class="conn-agents">
+            <article class="agent-card">
+              <div class="agent-card__top">
+                <span class="agent-card__dot"></span>
+                <h3 class="agent-card__name">bench-win-01</h3>
+                <span class="agent-card__badge">
+                  <span class="lang-en">active</span>
+                  <span class="lang-zh">当前</span>
+                </span>
+              </div>
+              <p class="agent-card__meta">id a1b2c3d4 · v1</p>
+              <div class="agent-card__caps">
+                <span class="agent-cap">adb</span>
+                <span class="agent-cap">serial</span>
+              </div>
+            </article>
+            <article class="agent-card">
+              <div class="agent-card__top">
+                <span class="agent-card__dot"></span>
+                <h3 class="agent-card__name">lab-win-02</h3>
+              </div>
+              <p class="agent-card__meta">id e5f6a7b8 · v1</p>
+              <div class="agent-card__caps">
+                <span class="agent-cap">adb</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ===== empty state (shown when no agent is connected) ===== -->
+        <section class="conn-section">
+          <h2 class="conn-section__title">
+            <span class="lang-en">No agents (empty state)</span>
+            <span class="lang-zh">无 agent（空态）</span>
+          </h2>
+          <div class="conn-empty">
+            <span class="agent-card__dot agent-card__dot--off"></span>
+            <p class="conn-empty__title">
+              <span class="lang-en">No agent connected</span>
+              <span class="lang-zh">还没有 agent 连接</span>
+            </p>
+            <p class="conn-empty__hint">
+              <span class="lang-en">Start the device agent on the machine that holds the board — it dials out to this hub. The forwarders below stay idle until one connects.</span>
+              <span class="lang-zh">在连着板子的机器上启动设备 agent，它会主动拨入本中枢。下方转发器在 agent 连上前保持空闲。</span>
+            </p>
+          </div>
+        </section>
+
+        <!-- ===== forwarders ===== -->
+        <section class="conn-section">
+          <h2 class="conn-section__title">
+            <span class="lang-en">Forwarders</span>
+            <span class="lang-zh">转发器</span>
+          </h2>
+          <div class="fwd-list">
+            <div class="fwd-row">
+              <span class="fwd-row__label">ADB</span>
+              <span class="fwd-row__pill fwd-row__pill--on">
+                <span class="lang-en">bound</span>
+                <span class="lang-zh">已绑定</span>
+              </span>
+              <span class="fwd-row__detail">127.0.0.1:5037</span>
+            </div>
+            <div class="fwd-row">
+              <span class="fwd-row__label">Serial</span>
+              <span class="fwd-row__pill fwd-row__pill--on">
+                <span class="lang-en">bound</span>
+                <span class="lang-zh">已绑定</span>
+              </span>
+              <span class="fwd-row__detail">127.0.0.1:9001 · COM27 @ 1500000</span>
+            </div>
+            <div class="fwd-row">
+              <span class="fwd-row__label">Serial</span>
+              <span class="fwd-row__pill fwd-row__pill--off">
+                <span class="lang-en">not configured</span>
+                <span class="lang-zh">未配置</span>
+              </span>
+              <span class="fwd-row__detail">
+                <span class="lang-en">set ALB_AGENT_SERIAL_COM</span>
+                <span class="lang-zh">设置 ALB_AGENT_SERIAL_COM</span>
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== how to connect ===== -->
+        <div class="conn-hint">
+          <span>
+            <span class="lang-en">Run the agent on the device's host (it needs only Python + websockets):</span>
+            <span class="lang-zh">在设备所在主机上运行 agent（只需 Python + websockets）：</span>
+          </span>
+          <code class="conn-hint__code">python alb_agent.py --hub-url wss://&lt;hub&gt;/agent/connect --token &lt;token&gt;</code>
+        </div>
+      </div>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>

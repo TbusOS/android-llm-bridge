@@ -1494,3 +1494,47 @@ export async function fetchDoctor(signal?: AbortSignal): Promise<DoctorPayload> 
   }
   return (await r.json()) as DoctorPayload;
 }
+
+// ── Connection Center (remote device agents) — GET /agent/status ──────
+
+export interface AgentStatusItem {
+  agent_id: string;
+  name: string;
+  version: number;
+  caps: string[];
+  current: boolean;
+}
+
+export interface ForwarderView {
+  bound: boolean;
+  port: number;
+}
+
+export interface SerialForwarderView extends ForwarderView {
+  configured: boolean;
+  com: string | null;
+  baud: number;
+}
+
+export interface AgentStatus {
+  v: string;
+  agents: AgentStatusItem[];
+  forwarders: {
+    adb: ForwarderView;
+    serial: SerialForwarderView;
+  };
+}
+
+export async function fetchAgentStatus(
+  signal?: AbortSignal,
+): Promise<AgentStatus> {
+  const r = await fetch("/agent/status", { signal });
+  if (!r.ok) {
+    throw new AlbApiError(
+      `GET /agent/status returned ${r.status}`,
+      r.status,
+      "AGENT_STATUS_FETCH_FAILED",
+    );
+  }
+  return (await r.json()) as AgentStatus;
+}

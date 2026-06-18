@@ -22,6 +22,7 @@ import { lazy } from "react";
 import { ChatPage } from "./features/chat/ChatPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { AuditPage } from "./features/audit/AuditPage";
+import { ConnectionsPage } from "./features/connections/ConnectionsPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
 import { PlaygroundPage } from "./features/playground/PlaygroundPage";
 import { InspectLayout } from "./features/inspect/InspectLayout";
@@ -264,6 +265,12 @@ const auditRoute = createRoute({
   component: AuditPage,
 });
 
+const connectionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/connections",
+  component: ConnectionsPage,
+});
+
 // `addChildren` must be chained inline so the route-tree TYPE picks
 // up `/inspect/$tabKey` and `/inspect/system|charts|...` paths. A
 // separate statement keeps it runtime-correct but the type
@@ -284,6 +291,7 @@ const routeTree = rootRoute.addChildren([
   filesRoute,
   doctorRoute,
   auditRoute,
+  connectionsRoute,
 ]);
 
 // Strip the deployment base (e.g. `/app/` in dev + alb-api mount, or

@@ -46,4 +46,11 @@ export const MOCK_QUICK_ACTIONS: QuickActionData[] = [
     sub: "six-layer doctor probe",
     subZh: "六层 doctor 探测",
   },
+  {
+    key: "connections",
+    title: "Connection Center",
+    titleZh: "连接中心",
+    sub: "remote agents · forwarders",
+    subZh: "远程 agent · 转发器",
+  },
 ];
