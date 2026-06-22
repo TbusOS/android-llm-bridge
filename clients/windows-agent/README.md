@@ -28,9 +28,21 @@ python alb_agent.py --hub-url wss://<hub>/agent/connect --token <token>
 - `--name`    — a human-readable label shown in the hub's device list.
 - `--agent-id`— a stable id (defaults to a random one each run).
 
+- `--status-port` — local status page port on 127.0.0.1 (default `8731`; `0`
+  disables). `--status-host` to change the bind host.
+
 Keep the process running (it auto-reconnects with backoff if the link drops).
-On Windows it can be made a background service / tray app later; for now run it
-in a terminal or via Task Scheduler.
+On Windows run it in a terminal or via Task Scheduler (a background service
+wrapper can come later).
+
+### Status page
+
+The agent serves a localhost-only status page on `http://127.0.0.1:8731`. It
+shows the connection state, active channels, enumerated devices, and the last
+error — so you can tell whether the dial-home reached the hub *without* logging
+into the hub, even when the hub never saw the agent (wrong token / hub
+unreachable). The token is never shown there; `GET /status.json` exposes the
+same data for scripted checks.
 
 ## What it does
 
@@ -47,8 +59,10 @@ To use serial, set the COM + baud on the **hub** (it drives the agent):
 ALB_AGENT_SERIAL_COM=COM27 ALB_AGENT_SERIAL_BAUD=1500000 alb-api
 ```
 
-COM enumeration, on-demand COM/baud selection from the web UI, and a status
-tray come in later phases.
+- Enumerates attached serial ports on request (`serial.tools.list_ports`).
+
+For the full end-to-end bring-up + verification + troubleshooting, see
+`docs/dial-home-runbook.md`.
 
 ## Security
 

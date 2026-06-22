@@ -130,6 +130,32 @@ def test_channel_forwards_csecret_to_resolve(monkeypatch):
     assert captured == {"cid": "abc", "csecret": "xyz"}
 
 
+def test_agent_survives_forwarder_bind_failure(monkeypatch):
+    """ADR-051 hub-side robustness: if the adb forwarder can't bind its port
+    (e.g. a local adb server already holds 5037), the agent session must STILL
+    complete the handshake (hello_ok) and register — not get torn down before
+    hello_ok and trapped in a reconnect loop."""
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    from alb.remote.registry import get_agent_registry
+
+    class _BoomForwarder:
+        async def attach(self):
+            raise OSError("[Errno 98] address already in use")
+
+    monkeypatch.setattr("alb.api.agent_route.get_adb_forwarder", lambda: _BoomForwarder())
+
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(_hello(None))
+            # handshake still succeeds despite the bind failure
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
+            assert get_agent_registry().agent_count == 1
+            # ...and the failure stays observable: the forwarder reports unbound
+            from alb.remote.forwarder import forwarder_status
+
+            assert forwarder_status()["adb"]["bound"] is False
+
+
 def test_heartbeat_timeout_tears_down(monkeypatch):
     """After hello, an agent that never sends a heartbeat is dropped once
     HEARTBEAT_TIMEOUT_S elapses — and the registry is cleaned up (finally)."""

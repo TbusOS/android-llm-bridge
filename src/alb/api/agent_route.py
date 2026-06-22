@@ -117,6 +117,27 @@ def _apply_agent_frame(conn: AgentConnection, frame: dict[str, Any]) -> None:
         conn.com_ports = list(frame.get("ports") or [])
 
 
+async def _safe_attach(get_forwarder: Any, label: str) -> None:
+    """Attach a forwarder without letting a bind failure tear down the agent
+    session. A taken port — most often a real adb server already holding the
+    hub's 127.0.0.1:5037 (ADR-051 says the forwarder MUST own that port) —
+    otherwise propagates out of agent_connect, drops the session before
+    hello_ok, and traps the agent in an endless reconnect loop. Instead we log a
+    loud, actionable warning and carry on: signaling + the other channel keep
+    working, and /agent/status shows the forwarder unbound."""
+    try:
+        await get_forwarder().attach()
+    except OSError as e:
+        _log.warning(
+            "%s forwarder could not bind (%s) — that device path stays "
+            "unavailable until the conflict clears (a local adb server holding "
+            "the port? stop it, or set ALB_ADB_FORWARD_PORT / "
+            "ALB_SERIAL_FORWARD_PORT to a free port). Agent stays connected.",
+            label,
+            e,
+        )
+
+
 @router.websocket("/agent/connect")
 async def agent_connect(ws: WebSocket) -> None:
     await ws.accept()
@@ -158,9 +179,9 @@ async def agent_connect(ws: WebSocket) -> None:
         # agent never re-binds the port (no EADDRINUSE race). They route to the
         # current agent via the registry, so we do NOT detach on disconnect. The
         # serial forwarder only binds when a COM is configured on this hub.
-        await get_adb_forwarder().attach()
+        await _safe_attach(get_adb_forwarder, "adb")
         if serial_configured():
-            await get_serial_forwarder().attach()
+            await _safe_attach(get_serial_forwarder, "serial")
         await send_control(protocol.hello_ok(server_version=protocol.PROTOCOL_VERSION))
         # populate the device cache so the Connection Center has data right away
         await conn.request_device_list()
