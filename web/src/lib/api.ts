@@ -965,6 +965,48 @@ export async function previewWorkspaceFile(
   return (await r.json()) as WorkspaceFilePreview;
 }
 
+export interface WorkspaceUploadResult {
+  ok: boolean;
+  name?: string;
+  path?: string;
+  size?: number;
+  error?: string;
+}
+
+/** Upload a browser-local file INTO the workspace (drag-drop / picker).
+ * `workspaceDir` is the workspace-relative target directory; the server
+ * sanitizes the saved name to a single path segment. Multipart, mirrors
+ * postAppInstall's fetch+FormData shape. The endpoint returns a plain
+ * `{ok, name, path, size, error}` envelope: business errors (bad filename /
+ * path escape / size cap) come back as 200 ok=false, FastAPI multipart
+ * validation as 422. Any other non-2xx is unexpected and throws; 400/503 are
+ * tolerated defensively (this endpoint never emits them today). */
+export async function uploadWorkspaceFile(
+  workspaceDir: string,
+  file: File,
+  signal?: AbortSignal,
+): Promise<WorkspaceUploadResult> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("path", workspaceDir);
+  const r = await fetch("/workspace/files/upload", {
+    method: "POST",
+    body: fd,
+    signal,
+  });
+  if (r.status === 422) {
+    return { ok: false, error: "invalid upload" };
+  }
+  if (!r.ok && r.status !== 400 && r.status !== 503) {
+    throw new AlbApiError(
+      `POST /workspace/files/upload returned ${r.status}`,
+      r.status,
+      "WORKSPACE_UPLOAD_FAILED",
+    );
+  }
+  return (await r.json()) as WorkspaceUploadResult;
+}
+
 /* ─── App (install / uninstall / start / stop / list / info / clear) ─ */
 
 export interface AppListData {

@@ -11,13 +11,14 @@
  * resubmits with `force: true` after the user OKs it.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Download,
   FolderUp,
   RefreshCw,
+  Upload,
   X,
 } from "lucide-react";
 
@@ -29,6 +30,7 @@ import { NoDeviceCard } from "../../components/NoDeviceCard";
 import {
   type DeviceFileEntry,
   type WorkspaceFileEntry,
+  uploadWorkspaceFile,
   workspaceDownloadUrl,
 } from "../../lib/api";
 import {
@@ -60,6 +62,13 @@ export function FilesTab() {
     remote: string;
     error: string;
   } | null>(null);
+  // Browser → workspace upload (drag-drop / picker). Independent of the
+  // device↔workspace push/pull stream above.
+  const [upload, setUpload] = useState<{
+    phase: "idle" | "busy" | "done" | "error";
+    msg: string;
+  }>({ phase: "idle", msg: "" });
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   // Debounce path-input → fetch trigger so 14-char path edits don't
   // fan out to 14 adb `ls -la` calls (code-review HIGH 2 / 2026-05-02).
@@ -158,6 +167,44 @@ export function FilesTab() {
     setPendingPush(null);
   };
 
+  // Upload one or more browser-local files into the current workspace dir.
+  // Sequential (the workspace is a single dir; parallel writes gain little
+  // and muddy the progress line). Refreshes the workspace pane on completion.
+  const onUploadFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0 || upload.phase === "busy") return;
+    const list = Array.from(files);
+    const targetDir = workspacePath || `${DEFAULT_WS_PREFIX}/${device}`;
+    const label =
+      list.length > 1
+        ? `${list.length} ${lang === "zh" ? "个文件" : "files"}`
+        : (list[0]?.name ?? "");
+    setUpload({ phase: "busy", msg: label });
+    let okCount = 0;
+    let lastErr = "";
+    for (const f of list) {
+      try {
+        const res = await uploadWorkspaceFile(targetDir, f);
+        if (res.ok) okCount += 1;
+        else lastErr = res.error || "upload failed";
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+    if (okCount === 0) {
+      setUpload({ phase: "error", msg: lastErr || "upload failed" });
+    } else {
+      const failed = list.length - okCount;
+      setUpload({
+        phase: "done",
+        msg:
+          failed > 0
+            ? `${okCount} ✓ · ${failed} ${lang === "zh" ? "失败" : "failed"}`
+            : label,
+      });
+    }
+    qc.invalidateQueries({ queryKey: ["workspace-files"] });
+  };
+
   return (
     <div className="files-tab">
       <div className="files-tab__panes">
@@ -218,6 +265,13 @@ export function FilesTab() {
           lang={lang}
           title={lang === "zh" ? "工作区" : "Workspace"}
           subtitle={workspacePath || "(root)"}
+          onUploadFiles={onUploadFiles}
+          dropHint={{
+            title: lang === "zh" ? "松手上传" : "Drop to upload",
+            sub:
+              (lang === "zh" ? "到 " : "into ") +
+              (workspacePath || `${DEFAULT_WS_PREFIX}/${device}`),
+          }}
           path={workspacePath}
           onPathChange={(p) => {
             setWorkspacePath(p);
@@ -269,6 +323,27 @@ export function FilesTab() {
               ? lang === "zh" ? "推送中…" : "Pushing…"
               : lang === "zh" ? "推到设备" : "Push"}
           </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={upload.phase === "busy"}
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            <Upload size={12} className="icon-inline" />{" "}
+            {upload.phase === "busy"
+              ? lang === "zh" ? "上传中…" : "Uploading…"
+              : lang === "zh" ? "上传" : "Upload"}
+          </button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              onUploadFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
           {selectedWorkspace && !selectedWorkspace.is_dir ? (
             <a
               className="btn"
@@ -336,6 +411,32 @@ export function FilesTab() {
       ) : null}
 
       <div className="files-tab__status">
+        {upload.phase === "busy" ? (
+          <div className="files-tab__progress" role="status" aria-live="polite">
+            <div className="files-tab__progress-bar">
+              <div className="files-tab__progress-fill" data-indeterminate />
+            </div>
+            <span className="files-tab__progress-meta">
+              {lang === "zh" ? "上传 · " : "Upload · "}
+              {upload.msg}
+            </span>
+          </div>
+        ) : null}
+
+        {upload.phase === "done" ? (
+          <span className="files-tab__msg files-tab__msg--ok">
+            {lang === "zh" ? "上传成功 · " : "Uploaded · "}
+            {upload.msg}
+          </span>
+        ) : null}
+
+        {upload.phase === "error" ? (
+          <span className="files-tab__msg files-tab__msg--err">
+            {lang === "zh" ? "上传失败 · " : "Upload failed · "}
+            {upload.msg}
+          </span>
+        ) : null}
+
         {xferRunning ? (
           <div className="files-tab__progress" role="status" aria-live="polite">
             <div className="files-tab__progress-bar">
@@ -478,12 +579,58 @@ interface FilePaneProps {
   activeName: string | null;
   onActivate: (name: string) => void;
   lang: Lang;
+  /** When set, the pane becomes a drag-drop upload target: dragging files
+   * over it highlights it + shows the drop hint, and dropping calls this. */
+  onUploadFiles?: (files: FileList | null) => void;
+  dropHint?: { title: string; sub: string };
   children?: React.ReactNode;
 }
 
 function FilePane(p: FilePaneProps) {
+  // dragenter/dragleave fire for every child element, so count depth and only
+  // clear the highlight when the cursor truly leaves the pane.
+  const dragDepth = useRef(0);
+  const [dragOver, setDragOver] = useState(false);
+  const droppable = !!p.onUploadFiles;
+
+  const dragProps = droppable
+    ? {
+        onDragEnter: (e: React.DragEvent) => {
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragOver(true);
+        },
+        onDragOver: (e: React.DragEvent) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        },
+        onDragLeave: () => {
+          dragDepth.current -= 1;
+          if (dragDepth.current <= 0) {
+            dragDepth.current = 0;
+            setDragOver(false);
+          }
+        },
+        onDrop: (e: React.DragEvent) => {
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragOver(false);
+          p.onUploadFiles?.(e.dataTransfer.files);
+        },
+      }
+    : {};
+
   return (
-    <div className="files-tab__pane">
+    <div
+      className={`files-tab__pane${dragOver ? " files-tab__pane--dragover" : ""}`}
+      {...dragProps}
+    >
+      {dragOver && p.dropHint ? (
+        <div className="files-tab__drop-hint">
+          <span className="files-tab__drop-hint__title">{p.dropHint.title}</span>
+          <span className="files-tab__drop-hint__sub">{p.dropHint.sub}</span>
+        </div>
+      ) : null}
       <div className="files-tab__pane-head">
         <div>
           <div className="files-tab__pane-title">{p.title}</div>

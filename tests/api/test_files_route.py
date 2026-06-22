@@ -957,3 +957,119 @@ def test_workspace_preview_endpoint_listed_in_schema(client) -> None:
     body = client.get("/api/version").json()
     paths = [(e["method"], e["path"]) for e in body["rest"]]
     assert ("GET", "/workspace/files/preview/{path}") in paths
+
+
+# ─── POST /workspace/files/upload (drag-drop browser → workspace) ────
+
+
+def test_workspace_upload_writes_file_into_target_dir(client, workspace) -> None:
+    r = client.post(
+        "/workspace/files/upload",
+        data={"path": "devices/abc/pulls"},
+        files={"file": ("note.txt", b"hello bytes", "text/plain")},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["name"] == "note.txt"
+    assert body["path"] == "devices/abc/pulls/note.txt"
+    assert body["size"] == len(b"hello bytes")
+    saved = workspace / "devices" / "abc" / "pulls" / "note.txt"
+    assert saved.read_bytes() == b"hello bytes"
+
+
+def test_workspace_upload_default_path_lands_at_root(client, workspace) -> None:
+    r = client.post(
+        "/workspace/files/upload",
+        files={"file": ("root.bin", b"\x00\x01\x02", "application/octet-stream")},
+    )
+    body = r.json()
+    assert body["ok"] is True
+    assert body["path"] == "root.bin"
+    assert (workspace / "root.bin").read_bytes() == b"\x00\x01\x02"
+
+
+def test_workspace_upload_sanitizes_filename_to_basename(client, workspace) -> None:
+    """A filename carrying directory components is reduced to its basename so
+    the upload can't escape the resolved target directory."""
+    r = client.post(
+        "/workspace/files/upload",
+        data={"path": "drop"},
+        files={"file": ("../../etc/evil.sh", b"x", "text/plain")},
+    )
+    body = r.json()
+    assert body["ok"] is True
+    assert body["name"] == "evil.sh"
+    assert body["path"] == "drop/evil.sh"
+    assert (workspace / "drop" / "evil.sh").exists()
+    assert not (workspace.parent / "etc" / "evil.sh").exists()
+
+
+def test_workspace_upload_rejects_path_traversal_in_dir(client, workspace) -> None:
+    r = client.post(
+        "/workspace/files/upload",
+        data={"path": "../../outside"},
+        files={"file": ("x.txt", b"x", "text/plain")},
+    )
+    body = r.json()
+    assert body["ok"] is False
+    assert "workspace" in body["error"]
+    assert not (workspace.parent / "outside").exists()
+
+
+def test_workspace_upload_rejects_filename_that_sanitizes_to_empty(client) -> None:
+    """A filename that reduces to nothing after sanitization (here ".") reaches
+    our handler and is rejected with the envelope, not silently written."""
+    r = client.post(
+        "/workspace/files/upload",
+        files={"file": (".", b"x", "application/octet-stream")},
+    )
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"] == "invalid filename"
+
+
+def test_workspace_upload_endpoint_listed_in_schema(client) -> None:
+    body = client.get("/api/version").json()
+    paths = [(e["method"], e["path"]) for e in body["rest"]]
+    assert ("POST", "/workspace/files/upload") in paths
+
+
+def test_workspace_upload_preflight_rejects_oversize(client, workspace, monkeypatch) -> None:
+    """Content-Length preflight rejects a body past the cap before streaming;
+    nothing is written."""
+    monkeypatch.setattr("alb.api.files_route._UPLOAD_MAX_BYTES", 8)
+    r = client.post(
+        "/workspace/files/upload",
+        data={"path": "drop"},
+        files={"file": ("big.bin", b"0123456789abcdef", "application/octet-stream")},
+    )
+    body = r.json()
+    assert body["ok"] is False
+    assert "2 G" in body["error"]
+    assert not (workspace / "drop" / "big.bin").exists()
+
+
+async def test_write_upload_cap_removes_partial(workspace, monkeypatch) -> None:
+    """The authoritative streaming cap (reached when a client lies about /
+    omits Content-Length): exceeding it raises _UploadTooLarge AND the partial
+    file is unlinked, so no truncated artifact survives (code-review MID-1)."""
+    import alb.api.files_route as mod
+
+    monkeypatch.setattr(mod, "_UPLOAD_MAX_BYTES", 8)
+    monkeypatch.setattr(mod, "_UPLOAD_CHUNK", 4)
+    dest = workspace / "drop" / "big.bin"
+
+    class _FakeUpload:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+            self._i = 0
+
+        async def read(self, n: int) -> bytes:
+            chunk = self._data[self._i : self._i + n]
+            self._i += n
+            return chunk
+
+    with pytest.raises(mod._UploadTooLarge):
+        await mod._write_upload(_FakeUpload(b"0123456789abcdef"), dest)  # type: ignore[arg-type]
+    assert not dest.exists()  # partial cleaned up

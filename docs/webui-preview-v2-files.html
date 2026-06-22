@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Files tab — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect Files tab — two-pane device/workspace browser, drag-drop upload into the workspace, transfer progress + preview. React class names must mirror this baseline.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+      .mockup-topbar { display: flex; justify-content: flex-end; padding: 8px var(--space-6) 0; }
+      .lang-toggle {
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: var(--radius-pill); padding: 4px 12px;
+        font-family: var(--font-heading); font-size: 12px; cursor: pointer;
+        color: var(--anth-text-secondary);
+      }
+      .lang-toggle:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+
+      .files-wrap { padding: var(--space-6); }
+      .files-shell { max-width: 1080px; margin: 0 auto; }
+      .files-head { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-4); }
+      .files-head__title {
+        margin: 0; font-family: "Poppins", system-ui, sans-serif;
+        font-size: 22px; font-weight: 600; color: var(--anth-text);
+      }
+      .files-head__sub { margin: 0; font-size: 14px; color: var(--anth-text-secondary); }
+      .files-section-label {
+        margin: var(--space-5) 0 var(--space-2);
+        font-family: "Poppins", system-ui, sans-serif; font-size: 13px; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.05em; color: var(--anth-text-secondary);
+      }
+
+      /* ---- minimal button surface (mirrors global .btn) ---- */
+      .btn {
+        display: inline-flex; align-items: center; gap: 5px;
+        font-family: var(--font-heading); font-size: 12px;
+        padding: 5px 12px; border-radius: var(--radius-pill);
+        border: 1px solid var(--anth-light-gray); background: #ffffff;
+        color: var(--anth-text); cursor: pointer; text-decoration: none;
+      }
+      .btn:hover { border-color: var(--anth-orange); color: var(--anth-orange); }
+      .btn--primary { background: var(--anth-orange); border-color: var(--anth-orange); color: #ffffff; font-weight: 600; }
+      .btn--primary:hover { color: #ffffff; }
+      .btn--small { font-size: 11px; padding: 3px 9px; }
+      .icon-inline { width: 12px; height: 12px; }
+
+      /* ============ files-tab (mirrors web/src/styles/components.css) ============ */
+      .files-tab { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3); }
+      .files-tab__panes { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+      .files-tab__pane {
+        position: relative;
+        display: flex; flex-direction: column;
+        background: #ffffff; border: 1px solid var(--anth-light-gray);
+        border-radius: 10px; overflow: hidden; min-height: 420px;
+      }
+      .files-tab__pane-head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: var(--space-2) var(--space-3);
+        border-bottom: 1px solid var(--anth-light-gray); background: var(--anth-bg-subtle);
+      }
+      .files-tab__pane-title { font-family: "Poppins", system-ui, sans-serif; font-size: 13px; font-weight: 600; color: var(--anth-text); }
+      .files-tab__pane-sub { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; color: var(--anth-mid-gray); margin-top: 2px; }
+      .files-tab__pane-actions { display: flex; gap: var(--space-1); }
+      .files-tab__pane-path { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--anth-light-gray); background: var(--anth-bg-subtle); }
+      .files-tab__pane-path input {
+        width: 100%; padding: 4px 8px; box-sizing: border-box;
+        font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+        border: 1px solid var(--anth-light-gray); border-radius: 6px; background: #ffffff; color: var(--anth-text);
+      }
+      .files-tab__pane-list { flex: 1; overflow-y: auto; background: #ffffff; min-height: 220px; }
+      .files-tab__pane-list ul { list-style: none; margin: 0; padding: 0; }
+      .files-tab__pane-list li { border-bottom: 1px solid var(--anth-bg-subtle); }
+      .files-tab__pane-list li button {
+        width: 100%; text-align: left; background: transparent; border: 0;
+        padding: 6px var(--space-3); display: grid; grid-template-columns: 1fr auto auto;
+        gap: var(--space-2); align-items: center; cursor: pointer; font-size: 12px;
+      }
+      .files-tab__pane-list li button:hover { background: var(--anth-bg-subtle); }
+      .files-tab__pane-list li.is-active button { background: color-mix(in srgb, var(--anth-orange) 14%, #ffffff); }
+      .files-tab__entry-name { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--anth-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .files-tab__entry-meta, .files-tab__entry-mtime { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; color: var(--anth-mid-gray); white-space: nowrap; }
+      .files-tab__loading, .files-tab__error, .files-tab__empty {
+        padding: var(--space-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; color: var(--anth-mid-gray);
+      }
+      .files-tab__error { color: var(--anth-danger); }
+      .files-tab__truncated {
+        padding: 6px var(--space-3); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px;
+        color: var(--anth-text-secondary); background: color-mix(in srgb, var(--anth-orange) 12%, #ffffff);
+        border-top: 1px solid var(--anth-light-gray);
+      }
+      .files-tab__pane-foot {
+        padding: var(--space-2) var(--space-3); border-top: 1px solid var(--anth-light-gray);
+        background: var(--anth-bg-subtle); display: flex; gap: var(--space-2); flex-wrap: wrap;
+      }
+      .files-tab__status { min-height: 18px; display: flex; align-items: center; gap: var(--space-2); }
+
+      /* ---- drag-drop upload into the workspace pane (NEW) ---- */
+      .files-tab__pane--dragover { border-color: var(--anth-orange); box-shadow: inset 0 0 0 2px var(--anth-orange); }
+      .files-tab__drop-hint {
+        position: absolute; inset: var(--space-2);
+        border: 2px dashed var(--anth-orange); border-radius: 8px;
+        background: color-mix(in srgb, var(--anth-orange) 8%, #ffffff);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: var(--space-1); pointer-events: none; z-index: 2; text-align: center;
+      }
+      .files-tab__drop-hint__title { font-family: "Poppins", system-ui, sans-serif; font-size: 15px; font-weight: 600; color: var(--anth-orange); }
+      .files-tab__drop-hint__sub { font-size: 12px; color: var(--anth-text-secondary); }
+
+      /* ---- preview ---- */
+      .files-tab__preview {
+        background: #ffffff; border: 1px solid var(--anth-light-gray); border-radius: 10px;
+        padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2);
+        margin-top: var(--space-3); min-height: 200px;
+      }
+      .files-tab__preview--state { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--anth-mid-gray); padding: var(--space-3); text-align: center; }
+      .files-tab__preview--err { color: var(--anth-danger); border-color: var(--anth-danger); }
+      .files-tab__preview-head { display: flex; align-items: center; gap: var(--space-3); border-bottom: 1px solid var(--anth-light-gray); padding-bottom: var(--space-2); }
+      .files-tab__preview-name { flex: 1; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--anth-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .files-tab__preview-meta { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; color: var(--anth-mid-gray); }
+      .files-tab__preview-close { background: none; border: 0; padding: 2px; cursor: pointer; color: var(--anth-text-secondary); display: inline-flex; align-items: center; justify-content: center; }
+      .files-tab__preview-close:hover { color: var(--anth-text); }
+      .files-tab__preview-pre {
+        margin: 0; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; line-height: 1.5;
+        color: var(--anth-text); white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto;
+        background: var(--anth-bg-subtle); padding: var(--space-2) var(--space-3); border-radius: 6px;
+      }
+      .files-tab__preview-binary { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--anth-mid-gray); padding: var(--space-3); text-align: center; }
+
+      /* ---- status messages + progress ---- */
+      .files-tab__msg { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--anth-light-gray); color: var(--anth-text-secondary); }
+      .files-tab__msg--ok { color: var(--anth-green); border-color: var(--anth-green); background: color-mix(in srgb, var(--anth-green) 10%, #ffffff); }
+      .files-tab__msg--err { color: var(--anth-danger); border-color: var(--anth-danger); background: color-mix(in srgb, var(--anth-danger) 10%, #ffffff); }
+      .files-tab__progress { display: flex; align-items: center; gap: 8px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; color: var(--anth-text-secondary); width: 100%; }
+      .files-tab__progress-bar { flex: 1; height: 6px; border-radius: 999px; background: var(--anth-light-gray); overflow: hidden; position: relative; }
+      .files-tab__progress-fill { height: 100%; background: var(--anth-orange); transition: width 120ms ease-out; }
+      .files-tab__progress-fill[data-indeterminate] { width: 30%; animation: files-tab__progress-slide 1.4s linear infinite; }
+      @keyframes files-tab__progress-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+      .files-tab__progress-meta { flex: 0 0 auto; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <div class="mockup-topbar">
+      <button class="lang-toggle" id="langBtn" type="button" aria-label="Switch to 中文" onclick="toggleLang()">
+        <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+      </button>
+    </div>
+    <div class="files-wrap">
+      <div class="files-shell">
+        <header class="files-head">
+          <h1 class="files-head__title">
+            <span class="lang-en">Files</span><span class="lang-zh">文件</span>
+          </h1>
+          <p class="files-head__sub">
+            <span class="lang-en">Browse the device and the local workspace side by side. Pull, push, download — or drag a file from your computer onto the workspace pane to upload it.</span>
+            <span class="lang-zh">并排浏览设备和本地工作区。拉取、推送、下载——或把电脑里的文件拖到工作区面板上传。</span>
+          </p>
+        </header>
+
+        <div class="files-tab">
+          <div class="files-tab__panes">
+            <!-- ===== device pane ===== -->
+            <div class="files-tab__pane">
+              <div class="files-tab__pane-head">
+                <div>
+                  <div class="files-tab__pane-title"><span class="lang-en">Device</span><span class="lang-zh">设备</span></div>
+                  <div class="files-tab__pane-sub">a1b2c3d4e5f6</div>
+                </div>
+                <div class="files-tab__pane-actions">
+                  <button type="button" class="btn" aria-label="Parent directory" title="parent dir">↰</button>
+                  <button type="button" class="btn" aria-label="Refresh" title="refresh">⟳</button>
+                </div>
+              </div>
+              <div class="files-tab__pane-path">
+                <input type="text" value="/sdcard/" spellcheck="false" readonly>
+              </div>
+              <div class="files-tab__pane-list">
+                <ul>
+                  <li><button type="button"><span class="files-tab__entry-name">📁 Download</span><span class="files-tab__entry-meta">0 B · drwxrwx--x</span><span class="files-tab__entry-mtime">2026-06-18 09:12</span></button></li>
+                  <li><button type="button"><span class="files-tab__entry-name">🔗 sdcard0</span><span class="files-tab__entry-meta">0 B · lrwxrwxrwx</span><span class="files-tab__entry-mtime">2026-06-01 00:00</span></button></li>
+                  <li class="is-active"><button type="button" aria-current="true"><span class="files-tab__entry-name">· crash-2026.txt</span><span class="files-tab__entry-meta">12.4 KB · -rw-rw----</span><span class="files-tab__entry-mtime">2026-06-18 14:30</span></button></li>
+                  <li><button type="button"><span class="files-tab__entry-name">· screenrecord.mp4</span><span class="files-tab__entry-meta">48.2 MB · -rw-rw----</span><span class="files-tab__entry-mtime">2026-06-17 22:05</span></button></li>
+                </ul>
+              </div>
+              <div class="files-tab__pane-foot">
+                <button type="button" class="btn btn--primary">↓ <span class="lang-en">Pull</span><span class="lang-zh">拉到工作区</span></button>
+              </div>
+            </div>
+
+            <!-- ===== workspace pane (drag-over: drop-hint overlay) ===== -->
+            <div class="files-tab__pane files-tab__pane--dragover">
+              <div class="files-tab__drop-hint">
+                <span class="files-tab__drop-hint__title"><span class="lang-en">Drop to upload</span><span class="lang-zh">松手上传</span></span>
+                <span class="files-tab__drop-hint__sub"><span class="lang-en">into devices/a1b2c3d4e5f6</span><span class="lang-zh">到 devices/a1b2c3d4e5f6</span></span>
+              </div>
+              <div class="files-tab__pane-head">
+                <div>
+                  <div class="files-tab__pane-title"><span class="lang-en">Workspace</span><span class="lang-zh">工作区</span></div>
+                  <div class="files-tab__pane-sub">devices/a1b2c3d4e5f6</div>
+                </div>
+                <div class="files-tab__pane-actions">
+                  <button type="button" class="btn" aria-label="Parent directory" title="parent dir">↰</button>
+                  <button type="button" class="btn" aria-label="Refresh" title="refresh">⟳</button>
+                </div>
+              </div>
+              <div class="files-tab__pane-path">
+                <input type="text" value="devices/a1b2c3d4e5f6" spellcheck="false" readonly>
+              </div>
+              <div class="files-tab__pane-list">
+                <ul>
+                  <li><button type="button"><span class="files-tab__entry-name">📁 pulls</span><span class="files-tab__entry-meta">0 B</span><span class="files-tab__entry-mtime">2026-06-18 14:31</span></button></li>
+                  <li class="is-active"><button type="button" aria-current="true"><span class="files-tab__entry-name">· patch.zip</span><span class="files-tab__entry-meta">2.1 MB</span><span class="files-tab__entry-mtime">2026-06-18 14:40</span></button></li>
+                </ul>
+              </div>
+              <div class="files-tab__pane-foot">
+                <button type="button" class="btn btn--primary">↑ <span class="lang-en">Push</span><span class="lang-zh">推到设备</span></button>
+                <button type="button" class="btn">⬆ <span class="lang-en">Upload</span><span class="lang-zh">上传</span></button>
+                <a class="btn" href="#" download>⤓ <span class="lang-en">Download</span><span class="lang-zh">下载</span></a>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== status: upload/transfer in progress ===== -->
+          <div class="files-tab__status">
+            <div class="files-tab__progress" role="status" aria-live="polite">
+              <div class="files-tab__progress-bar"><div class="files-tab__progress-fill" style="width:62%"></div></div>
+              <span class="files-tab__progress-meta"><span class="lang-en">Upload · </span><span class="lang-zh">上传 · </span>62% · 1.3 MB</span>
+              <button type="button" class="btn btn--small">✕ <span class="lang-en">Cancel</span><span class="lang-zh">取消</span></button>
+            </div>
+          </div>
+
+          <!-- ===== preview (text) ===== -->
+          <div class="files-tab__preview">
+            <div class="files-tab__preview-head">
+              <span class="files-tab__preview-name">devices/a1b2c3d4e5f6/pulls/crash-2026.txt</span>
+              <span class="files-tab__preview-meta">12.4 KB · utf-8</span>
+              <button type="button" class="files-tab__preview-close" aria-label="Close preview" title="Close">✕</button>
+            </div>
+            <pre class="files-tab__preview-pre">--------- beginning of crash
+FATAL EXCEPTION: main
+Process: com.example.app, PID: 4821
+java.lang.NullPointerException
+    at com.example.app.MainActivity.onCreate(MainActivity.java:42)</pre>
+          </div>
+        </div>
+
+        <!-- ============ state variants (baseline coverage) ============ -->
+        <p class="files-section-label"><span class="lang-en">State variants (baseline coverage)</span><span class="lang-zh">状态变体（基线覆盖）</span></p>
+        <div class="files-tab">
+          <div class="files-tab__panes">
+            <!-- loading + empty -->
+            <div class="files-tab__pane">
+              <div class="files-tab__pane-head"><div><div class="files-tab__pane-title">loading / empty</div><div class="files-tab__pane-sub">—</div></div></div>
+              <div class="files-tab__pane-list">
+                <div class="files-tab__loading"><span class="lang-en">loading…</span><span class="lang-zh">加载中…</span></div>
+                <div class="files-tab__empty"><span class="lang-en">Empty directory — go up or change path</span><span class="lang-zh">目录为空 · 上一级或换路径</span></div>
+              </div>
+              <div class="files-tab__truncated">(list truncated — narrow the path to see more)</div>
+            </div>
+            <!-- error -->
+            <div class="files-tab__pane">
+              <div class="files-tab__pane-head"><div><div class="files-tab__pane-title">error</div><div class="files-tab__pane-sub">—</div></div></div>
+              <div class="files-tab__pane-list">
+                <div class="files-tab__error">ls: /system/lost+found: Permission denied</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- preview state variants -->
+          <div class="files-tab__preview files-tab__preview--state"><span class="lang-en">Loading preview…</span><span class="lang-zh">加载预览…</span></div>
+          <div class="files-tab__preview files-tab__preview--state files-tab__preview--err"><span class="lang-en">Preview failed</span><span class="lang-zh">预览失败</span></div>
+          <div class="files-tab__preview">
+            <div class="files-tab__preview-head">
+              <span class="files-tab__preview-name">devices/a1b2c3d4e5f6/patch.zip</span>
+              <span class="files-tab__preview-meta">2.1 MB · binary</span>
+              <button type="button" class="files-tab__preview-close" aria-label="Close preview" title="Close">✕</button>
+            </div>
+            <div class="files-tab__preview-binary"><span class="lang-en">Binary file — use Download to retrieve</span><span class="lang-zh">二进制文件 · 用「下载」按钮拉取查看</span></div>
+          </div>
+
+          <!-- status message variants -->
+          <div class="files-tab__status"><span class="files-tab__msg files-tab__msg--ok"><span class="lang-en">Uploaded · devices/a1b2c3d4e5f6/patch.zip (2.1 MB)</span><span class="lang-zh">上传成功 · devices/a1b2c3d4e5f6/patch.zip (2.1 MB)</span></span></div>
+          <div class="files-tab__status"><span class="files-tab__msg"><span class="lang-en">Cancelled</span><span class="lang-zh">已取消</span></span></div>
+          <div class="files-tab__status"><span class="files-tab__msg files-tab__msg--err"><span class="lang-en">Upload failed · path escapes workspace</span><span class="lang-zh">上传失败 · 路径越出工作区</span></span></div>
+          <div class="files-tab__status">
+            <div class="files-tab__progress" role="status" aria-live="polite">
+              <div class="files-tab__progress-bar"><div class="files-tab__progress-fill" data-indeterminate></div></div>
+              <span class="files-tab__progress-meta"><span class="lang-en">transferring…</span><span class="lang-zh">传输中…</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      function toggleLang() {
+        const html = document.documentElement;
+        const goingZh = !html.lang.startsWith('zh');
+        html.lang = goingZh ? 'zh-CN' : 'en';
+        const btn = document.getElementById('langBtn');
+        if (btn) btn.setAttribute('aria-label', goingZh ? '切换到 English' : 'Switch to 中文');
+      }
+    </script>
+  </body>
+</html>

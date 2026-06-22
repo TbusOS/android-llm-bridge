@@ -45,7 +45,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse
 
 from alb.api.schema import API_VERSION
@@ -544,6 +555,104 @@ async def workspace_download(path: str) -> FileResponse:
         filename=target.name,
         media_type="application/octet-stream",
     )
+
+
+# Browser → workspace upload (drag-drop / file picker). 2 GiB cap mirrors the
+# push/pull timeout budget; bigger payloads should go over a real transport.
+_UPLOAD_CHUNK = 1 << 20  # 1 MiB
+_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+
+class _UploadTooLarge(Exception):
+    """Raised mid-stream once the upload passes the size cap."""
+
+
+def _safe_upload_name(name: str) -> str:
+    """Reduce an uploaded filename to a single safe path segment: strip any
+    directory components (both / and \\), reject traversal / control chars /
+    empties. The result never contains a path separator, so it cannot escape
+    the resolved target directory."""
+    base = os.path.basename(name.replace("\\", "/")).strip()
+    if not base or base in (".", ".."):
+        return ""
+    if any(c in base for c in ("\x00", "\n", "\r", "/")):
+        return ""
+    if len(base) > 255:
+        return ""
+    return base
+
+
+async def _write_upload(file: UploadFile, dest: Path) -> int:
+    """Stream the upload to `dest` in chunks with sync FS off the event loop
+    (L-033) and a hard size cap. Removes the partial file on any failure so a
+    cancelled / oversize upload never leaves a truncated artifact behind."""
+    await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
+    size = 0
+    ok = False
+    fh = await asyncio.to_thread(dest.open, "wb")
+    try:
+        while chunk := await file.read(_UPLOAD_CHUNK):
+            size += len(chunk)
+            if size > _UPLOAD_MAX_BYTES:
+                raise _UploadTooLarge
+            await asyncio.to_thread(fh.write, chunk)
+        ok = True
+    finally:
+        # close ALWAYS (reclaim the fd on cap / cancel / write error / success),
+        # THEN drop the partial on any failure — close-before-unlink so it also
+        # works on Windows, where an open file can't be unlinked.
+        await asyncio.to_thread(fh.close)
+        if not ok:
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(dest.unlink)
+    return size
+
+
+@router.post("/workspace/files/upload")
+async def workspace_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    path: str = Form(""),
+) -> dict[str, Any]:
+    """Upload a browser-local file INTO the workspace (drag-drop / picker).
+
+    `path` is the workspace-relative target DIRECTORY (default = root); the
+    saved name is the upload's basename sanitized to a single path segment.
+    This is browser → workspace only — pushing onward to a device stays the
+    explicit, HITL-gated `POST /devices/{serial}/files/push`."""
+    # Pre-flight Content-Length: reject oversize at the door (app_route precedent).
+    cl_header = request.headers.get("content-length")
+    if cl_header:
+        try:
+            if int(cl_header) > _UPLOAD_MAX_BYTES:
+                return {"ok": False, "error": "upload exceeds 2 GiB cap"}
+        except ValueError:
+            pass
+
+    safe_name = _safe_upload_name(file.filename or "")
+    if not safe_name:
+        return {"ok": False, "error": "invalid filename"}
+
+    rel = f"{path.strip().rstrip('/')}/{safe_name}" if path.strip() else safe_name
+    try:
+        dest = _resolve_workspace_path(rel)
+    except HTTPException as exc:
+        return {"ok": False, "error": exc.detail}
+
+    try:
+        size = await _write_upload(file, dest)
+    except _UploadTooLarge:
+        return {"ok": False, "error": "upload exceeds 2 GiB cap"}
+    except OSError as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    root = workspace_root().resolve()
+    return {
+        "ok": True,
+        "name": safe_name,
+        "path": str(dest.relative_to(root)),
+        "size": size,
+    }
 
 
 # functional LOW-3: inline text preview for small workspace files.

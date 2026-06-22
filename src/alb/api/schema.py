@@ -106,6 +106,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
      "description": "Stream a workspace file as a download (PR-H)"},
     {"method": "GET",  "path": "/workspace/files/preview/{path}",
      "description": "Inline UTF-8 text preview of a small workspace file (LOW-3)"},
+    {"method": "POST", "path": "/workspace/files/upload",
+     "description": "Upload a browser-local file into the workspace (drag-drop, 2 GiB cap)"},
     # ---- /api/<domain>/* generation (5/18 batch) -------------------
     {"method": "GET",  "path": "/api/app/list",
      "description": "Installed packages (pm list), optional name filter / system apps"},
