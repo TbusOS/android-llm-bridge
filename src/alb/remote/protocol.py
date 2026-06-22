@@ -3,7 +3,8 @@
 Single source of truth shared by the hub (alb-api) and the agent. The
 SIGNALING connection carries only these control frames (JSON text). Each
 DATA channel is its own connection carrying raw bytes (no per-frame header);
-the channel id (cid) is correlated once at dial-back, not per frame.
+the channel id (cid) is correlated once at dial-back, not per frame, and the
+dial-back is authenticated by a per-channel secret minted with the cid (DEBT-084).
 
 Control frame shape:
     {"v": <PROTOCOL_VERSION>, "verb": "<verb>", ...fields}
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import enum
 import json
+import secrets
 import uuid
 from typing import Any
 
@@ -79,14 +81,29 @@ _VERB_VALUES = {v.value for v in Verb}
 
 
 def new_cid() -> str:
-    """A hub-generated, unguessable channel id.
+    """A hub-generated channel id used to correlate the dial-back to its pending
+    forwarder request.
 
-    Unguessable (uuid4, 122 bits) + token-gated on the dial-back, so a third
-    party cannot claim a channel's data plane. NOTE: P0 (single-agent) does NOT
-    yet bind the cid to a specific agent_id; per-agent binding is required before
-    multi-agent — see DEBT-084.
+    The cid is the routing key only; the per-channel SECRET that authenticates
+    the dial-back is minted separately by new_csecret() (DEBT-084). Binding the
+    channel to a specific agent_id / device (multi-agent addressing) is still
+    future work — see DEBT-083.
     """
     return uuid.uuid4().hex
+
+
+def new_csecret() -> str:
+    """A hub-minted, per-channel secret (DEBT-084).
+
+    Minted at open_channel and delivered ONLY on the owning agent's signaling
+    WS; the agent must present it on the data-plane dial-back, which the hub
+    verifies with a constant-time compare (registry.resolve_pending). This binds
+    the data channel to the agent that actually received the open_channel: a
+    process that merely holds the shared agent token AND a live cid still cannot
+    claim the channel without this secret. 256-bit, URL-safe so it rides the
+    dial-back query string alongside the cid (same wss posture as the token).
+    """
+    return secrets.token_urlsafe(32)
 
 
 # ── builders ─────────────────────────────────────────────────────────
@@ -134,11 +151,17 @@ def com_list(ports: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def open_channel(
-    *, cid: str, ctype: ChannelType, role: ChannelRole, params: dict[str, Any]
+    *,
+    cid: str,
+    csecret: str,
+    ctype: ChannelType,
+    role: ChannelRole,
+    params: dict[str, Any],
 ) -> dict[str, Any]:
     return _frame(
         Verb.OPEN_CHANNEL,
         cid=cid,
+        csecret=csecret,
         channel_type=ctype.value,
         role=role.value,
         params=params,

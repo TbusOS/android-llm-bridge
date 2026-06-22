@@ -3011,3 +3011,25 @@ host"(缺席的场景)有效,对"多设备单 host"(已被 adb `-s serial` 覆�
 
 **关联**: P4 multi-agent（DEFER）· DEBT-083 / DEBT-084 · ADR-051（后续可能推翻条件）·
 [[L-020]]（N≥2 抽象阈值）· architecture_decisions（ADR-029 不为假想需求设计）
+
+## L-063 · 一条被 defer 的债往往能拆出"自包含、当下就能落"的半（安全硬化先行，多实例寻址后行）
+
+**症状**: DEBT-084 整条被 P4 review 判 DEFER（跟多 agent 一起做）。但用户要"硬化协议"时，
+真照搬"整条 defer"会漏掉一个事实：DEBT-084 含两个**耦合度不同**的半——(a) data-plane
+dial-back 鉴权（per-channel secret）(b) current_agent 多 agent 寻址。(b) 真依赖多 agent +
+枚举（L-062 管），但 (a) 是**自包含**的：单 agent 就能落、单 agent 就有收益（数据面从"cid
+当凭证"变成"256bit secret 鉴权"），且 review 本身已指定机制（per-cid secret）。
+
+**根因**: "这条债 defer 了"不等于"它的每个子项都 defer"。defer 的真正约束是"别在没地基
+（真多 agent + 枚举）上设计**寻址**"，不是"别碰这条债的任何字节"。把 deferral 的边界等同于
+DEBT 条目的边界，会把能立即兑现的安全加固一起冻住。
+
+**How to apply**:
+- 接到"硬化 X"且 X 命中一条 deferred DEBT 时，先拆这条 DEBT 的子项，逐个问"它依赖被 defer
+  的前置（真多实例/真枚举/真硬件）吗？"。不依赖的子项 = 可当下做，且应当做（尤其安全/正确性）。
+- 落自包含半时，在 DEBT 条目标 **PARTIAL RESOLVED**，写清哪半落了（引 ADR）、哪半仍 open
+  （引 defer 理由），别把整条标 closed（剩的半会被遗忘）。
+- 机制选型若 review 已给定（如 per-cid secret、拒 agent_id-on-query），照做，别另起炉灶。
+
+**关联**: ADR-053（per-channel secret 落地）· DEBT-084（PARTIAL RESOLVED）· [[L-062]]
+（多实例寻址的 defer 边界）· DEBT-083（寻址半仍 open）

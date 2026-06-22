@@ -77,12 +77,16 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
     )
 
 
-def _channel_url(hub_url: str, cid: str, token: str | None) -> str:
-    """Derive wss://<host>/agent/channel?cid=...&token=... from the hub URL."""
+def _channel_url(hub_url: str, cid: str, token: str | None, csecret: str | None) -> str:
+    """Derive wss://<host>/agent/channel?cid=...&token=...&csecret=... from the
+    hub URL. The csecret is the hub-minted per-channel secret carried by the
+    open_channel frame; the hub verifies it on dial-back (DEBT-084)."""
     parts = urlsplit(hub_url)
     query = {"cid": cid}
     if token:
         query["token"] = token
+    if csecret:
+        query["csecret"] = csecret
     return urlunsplit((parts.scheme, parts.netloc, "/agent/channel", urlencode(query), ""))
 
 
@@ -134,6 +138,7 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
         _log.warning("rejected channel target %r (not allowlisted)", target)
         return
 
+    csecret = str(frame.get("csecret") or "")
     host, _, port_s = target.partition(":")
     try:
         port = int(port_s)
@@ -148,7 +153,7 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
         _log.warning("channel %s: cannot reach %s: %s", cid[:8], target, e)
         return
 
-    url = _channel_url(hub_url, cid, token)
+    url = _channel_url(hub_url, cid, token, csecret)
     try:
         async with ws_connect(url, max_size=None) as data_ws:
             await _bridge(reader, writer, data_ws)
@@ -162,6 +167,7 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
 
 async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
     cid = str(frame.get("cid") or "")
+    csecret = str(frame.get("csecret") or "")
     params = frame.get("params") or {}
     com = str(params.get("com") or "")
     baud = int(params.get("baud") or 115200)
@@ -181,7 +187,7 @@ async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[st
         return
     _log.info("serial channel %s: opened %s @ %s", cid[:8], com, baud)
 
-    url = _channel_url(hub_url, cid, token)
+    url = _channel_url(hub_url, cid, token, csecret)
     try:
         async with ws_connect(url, max_size=None) as data_ws:
             await _bridge_serial(ser, data_ws)

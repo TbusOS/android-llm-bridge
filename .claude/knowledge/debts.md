@@ -1817,6 +1817,15 @@
 
 ## DEBT-084 · remote agent: cid 未绑定 agent_id + current_agent 单 agent 假设（多 agent 前置）
 
+> **PARTIAL RESOLVED（2026-06-18）**：① cid-binding/数据面鉴权半**已落地**——
+> per-channel secret（hub mint + 信令面下发 + dial-back 出示 + `hmac.compare_digest`
+> 核验），见 **ADR-053**（改 `protocol.new_csecret`/`open_channel`、`registry._Pending`/
+> `register_pending`/`resolve_pending`、`agent_route` `/agent/channel ?csecret=`、
+> `alb_agent._channel_url`）。下面"现象①"那条 defense-in-depth 缺口已堵。
+> ② **current_agent 多 agent 寻址半仍 open**（按 (agent_id|device) 选 agent），与 DEBT-083
+> 一起留到真多 agent 落地（L-062）。本条剩这半，优先级降为 LOW（无真多 agent 无暴露）。
+
+
 - **现象**：① `src/alb/remote/registry.py` `_pending` 全局只按 cid，`resolve_pending`
   只验 cid 存在 + token（`agent_route.py /agent/channel`），**不验回拨连接归属哪个 agent**。
   ② `registry.current_agent()` 返回 epoch 最大的单个 agent（P0 单 agent 假设）。

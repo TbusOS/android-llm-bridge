@@ -330,8 +330,9 @@ WS_ENDPOINTS: list[WSSpec] = [
             {"type": "heartbeat",        "direction": "C→S",
              "description": "Liveness ping; hub drops the agent on timeout"},
             {"type": "open_channel",     "direction": "S→C",
-             "description": "{cid, channel_type, role, params} — hub asks the "
-                            "agent to dial back a data channel"},
+             "description": "{cid, csecret, channel_type, role, params} — hub asks "
+                            "the agent to dial back a data channel; csecret "
+                            "authenticates that dial-back (DEBT-084)"},
             {"type": "adb_list",         "direction": "C→S",
              "description": "{devices} — reply to a list_adb request"},
         ],
@@ -340,7 +341,8 @@ WS_ENDPOINTS: list[WSSpec] = [
         "path": "/agent/channel",
         "description": "Remote device agent per-channel DATA connection "
                        "(ADR-050) — raw bytes, correlated to a pending "
-                       "open_channel by the ?cid= query param.",
+                       "open_channel by the ?cid= query param and authenticated "
+                       "by the ?csecret= per-channel secret (DEBT-084).",
         "messages": [
             {"type": "<raw-bytes>",      "direction": "C↔S",
              "description": "Bidirectional raw byte shuttle for one channel "

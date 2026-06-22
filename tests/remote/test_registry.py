@@ -68,10 +68,10 @@ async def test_unregister_current_epoch_removes():
 
 async def test_pending_resolves_future():
     reg = AgentRegistry()
-    fut = reg.register_pending("cid1")
+    fut = reg.register_pending("cid1", "sec1")
     assert reg.pending_count == 1
     ch = _DummyChannel()
-    assert reg.resolve_pending("cid1", ch) is True
+    assert reg.resolve_pending("cid1", ch, "sec1") is True
     assert fut.done() and fut.result() is ch
     reg.discard_pending("cid1")
     assert reg.pending_count == 0
@@ -79,7 +79,44 @@ async def test_pending_resolves_future():
 
 async def test_resolve_unknown_cid_is_false():
     reg = AgentRegistry()
-    assert reg.resolve_pending("nope", _DummyChannel()) is False
+    assert reg.resolve_pending("nope", _DummyChannel(), "sec") is False
+
+
+async def test_resolve_wrong_csecret_is_false():
+    """DEBT-084: a dial-back with the right cid but the wrong per-channel secret
+    must NOT resolve the channel, and must leave the future open for the real
+    dial-back."""
+    reg = AgentRegistry()
+    fut = reg.register_pending("cid1", "right")
+    assert reg.resolve_pending("cid1", _DummyChannel(), "wrong") is False
+    assert not fut.done()
+    # the legitimate dial-back (correct secret) still resolves it
+    ch = _DummyChannel()
+    assert reg.resolve_pending("cid1", ch, "right") is True
+    assert fut.result() is ch
+
+
+async def test_resolve_missing_csecret_is_false():
+    reg = AgentRegistry()
+    fut = reg.register_pending("cid1", "right")
+    assert reg.resolve_pending("cid1", _DummyChannel(), None) is False
+    assert reg.resolve_pending("cid1", _DummyChannel(), "") is False
+    assert not fut.done()
+
+
+async def test_resolve_non_ascii_csecret_rejects_without_raising():
+    """A non-ASCII presented secret must reject cleanly, NOT raise TypeError out
+    of resolve_pending (hmac.compare_digest forbids non-ASCII str; we compare as
+    bytes). The future stays open for the legitimate dial-back."""
+    reg = AgentRegistry()
+    fut = reg.register_pending("cid1", "right")
+    assert reg.resolve_pending("cid1", _DummyChannel(), "café") is False
+    assert reg.resolve_pending("cid1", _DummyChannel(), "日本語") is False
+    assert not fut.done()
+    # the real secret still resolves
+    ch = _DummyChannel()
+    assert reg.resolve_pending("cid1", ch, "right") is True
+    assert fut.result() is ch
 
 
 async def test_open_data_channel_registers_cid_before_signaling():
@@ -91,8 +128,10 @@ async def test_open_data_channel_registers_cid_before_signaling():
 
     async def send_control(m: dict[str, Any]) -> None:
         cid = m["cid"]
-        # at this point the pending future MUST already exist
-        seen["resolved"] = reg.resolve_pending(cid, _DummyChannel())
+        # at this point the pending future MUST already exist, and the frame
+        # MUST carry the per-channel secret the dial-back has to present
+        assert m["csecret"]
+        seen["resolved"] = reg.resolve_pending(cid, _DummyChannel(), m["csecret"])
 
     conn = _conn(reg, "a", send=send_control)
     dc = await conn.open_data_channel(

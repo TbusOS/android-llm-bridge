@@ -108,6 +108,28 @@ def test_channel_requires_cid(monkeypatch):
                 ws.receive_bytes()
 
 
+def test_channel_forwards_csecret_to_resolve(monkeypatch):
+    """DEBT-084: the data-WS route reads ?csecret= and passes it to
+    resolve_pending, which authenticates the dial-back against the channel's
+    minted secret. We capture the args and reject so the WS closes."""
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    from alb.remote.registry import AgentRegistry
+
+    captured: dict = {}
+
+    def fake_resolve(self, cid, channel, csecret):
+        captured["cid"] = cid
+        captured["csecret"] = csecret
+        return False  # reject → route closes the WS → WebSocketDisconnect
+
+    monkeypatch.setattr(AgentRegistry, "resolve_pending", fake_resolve)
+    with TestClient(create_app()) as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect("/agent/channel?cid=abc&csecret=xyz") as ws:
+                ws.receive_bytes()
+    assert captured == {"cid": "abc", "csecret": "xyz"}
+
+
 def test_heartbeat_timeout_tears_down(monkeypatch):
     """After hello, an agent that never sends a heartbeat is dropped once
     HEARTBEAT_TIMEOUT_S elapses — and the registry is cleaned up (finally)."""

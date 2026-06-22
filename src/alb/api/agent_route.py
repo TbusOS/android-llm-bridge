@@ -4,7 +4,8 @@
                       frames only: hello / heartbeat / list_* / channel_*).
     /agent/channel  — a per-channel DATA WebSocket the agent dials back, one
                       per open_channel, carrying raw bytes. Correlated by the
-                      ?cid= query param to the pending forwarder request.
+                      ?cid= query param and authenticated by the ?csecret=
+                      per-channel secret (DEBT-084) to the pending request.
 
 Security (ADR-050 §6): both endpoints validate the agent token (env
 ALB_AGENT_TOKEN; when unset the API is open, same posture as the rest of
@@ -197,6 +198,7 @@ async def agent_channel(ws: WebSocket) -> None:
     await ws.accept()
     cid = ws.query_params.get("cid")
     token = ws.query_params.get("token")
+    csecret = ws.query_params.get("csecret")
     if not cid or not _token_ok(token):
         with contextlib.suppress(Exception):
             await ws.close(code=1008)
@@ -204,8 +206,11 @@ async def agent_channel(ws: WebSocket) -> None:
 
     registry = get_agent_registry()
     channel = _WsDataChannel(ws)
-    if not registry.resolve_pending(cid, channel):
-        # unknown / expired cid — do not leave a dangling data WS
+    # The endpoint token gates WHO may dial back; the per-channel secret
+    # (DEBT-084) gates WHICH channel this dial-back may claim — only the agent
+    # that received the open_channel knows it.
+    if not registry.resolve_pending(cid, channel, csecret):
+        # unknown / expired cid or wrong secret — do not leave a dangling WS
         with contextlib.suppress(Exception):
             await ws.close(code=1008)
         return

@@ -2,9 +2,10 @@
 
 The hub holds one AgentConnection per connected agent. When a forwarder needs
 a data channel it asks the AgentConnection to open one: the connection
-registers a pending future keyed by a fresh cid BEFORE sending `open_channel`
-on the signaling WS (so a fast dial-back can never miss the cid — checklist #1),
-then awaits the dialed-back DataChannel.
+registers a pending future keyed by a fresh cid (with a per-channel secret —
+DEBT-084) BEFORE sending `open_channel` on the signaling WS (so a fast dial-back
+can never miss the cid — checklist #1), then awaits the dialed-back DataChannel.
+The dial-back must present the secret, which only the owning agent received.
 
 Registration uses a per-agent epoch so that a reconnect of the same agent_id
 does NOT let a stale connection's teardown clobber the new one (checklist #4,
@@ -14,8 +15,10 @@ compare-and-clear).
 from __future__ import annotations
 
 import asyncio
+import hmac
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from alb.remote import protocol
@@ -47,6 +50,15 @@ class ChannelOpener(Protocol):
 
 
 SendControl = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+@dataclass
+class _Pending:
+    """A pending data-channel dial-back: the future the forwarder awaits, plus
+    the per-channel secret (DEBT-084) the dial-back must present to resolve it."""
+
+    fut: asyncio.Future[DataChannel]
+    csecret: str
 
 
 class AgentConnection:
@@ -100,10 +112,13 @@ class AgentConnection:
         FIRST, send `open_channel` SECOND, so the agent's dial-back to
         /agent/channel?cid=<cid> always finds a waiting future."""
         cid = protocol.new_cid()
-        fut = self._registry.register_pending(cid)
+        csecret = protocol.new_csecret()
+        fut = self._registry.register_pending(cid, csecret)
         try:
             await self._send_control(
-                protocol.open_channel(cid=cid, ctype=ctype, role=role, params=params)
+                protocol.open_channel(
+                    cid=cid, csecret=csecret, ctype=ctype, role=role, params=params
+                )
             )
             return await asyncio.wait_for(fut, timeout)
         finally:
@@ -122,7 +137,7 @@ class AgentRegistry:
     def __init__(self) -> None:
         self._agents: dict[str, AgentConnection] = {}
         self._epoch: dict[str, int] = {}
-        self._pending: dict[str, asyncio.Future[DataChannel]] = {}
+        self._pending: dict[str, _Pending] = {}
         self._lock = asyncio.Lock()
 
     async def register(self, conn: AgentConnection) -> int:
@@ -179,21 +194,34 @@ class AgentRegistry:
     def agent_count(self) -> int:
         return len(self._agents)
 
-    # ── pending data-channel correlation (global cid) ────────────────
+    # ── pending data-channel correlation (cid + per-channel secret) ──
 
-    def register_pending(self, cid: str) -> asyncio.Future[DataChannel]:
+    def register_pending(self, cid: str, csecret: str) -> asyncio.Future[DataChannel]:
         fut: asyncio.Future[DataChannel] = asyncio.get_running_loop().create_future()
-        self._pending[cid] = fut
+        self._pending[cid] = _Pending(fut, csecret)
         return fut
 
-    def resolve_pending(self, cid: str, channel: DataChannel) -> bool:
-        """Bind a dialed-back DataChannel to its pending cid. Returns False
-        if the cid is unknown/expired (the data WS should then be closed)."""
-        fut = self._pending.get(cid)
-        if fut is not None and not fut.done():
-            fut.set_result(channel)
-            return True
-        return False
+    def resolve_pending(self, cid: str, channel: DataChannel, csecret: str | None) -> bool:
+        """Bind a dialed-back DataChannel to its pending cid. Returns False if
+        the cid is unknown/expired OR the presented per-channel secret does not
+        match the one minted at open_channel (DEBT-084 — constant-time compare).
+        The caller closes the data WS on False."""
+        pending = self._pending.get(cid)
+        if pending is None or pending.fut.done():
+            return False
+        if not csecret:
+            return False
+        # Compare as BYTES: hmac.compare_digest rejects non-ASCII str inputs with
+        # TypeError, and csecret is attacker-controllable (dial-back query param).
+        # Bytes have no such restriction, so a malformed secret reject cleanly
+        # instead of throwing past the caller's ws.close(1008). utf-8 with
+        # errors="replace" can never raise on the presented side.
+        stored = pending.csecret.encode("utf-8")
+        presented = csecret.encode("utf-8", "replace")
+        if not hmac.compare_digest(stored, presented):
+            return False
+        pending.fut.set_result(channel)
+        return True
 
     def discard_pending(self, cid: str) -> None:
         self._pending.pop(cid, None)

@@ -1978,3 +1978,45 @@ retry（踩 fd race）。显式 role 是唯一不诱导误判的抽象。
 **关联**: ADR-050（channel 模型）· ADR-051（forwarder）· L-034（listen-socket daemon
 反模式 · 本 ADR 扩到反向代理新场景）· `SerialTransport._open_tcp_with_retry`（gateway
 正例来源）
+
+## ADR-053 · data-plane dial-back 鉴权用 per-channel secret，不用 agent_id-on-query（DEBT-084 cid-binding 半落地）
+
+**背景**: ADR-050 数据面是"agent 收到 `open_channel` 后拨回 `/agent/channel?cid=...`，
+hub 按 cid 对回 pending forwarder 请求"。P0 只用 cid（uuid4 122bit 不可猜）+ 端点级共享
+token（`ALB_AGENT_TOKEN`）门禁。architecture-reviewer（2026-06-18 opus）指出这是
+defense-in-depth 缺口（DEBT-084）：**cid 是路由 key 不是凭证**，任何持有效共享 token 的
+进程只要拿到一个 live cid，就能拨回 `/agent/channel` resolve 走那条 channel 的 data plane。
+单 agent 下 hub 从不把 A 的 cid 发给别人，暴露面小；但多 agent 落地前必须堵。
+
+**决定**:
+1. **hub 在 `open_channel` 时 mint 一个 per-channel secret**（`protocol.new_csecret()` =
+   `secrets.token_urlsafe(32)`，256bit），与 cid 一同 `register_pending(cid, csecret)`，
+   并**只**随 `open_channel` 帧下发到 owning agent 的信令 WS（别的 agent / 进程拿不到）。
+2. **dial-back 必须出示该 secret**（`/agent/channel?cid=...&csecret=...`）。
+   `resolve_pending(cid, channel, csecret)` 用 `hmac.compare_digest` 常量时间比对，cid 未知/
+   已 done/secret 不匹配/secret 缺失 → 一律 False → 关 WS。
+3. **secret 走 query string**（与既有 token 同 posture，wss 加密）——不引入数据面 per-frame
+   header（数据面仍是纯 raw bytes，ADR-050 不变）。
+4. **拒绝 `agent_id`-on-query 方案**：共享 token 下 agent_id 可随意伪造 = security theater；
+   per-channel secret 才是不可伪造的真凭证（只流向 owning agent）。
+
+**为什么**: cid 当凭证是"路由 key 兼做鉴权"的经典错。per-channel secret 把"谁能拨回这条
+channel"从"任何持 token 者 + 知道 cid"收紧到"收到这条 open_channel 的那个 agent"。即使
+no-token dev posture 也变强（数据面从只验 cid 变成额外需要 256bit secret）。这是 DEBT-084
+评审本身指定的机制，单 agent 即可独立落地（不依赖多 agent），所以先做。
+
+**边界（不在本 ADR）**: `current_agent()` 的多 agent 寻址（按 (agent_id|device) 选 agent）
+**仍未做**，与 DEBT-083 一起留到真多 agent 落地（L-062：单实例 E2E + 真实枚举前不设计多实例
+寻址）。本 ADR 只落 DEBT-084 的 cid-binding/数据面鉴权半。
+
+**代价 / 已知**: agent 客户端 `alb_agent.py` 与 hub 协议常量须 lockstep（已同步 `_channel_url`
+带 csecret）。secret 进 URL 有被日志记录的理论风险，但与既有 token-on-query 同等 posture，
+未引入新面。
+
+**Enforcement**:
+- `resolve_pending` 永远要求 csecret 匹配（与 `ALB_AGENT_TOKEN` 是否配置无关）。
+- 新增任何 data channel 类型，dial-back 必须带 csecret 并经 `resolve_pending` 核验，禁止只验 cid。
+
+**关联**: ADR-050（数据面 dial-back 模型）· DEBT-084（cid-binding 半本 ADR 落地，current_agent
+寻址半仍 open）· DEBT-083（多 agent 寻址，一并）· L-063（自包含安全硬化可先于 deferred 的多
+agent 寻址落地）
