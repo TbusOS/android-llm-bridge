@@ -17,6 +17,11 @@ Usage:
 The agent maintains the signaling connection (auto-reconnect with backoff) and,
 on each `open_channel` from the hub, dials back a separate data connection and
 bridges raw bytes to the requested local target.
+
+A localhost-only status page (http://127.0.0.1:8731 by default, --status-port 0
+to disable) shows connection state, active channels, enumerated devices, and the
+last error — so the operator can diagnose a failed dial-home locally, without
+logging into the hub. The token is never shown there.
 """
 
 from __future__ import annotations
@@ -28,7 +33,11 @@ import json
 import logging
 import signal
 import sys
+import threading
+import time
 import uuid
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -51,8 +60,248 @@ ALLOWED_TCP_TARGETS = frozenset({ADB_TARGET})
 HEARTBEAT_INTERVAL_S = 20.0
 RECONNECT_BACKOFF_S = (1.0, 2.0, 5.0, 10.0)
 _CHUNK = 65536
+DEFAULT_STATUS_PORT = 8731
 
 _shutdown = asyncio.Event()
+
+
+# ── local status surface ─────────────────────────────────────────────
+# A tiny localhost-only HTTP page so the operator on the device's host can see
+# whether the agent reached the hub WITHOUT logging into the hub. Crucial when
+# the dial-home FAILS: the hub never sees the agent, so the hub's Connection
+# Center cannot explain "wrong token / hub unreachable" — this page can. The
+# token is NEVER included in the snapshot.
+
+
+@dataclass
+class _ChannelInfo:
+    kind: str  # "adb" | "serial"
+    target: str  # "127.0.0.1:5037" | "COM27 @ 1500000"
+    opened_monotonic: float
+
+
+@dataclass
+class AgentStatus:
+    """Live agent state, read by the status HTTP server (separate thread) and
+    written by the asyncio session/channel code — guarded by a lock."""
+
+    hub_url: str = ""
+    agent_id: str = ""
+    name: str = ""
+    started_monotonic: float = 0.0
+    connected: bool = False
+    connected_since_monotonic: float = 0.0
+    reconnects: int = 0
+    last_error: str = ""
+    adb_devices: list[str] = field(default_factory=list)
+    com_ports: list[dict[str, str]] = field(default_factory=list)
+    _channels: dict[str, _ChannelInfo] = field(default_factory=dict)
+    _channels_total: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def init(self, *, hub_url: str, agent_id: str, name: str) -> None:
+        """Set the static identity fields. Call ONCE at startup — it does NOT
+        reset the runtime counters (reconnects / channels_total), so reusing it
+        mid-run would skew uptime vs those counters."""
+        with self._lock:
+            self.hub_url = hub_url
+            self.agent_id = agent_id
+            self.name = name
+            self.started_monotonic = time.monotonic()
+
+    def on_connected(self) -> None:
+        with self._lock:
+            self.connected = True
+            self.connected_since_monotonic = time.monotonic()
+            self.last_error = ""
+
+    def on_disconnected(self, error: str = "") -> None:
+        with self._lock:
+            self.connected = False
+            self.connected_since_monotonic = 0.0
+            if error:
+                self.last_error = error
+            self._channels.clear()
+
+    def on_reconnect_scheduled(self, error: str = "") -> None:
+        with self._lock:
+            self.reconnects += 1
+            if error:
+                self.last_error = error
+
+    def channel_opened(self, cid: str, kind: str, target: str) -> None:
+        with self._lock:
+            self._channels[cid] = _ChannelInfo(kind, target, time.monotonic())
+            self._channels_total += 1
+
+    def channel_closed(self, cid: str) -> None:
+        with self._lock:
+            self._channels.pop(cid, None)
+
+    def set_adb_devices(self, devices: list[str]) -> None:
+        with self._lock:
+            self.adb_devices = list(devices)
+
+    def set_com_ports(self, ports: list[dict[str, str]]) -> None:
+        with self._lock:
+            self.com_ports = list(ports)
+
+    def snapshot(self) -> dict[str, Any]:
+        """JSON-safe view for /status.json + the HTML page. Never includes the
+        token. Durations are seconds (ints) computed from monotonic clocks."""
+        now = time.monotonic()
+        with self._lock:
+            uptime = int(now - self.started_monotonic) if self.started_monotonic else 0
+            connected_for = (
+                int(now - self.connected_since_monotonic)
+                if self.connected and self.connected_since_monotonic
+                else 0
+            )
+            channels = [
+                {
+                    "cid": cid[:8],
+                    "kind": c.kind,
+                    "target": c.target,
+                    "open_for_s": int(now - c.opened_monotonic),
+                }
+                for cid, c in self._channels.items()
+            ]
+            return {
+                "agent_id": self.agent_id,
+                "name": self.name,
+                "hub_url": self.hub_url,
+                "connected": self.connected,
+                "uptime_s": uptime,
+                "connected_for_s": connected_for,
+                "reconnects": self.reconnects,
+                "last_error": self.last_error,
+                "active_channels": channels,
+                "channels_total": self._channels_total,
+                "adb_devices": list(self.adb_devices),
+                "com_ports": list(self.com_ports),
+            }
+
+
+_STATUS = AgentStatus()
+
+
+def _render_status_html(snap: dict[str, Any]) -> str:
+    """Render the status snapshot as a small self-contained, auto-refreshing
+    HTML page. Brand-neutral, no external assets, no token."""
+
+    def esc(s: object) -> str:
+        return (
+            str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    up = snap["connected"]
+    dot = "#1f9d57" if up else "#c0392b"
+    state = "connected" if up else "disconnected"
+    rows = [
+        ("hub", esc(snap["hub_url"])),
+        ("agent", f'{esc(snap["name"])} · {esc(snap["agent_id"][:8])}'),
+        ("uptime", f'{snap["uptime_s"]}s'),
+        ("connected for", f'{snap["connected_for_s"]}s' if up else "—"),
+        ("reconnects", str(snap["reconnects"])),
+        ("last error", esc(snap["last_error"]) or "—"),
+        ("adb devices", esc(", ".join(snap["adb_devices"])) or "—"),
+        (
+            "serial ports",
+            esc(", ".join(p.get("port", "") for p in snap["com_ports"])) or "—",
+        ),
+        ("channels (total)", str(snap["channels_total"])),
+    ]
+    info = "\n".join(
+        f'<tr><th>{k}</th><td>{v}</td></tr>' for k, v in rows
+    )
+    if snap["active_channels"]:
+        chan_rows = "\n".join(
+            f'<tr><td>{esc(c["cid"])}</td><td>{esc(c["kind"])}</td>'
+            f'<td>{esc(c["target"])}</td><td>{c["open_for_s"]}s</td></tr>'
+            for c in snap["active_channels"]
+        )
+        channels = (
+            "<h2>Active channels</h2><table class=ch>"
+            "<tr><th>cid</th><th>kind</th><th>target</th><th>open</th></tr>"
+            f"{chan_rows}</table>"
+        )
+    else:
+        channels = "<h2>Active channels</h2><p class=muted>none</p>"
+    return f"""<!doctype html>
+<html lang=en><head><meta charset=utf-8>
+<meta http-equiv=refresh content=3>
+<title>alb device agent — {state}</title>
+<style>
+ body{{font:14px/1.5 system-ui,sans-serif;margin:0;background:#faf9f5;color:#2b2a27}}
+ .wrap{{max-width:680px;margin:0 auto;padding:24px}}
+ h1{{font-size:18px;display:flex;align-items:center;gap:8px;margin:0 0 16px}}
+ .dot{{width:11px;height:11px;border-radius:50%;background:{dot};display:inline-block}}
+ table{{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e8e3d9;border-radius:8px;overflow:hidden}}
+ th,td{{text-align:left;padding:7px 12px;border-bottom:1px solid #f0ece3;font-variant-numeric:tabular-nums}}
+ tr:last-child th,tr:last-child td{{border-bottom:0}}
+ table.info th{{width:140px;color:#6b675f;font-weight:600}}
+ table.ch th{{color:#6b675f;font-weight:600;background:#f7f5f0}}
+ h2{{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#6b675f;margin:20px 0 8px}}
+ .muted{{color:#9b968c}}
+ code{{font-family:ui-monospace,monospace}}
+</style></head><body><div class=wrap>
+<h1><span class=dot></span> alb device agent — {state}</h1>
+<table class=info>{info}</table>
+{channels}
+</div></body></html>"""
+
+
+class _StatusHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_a: Any) -> None:  # silence per-request stderr noise
+        return
+
+    def _send(self, code: int, ctype: str, body: bytes) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        # client closed mid-response (common with the 3s auto-refresh) — drop it.
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.wfile.write(body)
+
+    def do_GET(self) -> None:  # stdlib BaseHTTPRequestHandler API name
+        if self.path.startswith("/status.json"):
+            body = json.dumps(_STATUS.snapshot()).encode("utf-8")
+            self._send(200, "application/json", body)
+        elif self.path == "/" or self.path.startswith("/?"):
+            body = _render_status_html(_STATUS.snapshot()).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+        else:
+            self._send(404, "text/plain; charset=utf-8", b"not found")
+
+
+def _start_status_server(host: str, port: int) -> ThreadingHTTPServer | None:
+    """Start the localhost status server in a daemon thread. Returns None (with
+    a warning) if the bind fails — the agent must keep running regardless.
+
+    We wait until serve_forever() is actually running before returning, because
+    BaseServer.shutdown() deadlocks if called before serve_forever() has started
+    (CPython docs). The worst path that exposes this — a bad token rejected at
+    handshake — returns from _main_loop immediately and hits the shutdown."""
+    try:
+        httpd = ThreadingHTTPServer((host, port), _StatusHandler)
+    except OSError as e:
+        _log.warning("status page disabled — cannot bind %s:%d (%s)", host, port, e)
+        return None
+    started = threading.Event()
+
+    def _serve() -> None:
+        started.set()
+        httpd.serve_forever()
+
+    threading.Thread(target=_serve, name="alb-agent-status", daemon=True).start()
+    started.wait(timeout=2.0)  # serve_forever is (about to be) looping → shutdown is safe
+    _log.info("status page on http://%s:%d", host, port)
+    return httpd
 
 
 class _HandshakeRejected(Exception):
@@ -156,10 +405,12 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
     url = _channel_url(hub_url, cid, token, csecret)
     try:
         async with ws_connect(url, max_size=None) as data_ws:
+            _STATUS.channel_opened(cid, "adb", target)
             await _bridge(reader, writer, data_ws)
     except Exception as e:
         _log.warning("channel %s ended: %s", cid[:8], e)
     finally:
+        _STATUS.channel_closed(cid)
         with contextlib.suppress(Exception):
             writer.close()
             await writer.wait_closed()
@@ -190,10 +441,12 @@ async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[st
     url = _channel_url(hub_url, cid, token, csecret)
     try:
         async with ws_connect(url, max_size=None) as data_ws:
+            _STATUS.channel_opened(cid, "serial", f"{com} @ {baud}")
             await _bridge_serial(ser, data_ws)
     except Exception as e:
         _log.warning("serial channel %s ended: %s", cid[:8], e)
     finally:
+        _STATUS.channel_closed(cid)
         with contextlib.suppress(Exception):
             ser.close()
 
@@ -277,6 +530,7 @@ async def _heartbeat(ws: Any) -> None:
 
 async def _reply_adb_list(ws: Any) -> None:
     devices = await _adb_devices()
+    _STATUS.set_adb_devices(devices)
     with contextlib.suppress(Exception):
         await ws.send(_frame("adb_list", devices=devices))
 
@@ -291,6 +545,7 @@ def _enumerate_com() -> list[dict[str, str]]:
 
 async def _reply_com_list(ws: Any) -> None:
     ports = await asyncio.to_thread(_enumerate_com)
+    _STATUS.set_com_ports(ports)
     with contextlib.suppress(Exception):
         await ws.send(_frame("com_list", ports=ports))
 
@@ -311,6 +566,7 @@ async def _run_session(args: argparse.Namespace) -> None:
         if msg.get("verb") != "hello_ok":
             raise _HandshakeRejected(f"unexpected handshake reply: {msg!r}")
         _log.info("connected to %s as %s", args.hub_url, args.agent_id)
+        _STATUS.on_connected()
 
         hb = asyncio.create_task(_heartbeat(ws))
         channels: set[asyncio.Task[None]] = set()
@@ -343,6 +599,7 @@ async def _run_session(args: argparse.Namespace) -> None:
                     channels.add(task)
                     task.add_done_callback(channels.discard)
         finally:
+            _STATUS.on_disconnected()
             hb.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await hb
@@ -364,10 +621,12 @@ async def _main_loop(args: argparse.Namespace) -> None:
             return  # misconfig won't fix itself by reconnecting
         except (OSError, websockets.exceptions.WebSocketException, RuntimeError) as e:
             _log.warning("session ended: %s", e)
+            _STATUS.on_disconnected(f"{type(e).__name__}: {e}")
         if _shutdown.is_set():
             break
         delay = RECONNECT_BACKOFF_S[min(attempt, len(RECONNECT_BACKOFF_S) - 1)]
         attempt += 1
+        _STATUS.on_reconnect_scheduled()
         _log.info("reconnecting in %.0fs ...", delay)
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(_shutdown.wait(), timeout=delay)
@@ -388,6 +647,17 @@ def main() -> None:
     )
     ap.add_argument("--name", default="device-agent", help="human-readable agent name")
     ap.add_argument("--agent-id", default=None, help="stable agent id (default: random)")
+    ap.add_argument(
+        "--status-port",
+        type=int,
+        default=DEFAULT_STATUS_PORT,
+        help=f"local status page port on localhost (default {DEFAULT_STATUS_PORT}; 0 disables)",
+    )
+    ap.add_argument(
+        "--status-host",
+        default="127.0.0.1",
+        help="status page bind host (default 127.0.0.1 — localhost only)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     args.agent_id = args.agent_id or uuid.uuid4().hex
@@ -403,7 +673,14 @@ def main() -> None:
 
 async def _run(args: argparse.Namespace) -> None:
     _install_signal_handlers()
-    await _main_loop(args)
+    _STATUS.init(hub_url=args.hub_url, agent_id=args.agent_id, name=args.name)
+    httpd = _start_status_server(args.status_host, args.status_port) if args.status_port else None
+    try:
+        await _main_loop(args)
+    finally:
+        if httpd is not None:
+            with contextlib.suppress(Exception):
+                httpd.shutdown()
 
 
 if __name__ == "__main__":
