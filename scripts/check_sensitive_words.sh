@@ -78,8 +78,10 @@ if [[ "$MODE" == "staged" ]]; then
   while IFS= read -r -d '' f; do FILES+=("$f"); done \
     < <(git diff --cached --name-only --diff-filter=ACMR -z)
 else
+  # tracked + untracked (minus ignored) — "--all" must see brand-new files
+  # too, or a pre-commit review of untracked work gets a false all-clear.
   while IFS= read -r -d '' f; do FILES+=("$f"); done \
-    < <(git ls-files -z)
+    < <(git ls-files -z --cached --others --exclude-standard)
 fi
 
 if [[ ${#FILES[@]} -eq 0 ]]; then

@@ -144,6 +144,8 @@ docs/reference/
 # those screenshots; making the rule depth-agnostic prevents the leak.
 **/.claude/reports/screenshots/
 **/.claude/reports/web-check/
+# Sweep 全文报告：finding 证据里引用敏感串原文（清理前的旧引文），只留本机
+**/.claude/reports/round*-sweep-*.json
 # Personal operating guides kept out of the open-source repo
 adb-via-ssh-tunnel-guide*.md
 # Anything in a user's home directory tree
