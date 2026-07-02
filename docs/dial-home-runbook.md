@@ -44,12 +44,23 @@ changes for remote vs local.
 
 ## 1. Hub (Linux)
 
-Set the environment and start the API. The serial COM + baud are chosen on the
-**hub** (it drives the agent); leave them unset to run adb-only.
+The one-command path — fill a file, run a script:
+
+```bash
+cd deploy/hub
+cp hub.env.example hub.env    # fill in ALB_AGENT_TOKEN (+ COM/baud for serial)
+./run-hub.sh
+```
+
+`run-hub.sh` loads `hub.env` (which is gitignored — only the `.example` is
+tracked) and starts `alb-api`, falling back to `uv run alb-api` inside a repo
+checkout. Everything below is what the file configures, if you prefer to set
+the environment by hand. The serial COM + baud are chosen on the **hub** (it
+drives the agent); leave them unset to run adb-only.
 
 | env var | purpose | example |
 |---|---|---|
-| `ALB_AGENT_TOKEN` | auth — must match the agent's `--token` | `s3cret-xyz` |
+| `ALB_AGENT_TOKEN` | auth — must match the agent's `token` (agent.conf / `--token`) | `s3cret-xyz` |
 | `ALB_AGENT_SERIAL_COM` | the COM port the agent should open (enables serial) | `COM27` |
 | `ALB_AGENT_SERIAL_BAUD` | serial baud | `1500000` |
 | `ALB_ADB_FORWARD_PORT` | override the adb forward port (default `5037`) | `15037` |
@@ -76,6 +87,15 @@ it — adb via `ADB_SERVER_SOCKET=tcp:127.0.0.1:<port>`, serial via
 `ALB_SERIAL_TCP=127.0.0.1:<port>`.
 
 ## 2. Agent (Windows host, where the device is)
+
+Copy `clients/windows-agent/` onto the host, then:
+
+1. Copy `agent.conf.example` to `agent.conf` and fill in `hub_url` + `token`
+   (the same token as the hub's `hub.env`).
+2. Double-click `run-agent.bat` — it installs the two dependencies on first
+   run and starts the agent.
+
+Or by hand, flags overriding anything in `agent.conf`:
 
 ```
 pip install -r requirements.txt

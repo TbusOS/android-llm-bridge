@@ -10,9 +10,16 @@ it depends only on the stdlib + `websockets` (+ `pyserial` for serial channels),
 NOT the alb package, so it can be dropped onto a bare host. The wire constants
 below mirror the hub's `alb.remote.protocol` and MUST stay in lockstep with it.
 
-Usage:
+Usage (config file — the normal path):
+    copy agent.conf.example agent.conf   # fill in hub_url + token
+    run-agent.bat                        # or: python alb_agent.py
+
+Usage (flags — override any config value):
     pip install -r requirements.txt   # websockets + pyserial
     python alb_agent.py --hub-url wss://<hub>/agent/connect --token <token>
+
+Precedence: command line > agent.conf > built-in defaults. The config file
+lives next to this script by default (`--config` points elsewhere).
 
 The agent maintains the signaling connection (auto-reconnect with backoff) and,
 on each `open_channel` from the hub, dials back a separate data connection and
@@ -38,6 +45,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -203,9 +211,9 @@ def _render_status_html(snap: dict[str, Any]) -> str:
     state = "connected" if up else "disconnected"
     rows = [
         ("hub", esc(snap["hub_url"])),
-        ("agent", f'{esc(snap["name"])} · {esc(snap["agent_id"][:8])}'),
-        ("uptime", f'{snap["uptime_s"]}s'),
-        ("connected for", f'{snap["connected_for_s"]}s' if up else "—"),
+        ("agent", f"{esc(snap['name'])} · {esc(snap['agent_id'][:8])}"),
+        ("uptime", f"{snap['uptime_s']}s"),
+        ("connected for", f"{snap['connected_for_s']}s" if up else "—"),
         ("reconnects", str(snap["reconnects"])),
         ("last error", esc(snap["last_error"]) or "—"),
         ("adb devices", esc(", ".join(snap["adb_devices"])) or "—"),
@@ -215,13 +223,11 @@ def _render_status_html(snap: dict[str, Any]) -> str:
         ),
         ("channels (total)", str(snap["channels_total"])),
     ]
-    info = "\n".join(
-        f'<tr><th>{k}</th><td>{v}</td></tr>' for k, v in rows
-    )
+    info = "\n".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows)
     if snap["active_channels"]:
         chan_rows = "\n".join(
-            f'<tr><td>{esc(c["cid"])}</td><td>{esc(c["kind"])}</td>'
-            f'<td>{esc(c["target"])}</td><td>{c["open_for_s"]}s</td></tr>'
+            f"<tr><td>{esc(c['cid'])}</td><td>{esc(c['kind'])}</td>"
+            f"<td>{esc(c['target'])}</td><td>{c['open_for_s']}s</td></tr>"
             for c in snap["active_channels"]
         )
         channels = (
@@ -289,7 +295,9 @@ def _start_status_server(host: str, port: int) -> ThreadingHTTPServer | None:
     handshake — returns from _main_loop immediately and hits the shutdown."""
     try:
         httpd = ThreadingHTTPServer((host, port), _StatusHandler)
-    except OSError as e:
+    # OverflowError: CPython raises it (not OSError) for a port outside
+    # 0-65535 — reachable via --status-port, and this must not kill the agent.
+    except (OSError, OverflowError) as e:
         _log.warning("status page disabled — cannot bind %s:%d (%s)", host, port, e)
         return None
     started = threading.Event()
@@ -639,9 +647,87 @@ def _install_signal_handlers() -> None:
             loop.add_signal_handler(sig, _shutdown.set)
 
 
-def main() -> None:
+# ── config file (agent.conf) ─────────────────────────────────────────
+# Minimal KEY=VALUE file next to this script, so a permanent bench setup is
+# "fill the file, double-click run-agent.bat" — no flags to remember. The
+# parser is deliberately hand-rolled (~30 lines, zero deps) and hardened for
+# how the file is actually edited on Windows: Notepad's UTF-8 BOM, CRLF line
+# endings, values that contain '=' or '#' (tokens), and copy-pasted quotes.
+
+DEFAULT_CONFIG_NAME = "agent.conf"
+
+
+def _port_number(value: str) -> int:
+    port = int(value)  # ValueError propagates to the caller's error message
+    if not 0 <= port <= 65535:
+        raise ValueError("port out of range 0-65535")
+    return port
+
+
+# key → converter. argparse `type=` does NOT run on defaults injected via
+# set_defaults(), so non-string values must be converted here.
+_CONFIG_KEYS: dict[str, Any] = {
+    "hub_url": str,
+    "token": str,
+    "name": str,
+    "agent_id": str,
+    "status_port": _port_number,
+    "status_host": str,
+}
+
+
+def _default_config_path() -> Path:
+    """agent.conf next to this script — NOT the CWD, which is system32 when
+    launched from Task Scheduler."""
+    return Path(__file__).resolve().parent / DEFAULT_CONFIG_NAME
+
+
+def _load_config(path: Path) -> dict[str, Any]:
+    """Parse a KEY=VALUE config file into {argparse dest: converted value}.
+
+    Rules (mirrored in agent.conf.example): one KEY=VALUE per line; comments
+    on their own line only (a '#' inside a value is kept — tokens may contain
+    it); only the first '=' splits key from value (values may contain '=');
+    one pair of surrounding quotes is stripped; an empty value means "unset";
+    an unknown key is a hard error, so a typo can't be silently ignored."""
+    cfg: dict[str, Any] = {}
+    # utf-8-sig: strip Notepad's BOM; splitlines(): swallow CRLF.
+    text = path.read_text(encoding="utf-8-sig")
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        key = key.strip().lower()
+        value = value.strip()
+        if not sep or not key:
+            sys.exit(f"{path}:{lineno}: expected KEY=VALUE, got: {raw.strip()!r}")
+        if key not in _CONFIG_KEYS:
+            valid = ", ".join(sorted(_CONFIG_KEYS))
+            sys.exit(f"{path}:{lineno}: unknown key {key!r} (valid keys: {valid})")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if not value:
+            continue
+        try:
+            cfg[key] = _CONFIG_KEYS[key](value)
+        except ValueError:
+            sys.exit(f"{path}:{lineno}: bad value for {key}: {value!r}")
+    return cfg
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Two-pass parse: find --config, merge the file's values in as argparse
+    defaults, then parse fully — so explicit flags always win over the file."""
     ap = argparse.ArgumentParser(description="alb dial-home device agent")
-    ap.add_argument("--hub-url", required=True, help="wss://<hub>/agent/connect")
+    ap.add_argument(
+        "--config",
+        default=None,
+        help=f"config file (default: {DEFAULT_CONFIG_NAME} next to this script)",
+    )
+    ap.add_argument(
+        "--hub-url", default=None, help="wss://<hub>/agent/connect (or hub_url in agent.conf)"
+    )
     ap.add_argument(
         "--token", default=None, help="agent auth token (matches ALB_AGENT_TOKEN on the hub)"
     )
@@ -659,8 +745,25 @@ def main() -> None:
         help="status page bind host (default 127.0.0.1 — localhost only)",
     )
     ap.add_argument("-v", "--verbose", action="store_true")
-    args = ap.parse_args()
+
+    pre, _ = ap.parse_known_args(argv)
+    if pre.config:
+        config_path = Path(pre.config)
+        if not config_path.is_file():
+            ap.error(f"config file not found: {config_path}")
+        ap.set_defaults(**_load_config(config_path))
+    elif _default_config_path().is_file():
+        ap.set_defaults(**_load_config(_default_config_path()))
+
+    args = ap.parse_args(argv)
+    if not args.hub_url:
+        ap.error(f"missing hub URL — set hub_url in {DEFAULT_CONFIG_NAME} or pass --hub-url")
     args.agent_id = args.agent_id or uuid.uuid4().hex
+    return args
+
+
+def main() -> None:
+    args = _parse_args()
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

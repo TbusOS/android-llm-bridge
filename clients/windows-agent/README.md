@@ -8,20 +8,31 @@ port, no SSH, and no third-party terminal** to configure. The hub then exposes
 the device locally (e.g. `127.0.0.1:5037` for adb) so the LLM (via MCP) and
 humans (via the web UI) can debug it, all driven from the Linux side.
 
-## Install
+## Run (config file + one click — the normal path)
+
+1. Copy `agent.conf.example` to `agent.conf` (same folder) and fill in
+   `hub_url` + `token` (+ optionally `name`, and `agent_id` for a stable
+   identity across restarts).
+2. Double-click `run-agent.bat`.
+
+The script finds Python (`python`, falling back to the `py -3` launcher),
+installs the two dependencies on first run, prints the status page URL, and
+starts the agent. On errors the window stays open so the reason is readable.
+Requires Python 3.11+ installed.
+
+`agent.conf` holds your real token, so it is gitignored — only the
+`.example` is tracked.
+
+## Run (flags — override any config value)
 
 ```
 pip install -r requirements.txt
-```
-
-(Only dependency is `websockets`. Python 3.11+.)
-
-## Run
-
-```
 python alb_agent.py --hub-url wss://<hub>/agent/connect --token <token>
 ```
 
+Precedence: command line > `agent.conf` > built-in defaults.
+
+- `--config`  — config file path (default: `agent.conf` next to the script).
 - `--hub-url` — the hub's signaling endpoint (`/agent/connect`).
 - `--token`   — must match `ALB_AGENT_TOKEN` configured on the hub. Omit only
   for a fully local, no-auth dev setup.
@@ -32,8 +43,11 @@ python alb_agent.py --hub-url wss://<hub>/agent/connect --token <token>
   disables). `--status-host` to change the bind host.
 
 Keep the process running (it auto-reconnects with backoff if the link drops).
-On Windows run it in a terminal or via Task Scheduler (a background service
-wrapper can come later).
+On Windows run it via `run-agent.bat` in a terminal or point Task Scheduler
+at the `.bat` for start-at-boot — set `ALB_AGENT_NO_PAUSE=1` in the task's
+environment so an exit never waits for a keypress (interactively the script
+pauses on exit to keep the window readable). A background service wrapper
+can come later.
 
 ### Status page
 

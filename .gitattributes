@@ -1,0 +1,3 @@
+# Windows batch files break with LF endings (label/goto quirks) — force CRLF
+# regardless of the committer's platform.
+*.bat text eol=crlf

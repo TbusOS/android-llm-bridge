@@ -1,0 +1,32 @@
+# alb device agent config.
+# Copy this file to agent.conf (same folder), fill in hub_url + token,
+# then double-click run-agent.bat.
+#
+# Format: one KEY=VALUE per line. No quotes needed. Comments only on their
+# own line — a '#' inside a value is kept as-is. Command-line flags override
+# anything set here.
+
+# The hub's signaling endpoint. ws:// on a trusted LAN; wss:// when TLS is
+# terminated at a reverse proxy in front of the hub.
+#   ws://<hub-ip>:8765/agent/connect
+#   wss://hub.example.com/agent/connect
+hub_url=ws://<hub-ip>:8765/agent/connect
+
+# Must match ALB_AGENT_TOKEN on the hub. Stick to letters/digits/_/- so the
+# same value pastes cleanly into the hub's hub.env too.
+# Generate one:  openssl rand -hex 16
+token=change-me
+
+# Label shown in the hub's Connection Center.
+name=bench-01
+
+# Stable agent identity. Generate once and keep it — without it the hub sees
+# a brand-new agent after every restart. Any unique string works.
+#agent_id=
+
+# Local status page (http://127.0.0.1:<port>). 0 disables. Default 8731.
+#status_port=8731
+
+# Status page bind host. Keep the default 127.0.0.1 — anything else exposes
+# the page beyond this machine.
+#status_host=127.0.0.1

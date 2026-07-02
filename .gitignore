@@ -122,6 +122,11 @@ docs/reference/
 # ─────────────────────────────────────────────
 .env.local
 .env.*.local
+# 远程调试真配置：只提交 *.example，填了真 token/IP 的实体不入仓
+# **/ 前缀：目录被复制（deploy/hub-bench2/）或文件被挪到仓根调试时同样兜住
+# （同 2026-05-02 web/.claude/ 漏 ignore 的教训 — secret 类 ignore 一律 depth-agnostic）
+**/agent.conf
+**/hub.env
 
 # ─────────────────────────────────────────────
 # Secrets / personal / machine-specific — NEVER commit
