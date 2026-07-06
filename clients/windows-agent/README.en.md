@@ -28,7 +28,9 @@ re-reports devices.
 The classic "driver fine, device enumerated, adb sees nothing" case is a
 *renamed* adb build (shipped inside vendor PC tools) exclusively holding the
 USB interface. The agent detects this: an empty device list triggers a fuzzy
-process scan (name contains "adb", is not adb itself) whose hits show up in
+process scan ("adb" as a standalone token in the name — `xxx_adb`,
+`adb_server` — never a mid-word substring, so innocent bystanders don't get
+flagged or killed) whose hits show up in
 the startup check, on the status page (`adb conflicts`), and in
 `/agent/status` (`adb_conflicts`). Clear it remotely with
 `POST /api/agent/adb/restart?kill_conflicts=true` — the agent terminates the

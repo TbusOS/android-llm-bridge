@@ -40,6 +40,7 @@ import csv
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -555,8 +556,13 @@ async def _heartbeat(ws: Any) -> None:
 # blinds every other one. Vendor tool suites often ship a *renamed* adb build
 # whose server keeps running after the tool exits — the standard adb then
 # reports an empty device list while the driver looks perfectly healthy.
-# Detection is a fuzzy name match (contains "adb", is not adb itself), so any
-# renamed build is caught without maintaining a vendor list.
+# Detection: "adb" as a STANDALONE token in the process name (vendor renames
+# follow the xxx_adb / HD-Adb / adb_server convention) — a plain substring
+# match flagged innocent bystanders whose name merely contains the letters
+# (AcutaDBCore.exe, real case 2026-07-06), and the SAME list feeds the kill
+# path, so precision is a safety property here, not cosmetics.
+
+_ADB_TOKEN = re.compile(r"(?:^|[^a-z0-9])adb(?:[^a-z0-9]|$)")
 
 
 def _adb_conflicts_from_listing(procs: list[tuple[str, str]]) -> list[str]:
@@ -565,7 +571,7 @@ def _adb_conflicts_from_listing(procs: list[tuple[str, str]]) -> list[str]:
     hits: list[str] = []
     for name, pid in procs:
         base = name.lower().removesuffix(".exe")
-        if "adb" in base and base != "adb":
+        if base != "adb" and _ADB_TOKEN.search(base):
             hits.append(f"{name} pid={pid}")
     return hits
 

@@ -70,18 +70,27 @@ async def test_missing_adb_aborts_but_still_reports(monkeypatch):
 # ── conflict detection (exclusive USB interface takeover) ───────────────
 
 
-def test_conflicts_fuzzy_match_excludes_real_adb():
+def test_conflicts_token_match_excludes_real_adb_and_bystanders():
+    # Precision is a safety property: the same list feeds the kill path, so a
+    # mid-word substring hit (real case: AcutaDBCore.exe, 2026-07-06) would
+    # get an innocent process force-killed by kill_conflicts=true.
     hits = agent._adb_conflicts_from_listing(
         [
             ("adb.exe", "100"),  # the real thing — not a conflict
             ("ADB.EXE", "101"),  # case variant of the real thing
-            ("vendor_adb.exe", "200"),  # renamed vendor build
-            ("HD-Adb.exe", "201"),  # another renamed build
+            ("vendor_adb.exe", "200"),  # renamed vendor build (…_adb)
+            ("HD-Adb.exe", "201"),  # renamed build, dash separator
+            ("adb_server.exe", "202"),  # renamed build, adb up front
             ("notepad.exe", "300"),  # unrelated
-            ("adbd", "400"),  # adb-flavoured non-exe (posix)
+            ("AcutaDBCore.exe", "301"),  # 'adb' mid-word — must NOT match
+            ("adbd", "400"),  # fused token — not a renamed adb build
         ]
     )
-    assert hits == ["vendor_adb.exe pid=200", "HD-Adb.exe pid=201", "adbd pid=400"]
+    assert hits == [
+        "vendor_adb.exe pid=200",
+        "HD-Adb.exe pid=201",
+        "adb_server.exe pid=202",
+    ]
 
 
 def test_reply_adb_list_reports_conflicts_when_empty(monkeypatch):

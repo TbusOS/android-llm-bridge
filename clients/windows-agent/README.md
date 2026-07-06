@@ -79,7 +79,9 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
 完全正常。这套工具的应对：
 
 - **启动自检**：`run-agent.bat` 在 devices 为 NONE 时会自动扫一遍进程表，
-  把"名字含 adb 但不是 adb 本尊"的进程连 pid 一起打出来，并给出处置命令；
+  把"名字里带独立 adb 字段（`xxx_adb`、`adb_server` 这类）但不是 adb 本尊"
+  的进程连 pid 一起打出来，并给出处置命令（只认独立字段，名字中间碰巧连出
+  a-d-b 三个字母的无辜进程不会被误伤）；
 - **状态页/hub 可见**：agent 上报设备列表为空时会附带嫌疑进程清单
   （状态页 `adb conflicts` 一行、hub 的 `/agent/status` 里 `adb_conflicts`）；
 - **远程一键处置**：Linux 侧跑
