@@ -58,6 +58,10 @@ Precedence: command line > `agent.conf` > built-in defaults.
 - `--status-port` — local status page port on 127.0.0.1 (default `8731`; `0`
   disables). `--status-host` to change the bind host.
 
+Ctrl-C once stops the agent gracefully; if it ever hangs, a second Ctrl-C
+hard-kills the process (serial writes also carry a 2 s timeout, so a
+flow-control-wedged port can no longer block shutdown).
+
 Keep the process running (it auto-reconnects with backoff if the link drops).
 On Windows run it via `run-agent.bat` in a terminal or point Task Scheduler
 at the `.bat` for start-at-boot — set `ALB_AGENT_NO_PAUSE=1` in the task's

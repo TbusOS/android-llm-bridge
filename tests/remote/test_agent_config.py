@@ -217,6 +217,20 @@ def test_setup_file_logging_creates_rotating_handler(tmp_path):
             h.close()
 
 
+def test_sigint_fallback_first_graceful_second_hard_exit(monkeypatch, capsys):
+    # Windows fallback: 1st Ctrl-C → KeyboardInterrupt (asyncio.run teardown);
+    # 2nd → os._exit, so a wedged worker thread can never trap the console.
+    codes: list[int] = []
+    monkeypatch.setattr(agent.os, "_exit", lambda code: codes.append(code))
+    handler = agent._make_sigint_handler()
+    with pytest.raises(KeyboardInterrupt):
+        handler(2, None)
+    assert codes == []
+    assert "Ctrl-C again" in capsys.readouterr().err
+    handler(2, None)  # no raise this time — straight to hard exit
+    assert codes == [130]
+
+
 def test_setup_file_logging_none_disables():
     import logging
 

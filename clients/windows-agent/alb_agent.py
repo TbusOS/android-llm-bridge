@@ -451,7 +451,10 @@ async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[st
         return
 
     try:
-        ser = serial.Serial(com, baud, timeout=0.05)
+        # write_timeout: a write stuck on flow control would otherwise block
+        # its worker thread FOREVER — and on Windows the executor join at
+        # shutdown can't be interrupted, leaving the console unkillable.
+        ser = serial.Serial(com, baud, timeout=0.05, write_timeout=2)
     except Exception as e:
         _log.warning("serial channel %s: cannot open %s @ %s: %s", cid[:8], com, baud, e)
         return
@@ -758,11 +761,42 @@ async def _main_loop(args: argparse.Namespace) -> None:
             await asyncio.wait_for(_shutdown.wait(), timeout=delay)
 
 
+def _make_sigint_handler() -> Any:
+    """Windows fallback handler (loop.add_signal_handler is unavailable
+    there): the FIRST Ctrl-C raises KeyboardInterrupt for asyncio.run's
+    normal teardown; a SECOND one hard-exits. Without the escape hatch a
+    wedged worker thread makes the shutdown's executor join uninterruptible
+    on Windows and the console can never be killed from the keyboard."""
+    hits = 0
+
+    def _handler(_signum: Any, _frame: Any) -> None:
+        nonlocal hits
+        hits += 1
+        if hits >= 2:
+            os._exit(130)
+            return  # unreachable in production; keeps the fake-exit test honest
+        print("stopping... (Ctrl-C again to force quit)", file=sys.stderr, flush=True)
+        raise KeyboardInterrupt
+
+    return _handler
+
+
 def _install_signal_handlers() -> None:
     loop = asyncio.get_event_loop()
+    installed = False
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, ValueError):
             loop.add_signal_handler(sig, _shutdown.set)
+            installed = True
+    if installed:
+        return
+    handler = _make_sigint_handler()
+    with contextlib.suppress(ValueError, OSError):
+        signal.signal(signal.SIGINT, handler)
+    # Ctrl+Break gets the same treatment where it exists (Windows-only signal)
+    if hasattr(signal, "SIGBREAK"):
+        with contextlib.suppress(ValueError, OSError):
+            signal.signal(signal.SIGBREAK, handler)
 
 
 # ── config file (agent.conf) ─────────────────────────────────────────
