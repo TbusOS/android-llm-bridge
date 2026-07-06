@@ -68,6 +68,24 @@ M1 ships **A / B / C / G**. D / E / F are scaffolded for later.
 
 See [`docs/methods/00-comparison.md`](./docs/methods/00-comparison.md) for the full matrix.
 
+### Board attached to a different machine? → remote device agent (dial-home)
+
+When the board is physically attached to a Windows host (or any other
+machine), no SSH tunnel and no inbound port on the device side — the agent
+**dials out** to the hub:
+
+1. **hub (the Linux box running alb)**: `cd deploy/hub && cp hub.env.example
+   hub.env` (fill in the shared token, plus COM + baud for serial) →
+   `./run-hub.sh`
+2. **device side (Windows)**: copy `clients/windows-agent/` over, copy
+   `agent.conf.example` to `agent.conf`, fill in the hub URL + token →
+   **double-click `run-agent.bat`** (it re-checks the environment on every
+   run and auto-installs its two dependencies)
+
+adb, the UART console, the web UI and MCP are then all driven from the hub
+side, as if the board were plugged in locally. Full bring-up + per-hop
+troubleshooting: [docs/dial-home-runbook.md](./docs/dial-home-runbook.md).
+
 ---
 
 ## Architecture
@@ -155,6 +173,8 @@ uv run alb setup wifi        # Method B
 | Overview | [docs/00-overview.md](./docs/00-overview.md) | Start here |
 | Architecture | [docs/architecture.md](./docs/architecture.md) | Internals |
 | Design decisions | [docs/design-decisions.md](./docs/design-decisions.md) | Why this way |
+| Remote device debugging | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md) | Board on another machine: bring-up + troubleshooting |
+| Windows device agent | [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md) | Operator of the Windows host holding the board |
 | LLM integration | [docs/llm-integration.md](./docs/llm-integration.md) | Agent devs |
 | Permissions | [docs/permissions.md](./docs/permissions.md) | Ops / safety |
 | Error catalog | [docs/errors.md](./docs/errors.md) | LLMs, debugging |

@@ -84,11 +84,15 @@ LLM：[alb.profile.each("lab") {
      → 10 台并行、2 分钟完成、汇总表格
 ```
 
-### 场景 5：客户现场远程调试（M3）
+### 场景 5：设备在另一台电脑上 / 客户现场远程调试（已可用）
 
-> "客户机器 POS 死机了，他那边只有网络没有 Linux 服务器。"
+> "板子插在实验室那台 Windows 上" / "客户机器死机了，他那边只有一台 Windows。"
 
-（规划中，方案 F）
+用**远程设备 agent（dial-home）**：设备侧双击 `run-agent.bat`，agent 主动
+拨出连 hub（`ws://` 内网直连或 `wss://` 走公网/反代），hub 把 adb 和串口
+重新暴露在本地——LLM / CLI / Web 全部照常，设备侧不开任何入站端口。
+完整步骤：[dial-home-runbook.md](./dial-home-runbook.md)。
+（纯 frp 公网中转仍属方案 F 预留；hub 能被设备侧访问到时不需要它。）
 
 ---
 

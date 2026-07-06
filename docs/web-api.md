@@ -277,6 +277,68 @@ history / alias / which / type / help / cd / pwd`.
 **Audit trail**: every input line, hitl request, approval, and denial
 is appended to `workspace/sessions/<session_id>/terminal.jsonl`.
 
+## Remote device agent (dial-home)
+
+Rendezvous endpoints for the remote device agent
+(`clients/windows-agent/alb_agent.py`). Both WebSocket endpoints check the
+shared token (`ALB_AGENT_TOKEN`); full bring-up in
+[dial-home-runbook.md](./dial-home-runbook.md).
+
+### WS /agent/connect
+
+The agent's persistent signaling channel (hello / heartbeat / device lists /
+channel control). Not for browser use.
+
+### WS /agent/channel?cid=…&csecret=…
+
+Per-channel data connection the agent dials back, one per open channel,
+carrying raw bytes. Authenticated by the per-channel secret.
+
+### GET /agent/status
+
+Snapshot for the Connection Center. Calling it also fires a device refresh,
+so the next poll reflects plug/unplug.
+
+```json
+{
+  "v": "1",
+  "agents": [
+    {
+      "agent_id": "win-…", "name": "bench-01", "version": 1,
+      "caps": ["adb"], "current": true,
+      "adb_devices": ["1240681723"],
+      "adb_conflicts": [],
+      "com_ports": [{"port": "COM4", "desc": "USB Serial Port"}]
+    }
+  ],
+  "forwarders": {
+    "adb":    {"bound": true, "port": 5037},
+    "serial": {"bound": true, "port": 9001, "configured": true,
+               "com": "COM4", "baud": 115200}
+  }
+}
+```
+
+`adb_conflicts` lists adb-flavoured foreign processes the agent saw while its
+device list was empty — the signature of a renamed vendor adb holding the
+exclusive USB interface.
+
+### POST /api/agent/adb/restart
+
+Ask the current agent to restart its **local** adb server and re-report
+devices. Fire-and-forget: poll `/agent/status` for the outcome. `409` when no
+agent is connected.
+
+`?kill_conflicts=true` additionally terminates the detected conflict
+processes first (the agent's own heuristic decides what matches — the hub
+can never name a process). Default `false`: killing a vendor tool's adb
+mid-flash would interrupt it.
+
+```json
+{"v": "1", "ok": true, "agent_id": "win-…", "kill_conflicts": false,
+ "note": "restart requested — poll /agent/status for the refreshed device list"}
+```
+
 ## Error codes (cross-endpoint)
 
 | Code | Where | Meaning |

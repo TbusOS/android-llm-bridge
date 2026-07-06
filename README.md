@@ -77,10 +77,25 @@
 | 开发日常：改代码 → 推板子 → 看效果 | C + A | rsync 增量快、长 session；A 兜底 |
 | 大量设备 CI / 自动化 | B + C | 无线省线、多设备并发 |
 | 板子起不来 / 内核 panic / u-boot 调试 | **G** | 只有串口能看到底层日志 |
-| 客户现场远程调试 | F（待实现） | 走公网中转 |
-| 板子在 Windows 上，Linux 服务器调 | **A + G** | adb + 串口都走 Xshell 反向隧道 |
+| 客户现场远程调试 | **远程 agent（dial-home）** | 设备侧主动拨出 wss，hub 公网/反代可达即可 |
+| 板子在 Windows 上，Linux 服务器调 | **远程 agent（dial-home）** | Windows 双击 `run-agent.bat` 拨出，免隧道、免入站端口 |
 
 详见 [`docs/methods/00-comparison.md`](./docs/methods/00-comparison.md)。
+
+### 板子插在别的电脑上？→ 远程设备 agent（dial-home）
+
+板子物理插在 Windows（或任何别的机器）上时，不需要 SSH 隧道、设备侧不用开
+任何入站端口——agent **主动拨出**连 hub：
+
+1. **hub（跑 alb 的 Linux）**：`cd deploy/hub && cp hub.env.example hub.env`
+   （填共享 token；要串口再填 COM + 波特率）→ `./run-hub.sh`
+2. **设备侧（Windows）**：把 `clients/windows-agent/` 拷过去，
+   `agent.conf.example` 复制为 `agent.conf` 填 hub 地址 + token →
+   **双击 `run-agent.bat`**（每次启动自检环境，缺依赖自动装）
+
+之后 adb / UART 串口 / Web 控制台 / MCP 全部从 hub 侧驱动，跟板子直接插在
+hub 上一样。完整链路与逐跳排障：[docs/dial-home-runbook.md](./docs/dial-home-runbook.md)；
+设备侧操作手册（中文）：[clients/windows-agent/README.md](./clients/windows-agent/README.md)。
 
 ---
 
@@ -215,6 +230,8 @@ uv run alb serial shell "dmesg | tail"
 | **LLM 集成** | [docs/llm-integration.md](./docs/llm-integration.md) | Agent / AI 开发者 |
 | **Agent 层设计** | [docs/agent.md](./docs/agent.md) | 宿主端 agent / backend 选型 |
 | **设备端模型选型** | [docs/on-device-model-selection.md](./docs/on-device-model-selection.md) | 全球商用场景选型(许可 + SoC 硬件) |
+| **远程设备调试** | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md) | 板子在另一台电脑上：端到端搭建 + 排障 |
+| **Windows 设备端 agent** | [clients/windows-agent/README.md](./clients/windows-agent/README.md) | 板子所在 Windows 的操作者（中文） |
 | **权限系统** | [docs/permissions.md](./docs/permissions.md) | 安全 / 部署人员 |
 | **错误码** | [docs/errors.md](./docs/errors.md) | LLM / 排错时查表 |
 | **Tool 写法** | [docs/tool-writing-guide.md](./docs/tool-writing-guide.md) | 贡献者 |
