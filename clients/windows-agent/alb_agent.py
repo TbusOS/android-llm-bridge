@@ -544,6 +544,27 @@ async def _reply_adb_list(ws: Any) -> None:
         await ws.send(_frame("adb_list", devices=devices))
 
 
+async def _restart_adb_and_report(ws: Any) -> None:
+    """Restart the LOCAL adb server, then re-report devices. Runs here on the
+    agent host by design — the hub must never kill an adb server remotely.
+    Unsticks the common 'interface enumerated but adb server sees nothing'
+    state without anyone walking over to this machine."""
+    for args in (("adb", "kill-server"), ("adb", "start-server")):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except (FileNotFoundError, OSError) as e:
+            _log.warning("adb restart: %r failed: %s", " ".join(args), e)
+            break
+    else:
+        _log.info("local adb server restarted on hub request")
+    await _reply_adb_list(ws)
+
+
 def _enumerate_com() -> list[dict[str, str]]:
     try:
         from serial.tools import list_ports
@@ -599,6 +620,10 @@ async def _run_session(args: argparse.Namespace) -> None:
                     # (it would delay subsequent open_channel frames) — run it
                     # as its own task.
                     task = asyncio.create_task(_reply_adb_list(ws))
+                    channels.add(task)
+                    task.add_done_callback(channels.discard)
+                elif verb == "restart_adb":
+                    task = asyncio.create_task(_restart_adb_and_report(ws))
                     channels.add(task)
                     task.add_done_callback(channels.discard)
                 elif verb == "list_com":

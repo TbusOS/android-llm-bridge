@@ -252,3 +252,28 @@ def test_agent_status_exposes_device_keys(monkeypatch):
     agent = body["agents"][0]
     assert "adb_devices" in agent
     assert "com_ports" in agent
+
+
+# ── POST /api/agent/adb/restart ────────────────────────────────────────
+
+
+def test_adb_restart_sends_verb_to_current_agent(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(_hello(None))
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
+            # register() fires a device refresh — drain it (caps=["adb"] → list_adb only)
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_ADB.value
+            body = c.post("/api/agent/adb/restart").json()
+            assert body["ok"] is True
+            assert body["agent_id"] == "agent-1"
+            # the agent receives the restart request on the signaling WS
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.RESTART_ADB.value
+
+
+def test_adb_restart_409_when_no_agent(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    with TestClient(create_app()) as c:
+        r = c.post("/api/agent/adb/restart")
+    assert r.status_code == 409

@@ -98,6 +98,14 @@ class AgentConnection:
             if "serial" in self.caps:
                 await self._send_control(protocol.list_com())
 
+    async def request_adb_restart(self) -> None:
+        """Fire-and-forget: ask the agent to restart ITS local adb server and
+        re-report devices (the adb_list reply updates the cache; poll
+        /agent/status for the result). Unsticks a wedged host-side adb
+        enumeration without anyone touching the agent machine."""
+        with suppress(Exception):
+            await self._send_control(protocol.restart_adb())
+
     async def open_data_channel(
         self,
         *,

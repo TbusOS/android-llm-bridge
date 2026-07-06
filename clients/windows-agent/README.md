@@ -32,7 +32,7 @@ Windows 上（USB 线 + 串口线），跑起这个 agent 之后，Linux 那边�
 | Python 3.11+（`python` 或 `py -3`） | 停下并提示安装地址 |
 | websockets / pyserial 两个依赖库 | **自动安装**，装失败才停 |
 | `agent.conf` 是否存在 | 停下并提示先复制 `agent.conf.example` |
-| adb 是否在 PATH | 只提示不阻塞（不装 adb 串口功能照常用） |
+| adb 是否在 PATH + 当前设备列表 | 只提示不阻塞（不装 adb 串口功能照常用）；有 adb 时把 `adb devices` 看到的设备直接打出来 |
 | 本机能看到的串口列表 | 打印出来供核对，空列表会提示查线/驱动 |
 
 任何一步失败窗口都会停住（按任意键才关），报错原因看得见。
@@ -66,7 +66,10 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
 **问：adb 设备列表是空的？**
 - 这台 Windows 要装 adb（platform-tools）并在 PATH 里；
 - 板子 USB 线插好，第一次连接要在板子屏幕上点"允许 USB 调试"；
-- 本机 cmd 里跑 `adb devices` 能看到设备，Linux 那边才能看到。
+- 本机 cmd 里跑 `adb devices` 能看到设备，Linux 那边才能看到；
+- adb server 卡住没重新扫的情况，Linux 侧可以远程触发本机重启 adb server：
+  `curl -X POST http://<hub>:8765/api/agent/adb/restart`（agent 在本机执行
+  `adb kill-server` 后重新上报设备列表），不用人到这台电脑跟前。
 
 **问：想换 hub 地址 / token / 显示名字？**
 编辑 `agent.conf`（记事本就行），改完重新双击 `run-agent.bat`。格式是

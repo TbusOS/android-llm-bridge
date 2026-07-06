@@ -18,9 +18,12 @@ humans (via the web UI) can debug it, all driven from the Linux side.
 The script re-checks the environment on every run and prints each result:
 Python 3.11+ (`python`, falling back to the `py -3` launcher), the two
 dependencies (auto-installed when missing), `agent.conf` presence, adb on
-PATH (warn-only — serial works without it), and the serial ports visible on
-this machine. Then it prints the status page URL and starts the agent. On
-errors the window stays open so the reason is readable.
+PATH with its current device list (warn-only — serial works without it), and
+the serial ports visible on this machine. Then it prints the status page URL
+and starts the agent. On errors the window stays open so the reason is
+readable. A stuck adb enumeration can be fixed from the hub side with
+`POST /api/agent/adb/restart` — the agent restarts its local adb server and
+re-reports devices.
 
 `agent.conf` holds your real token, so it is gitignored — only the
 `.example` is tracked.

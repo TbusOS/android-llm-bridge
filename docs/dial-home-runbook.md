@@ -139,7 +139,7 @@ Walk down the chain; each hop has an unambiguous "good" signal.
 | status page never loads | agent not running / port taken | is `alb_agent.py` running? try `--status-port` |
 | `/agent/status` shows no agents | hub | agent didn't register — recheck token match + hub URL path is `/agent/connect` |
 | `forwarders.adb.bound: false` | hub | a local adb server holds `5037` — `adb kill-server` on the hub or set `ALB_ADB_FORWARD_PORT` (the hub log prints the bind error) |
-| `alb devices` empty but agent connected | Windows adb | `adb devices` on the Windows host — authorize the USB prompt; the agent only proxies what its local adb sees |
+| `alb devices` empty but agent connected | Windows adb | `adb devices` on the Windows host — authorize the USB prompt; the agent only proxies what its local adb sees. A wedged enumeration can be kicked remotely: `curl -X POST http://<hub>:8765/api/agent/adb/restart` (the agent restarts its local adb server and re-reports) |
 | serial silent | hub COM / agent | `ALB_AGENT_SERIAL_COM` set on the **hub**? COM exists on the Windows host? right baud? |
 | agent connects then drops in a loop | hub | older builds tore the session down on a forwarder bind failure — current builds keep it up and warn; if looping, it's the handshake (token/version) |
 

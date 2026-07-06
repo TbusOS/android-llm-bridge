@@ -148,6 +148,9 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     {"method": "GET",  "path": "/agent/status",
      "description": "Connected remote device agents + adb/serial forwarder state "
                     "(web Connection Center)"},
+    {"method": "POST", "path": "/api/agent/adb/restart",
+     "description": "Ask the current agent to restart its local adb server and "
+                    "re-report devices (fire-and-forget; poll /agent/status)"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

@@ -26,7 +26,7 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
 from alb.remote import protocol
@@ -244,6 +244,26 @@ async def agent_channel(ws: WebSocket) -> None:
     finally:
         with contextlib.suppress(Exception):
             await ws.close()
+
+
+@router.post("/api/agent/adb/restart")
+async def agent_adb_restart() -> dict[str, Any]:
+    """Ask the current agent to restart its LOCAL adb server and re-report
+    devices. Fire-and-forget by design (same posture as the device refresh):
+    the adb_list reply lands on the signaling WS and updates the cache, so the
+    caller polls /agent/status to see the outcome. 409 when no agent is
+    connected — nothing could receive the request."""
+    registry = get_agent_registry()
+    current = registry.current_agent()
+    if current is None:
+        raise HTTPException(status_code=409, detail="no agent connected")
+    await current.request_adb_restart()
+    return {
+        "v": API_VERSION,
+        "ok": True,
+        "agent_id": current.agent_id,
+        "note": "restart requested — poll /agent/status for the refreshed device list",
+    }
 
 
 @router.get("/agent/status")

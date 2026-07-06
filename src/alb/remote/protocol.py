@@ -70,6 +70,7 @@ class Verb(str, enum.Enum):
     COM_LIST = "com_list"
     LIST_ADB = "list_adb"
     ADB_LIST = "adb_list"
+    RESTART_ADB = "restart_adb"
     OPEN_CHANNEL = "open_channel"
     CHANNEL_OPENED = "channel_opened"
     CHANNEL_ERROR = "channel_error"
@@ -140,6 +141,13 @@ def list_adb() -> dict[str, Any]:
 
 def adb_list(devices: list[str]) -> dict[str, Any]:
     return _frame(Verb.ADB_LIST, devices=devices)
+
+
+def restart_adb() -> dict[str, Any]:
+    """Ask the agent to restart ITS local adb server, then re-report devices.
+    The restart runs on the agent host by design — killing an adb server from
+    the hub side is never allowed; agents that predate this verb ignore it."""
+    return _frame(Verb.RESTART_ADB)
 
 
 def list_com() -> dict[str, Any]:

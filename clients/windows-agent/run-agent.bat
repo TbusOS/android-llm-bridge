@@ -56,7 +56,8 @@ where adb >nul 2>&1
 if errorlevel 1 (
     echo   [!] adb ... not on PATH -- UART works, adb bridging disabled
 ) else (
-    echo   [v] adb ... OK
+    %PY% -c "import subprocess; out = subprocess.run(['adb', 'devices'], capture_output=True, text=True, timeout=20).stdout; ds = [l.split('\t')[0] for l in out.splitlines()[1:] if '\t' in l]; print('  [v] adb ... OK, devices: ' + (', '.join(ds) if ds else 'NONE -- board not visible to adb yet'))" 2>nul
+    if errorlevel 1 echo   [v] adb ... OK - device query failed or timed out
 )
 
 rem -- 5. serial ports visible to this machine, for quick eyeballing.
