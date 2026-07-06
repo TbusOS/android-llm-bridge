@@ -188,6 +188,7 @@ class AgentStatus:
                 "agent_id": self.agent_id,
                 "name": self.name,
                 "hub_url": self.hub_url,
+                "web_ui": _web_ui_url(self.hub_url),
                 "connected": self.connected,
                 "uptime_s": uptime,
                 "connected_for_s": connected_for,
@@ -220,8 +221,11 @@ def _render_status_html(snap: dict[str, Any]) -> str:
     up = snap["connected"]
     dot = "#1f9d57" if up else "#c0392b"
     state = "connected" if up else "disconnected"
+    web_ui = esc(snap["web_ui"])
     rows = [
         ("hub", esc(snap["hub_url"])),
+        # the one clickable row — so nobody has to ask where the console is
+        ("web console", f'<a href="{web_ui}">{web_ui}</a>' if web_ui else "—"),
         ("agent", f"{esc(snap['name'])} · {esc(snap['agent_id'][:8])}"),
         ("uptime", f"{snap['uptime_s']}s"),
         ("connected for", f"{snap['connected_for_s']}s" if up else "—"),
@@ -344,6 +348,18 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
         caps=["adb"],
         token=token,
     )
+
+
+def _web_ui_url(hub_url: str) -> str:
+    """Best-effort URL of the hub's web console, derived from the signaling
+    URL (ws://host:port/agent/connect → http://host:port/app/). Shown at
+    startup and on the status page so the operator never has to ask where
+    the web UI lives."""
+    parts = urlsplit(hub_url)
+    if not parts.netloc:
+        return ""
+    scheme = "https" if parts.scheme == "wss" else "http"
+    return urlunsplit((scheme, parts.netloc, "/app/", "", ""))
 
 
 def _channel_url(hub_url: str, cid: str, token: str | None, csecret: str | None) -> str:
@@ -977,6 +993,9 @@ def _log_environment(args: argparse.Namespace) -> None:
         args.agent_id,
         args.hub_url,
     )
+    web_ui = _web_ui_url(args.hub_url)
+    if web_ui:
+        _log.info("hub web console: %s", web_ui)
     ports = _enumerate_com()
     _log.info(
         "serial ports here: %s",

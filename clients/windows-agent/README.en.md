@@ -74,8 +74,9 @@ can come later.
 ### Status page
 
 The agent serves a localhost-only status page on `http://127.0.0.1:8731`. It
-shows the connection state, active channels, enumerated devices, and the last
-error — so you can tell whether the dial-home reached the hub *without* logging
+shows the hub's web-console URL (a clickable `web console` row, derived from
+`hub_url`; the startup log prints the same line), the connection state,
+active channels, enumerated devices, and the last error — so you can tell whether the dial-home reached the hub *without* logging
 into the hub, even when the hub never saw the agent (wrong token / hub
 unreachable). The token is never shown there; `GET /status.json` exposes the
 same data for scripted checks.

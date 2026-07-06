@@ -16,9 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_AGENT_PATH = (
-    Path(__file__).resolve().parents[2] / "clients" / "windows-agent" / "alb_agent.py"
-)
+_AGENT_PATH = Path(__file__).resolve().parents[2] / "clients" / "windows-agent" / "alb_agent.py"
 
 
 def _load_agent():
@@ -117,7 +115,7 @@ def test_snapshot_is_json_serializable():
 
 def test_render_html_escapes_user_fields_and_shows_state():
     s = agent.AgentStatus()
-    s.init(hub_url="wss://h/agent/connect", agent_id="dead", name='<script>x</script>')
+    s.init(hub_url="wss://h/agent/connect", agent_id="dead", name="<script>x</script>")
     s.on_connected()
     html = agent._render_status_html(s.snapshot())
     assert "connected" in html
@@ -192,3 +190,16 @@ def test_status_server_bind_failure_returns_none():
         assert agent._start_status_server("127.0.0.1", port) is None
     finally:
         occupied.close()
+
+
+def test_web_ui_url_derivation():
+    assert agent._web_ui_url("ws://192.0.2.1:8765/agent/connect") == "http://192.0.2.1:8765/app/"
+    assert agent._web_ui_url("wss://hub.example/agent/connect") == "https://hub.example/app/"
+    assert agent._web_ui_url("nonsense") == ""
+
+
+def test_status_page_links_web_console():
+    snap = _fresh().snapshot()
+    assert snap["web_ui"] == "https://hub.example/app/"
+    html = agent._render_status_html(snap)
+    assert '<a href="https://hub.example/app/">' in html
