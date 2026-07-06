@@ -804,6 +804,18 @@ def _make_sigint_handler() -> Any:
 
 
 def _install_signal_handlers() -> None:
+    if sys.platform == "win32":
+        # Processes spawned under a CREATE_NEW_PROCESS_GROUP lineage (Task
+        # Scheduler, remote shells, IDE-embedded terminals) inherit Windows'
+        # "ignore Ctrl+C" console flag — CTRL_C_EVENT is then never delivered
+        # at all, no matter how often it's pressed. Clearing the inherited
+        # handler restores delivery; a double-clicked console is unaffected.
+        # (Field-verified 2026-07-06: injected CTRL_C_EVENT reached the agent
+        # only after this call.) Ctrl+Break never had the problem.
+        import ctypes
+
+        with contextlib.suppress(Exception):
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
     loop = asyncio.get_event_loop()
     installed = False
     for sig in (signal.SIGINT, signal.SIGTERM):
