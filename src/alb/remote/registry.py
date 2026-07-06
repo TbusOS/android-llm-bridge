@@ -87,6 +87,9 @@ class AgentConnection:
         # last-reported device enumeration (updated by the signaling recv loop
         # from adb_list / com_list replies). Surfaced via GET /agent/status.
         self.adb_devices: list[str] = []
+        # adb-flavoured foreign processes the agent saw while its device list
+        # was empty — the exclusive-USB-interface takeover signature.
+        self.adb_conflicts: list[str] = []
         self.com_ports: list[dict[str, Any]] = []
 
     async def request_device_list(self) -> None:
@@ -98,13 +101,15 @@ class AgentConnection:
             if "serial" in self.caps:
                 await self._send_control(protocol.list_com())
 
-    async def request_adb_restart(self) -> None:
+    async def request_adb_restart(self, *, kill_conflicts: bool = False) -> None:
         """Fire-and-forget: ask the agent to restart ITS local adb server and
         re-report devices (the adb_list reply updates the cache; poll
         /agent/status for the result). Unsticks a wedged host-side adb
-        enumeration without anyone touching the agent machine."""
+        enumeration without anyone touching the agent machine. kill_conflicts
+        additionally clears adb-flavoured foreign processes holding the
+        exclusive USB interface (the agent decides what matches)."""
         with suppress(Exception):
-            await self._send_control(protocol.restart_adb())
+            await self._send_control(protocol.restart_adb(kill_conflicts=kill_conflicts))
 
     async def open_data_channel(
         self,
@@ -188,6 +193,7 @@ class AgentRegistry:
                 "version": c.version,
                 "caps": c.caps,
                 "adb_devices": c.adb_devices,
+                "adb_conflicts": c.adb_conflicts,
                 "com_ports": c.com_ports,
             }
             for c in self._agents.values()

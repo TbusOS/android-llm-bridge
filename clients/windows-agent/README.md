@@ -71,6 +71,25 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
   `curl -X POST http://<hub>:8765/api/agent/adb/restart`（agent 在本机执行
   `adb kill-server` 后重新上报设备列表），不用人到这台电脑跟前。
 
+**问：驱动正常、设备也枚举了，adb 还是看不到（列表空）？**
+最常见的根因是**另一个改名版 adb 独占了 USB 接口**。很多厂商 PC 工具
+（烧录/部署套件、模拟器等）自带一份改了名字的 adb（`xxx_adb.exe` 之类），
+它的 server 先打开接口后就独占了——ADB 的 USB 接口同一时刻只允许一个进程
+持有，标准 adb 每次打开都吃"拒绝访问"，设备列表永远是空的，而驱动看起来
+完全正常。这套工具的应对：
+
+- **启动自检**：`run-agent.bat` 在 devices 为 NONE 时会自动扫一遍进程表，
+  把"名字含 adb 但不是 adb 本尊"的进程连 pid 一起打出来，并给出处置命令；
+- **状态页/hub 可见**：agent 上报设备列表为空时会附带嫌疑进程清单
+  （状态页 `adb conflicts` 一行、hub 的 `/agent/status` 里 `adb_conflicts`）；
+- **远程一键处置**：Linux 侧跑
+  `curl -X POST "http://<hub>:8765/api/agent/adb/restart?kill_conflicts=true"`，
+  agent 会先结束嫌疑进程再重启 adb server。默认不杀（`kill_conflicts` 不传
+  就只重启 server）——如果现场正拿厂商工具烧录，贸然杀它的 adb 会打断操作；
+- **手动处置**：`taskkill /f /pid <pid>` 然后 `adb kill-server` + `adb devices`。
+- 注意这是共存的固有矛盾：厂商工具每次运行都可能把接口再抢回去。用完厂商
+  工具后顺手跑一遍处置命令即可，两边不会坏数据。
+
 **问：想换 hub 地址 / token / 显示名字？**
 编辑 `agent.conf`（记事本就行），改完重新双击 `run-agent.bat`。格式是
 `键=值` 一行一个，`#` 开头是注释。各字段：

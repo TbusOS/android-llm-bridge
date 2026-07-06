@@ -113,6 +113,9 @@ def _apply_agent_frame(conn: AgentConnection, frame: dict[str, Any]) -> None:
     verb = frame.get("verb")
     if verb == Verb.ADB_LIST.value:
         conn.adb_devices = [str(d) for d in (frame.get("devices") or [])]
+        # suspects the agent saw while its device list was empty (absent from
+        # frames sent by agents that predate the field → cleared)
+        conn.adb_conflicts = [str(c) for c in (frame.get("conflicts") or [])]
     elif verb == Verb.COM_LIST.value:
         conn.com_ports = list(frame.get("ports") or [])
 
@@ -247,21 +250,28 @@ async def agent_channel(ws: WebSocket) -> None:
 
 
 @router.post("/api/agent/adb/restart")
-async def agent_adb_restart() -> dict[str, Any]:
+async def agent_adb_restart(kill_conflicts: bool = False) -> dict[str, Any]:
     """Ask the current agent to restart its LOCAL adb server and re-report
     devices. Fire-and-forget by design (same posture as the device refresh):
     the adb_list reply lands on the signaling WS and updates the cache, so the
     caller polls /agent/status to see the outcome. 409 when no agent is
-    connected — nothing could receive the request."""
+    connected — nothing could receive the request.
+
+    ?kill_conflicts=true additionally asks the agent to first terminate
+    adb-flavoured foreign processes (renamed vendor adb builds hold the
+    exclusive USB interface; /agent/status lists them under adb_conflicts).
+    Boolean on purpose — the agent's own heuristic decides what matches, the
+    hub can never name a process."""
     registry = get_agent_registry()
     current = registry.current_agent()
     if current is None:
         raise HTTPException(status_code=409, detail="no agent connected")
-    await current.request_adb_restart()
+    await current.request_adb_restart(kill_conflicts=kill_conflicts)
     return {
         "v": API_VERSION,
         "ok": True,
         "agent_id": current.agent_id,
+        "kill_conflicts": kill_conflicts,
         "note": "restart requested — poll /agent/status for the refreshed device list",
     }
 

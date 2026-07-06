@@ -36,9 +36,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import csv
 import json
 import logging
+import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -103,6 +106,7 @@ class AgentStatus:
     reconnects: int = 0
     last_error: str = ""
     adb_devices: list[str] = field(default_factory=list)
+    adb_conflicts: list[str] = field(default_factory=list)
     com_ports: list[dict[str, str]] = field(default_factory=list)
     _channels: dict[str, _ChannelInfo] = field(default_factory=dict)
     _channels_total: int = 0
@@ -151,6 +155,10 @@ class AgentStatus:
         with self._lock:
             self.adb_devices = list(devices)
 
+    def set_adb_conflicts(self, conflicts: list[str]) -> None:
+        with self._lock:
+            self.adb_conflicts = list(conflicts)
+
     def set_com_ports(self, ports: list[dict[str, str]]) -> None:
         with self._lock:
             self.com_ports = list(ports)
@@ -187,6 +195,7 @@ class AgentStatus:
                 "active_channels": channels,
                 "channels_total": self._channels_total,
                 "adb_devices": list(self.adb_devices),
+                "adb_conflicts": list(self.adb_conflicts),
                 "com_ports": list(self.com_ports),
             }
 
@@ -218,6 +227,7 @@ def _render_status_html(snap: dict[str, Any]) -> str:
         ("reconnects", str(snap["reconnects"])),
         ("last error", esc(snap["last_error"]) or "—"),
         ("adb devices", esc(", ".join(snap["adb_devices"])) or "—"),
+        ("adb conflicts", esc(", ".join(snap["adb_conflicts"])) or "—"),
         (
             "serial ports",
             esc(", ".join(p.get("port", "") for p in snap["com_ports"])) or "—",
@@ -537,18 +547,98 @@ async def _heartbeat(ws: Any) -> None:
         return
 
 
+# ── adb interface conflicts ──────────────────────────────────────────
+# The ADB USB interface is EXCLUSIVE-open: whichever server grabs it first
+# blinds every other one. Vendor tool suites often ship a *renamed* adb build
+# whose server keeps running after the tool exits — the standard adb then
+# reports an empty device list while the driver looks perfectly healthy.
+# Detection is a fuzzy name match (contains "adb", is not adb itself), so any
+# renamed build is caught without maintaining a vendor list.
+
+
+def _adb_conflicts_from_listing(procs: list[tuple[str, str]]) -> list[str]:
+    """procs = (name, pid) pairs → 'name pid=N' for adb-flavoured processes
+    that are not the standard adb binary itself."""
+    hits: list[str] = []
+    for name, pid in procs:
+        base = name.lower().removesuffix(".exe")
+        if "adb" in base and base != "adb":
+            hits.append(f"{name} pid={pid}")
+    return hits
+
+
+def _list_processes() -> list[tuple[str, str]]:
+    """Best-effort (name, pid) listing of running processes; [] on failure."""
+    windows = sys.platform == "win32"
+    cmd = ["tasklist", "/fo", "csv", "/nh"] if windows else ["ps", "-eo", "comm=,pid="]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    procs: list[tuple[str, str]] = []
+    if windows:
+        for row in csv.reader(out.splitlines()):
+            if len(row) >= 2:
+                procs.append((row[0], row[1]))
+    else:
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                procs.append((parts[0], parts[-1]))
+    return procs
+
+
+def _find_adb_conflicts() -> list[str]:
+    return _adb_conflicts_from_listing(_list_processes())
+
+
+def _kill_adb_conflicts() -> list[str]:
+    """Terminate the detected adb-flavoured foreign processes. The hub only
+    ever passes a boolean — WHAT matches is decided here by the same fuzzy
+    heuristic, so the hub can never name an arbitrary process to kill."""
+    killed: list[str] = []
+    for entry in _find_adb_conflicts():
+        try:
+            pid = int(entry.rsplit("pid=", 1)[-1])
+        except ValueError:
+            continue
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/f", "/pid", str(pid)], capture_output=True, timeout=10
+                )
+            else:
+                os.kill(pid, signal.SIGTERM)
+            killed.append(entry)
+        except (OSError, subprocess.SubprocessError):
+            _log.warning("could not terminate %s", entry)
+    return killed
+
+
 async def _reply_adb_list(ws: Any) -> None:
     devices = await _adb_devices()
+    # empty list is the takeover's signature — surface the suspects so the
+    # hub (and the local status page) can see WHY instead of just "no devices".
+    conflicts = [] if devices else await asyncio.to_thread(_find_adb_conflicts)
     _STATUS.set_adb_devices(devices)
+    _STATUS.set_adb_conflicts(conflicts)
     with contextlib.suppress(Exception):
-        await ws.send(_frame("adb_list", devices=devices))
+        await ws.send(_frame("adb_list", devices=devices, conflicts=conflicts))
 
 
-async def _restart_adb_and_report(ws: Any) -> None:
+async def _restart_adb_and_report(ws: Any, kill_conflicts: bool = False) -> None:
     """Restart the LOCAL adb server, then re-report devices. Runs here on the
     agent host by design — the hub must never kill an adb server remotely.
     Unsticks the common 'interface enumerated but adb server sees nothing'
-    state without anyone walking over to this machine."""
+    state without anyone walking over to this machine.
+
+    kill_conflicts additionally terminates adb-flavoured foreign processes
+    first — a renamed vendor adb holding the exclusive USB interface survives
+    a plain server restart, our server just loses the race again."""
+    if kill_conflicts:
+        killed = await asyncio.to_thread(_kill_adb_conflicts)
+        if killed:
+            _log.info("terminated adb conflicts on hub request: %s", ", ".join(killed))
     for args in (("adb", "kill-server"), ("adb", "start-server")):
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -623,7 +713,9 @@ async def _run_session(args: argparse.Namespace) -> None:
                     channels.add(task)
                     task.add_done_callback(channels.discard)
                 elif verb == "restart_adb":
-                    task = asyncio.create_task(_restart_adb_and_report(ws))
+                    task = asyncio.create_task(
+                        _restart_adb_and_report(ws, bool(frame.get("kill_conflicts")))
+                    )
                     channels.add(task)
                     task.add_done_callback(channels.discard)
                 elif verb == "list_com":

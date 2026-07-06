@@ -25,6 +25,17 @@ readable. A stuck adb enumeration can be fixed from the hub side with
 `POST /api/agent/adb/restart` — the agent restarts its local adb server and
 re-reports devices.
 
+The classic "driver fine, device enumerated, adb sees nothing" case is a
+*renamed* adb build (shipped inside vendor PC tools) exclusively holding the
+USB interface. The agent detects this: an empty device list triggers a fuzzy
+process scan (name contains "adb", is not adb itself) whose hits show up in
+the startup check, on the status page (`adb conflicts`), and in
+`/agent/status` (`adb_conflicts`). Clear it remotely with
+`POST /api/agent/adb/restart?kill_conflicts=true` — the agent terminates the
+suspects (its own heuristic decides what matches; the hub can never name a
+process) before restarting the server. Default is false: killing a vendor
+tool's adb mid-flash would interrupt it.
+
 `agent.conf` holds your real token, so it is gitignored — only the
 `.example` is tracked.
 

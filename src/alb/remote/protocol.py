@@ -143,11 +143,17 @@ def adb_list(devices: list[str]) -> dict[str, Any]:
     return _frame(Verb.ADB_LIST, devices=devices)
 
 
-def restart_adb() -> dict[str, Any]:
+def restart_adb(*, kill_conflicts: bool = False) -> dict[str, Any]:
     """Ask the agent to restart ITS local adb server, then re-report devices.
     The restart runs on the agent host by design — killing an adb server from
-    the hub side is never allowed; agents that predate this verb ignore it."""
-    return _frame(Verb.RESTART_ADB)
+    the hub side is never allowed; agents that predate this verb ignore it.
+
+    kill_conflicts asks the agent to first terminate adb-flavoured foreign
+    processes (renamed vendor adb builds hold the exclusive USB interface, so
+    a plain server restart just loses the race again). Deliberately a bool:
+    WHAT matches is the agent's own heuristic — the hub can never name an
+    arbitrary process to kill."""
+    return _frame(Verb.RESTART_ADB, kill_conflicts=kill_conflicts)
 
 
 def list_com() -> dict[str, Any]:

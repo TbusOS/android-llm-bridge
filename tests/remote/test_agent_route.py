@@ -277,3 +277,39 @@ def test_adb_restart_409_when_no_agent(monkeypatch):
     with TestClient(create_app()) as c:
         r = c.post("/api/agent/adb/restart")
     assert r.status_code == 409
+
+
+def test_adb_restart_kill_conflicts_flag_in_frame(monkeypatch):
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(_hello(None))
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_ADB.value
+            body = c.post("/api/agent/adb/restart?kill_conflicts=true").json()
+            assert body["kill_conflicts"] is True
+            frame = p.decode_control(ws.receive_text())
+            assert frame["verb"] == p.Verb.RESTART_ADB.value
+            assert frame["kill_conflicts"] is True
+
+
+def test_apply_agent_frame_stores_and_clears_adb_conflicts():
+    from alb.api.agent_route import _apply_agent_frame
+    from alb.remote.registry import AgentConnection, AgentRegistry
+
+    async def _send(_m: dict) -> None:
+        return None
+
+    conn = AgentConnection(
+        agent_id="a",
+        name="a",
+        version=1,
+        caps=["adb"],
+        send_control=_send,
+        registry=AgentRegistry(),
+    )
+    _apply_agent_frame(conn, {"verb": "adb_list", "devices": [], "conflicts": ["x_adb pid=9"]})
+    assert conn.adb_conflicts == ["x_adb pid=9"]
+    # a frame from an agent that predates the field clears the stale suspects
+    _apply_agent_frame(conn, {"verb": "adb_list", "devices": ["s1"]})
+    assert conn.adb_conflicts == []

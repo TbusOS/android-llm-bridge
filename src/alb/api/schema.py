@@ -150,7 +150,9 @@ REST_ENDPOINTS: list[EndpointSpec] = [
                     "(web Connection Center)"},
     {"method": "POST", "path": "/api/agent/adb/restart",
      "description": "Ask the current agent to restart its local adb server and "
-                    "re-report devices (fire-and-forget; poll /agent/status)"},
+                    "re-report devices (fire-and-forget; poll /agent/status). "
+                    "?kill_conflicts=true also clears adb-flavoured foreign "
+                    "processes holding the exclusive USB interface"},
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [
