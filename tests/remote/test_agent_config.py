@@ -186,3 +186,41 @@ def test_agent_id_random_when_unset(tmp_path, monkeypatch):
     a1 = agent._parse_args(["--hub-url", "ws://h"])
     a2 = agent._parse_args(["--hub-url", "ws://h"])
     assert a1.agent_id and a2.agent_id and a1.agent_id != a2.agent_id
+
+
+# ── file logging ─────────────────────────────────────────────────────
+
+
+def test_log_file_key_parses(tmp_path):
+    p = _write(tmp_path, "log_file=logs/agent.log\n")
+    assert agent._load_config(p) == {"log_file": "logs/agent.log"}
+
+
+def test_setup_file_logging_creates_rotating_handler(tmp_path):
+    import logging
+
+    root = logging.getLogger()
+    before = list(root.handlers)
+    agent._setup_file_logging(str(tmp_path / "logs" / "a.log"))
+    added = [h for h in root.handlers if h not in before]
+    try:
+        assert len(added) == 1  # parent dir auto-created, handler attached
+        # warning: INFO would be gated by the root logger's default WARNING
+        # level in the test env (production sets basicConfig(level=INFO)).
+        logging.getLogger("alb-agent").warning("post-mortem line")
+        added[0].flush()
+        text = (tmp_path / "logs" / "a.log").read_text(encoding="utf-8")
+        assert "post-mortem line" in text
+    finally:
+        for h in added:
+            root.removeHandler(h)
+            h.close()
+
+
+def test_setup_file_logging_none_disables():
+    import logging
+
+    root = logging.getLogger()
+    before = list(root.handlers)
+    agent._setup_file_logging("none")
+    assert root.handlers == before

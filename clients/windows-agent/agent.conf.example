@@ -30,3 +30,8 @@ name=bench-01
 # Status page bind host. Keep the default 127.0.0.1 — anything else exposes
 # the page beyond this machine.
 #status_host=127.0.0.1
+
+# Run log: every run appends here (rotates at ~5 MB, keeps 3 old files) so
+# problems can be analyzed after the console window is closed. Relative
+# paths are resolved next to this script. Set to none to disable.
+log_file=logs/agent.log

@@ -1,87 +1,101 @@
-# Device agent (dial-home)
+# alb 设备 agent — Windows 端使用说明
 
-A small, headless agent that lets a Linux **alb hub** reach an Android device
-that is physically attached to *this* machine (USB for adb, serial for UART).
+（English version: [README.en.md](README.en.md)）
 
-It dials **out** to the hub over a single WebSocket — so there is **no inbound
-port, no SSH, and no third-party terminal** to configure. The hub then exposes
-the device locally (e.g. `127.0.0.1:5037` for adb) so the LLM (via MCP) and
-humans (via the web UI) can debug it, all driven from the Linux side.
+这个文件夹是「远程调试桥」的 **Windows 端**。它的作用一句话：**板子插在这台
+Windows 上（USB 线 + 串口线），跑起这个 agent 之后，Linux 那边（hub）就能像
+板子直接插在 Linux 上一样调试它** —— adb、UART 串口、网页控制台、AI 调试都
+从 Linux 侧驱动，Windows 这边不用再开 Xshell / SecureCRT。
 
-## Run (config file + one click — the normal path)
+连接方向是 Windows **主动拨出**去连 Linux，所以 Windows 不用开任何入站端口、
+不用装 SSH 服务、防火墙不用改。
 
-1. Copy `agent.conf.example` to `agent.conf` (same folder) and fill in
-   `hub_url` + `token` (+ optionally `name`, and `agent_id` for a stable
-   identity across restarts).
-2. Double-click `run-agent.bat`.
+## 快速开始（3 步）
 
-The script finds Python (`python`, falling back to the `py -3` launcher),
-installs the two dependencies on first run, prints the status page URL, and
-starts the agent. On errors the window stays open so the reason is readable.
-Requires Python 3.11+ installed.
+1. 确认这台 Windows 装了 **Python 3.11 或更高**（没装的话去
+   https://www.python.org/downloads/ 下载，安装时勾上
+   "Add python.exe to PATH"）。
+2. 把 `agent.conf.example` 复制为 `agent.conf`，填两个值：`hub_url`（hub 的
+   地址）和 `token`（和 hub 端 `hub.env` 里 `ALB_AGENT_TOKEN` 一致，问 hub
+   那边要）。
+3. **双击 `run-agent.bat`**。完事。
 
-`agent.conf` holds your real token, so it is gitignored — only the
-`.example` is tracked.
+窗口里看到 `connected to ws://... as win-xxxx` 就是连上了。把窗口最小化挂着
+即可（关掉窗口 = 断开远程调试）。
 
-## Run (flags — override any config value)
+## 每次启动都会自动检查什么
 
-```
-pip install -r requirements.txt
-python alb_agent.py --hub-url wss://<hub>/agent/connect --token <token>
-```
+`run-agent.bat` 每次运行都把环境过一遍，逐项打印结果：
 
-Precedence: command line > `agent.conf` > built-in defaults.
+| 检查项 | 不通过时的行为 |
+|---|---|
+| Python 3.11+（`python` 或 `py -3`） | 停下并提示安装地址 |
+| websockets / pyserial 两个依赖库 | **自动安装**，装失败才停 |
+| `agent.conf` 是否存在 | 停下并提示先复制 `agent.conf.example` |
+| adb 是否在 PATH | 只提示不阻塞（不装 adb 串口功能照常用） |
+| 本机能看到的串口列表 | 打印出来供核对，空列表会提示查线/驱动 |
 
-- `--config`  — config file path (default: `agent.conf` next to the script).
-- `--hub-url` — the hub's signaling endpoint (`/agent/connect`).
-- `--token`   — must match `ALB_AGENT_TOKEN` configured on the hub. Omit only
-  for a fully local, no-auth dev setup.
-- `--name`    — a human-readable label shown in the hub's device list.
-- `--agent-id`— a stable id (defaults to a random one each run).
+任何一步失败窗口都会停住（按任意键才关），报错原因看得见。
 
-- `--status-port` — local status page port on 127.0.0.1 (default `8731`; `0`
-  disables). `--status-host` to change the bind host.
+## 状态页：连没连上、出了什么错，本机自查
 
-Keep the process running (it auto-reconnects with backoff if the link drops).
-On Windows run it via `run-agent.bat` in a terminal or point Task Scheduler
-at the `.bat` for start-at-boot — set `ALB_AGENT_NO_PAUSE=1` in the task's
-environment so an exit never waits for a keypress (interactively the script
-pauses on exit to keep the window readable). A background service wrapper
-can come later.
+agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有这台电脑
+自己能访问）。上面能看到：
 
-### Status page
+- 连接状态（绿点 connected / 红点 disconnected）和最近一次错误原因
+- 这台电脑上枚举到的 **adb 设备** 和 **串口列表**（板子插没插好一眼看出）
+- 当前活跃的转发通道（Linux 那边正在用 adb 还是串口）
 
-The agent serves a localhost-only status page on `http://127.0.0.1:8731`. It
-shows the connection state, active channels, enumerated devices, and the last
-error — so you can tell whether the dial-home reached the hub *without* logging
-into the hub, even when the hub never saw the agent (wrong token / hub
-unreachable). The token is never shown there; `GET /status.json` exposes the
-same data for scripted checks.
+连不上 hub 时优先看这个页的 `last error`：
+- `HTTP 403` / `1008` → token 不对，或 hub 端还没起来
+- `connection refused` / `timeout` → hub 地址不对、hub 没起、或网络不通
 
-## What it does
+## 常见问题
 
-- Maintains the signaling connection (hello + heartbeat + auto-reconnect).
-- On request from the hub, bridges the local **adb server** (`127.0.0.1:5037`)
-  to the hub over a per-request data connection.
-- Bridges a **UART / serial port** (the hub picks the COM + baud) to the hub,
-  for boot-log capture and interactive console.
-- Reports attached adb devices on request (`adb devices`).
+**问：串口用不了，Linux 那边说打不开 COM 口？**
+按顺序查三件事：
+1. 状态页的 `serial ports` 一行有没有列出 COM 口。**空的**说明 Windows 根本
+   没看到串口设备 —— 检查 USB 转串口线插没插在这台电脑、驱动装没装
+   （设备管理器 → 端口(COM 和 LPT) 里应该能看到）。
+2. 列表里有口但号不对（比如是 COM5 不是 COM4）→ 告诉 Linux 侧改
+   `hub.env` 里的 `ALB_AGENT_SERIAL_COM` 后重启 hub（串口号是 Linux 侧配的，
+   Windows 这边不用改）。
+3. 号对但打不开 → 有别的程序占着这个口（Xshell / SecureCRT / 串口助手），
+   把它们关掉。串口同一时间只能被一个程序占用。
 
-To use serial, set the COM + baud on the **hub** (it drives the agent):
+**问：adb 设备列表是空的？**
+- 这台 Windows 要装 adb（platform-tools）并在 PATH 里；
+- 板子 USB 线插好，第一次连接要在板子屏幕上点"允许 USB 调试"；
+- 本机 cmd 里跑 `adb devices` 能看到设备，Linux 那边才能看到。
 
-```
-ALB_AGENT_SERIAL_COM=COM27 ALB_AGENT_SERIAL_BAUD=1500000 alb-api
-```
+**问：想换 hub 地址 / token / 显示名字？**
+编辑 `agent.conf`（记事本就行），改完重新双击 `run-agent.bat`。格式是
+`键=值` 一行一个，`#` 开头是注释。各字段：
 
-- Enumerates attached serial ports on request (`serial.tools.list_ports`).
+| 键 | 含义 |
+|---|---|
+| `hub_url` | hub 的地址，`ws://<Linux的IP>:8765/agent/connect` |
+| `token` | 和 hub 端 `hub.env` 里 `ALB_AGENT_TOKEN` 一致的口令 |
+| `name` | 在 hub 网页上显示的名字，随意 |
+| `agent_id` | 固定身份号，别改；删了的话每次重启 hub 会当成新设备 |
+| `status_port` | 状态页端口，默认 8731，写 0 关闭 |
 
-For the full end-to-end bring-up + verification + troubleshooting, see
-`docs/dial-home-runbook.md`.
+**问：能开机自动启动吗？**
+可以。任务计划程序（Task Scheduler）新建任务指向 `run-agent.bat`，并在任务的
+环境变量里加 `ALB_AGENT_NO_PAUSE=1`（不加的话出错时脚本会等按键，后台任务会
+卡住）。
 
-## Security
+**问：窗口关了会怎样？**
+远程调试断开，Linux 那边立刻看不到板子。重新双击 `run-agent.bat` 即可，断线
+也会自动重连（1/2/5/10 秒退避），不用手动干预。
 
-- The agent only ever proxies an **allowlisted** local target
-  (`127.0.0.1:5037`); it re-checks every request and refuses anything else, so
-  it can never be turned into an open proxy on your LAN.
-- Traffic rides the same authenticated `wss://` connection as the hub API.
-- Configure a token (`--token` / `ALB_AGENT_TOKEN`) for any non-loopback hub.
+**问：工具本身出问题了怎么定位？**
+看日志文件：**`logs\agent.log`**（本文件夹下，`agent.conf` 里
+`log_file=logs/agent.log` 控制）。每次运行都往里追加，窗口关了记录也在：
+
+- 启动环境一行（Python / websockets / pyserial 版本、用的哪个配置文件）
+- 本机串口列表快照
+- 每次连接 / 断开 / 重连的原因，每条通道打开失败的原因
+
+文件到约 5 MB 自动轮转，最多保留 3 份旧的（`agent.log.1` ~ `.3`），不会
+撑爆磁盘。报告问题时把这个文件一起发过来最有用。写 `log_file=none` 可关闭。

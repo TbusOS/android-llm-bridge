@@ -1,44 +1,68 @@
 @echo off
 rem One-click launcher for the alb device agent.
-rem Fill in agent.conf (copy agent.conf.example) and double-click this file.
-rem It finds Python 3.11+, installs the two dependencies on first run, and
-rem starts the agent. Extra arguments are passed through to alb_agent.py.
+rem Every run re-checks the environment (Python / deps / config / adb) and
+rem prints each result, then starts the agent. Extra arguments are passed
+rem through to alb_agent.py.
 rem Unattended runs (Task Scheduler): set ALB_AGENT_NO_PAUSE=1 in the task's
 rem environment so an exit never waits for a keypress.
 setlocal
 cd /d "%~dp0"
 
-rem -- locate Python 3.11+: plain `python` may be the Microsoft Store stub
-rem    or an old install -- fall back to the py launcher.
+echo [run-agent] environment check:
+
+rem -- 1. Python 3.11+: plain `python` may be the Microsoft Store stub or an
+rem       old install -- fall back to the py launcher.
 set "PY=python"
 %PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if errorlevel 1 set "PY=py -3"
 %PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if errorlevel 1 (
-    echo [run-agent] Python 3.11+ not found.
+    echo   [x] Python 3.11+ ... NOT FOUND
+    echo.
     echo [run-agent] Install it from https://www.python.org/downloads/
     echo [run-agent] and tick "Add python.exe to PATH" in the installer.
     goto :fail
 )
+%PY% -c "import sys; print('  [v] Python ' + '.'.join(map(str, sys.version_info[:3])) + ' ... OK')"
 
-if not exist agent.conf (
-    echo [run-agent] agent.conf not found.
-    echo [run-agent] Copy agent.conf.example to agent.conf, fill in
-    echo [run-agent] hub_url + token, then run this again.
-    goto :fail
-)
-
-rem -- first run: install websockets + pyserial if missing
-%PY% -c "import websockets, serial" >nul 2>&1
+rem -- 2. deps: websockets + pyserial. Missing -> auto-install, then re-check.
+%PY% -c "import websockets, serial; print('  [v] websockets ' + getattr(websockets, '__version__', '?') + ' / pyserial ' + getattr(serial, '__version__', '?') + ' ... OK')" 2>nul
 if errorlevel 1 (
-    echo [run-agent] installing dependencies -- first run only...
+    echo   [!] websockets / pyserial missing -- installing...
     %PY% -m pip install -r requirements.txt
     if errorlevel 1 (
-        echo [run-agent] pip install failed -- check network / proxy and retry.
+        echo   [x] pip install FAILED -- check network / proxy and retry.
+        goto :fail
+    )
+    %PY% -c "import websockets, serial; print('  [v] websockets ' + getattr(websockets, '__version__', '?') + ' / pyserial ' + getattr(serial, '__version__', '?') + ' ... installed OK')" 2>nul
+    if errorlevel 1 (
+        echo   [x] dependencies still missing after install.
         goto :fail
     )
 )
 
+rem -- 3. config file
+if not exist agent.conf (
+    echo   [x] agent.conf ... NOT FOUND
+    echo.
+    echo [run-agent] Copy agent.conf.example to agent.conf, fill in
+    echo [run-agent] hub_url + token, then run this again.
+    goto :fail
+)
+echo   [v] agent.conf ... OK
+
+rem -- 4. adb: optional -- serial/UART works without it.
+where adb >nul 2>&1
+if errorlevel 1 (
+    echo   [!] adb ... not on PATH -- UART works, adb bridging disabled
+) else (
+    echo   [v] adb ... OK
+)
+
+rem -- 5. serial ports visible to this machine, for quick eyeballing.
+%PY% -c "from serial.tools import list_ports; ps = [p.device for p in list_ports.comports()]; print('  [v] serial ports here: ' + (', '.join(ps) if ps else 'NONE -- check the USB-serial cable/driver'))" 2>nul
+
+echo.
 echo [run-agent] status page: http://127.0.0.1:8731 by default -- the agent
 echo [run-agent] log below prints the actual URL.
 %PY% alb_agent.py %*

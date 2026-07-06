@@ -45,6 +45,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -673,6 +674,7 @@ _CONFIG_KEYS: dict[str, Any] = {
     "agent_id": str,
     "status_port": _port_number,
     "status_host": str,
+    "log_file": str,
 }
 
 
@@ -744,22 +746,85 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="127.0.0.1",
         help="status page bind host (default 127.0.0.1 — localhost only)",
     )
+    ap.add_argument(
+        "--log-file",
+        default=None,
+        help="also log to this file, rotating at ~5 MB x3 (relative paths are"
+        " resolved next to this script; 'none' disables)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
 
     pre, _ = ap.parse_known_args(argv)
+    config_used: Path | None = None
     if pre.config:
         config_path = Path(pre.config)
         if not config_path.is_file():
             ap.error(f"config file not found: {config_path}")
         ap.set_defaults(**_load_config(config_path))
+        config_used = config_path
     elif _default_config_path().is_file():
         ap.set_defaults(**_load_config(_default_config_path()))
+        config_used = _default_config_path()
 
     args = ap.parse_args(argv)
     if not args.hub_url:
         ap.error(f"missing hub URL — set hub_url in {DEFAULT_CONFIG_NAME} or pass --hub-url")
     args.agent_id = args.agent_id or uuid.uuid4().hex
+    args.config_used = str(config_used) if config_used else ""
     return args
+
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def _setup_file_logging(log_file: str) -> None:
+    """Mirror all log output into a rotating file (~5 MB, 3 backups, UTF-8)
+    so problems can be analyzed after the console window is gone. Relative
+    paths resolve against the script directory, not the CWD — double-click
+    and Task Scheduler both start elsewhere. 'none' disables."""
+    if log_file.strip().lower() == "none":
+        return
+    path = Path(log_file)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent / path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    except OSError as e:
+        _log.warning("file logging disabled — cannot open %s (%s)", path, e)
+        return
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    logging.getLogger().addHandler(handler)
+    _log.info("logging to %s", path)
+
+
+def _log_environment(args: argparse.Namespace) -> None:
+    """One startup line with everything a post-mortem needs (never the token)."""
+    try:
+        import serial
+
+        pyserial_ver = getattr(serial, "__version__", "?")
+    except ImportError:
+        pyserial_ver = "not installed"
+    _log.info(
+        "starting: python %s · websockets %s · pyserial %s · %s · config %s",
+        sys.version.split()[0],
+        getattr(websockets, "__version__", "?"),
+        pyserial_ver,
+        sys.platform,
+        args.config_used or "(none — flags only)",
+    )
+    _log.info(
+        "identity: name=%s agent_id=%s hub=%s",
+        args.name,
+        args.agent_id,
+        args.hub_url,
+    )
+    ports = _enumerate_com()
+    _log.info(
+        "serial ports here: %s",
+        ", ".join(p["port"] for p in ports) if ports else "NONE",
+    )
 
 
 def main() -> None:
@@ -767,8 +832,11 @@ def main() -> None:
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        format=_LOG_FORMAT,
     )
+    if args.log_file:
+        _setup_file_logging(args.log_file)
+    _log_environment(args)
 
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args))
