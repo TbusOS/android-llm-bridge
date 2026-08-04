@@ -6,15 +6,16 @@ they are operating-system sockets (not in-loop objects), the separate alb-mcp /
 CLI processes reach the device by plain connect() — alb's transports and MCP
 tools are unchanged.
 
-Each accepted local connection opens ONE data channel to the agent and shuttles
-bytes. ADR-052 channel roles:
-  - adb    = DAEMON  — proxies the adb server (a listen-socket daemon). Fail
-             fast, NO retry; a reset is a real error (USB reauth / device drop /
-             server crash). L-034.
-  - serial = GATEWAY — proxies a per-connection exclusive bridge (the agent's
-             COM port). The forwarder itself is still single-attempt; the
-             bounded retry lives in alb's SerialTransport._open_tcp_with_retry,
-             which reconnects to this listener.
+ADR-052 channel roles decide how a local connection maps onto agent channels:
+  - adb    = DAEMON  — proxies the adb server (a listen-socket daemon), which
+             is happy to serve many clients. ONE channel per local connection.
+             Fail fast, NO retry; a reset is a real error (USB reauth / device
+             drop / server crash). L-034.
+  - serial = GATEWAY — proxies the agent's COM port, which the OS opens
+             EXCLUSIVELY. All local connections therefore SHARE one channel
+             (`_SerialSession`), refcounted: the first opens it, the last
+             closes it. See the class docstring for why fan-out is the only
+             correct model for a UART.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from collections.abc import Callable
 from typing import Any
 
 from alb.remote.protocol import ADB_TARGET, ChannelRole, ChannelType
-from alb.remote.registry import ChannelOpener, DataChannel
+from alb.remote.registry import ChannelOpener, ChannelOpenError, DataChannel
 
 _log = logging.getLogger(__name__)
 
@@ -38,6 +39,31 @@ DEFAULT_SERIAL_PORT = 9001  # matches infra.config.SerialConfig.default_tcp_port
 DEFAULT_BAUD = 115200
 DIAL_BACK_TIMEOUT_S = 10.0
 _CHUNK = 65536
+
+# RX chunks buffered per local connection before we consider it wedged.
+# Chunks are whatever one agent-side serial read produced (sub-KB at 115200),
+# so this is ~100 KB of slack — a localhost socket that has not drained that
+# much has stopped reading, and stalling the shared pump for it would starve
+# every OTHER reader (the capture that must not miss boot bytes).
+_SUB_QUEUE_MAX = 256
+
+# Inter-attempt waits when the agent reports it could not open the serial port.
+# Covers the hand-off gap while the agent releases the COM handle from the
+# session that just ended; a port held by another program still fails, ~0.5s later.
+_SERIAL_OPEN_BACKOFF_S: tuple[float, ...] = (0.15, 0.35)
+
+
+def _err_text(exc: BaseException) -> str:
+    """Human-readable one-liner for a channel-open failure.
+
+    ``str(asyncio.TimeoutError())`` is the empty string, which used to make
+    the "channel open failed" log line end in a bare colon and say nothing.
+    Fall back to the exception class name whenever the message is empty.
+    """
+    msg = str(exc).strip()
+    if isinstance(exc, TimeoutError) and not msg:
+        return f"agent did not dial back within {DIAL_BACK_TIMEOUT_S:.0f}s"
+    return msg or type(exc).__name__
 
 
 def _env_int(var: str, default: int) -> int:
@@ -156,7 +182,11 @@ class ChannelForwarder:
                 timeout=DIAL_BACK_TIMEOUT_S,
             )
         except Exception as e:
-            _log.warning("%s channel open failed (no retry): %s", self._channel_type.value, e)
+            _log.warning(
+                "%s channel open failed (no retry): %s",
+                self._channel_type.value,
+                _err_text(e),
+            )
             return
         await self._shuttle(reader, writer, channel)
 
@@ -221,8 +251,146 @@ class AdbForwarder(ChannelForwarder):
         )
 
 
+class _Subscriber:
+    """One local connection attached to the shared serial session."""
+
+    __slots__ = ("gone", "queue", "task", "writer")
+
+    def __init__(self, writer: asyncio.StreamWriter) -> None:
+        self.writer = writer
+        self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_SUB_QUEUE_MAX)
+        self.task: asyncio.Task[None] | None = None
+        self.gone = asyncio.Event()
+
+    async def pump(self) -> None:
+        """Drain our RX queue into the local socket. Per-subscriber so one slow
+        reader can never block the shared fan-out."""
+        try:
+            while True:
+                data = await self.queue.get()
+                self.writer.write(data)
+                await self.writer.drain()
+        except Exception:
+            return
+
+
+class _SerialSession:
+    """ONE agent-side serial channel, fanned out to N local connections.
+
+    Why this exists (issue #4): the agent opens the COM port with
+    ``serial.Serial(com, baud)``, and an OS serial port is EXCLUSIVE. Opening a
+    channel per local connection therefore meant the second concurrent alb
+    command — `serial shell` while `serial capture` runs, a second capture, the
+    web UART console alongside either — silently got nothing: the agent's open
+    failed, it never dialed back, and the hub closed the local socket after the
+    dial-back timeout. `shell` then saw zero bytes and blamed the board
+    (BOARD_UNREACHABLE); `send` reported "wrote N bytes" for bytes that went
+    nowhere.
+
+    A UART is physically a broadcast medium — every reader must see everything
+    the board prints, and any reader may type — so sharing is not a workaround
+    but the only faithful model. RX is copied to every subscriber; TX from all
+    subscribers is merged into the one channel (serialized by a lock, since a
+    half-written frame from one writer interleaved with another's would corrupt
+    both).
+
+    Lifetime is refcounted by the forwarder: the first local connection opens
+    the channel, the last one to leave closes it.
+    """
+
+    def __init__(self, channel: DataChannel) -> None:
+        self._channel = channel
+        self._subs: set[_Subscriber] = set()
+        self._send_lock = asyncio.Lock()
+        self.refs = 0
+        self.closed = asyncio.Event()
+        self._rx = asyncio.create_task(self._fan_out())
+
+    async def _fan_out(self) -> None:
+        try:
+            while True:
+                data = await self._channel.recv()
+                if not data:
+                    return
+                for sub in list(self._subs):
+                    try:
+                        sub.queue.put_nowait(data)
+                    except asyncio.QueueFull:
+                        _log.warning(
+                            "serial subscriber not draining (%d chunks queued); "
+                            "dropping it so the other readers keep flowing",
+                            _SUB_QUEUE_MAX,
+                        )
+                        self._drop(sub)
+        except Exception as e:
+            _log.debug("serial session RX ended: %s", _err_text(e))
+        finally:
+            self.closed.set()
+            for sub in list(self._subs):
+                self._drop(sub)
+
+    def _drop(self, sub: _Subscriber) -> None:
+        self._subs.discard(sub)
+        sub.gone.set()
+        if sub.task is not None:
+            sub.task.cancel()
+
+    async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Attach one local connection until it (or the session) ends."""
+        if self.closed.is_set():
+            return
+        sub = _Subscriber(writer)
+        sub.task = asyncio.create_task(sub.pump())
+        self._subs.add(sub)
+        if self.closed.is_set():
+            # The session died while we were attaching. Nothing above yields, so
+            # this cannot happen today — but a subscriber left in a dead set
+            # would wait on `gone` forever, and that is not a failure mode worth
+            # depending on statement order to avoid.
+            self._drop(sub)
+        tx = asyncio.create_task(self._local_to_channel(reader))
+        gone = asyncio.create_task(sub.gone.wait())
+        try:
+            _done, pending = await asyncio.wait({tx, gone}, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await t
+        finally:
+            self._drop(sub)
+            if sub.task is not None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await sub.task
+
+    async def _local_to_channel(self, reader: asyncio.StreamReader) -> None:
+        try:
+            while True:
+                data = await reader.read(_CHUNK)
+                if not data:
+                    return
+                async with self._send_lock:
+                    await self._channel.send(data)
+        except Exception:
+            return
+
+    async def aclose(self) -> None:
+        self.closed.set()
+        self._rx.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._rx
+        for sub in list(self._subs):
+            self._drop(sub)
+        with contextlib.suppress(Exception):
+            await self._channel.aclose()
+
+
 class SerialForwarder(ChannelForwarder):
-    """Bridge local TCP (127.0.0.1:9001) <-> the agent's COM port (GATEWAY)."""
+    """Bridge local TCP (127.0.0.1:9001) <-> the agent's COM port (GATEWAY).
+
+    Unlike the adb forwarder, ALL local connections share one agent channel —
+    see :class:`_SerialSession` for why an exclusive COM port leaves no other
+    honest option.
+    """
 
     def __init__(
         self,
@@ -241,6 +409,99 @@ class SerialForwarder(ChannelForwarder):
             host=host,
             port=port,
         )
+        self._session: _SerialSession | None = None
+        self._session_lock = asyncio.Lock()
+
+    @property
+    def session_refs(self) -> int:
+        """Local connections currently sharing the serial channel (0 = closed).
+        Surfaced for /agent/status and tests."""
+        return self._session.refs if self._session is not None else 0
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            session = await self._acquire()
+        except Exception as e:
+            _log.warning("serial channel open failed (no retry): %s", _err_text(e))
+            return
+        try:
+            await session.serve(reader, writer)
+        finally:
+            await self._release(session)
+
+    async def _acquire(self) -> _SerialSession:
+        """Join the live session, or open the channel if we are the first.
+
+        The lock is deliberately held across ``open_data_channel``: a second
+        connection arriving mid-open must WAIT and then reuse the result, not
+        race into a second COM open that the agent would have to refuse.
+        """
+        async with self._session_lock:
+            session = self._session
+            if session is not None and not session.closed.is_set():
+                session.refs += 1
+                return session
+            agent = self._get_agent()
+            if agent is None:
+                raise ConnectionError("no agent connected")
+            channel = await self._open_channel_with_retry(agent)
+            session = _SerialSession(channel)
+            session.refs = 1
+            self._session = session
+            return session
+
+    async def _open_channel_with_retry(self, agent: ChannelOpener) -> DataChannel:
+        """Bounded retry on "the agent could not open the port" — the GATEWAY
+        half of ADR-052, which permits it precisely because an exclusive
+        gateway can be *momentarily* busy.
+
+        The window we are covering: the previous session just closed, and the
+        agent has not finished releasing its COM handle. Retrying turns a
+        spurious "Access is denied" into a ~0.5 s hiccup. A port held by some
+        OTHER program still fails — just half a second later, with the agent's
+        own message intact.
+        """
+        last: Exception | None = None
+        for attempt in range(len(_SERIAL_OPEN_BACKOFF_S) + 1):
+            try:
+                return await agent.open_data_channel(
+                    ctype=self._channel_type,
+                    role=self._role,
+                    params=self._params,
+                    timeout=DIAL_BACK_TIMEOUT_S,
+                )
+            except ChannelOpenError as e:
+                last = e
+                if attempt < len(_SERIAL_OPEN_BACKOFF_S):
+                    await asyncio.sleep(_SERIAL_OPEN_BACKOFF_S[attempt])
+        assert last is not None  # the loop only exits here after a failure
+        raise last
+
+    async def _release(self, session: _SerialSession) -> None:
+        async with self._session_lock:
+            session.refs -= 1
+            if session.refs > 0:
+                return
+            if self._session is session:
+                self._session = None
+            # Close INSIDE the lock: a connection arriving right now must not
+            # start a fresh COM open while the agent is still releasing this
+            # one — that is the same exclusive-open race, just inverted.
+            await session.aclose()
+
+    async def detach(self) -> None:
+        # Deliberately NOT under _session_lock: a shutdown must not queue behind
+        # an in-flight open (up to DIAL_BACK_TIMEOUT_S). Instead, sweep twice —
+        # once now, once after the connection tasks are cancelled — so a session
+        # created by a racing _acquire cannot outlive the forwarder.
+        await self._close_session()
+        await super().detach()
+        await self._close_session()
+
+    async def _close_session(self) -> None:
+        session, self._session = self._session, None
+        if session is not None:
+            await session.aclose()
 
 
 _ADB_FORWARDER: ChannelForwarder | None = None
@@ -313,5 +574,8 @@ def forwarder_status() -> dict[str, Any]:
             "configured": serial_configured(),
             "com": serial_com(),
             "baud": serial_baud(),
+            # how many alb readers/writers currently share the one COM channel
+            # (capture + shell + web console can now coexist — issue #4)
+            "readers": getattr(_SERIAL_FORWARDER, "session_refs", 0),
         },
     }

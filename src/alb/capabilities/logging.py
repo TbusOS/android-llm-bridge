@@ -195,9 +195,14 @@ async def capture_uart(
     """Capture raw UART output for `duration` seconds. Requires SerialTransport.
 
     LLM notes:
-        - UART bytes are written verbatim to the artifact file.
+        - UART bytes are written verbatim to the artifact file, incrementally —
+          you can tail / grep the artifact WHILE the capture is still running
+          instead of waiting out the full duration.
         - Use for: boot log, u-boot stage, kernel panic rescue.
         - Returns DmesgSummary-shaped summary (lines + error-keyword count).
+        - Safe to run alongside `alb_uart_shell` / `alb_uart_send` / the web UART
+          console: readers share one link. To capture a full boot, start the
+          capture FIRST, then reboot the board from another call.
 
     Args:
         output: Optional override for the artifact path.
@@ -277,6 +282,10 @@ async def send_uart(
           Set False for raw control bytes / interrupt chars.
         - Returns immediately; it does NOT read the response. Follow with
           `alb_uart_capture` or `alb_uart_shell` to see output.
+        - ok=True means the bytes reached the UART, NOT that the board acted on
+          them — a console that is not at a prompt silently discards input. When
+          you need proof a command ran, use `alb_uart_shell` (it waits for the
+          prompt and returns a real exit code).
     """
     if transport.name != "serial":
         return fail(

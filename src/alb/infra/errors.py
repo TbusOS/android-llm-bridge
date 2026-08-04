@@ -60,7 +60,20 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "SERIAL_PORT_NOT_FOUND",
         "transport",
         "Serial port not found",
-        "Check ser2net config and Xshell tunnel",
+        "Check ser2net config and the reverse tunnel",
+    ),
+    "SERIAL_PORT_BUSY": ErrorSpec(
+        "SERIAL_PORT_BUSY",
+        "transport",
+        "Serial port is held exclusively by another program",
+        "Close the terminal emulator / flashing tool holding the port, then retry "
+        "(concurrent alb readers share one link and do NOT conflict)",
+    ),
+    "SERIAL_SEND_UNCONFIRMED": ErrorSpec(
+        "SERIAL_SEND_UNCONFIRMED",
+        "transport",
+        "Serial write was accepted locally but the link died before the bytes could reach the UART",
+        "Check the bridge / agent is up (alb serial health), then resend",
     ),
 
     # device

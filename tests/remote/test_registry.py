@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from alb.remote.protocol import ADB_TARGET, ChannelRole, ChannelType
 from alb.remote.registry import (
     AgentConnection,
     AgentRegistry,
+    ChannelOpenError,
     get_agent_registry,
     reset_agent_registry,
 )
@@ -75,6 +78,34 @@ async def test_pending_resolves_future():
     assert fut.done() and fut.result() is ch
     reg.discard_pending("cid1")
     assert reg.pending_count == 0
+
+
+async def test_fail_pending_raises_the_agents_reason():
+    """issue #4: when the agent says it cannot open the channel, the waiter must
+    fail NOW with that reason — not sit out the full dial-back timeout while the
+    caller's writes drain into a socket that will never carry them."""
+    reg = AgentRegistry()
+    fut = reg.register_pending("cid1", "sec1")
+    assert reg.fail_pending("cid1", "cannot open COM4: Access is denied") is True
+    assert fut.done()
+    with pytest.raises(ChannelOpenError, match="Access is denied"):
+        fut.result()
+
+
+async def test_fail_pending_unknown_or_settled_cid_is_false():
+    reg = AgentRegistry()
+    assert reg.fail_pending("nope", "boom") is False
+    fut = reg.register_pending("cid1", "sec1")
+    assert reg.resolve_pending("cid1", _DummyChannel(), "sec1") is True
+    assert reg.fail_pending("cid1", "too late") is False
+    assert fut.exception() is None
+
+
+async def test_fail_pending_has_a_reason_even_when_the_agent_sent_none():
+    reg = AgentRegistry()
+    fut = reg.register_pending("cid1", "sec1")
+    assert reg.fail_pending("cid1", "") is True
+    assert str(fut.exception())  # never an empty error string
 
 
 async def test_resolve_unknown_cid_is_false():

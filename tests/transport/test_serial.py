@@ -919,3 +919,74 @@ async def test_open_tcp_succeeds_first_attempt(monkeypatch) -> None:
     link = await t._open_tcp_with_retry()
     assert link.mode == "tcp"
     assert calls["n"] == 1
+
+
+# ─── send_raw honesty (issue #4) ───────────────────────────────────
+@pytest.mark.asyncio
+async def test_send_raw_ok_when_the_link_stays_up() -> None:
+    """A quiet console is not a failure — the write is reported ok once the
+    confirm window passes without the endpoint hanging up."""
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(4096)
+        await asyncio.sleep(1.0)  # stay connected, say nothing
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        t._SEND_CONFIRM_S = 0.1
+        r = await t.send_raw(b"reboot\n")
+    assert r.ok is True
+    assert r.error_code is None
+
+
+@pytest.mark.asyncio
+async def test_send_raw_ok_immediately_when_the_console_is_chatty() -> None:
+    """A board that is printing confirms the link instantly — no dwell, so
+    time-critical sends (u-boot autoboot interrupt) keep their timing."""
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(4096)
+        writer.write(b"Hit any key to stop autoboot:  2 \r")
+        await writer.drain()
+        await asyncio.sleep(1.0)
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        t._SEND_CONFIRM_S = 5.0  # would dominate the timing if we ever waited it out
+        r = await t.send_raw(b"\x03")
+    assert r.ok is True
+    assert r.duration_ms < 2000
+
+
+@pytest.mark.asyncio
+async def test_send_raw_reports_failure_when_the_endpoint_hangs_up() -> None:
+    """The issue #4 silent failure: the bridge could not reach the UART, so it
+    closes the connection and our bytes are discarded. Reporting
+    `[ok] wrote N bytes` there cost two 3-minute captures in the field."""
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(4096)
+        writer.close()  # drop it, exactly as the forwarder does with no channel
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        r = await t.send_raw(b"reboot\n")
+    assert r.ok is False
+    assert r.error_code == "SERIAL_SEND_UNCONFIRMED"
+    assert "never reached the UART" in r.stderr
+
+
+def test_classify_connect_error_separates_busy_from_missing() -> None:
+    """pyserial raises a plain SerialException (an OSError) for BOTH "no such
+    port" and "someone else has it" — only the message tells them apart, and
+    they need different fixes."""
+    from serial import SerialException  # type: ignore[import-not-found]
+
+    from alb.transport.serial import _classify_connect_error
+
+    win = SerialException("could not open port COM4: Access is denied.")
+    lnx = SerialException("Could not exclusively lock port /dev/ttyUSB0: [Errno 11]")
+    assert _classify_connect_error(win) == "SERIAL_PORT_BUSY"
+    assert _classify_connect_error(lnx) == "SERIAL_PORT_BUSY"
+    assert _classify_connect_error(FileNotFoundError("no such device")) == "SERIAL_PORT_NOT_FOUND"
+    assert _classify_connect_error(PermissionError("nope")) == "SERIAL_PERMISSION_DENIED"

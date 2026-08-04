@@ -154,24 +154,47 @@ alb serial uboot                        # 进 u-boot 专用模式（持续发 Ct
 
 ### 场景 1 · 看完整启动日志
 
-```bash
-# 1. 断电板子
-# 2. 启动采集
-alb serial log --save &
+抓取先起、复位后发 —— **顺序不能反**，bootrom / bootloader 阶段只出现一次，
+错过就得再重启一遍。
 
-# 3. 上电
-# 应该看到：
-#   U-Boot 2021.10 ...
-#   DRAM:  2 GiB
-#   Loading kernel...
-#   [0.000000] Booting Linux on ...
-#   [0.123456] CPU: ARMv8 ...
-#   ...
-#   init: Starting service 'adbd'
-#   android:/ $
+```bash
+# 终端 A：先起抓取（时长要盖住整个启动）
+alb serial capture -d 180 -o ./boot.log
+
+# 终端 B：抓取跑着的时候复位板子
+alb serial shell 'reboot'      # 软复位
+# 或者直接上电（硬复位场景下 B 什么都不用做）
 ```
 
-产物：`workspace/devices/<serial>/logs/2026-04-15T10-30-00-uart-boot.log`
+应该看到：
+
+```
+U-Boot 2021.10 ...
+DRAM:  2 GiB
+Loading kernel...
+[0.000000] Booting Linux on ...
+init: Starting service 'adbd'
+console:/ $
+```
+
+产物：`-o` 指定的路径；不给 `-o` 时落在 `workspace/devices/<serial>/logs/<ts>-uart.log`。
+
+**两条省时间的性质**：
+
+- 抓取是**增量落盘**的，不必等满时长 —— 另开一个终端
+  `tail -F ./boot.log | grep -m1 'Starting service .adbd.'` 就能在启动完成的那一刻返回。
+- 抓取期间**可以同时**跑 `alb serial shell` / `alb serial send` / 开 Web UART 控制台，
+  三者共用同一条链路，谁也不会把谁挤掉。
+
+> **为什么需要专门说这条**：串口不是网络端口，操作系统对它是**独占打开**的 ——
+> 一个进程拿着，第二个就打不开。所以 alb 的做法是 hub 侧只开一次串口，把收到的字节
+> **复制给每个读方**，写入则合并回同一条链路（UART 物理上本来就是广播介质，
+> 一份字节所有人都该看见）。
+> 早期版本是「一条连接开一次串口」，于是抓取期间 `serial shell` 必然报
+> `BOARD_UNREACHABLE`（其实板子是好的），`serial send` 更糟 —— 报"写入成功"但字节被丢弃。
+> 见 [issue #4](https://github.com/TbusOS/android-llm-bridge/issues/4)。
+> 如果现在还看到 `SERIAL_PORT_BUSY`，那是**别的程序**（终端软件、厂商烧录工具）
+> 占着串口，不是 alb 自己在打架。
 
 ### 场景 2 · 进 u-boot 命令行
 

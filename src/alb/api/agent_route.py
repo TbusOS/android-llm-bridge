@@ -198,8 +198,19 @@ async def agent_connect(ws: WebSocket) -> None:
             verb = frame.get("verb")
             if verb == Verb.HEARTBEAT.value:
                 continue
-            # adb_list / com_list update the device cache; channel_* are advisory
-            # (the data-plane correlation happens on /agent/channel).
+            if verb == Verb.CHANNEL_ERROR.value:
+                # The agent could not open the channel we asked for (COM held by
+                # another program, adb server gone, ...). Wake the forwarder NOW
+                # with the agent's own reason instead of making it wait out the
+                # dial-back timeout — issue #4.
+                cid = str(frame.get("cid") or "")
+                reason = str(frame.get("reason") or "")
+                if registry.fail_pending(cid, reason):
+                    _log.warning("agent %s could not open channel: %s", agent_id, reason)
+                continue
+            # adb_list / com_list update the device cache; channel_opened /
+            # channel_closed are advisory (the data-plane correlation happens
+            # on /agent/channel).
             _apply_agent_frame(conn, frame)
             _log.debug("agent %s control: %s", agent_id, verb)
     except WebSocketDisconnect:

@@ -49,14 +49,21 @@ def cmd_send(
     no_newline: bool = typer.Option(False, "--no-newline", help="Skip the trailing newline."),
     device: str | None = typer.Option(None, "--device"),
 ) -> None:
-    """Send a raw string over UART (no prompt waiting)."""
+    """Send a raw string over UART (no prompt waiting, no execution check)."""
     t = _force_serial(ctx, device)
     payload = text if no_newline else text + "\n"
     result = run_async(t.send_raw(payload.encode("utf-8")))
     # Reuse print_result by wrapping in an ok/fail Result-like object via the
     # shell path — simpler: print raw ShellResult.
     if result.ok:
-        typer.echo(f"[ok] wrote {len(payload)} bytes to serial")
+        # Say what we actually verified. A UART never acknowledges, so "sent"
+        # is the strongest true claim: if the console was busy / not at a
+        # prompt, the board may have ignored the bytes entirely. Use
+        # `alb serial shell` when you need to know the command really ran.
+        typer.echo(
+            f"[ok] sent {len(payload)} bytes over the serial link "
+            "(delivery to the UART confirmed; execution by the board is not)"
+        )
     else:
         typer.echo(f"[fail] {result.error_code}: {result.stderr}", err=True)
         raise typer.Exit(code=1)

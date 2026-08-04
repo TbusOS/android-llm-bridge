@@ -25,6 +25,15 @@ from alb.remote import protocol
 from alb.remote.protocol import ChannelRole, ChannelType
 
 
+class ChannelOpenError(Exception):
+    """The agent reported it could NOT open a requested data channel.
+
+    Distinct from a dial-back timeout: this carries the agent's own reason
+    (e.g. "cannot open COM4: Access is denied"), so the hub log and the caller
+    see WHY instead of "something took too long".
+    """
+
+
 class DataChannel(Protocol):
     """A bidirectional byte channel (one dialed-back data connection)."""
 
@@ -235,6 +244,28 @@ class AgentRegistry:
         if not hmac.compare_digest(stored, presented):
             return False
         pending.fut.set_result(channel)
+        return True
+
+    def fail_pending(self, cid: str, reason: str) -> bool:
+        """Fail a pending dial-back because the agent said it could not open the
+        channel (`channel_error` verb). Returns True if a waiter was woken.
+
+        Why it matters: without it the ONLY signal of a failed open is the
+        dial-back timeout, so the forwarder sits on a live local socket for the
+        full DIAL_BACK_TIMEOUT_S. For serial that window is actively harmful —
+        `alb serial send` writes into that socket, reports success, and the
+        bytes are discarded when the forwarder finally gives up (issue #4).
+
+        Not bound to the reporting agent: pending cids are global (DEBT-083
+        tracks per-agent addressing). The frame still has to arrive on an
+        authenticated signaling WS, and cids are unguessable uuid4 hex.
+        """
+        pending = self._pending.get(cid)
+        if pending is None or pending.fut.done():
+            return False
+        pending.fut.set_exception(
+            ChannelOpenError(reason or "agent reported channel open failure")
+        )
         return True
 
     def discard_pending(self, cid: str) -> None:

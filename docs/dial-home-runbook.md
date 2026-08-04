@@ -142,6 +142,8 @@ Walk down the chain; each hop has an unambiguous "good" signal.
 | `alb devices` empty but agent connected | Windows adb | `adb devices` on the Windows host — authorize the USB prompt; the agent only proxies what its local adb sees. A wedged enumeration can be kicked remotely: `curl -X POST http://<hub>:8765/api/agent/adb/restart` (the agent restarts its local adb server and re-reports) |
 | adb empty + `/agent/status` shows `adb_conflicts` | Windows adb takeover | a renamed vendor adb build holds the exclusive USB interface — `curl -X POST "http://<hub>:8765/api/agent/adb/restart?kill_conflicts=true"` terminates the suspects (agent-side heuristic) and restarts the server; expect it to recur whenever the vendor tool runs |
 | serial silent | hub COM / agent | `ALB_AGENT_SERIAL_COM` set on the **hub**? COM exists on the Windows host? right baud? |
+| `SERIAL_PORT_BUSY`, or the agent logs `cannot open COM…: Access is denied` | Windows host | some **other** program on the agent host holds the port (terminal emulator, vendor flashing tool) — close it. Concurrent alb clients are not the cause: they share one channel, and `/agent/status` → `forwarders.serial.readers` shows how many are attached |
+| `serial shell` fails while a capture runs | — | fixed (issue #4). If it still happens, the hub is running a build older than the shared-channel fan-out — check `forwarders.serial.readers` exists in `/agent/status` |
 | agent connects then drops in a loop | hub | older builds tore the session down on a forwarder bind failure — current builds keep it up and warn; if looping, it's the handshake (token/version) |
 
 ## Security

@@ -2020,3 +2020,55 @@ no-token dev posture 也变强（数据面从只验 cid 变成额外需要 256bi
 **关联**: ADR-050（数据面 dial-back 模型）· DEBT-084（cid-binding 半本 ADR 落地，current_agent
 寻址半仍 open）· DEBT-083（多 agent 寻址，一并）· L-063（自包含安全硬化可先于 deferred 的多
 agent 寻址落地）
+
+## ADR-054 · 独占串口的反向代理必须共享一条 channel + fan-out，不是"每条本地连接一条 channel"（issue #4 根因）
+
+**背景**: ADR-050 定"每条本地连接开一条独立 data channel"，对 adb 是对的（listen-socket
+daemon 多客户端友好），对 serial 是**错的**：agent 侧 `serial.Serial(com, baud)` 是**操作系统
+独占打开**，第二条 channel 必然打不开。真机 2026-08-04 issue #4 实测三个后果：
+① `capture` 跑着时 `serial shell` 必报 `BOARD_UNREACHABLE`（板子其实是好的 —— handshake
+读到 0 字节 → IDLE → 误报）；② `serial send` 报 `[ok] wrote N bytes` 但字节被丢弃（写进了
+本地 socket，forwarder 还卡在 10s dial-back 超时里没开始读，超时后连字节带连接一起扔）；
+③ 两个 capture 并发，后起的抓 0 字节。合起来是"边抓取边操作板子"整条路走不通 —— 而
+UART 抓取最重要的用途（抓完整启动日志 = 先起抓取再触发重启）恰好只能这么做。
+
+**决定**:
+1. **serial forwarder 全进程共享一条 agent channel**（`_SerialSession`），引用计数：第一条
+   本地连接开，最后一条走关。RX 复制给每个订阅者，TX 各方合流（`_send_lock` 串行，避免两个
+   写方的帧交错）。**adb 保持每连接一条 channel 不变**（daemon 语义没这个约束）。
+2. **每订阅者一条有界队列 + 自己的写任务**（`_SUB_QUEUE_MAX=256`）。慢读方溢出就**踢掉它**，
+   不阻塞共享 pump —— 否则一个不读的 Web 页面会让 capture 丢启动字节。
+3. **关闭在锁内做**（`_release`）：refs 归零后必须等 channel 真关完才允许下一次 open，
+   否则就是同一个独占竞态倒过来。
+4. **agent 开口失败要回帧**（`channel_error` verb，协议里早有、之前从没人发过；hub 端
+   `registry.fail_pending`）。之前唯一的失败信号是 10s dial-back 超时，而那 10s 正是
+   `send` 静默丢字节的窗口。
+5. **open 失败按 ADR-052 的 gateway 角色 bounded retry**（0.15/0.35s 两次）：覆盖上一条
+   session 刚关、agent 还没释放 COM 句柄的交接缝。真被别的程序占着的口照样失败，只是晚 0.5s。
+
+**为什么**: UART 物理上就是**广播介质** —— 板子打印的每个字节所有读方都该看见，任何读方都
+可以敲字符。所以"共享 + fan-out"不是绕过独占限制的 workaround，而是唯一忠于介质语义的模型。
+替代方案：(a) 只加错误码 `SERIAL_BUSY`（能把"浪费半小时"降到"看一眼提示"，但"边抓边操作"
+仍然走不通，而那是 UART 抓取的头号用途）；(b) agent 侧多路复用（要在 agent 里再造一套
+订阅分发，且直连 /dev/ttyUSB 拓扑用不上）。选 hub 侧 forwarder，因为它是所有本地连接的
+唯一汇聚点，改一处覆盖 CLI / MCP / Web 三个客户端。
+
+**边界（不在本 ADR）**: **直连拓扑**（`alb serial` 直接开 `/dev/ttyUSB*` 或直连 ser2net，
+不经 hub forwarder）仍然是一个进程一个独占句柄 —— 那里没有汇聚点可以 fan-out。对它只做
+诚实报错：`_classify_connect_error` 认 busy 文本（Windows "Access is denied" / pyserial
+"Could not exclusively lock port"）→ `SERIAL_PORT_BUSY`，与 `SERIAL_PORT_NOT_FOUND`
+分开（同是 SerialException，只有 message 能区分，而两者的修法完全不同）。
+
+**代价 / 已知**: serial forwarder 从无状态变成有状态（session + refcount + 锁），
+`detach()` 要扫两次防竞态创建的 session 漏关。`/agent/status` 多一个
+`forwarders.serial.readers` 字段暴露当前共享读方数（运维要能看见"是 alb 自己在共享"还是
+"别的程序占着口"）。
+
+**Enforcement**:
+- 新增反向代理 channel 类型时，除 ADR-052 的 role 判断外，还要判**被代理端是否独占打开**：
+  独占 → 必须共享 + fan-out + 引用计数；多客户端 daemon → 每连接一条。
+- `send_raw` 之类"只写不读"的路径禁止无条件报成功：至少要确认链路在写入后没被对端拆掉
+  （`SERIAL_SEND_UNCONFIRMED`）。报告"成功"却什么都没发生，比报错代价高得多。
+
+**关联**: ADR-050（每连接一条 channel —— serial 侧被本 ADR 修正）· ADR-051（forwarder 单例）·
+ADR-052（gateway bounded retry —— 本 ADR 用它覆盖 COM 句柄交接缝）· issue #4

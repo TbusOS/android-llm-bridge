@@ -283,7 +283,9 @@ class SerialTransport(Transport):
         start = perf_counter()
         try:
             link = await self._open()
-        except (ConnectionError, FileNotFoundError, ImportError) as e:
+        # OSError, not ConnectionError: pyserial raises SerialException (an
+        # OSError) for a busy / locked port, and it used to escape uncaught.
+        except (OSError, ImportError) as e:
             return ShellResult(
                 ok=False,
                 exit_code=-1,
@@ -626,7 +628,9 @@ class SerialTransport(Transport):
 
         try:
             link = await self._open()
-        except (ConnectionError, FileNotFoundError, ImportError) as e:
+        # OSError, not ConnectionError: pyserial raises SerialException (an
+        # OSError) for a busy / locked port, and it used to escape uncaught.
+        except (OSError, ImportError) as e:
             # Yield nothing and let the caller handle the empty stream via
             # its own timeout / duration limit. For better LLM diagnostics
             # we also write a single synthetic marker line.
@@ -708,7 +712,9 @@ class SerialTransport(Transport):
 
         try:
             link = await self._open()
-        except (ConnectionError, FileNotFoundError, ImportError) as e:
+        # OSError, not ConnectionError: pyserial raises SerialException (an
+        # OSError) for a busy / locked port, and it used to escape uncaught.
+        except (OSError, ImportError) as e:
             info["ok"] = False
             info["connected"] = False
             info["error"] = str(e)
@@ -779,9 +785,21 @@ class SerialTransport(Transport):
         any visible effect."""
         await self._close(link)
 
+    # How long send_raw waits for evidence that the link survived our write.
+    # Paid ONLY on a silent console: `reader.read()` returns the moment any
+    # byte arrives, so a chatty endpoint (u-boot countdown, booting kernel —
+    # exactly when send timing matters) confirms in ~0 ms.
+    _SEND_CONFIRM_S = 0.25
+
     async def send_raw(self, data: bytes) -> ShellResult:
         """Fire-and-forget byte write — no prompt wait. Useful for u-boot
         interrupt sequences (e.g. repeated b'\\x03' for Ctrl-C).
+
+        "Fire-and-forget" is about the BOARD: a UART never acknowledges, so we
+        cannot promise the console consumed the bytes. We can, however, promise
+        the *link* was still alive — and that promise used to be missing, which
+        is what made a write into a dead bridge report ``[ok] wrote N bytes``
+        while the board did nothing (issue #4).
         """
         start = perf_counter()
         try:
@@ -795,12 +813,44 @@ class SerialTransport(Transport):
         try:
             link.writer.write(data)
             await link.writer.drain()
+            if await self._link_died_after_write(link):
+                return ShellResult(
+                    ok=False,
+                    exit_code=-1,
+                    stderr=(
+                        "the serial endpoint closed the connection right after the "
+                        "write — the bytes never reached the UART"
+                    ),
+                    error_code="SERIAL_SEND_UNCONFIRMED",
+                    duration_ms=int((perf_counter() - start) * 1000),
+                )
             return ShellResult(
                 ok=True, exit_code=0, stdout="",
                 duration_ms=int((perf_counter() - start) * 1000),
             )
         finally:
             await self._close(link)
+
+    async def _link_died_after_write(self, link: _SerialLink) -> bool:
+        """True when the endpoint tore the connection down instead of carrying
+        our bytes.
+
+        Any byte read back, or a read that simply times out, both mean the link
+        is alive. Only a clean EOF / reset proves the write went nowhere.
+
+        Bytes observed here are discarded — nothing else is reading THIS
+        connection (each alb command owns its own), and with the hub-side
+        fan-out every other reader gets its own copy of the same stream.
+        """
+        try:
+            peek = await asyncio.wait_for(
+                link.reader.read(self.read_chunk), timeout=self._SEND_CONFIRM_S
+            )
+        except TimeoutError:
+            return False
+        except (ConnectionResetError, OSError):
+            return True
+        return peek == b""
 
 
 # ─── Helpers ───────────────────────────────────────────────────────
@@ -1011,7 +1061,23 @@ def _is_decisive(state: SerialState) -> bool:
     )
 
 
+# Substrings every OS/library uses to say "someone else already has this port".
+# pyserial raises SerialException (an OSError, NOT a PermissionError) in all of
+# these cases, so the type alone cannot tell them apart from a missing device.
+_BUSY_HINTS = (
+    "access is denied",            # Windows: another program holds the COM port
+    "could not exclusively lock",  # pyserial's flock() on Linux
+    "device or resource busy",
+    "resource temporarily unavailable",
+)
+
+
 def _classify_connect_error(exc: Exception) -> str:
+    # Busy beats every type-based rule below: the exception class is generic,
+    # the message is the only discriminator, and "someone else has the port"
+    # needs a different fix from "no such port" / "you lack permission".
+    if any(h in str(exc).lower() for h in _BUSY_HINTS):
+        return "SERIAL_PORT_BUSY"
     if isinstance(exc, FileNotFoundError):
         return "SERIAL_PORT_NOT_FOUND"
     if isinstance(exc, PermissionError):

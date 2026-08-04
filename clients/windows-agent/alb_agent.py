@@ -401,26 +401,46 @@ async def _adb_devices() -> list[str]:
 # ── data channel: dial back + bridge raw bytes ───────────────────────
 
 
-async def _handle_open_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
+async def _report_channel_error(ws: Any, cid: str, reason: str) -> None:
+    """Tell the hub we could not open the channel it asked for.
+
+    Without this the hub learns nothing and just waits out its dial-back
+    timeout, holding a local socket that will never carry bytes — and for
+    serial, silently swallowing whatever the caller wrote into it (issue #4).
+    Best-effort: a failure to report must never take down the session.
+    """
+    if not cid:
+        return
+    with contextlib.suppress(Exception):
+        await ws.send(_frame("channel_error", cid=cid, reason=reason))
+
+
+async def _handle_open_channel(
+    hub_url: str, token: str | None, frame: dict[str, Any], ws: Any = None
+) -> None:
     cid = str(frame.get("cid") or "")
     ctype = frame.get("channel_type")
     if not cid:
         return
     if ctype == "tcp":
-        await _handle_tcp_channel(hub_url, token, frame)
+        await _handle_tcp_channel(hub_url, token, frame, ws)
     elif ctype == "serial":
-        await _handle_serial_channel(hub_url, token, frame)
+        await _handle_serial_channel(hub_url, token, frame, ws)
     else:
         _log.warning("unsupported channel type %r", ctype)
+        await _report_channel_error(ws, cid, f"unsupported channel type {ctype!r}")
 
 
-async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
+async def _handle_tcp_channel(
+    hub_url: str, token: str | None, frame: dict[str, Any], ws: Any = None
+) -> None:
     cid = str(frame.get("cid") or "")
     params = frame.get("params") or {}
     target = str(params.get("target") or "")
     # Re-check the target against our OWN allowlist — do not trust the hub.
     if target not in ALLOWED_TCP_TARGETS:
         _log.warning("rejected channel target %r (not allowlisted)", target)
+        await _report_channel_error(ws, cid, f"target {target!r} not allowlisted on the agent")
         return
 
     csecret = str(frame.get("csecret") or "")
@@ -429,6 +449,7 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
         port = int(port_s)
     except ValueError:
         _log.warning("bad target port %r", target)
+        await _report_channel_error(ws, cid, f"bad target port in {target!r}")
         return
 
     # DAEMON channel (ADR-052): a single attempt. No retry of the data channel.
@@ -436,6 +457,7 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
         reader, writer = await asyncio.open_connection(host, port)
     except OSError as e:
         _log.warning("channel %s: cannot reach %s: %s", cid[:8], target, e)
+        await _report_channel_error(ws, cid, f"cannot reach {target}: {e}")
         return
 
     url = _channel_url(hub_url, cid, token, csecret)
@@ -452,7 +474,9 @@ async def _handle_tcp_channel(hub_url: str, token: str | None, frame: dict[str, 
             await writer.wait_closed()
 
 
-async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[str, Any]) -> None:
+async def _handle_serial_channel(
+    hub_url: str, token: str | None, frame: dict[str, Any], ws: Any = None
+) -> None:
     cid = str(frame.get("cid") or "")
     csecret = str(frame.get("csecret") or "")
     params = frame.get("params") or {}
@@ -460,11 +484,13 @@ async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[st
     baud = int(params.get("baud") or 115200)
     if not com:
         _log.warning("serial channel %s: no COM specified", cid[:8])
+        await _report_channel_error(ws, cid, "no COM port specified in open_channel params")
         return
     try:
         import serial  # pyserial
     except ImportError:
         _log.error("pyserial not installed; cannot open serial channel (pip install pyserial)")
+        await _report_channel_error(ws, cid, "pyserial not installed on the agent host")
         return
 
     try:
@@ -473,7 +499,12 @@ async def _handle_serial_channel(hub_url: str, token: str | None, frame: dict[st
         # shutdown can't be interrupted, leaving the console unkillable.
         ser = serial.Serial(com, baud, timeout=0.05, write_timeout=2)
     except Exception as e:
+        # The COM port is EXCLUSIVE. The hub now shares one channel across all
+        # its readers, so a failure here means some OTHER program on this host
+        # holds the port (a terminal emulator, a vendor flashing tool) — the
+        # operator needs to see WHICH, so send the OS message through.
         _log.warning("serial channel %s: cannot open %s @ %s: %s", cid[:8], com, baud, e)
+        await _report_channel_error(ws, cid, f"cannot open {com} @ {baud}: {e}")
         return
     _log.info("serial channel %s: opened %s @ %s", cid[:8], com, baud)
 
@@ -726,7 +757,7 @@ async def _run_session(args: argparse.Namespace) -> None:
                 verb = frame.get("verb")
                 if verb == "open_channel":
                     task = asyncio.create_task(
-                        _handle_open_channel(args.hub_url, args.token, frame)
+                        _handle_open_channel(args.hub_url, args.token, frame, ws)
                     )
                     channels.add(task)
                     task.add_done_callback(channels.discard)

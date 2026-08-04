@@ -314,7 +314,7 @@ so the next poll reflects plug/unplug.
   "forwarders": {
     "adb":    {"bound": true, "port": 5037},
     "serial": {"bound": true, "port": 9001, "configured": true,
-               "com": "COM4", "baud": 115200}
+               "com": "COM4", "baud": 115200, "readers": 2}
   }
 }
 ```
@@ -322,6 +322,11 @@ so the next poll reflects plug/unplug.
 `adb_conflicts` lists adb-flavoured foreign processes the agent saw while its
 device list was empty — the signature of a renamed vendor adb holding the
 exclusive USB interface.
+
+`serial.readers` is how many alb clients currently share the one COM channel —
+a capture, a `serial shell`, and the web UART console at the same time reads
+`3`. The port is opened once and its bytes are fanned out; `0` means no client
+is attached and the port is closed.
 
 ### POST /api/agent/adb/restart
 

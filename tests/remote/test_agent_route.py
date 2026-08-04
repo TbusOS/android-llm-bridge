@@ -8,6 +8,7 @@ Uses Starlette's in-process TestClient WebSocket (no real network, no
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -313,3 +314,39 @@ def test_apply_agent_frame_stores_and_clears_adb_conflicts():
     # a frame from an agent that predates the field clears the stale suspects
     _apply_agent_frame(conn, {"verb": "adb_list", "devices": ["s1"]})
     assert conn.adb_conflicts == []
+
+
+def test_channel_error_frame_is_dispatched_to_fail_pending(monkeypatch):
+    """issue #4: `channel_error` must wake the waiting forwarder immediately
+    with the agent's reason, instead of leaving it to time out on a dial-back
+    that will never come. The session must survive the frame."""
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    from alb.remote.registry import AgentRegistry
+
+    seen: list[tuple[str, str]] = []
+
+    def _spy(self, cid: str, reason: str) -> bool:
+        seen.append((cid, reason))
+        return True
+
+    monkeypatch.setattr(AgentRegistry, "fail_pending", _spy)
+
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(_hello(None))
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_ADB.value
+
+            ws.send_text(
+                p.encode_control(
+                    p.channel_error(cid="cid-x", reason="cannot open COM4: Access is denied")
+                )
+            )
+            # the route runs on the server's own loop — poll until it lands
+            for _ in range(200):
+                if seen:
+                    break
+                time.sleep(0.01)
+            assert seen == [("cid-x", "cannot open COM4: Access is denied")]
+            # an unopenable channel is not a session-level failure
+            assert len(c.get("/agent/status").json()["agents"]) == 1
