@@ -77,6 +77,7 @@ _POSIX_SHELL_STATES = frozenset({
 _STATE_REJECT: dict[SerialState, str] = {
     SerialState.PANIC: "BOARD_PANICKED",
     SerialState.IDLE: "BOARD_UNREACHABLE",
+    SerialState.LINK_REFUSED: "SERIAL_LINK_REFUSED",
     SerialState.CORRUPTED: "SERIAL_BAUD_MISMATCH",
     SerialState.SPL: "BOARD_BOOTING",
     SerialState.KERNEL_BOOT: "BOARD_BOOTING",
@@ -519,8 +520,15 @@ class SerialTransport(Transport):
            (prompts, panic, corrupted).
 
         Returns the final classified state.
+
+        Silence and a hang-up are tracked separately. Both leave an empty
+        buffer, but "the endpoint is there and quiet" (``IDLE``) and "the
+        endpoint closed on us" (``LINK_REFUSED``) point at opposite halves
+        of the chain, and collapsing them sends people to the bench to
+        debug a bridge problem.
         """
         deadline = perf_counter() + self.handshake_timeout
+        hung_up = False
 
         # Step 1: opportunistic pre-read of pending bytes
         for _ in range(5):
@@ -534,6 +542,7 @@ class SerialTransport(Transport):
             except asyncio.TimeoutError:
                 break
             if not chunk:
+                hung_up = True
                 break
             sm.feed(chunk)
 
@@ -545,8 +554,9 @@ class SerialTransport(Transport):
             link.writer.write(self.newline)
             await link.writer.drain()
         except (ConnectionResetError, BrokenPipeError):
-            # Writer died during nudge; fall through with whatever we have.
-            return sm.state
+            # Writer died during nudge — that IS a hang-up, and with no bytes
+            # seen it is all we know about the link.
+            return self._empty_buffer_state(sm, hung_up=True)
 
         # Step 3: drain until decisive or deadline
         while perf_counter() < deadline:
@@ -558,20 +568,34 @@ class SerialTransport(Transport):
             except asyncio.TimeoutError:
                 break
             if not chunk:
+                hung_up = True
                 break
             sm.feed(chunk)
             if _is_decisive(sm.state):
                 break
 
-        # An endpoint that emitted literally nothing across the whole
-        # handshake window is ``IDLE`` — semantically richer than the
-        # default ``UNKNOWN`` (which means "saw bytes but couldn't
-        # classify"). Most common causes of IDLE: board powered off,
-        # UART not wired on the device side, or some OTHER program
-        # holding the COM port exclusively on the remote end.
-        if not sm.buffer_tail and sm.state == SerialState.UNKNOWN:
-            return SerialState.IDLE
-        return sm.state
+        return self._empty_buffer_state(sm, hung_up=hung_up)
+
+    @staticmethod
+    def _empty_buffer_state(sm: SerialStateMachine, *, hung_up: bool) -> SerialState:
+        """Classify a handshake that produced no classifiable bytes.
+
+        An endpoint that emitted literally nothing is ``IDLE`` or
+        ``LINK_REFUSED`` — both semantically richer than the default
+        ``UNKNOWN`` (which means "saw bytes but couldn't classify").
+
+        * ``LINK_REFUSED`` — it hung up. The bridge/agent could not reach
+          the port (another program holds it, the COM vanished). Nothing
+          reached the board, so nothing about the board is implied.
+        * ``IDLE`` — it stayed connected and said nothing: board powered
+          off, UART not wired on the device side, wrong port.
+
+        Bytes we DID classify always win: a real prompt or a panic is
+        better information than how the socket ended.
+        """
+        if sm.buffer_tail or sm.state != SerialState.UNKNOWN:
+            return sm.state
+        return SerialState.LINK_REFUSED if hung_up else SerialState.IDLE
 
     def _reject_for_state(
         self,
@@ -598,6 +622,10 @@ class SerialTransport(Transport):
         stderr_map = {
             SerialState.PANIC:        "board is in kernel panic; only reboot can recover",
             SerialState.IDLE:         "no output observed on UART after handshake",
+            SerialState.LINK_REFUSED: (
+                "the serial endpoint closed the connection without sending a byte "
+                "— the bridge never reached the UART, so this says nothing about the board"
+            ),
             SerialState.CORRUPTED:    "UART stream is mostly non-printable (wrong baud?)",
             SerialState.SPL:          "board is still in SPL / pre-u-boot phase",
             SerialState.KERNEL_BOOT:  "board is still in kernel boot phase",

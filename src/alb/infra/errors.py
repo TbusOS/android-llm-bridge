@@ -191,6 +191,14 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "No output observed on UART after handshake",
         "Check power, UART wiring, baud rate, and the bridge / ser2net status",
     ),
+    "SERIAL_LINK_REFUSED": ErrorSpec(
+        "SERIAL_LINK_REFUSED",
+        "transport",
+        "The serial endpoint accepted the connection then closed it without a byte — "
+        "the bridge never reached the UART",
+        "Not a board fault. Check the bridge: the alb-api log carries the agent's own "
+        "reason (usually another program holds the port), or `alb serial health`",
+    ),
     "SERIAL_BAUD_MISMATCH": ErrorSpec(
         "SERIAL_BAUD_MISMATCH",
         "transport",

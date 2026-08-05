@@ -990,3 +990,58 @@ def test_classify_connect_error_separates_busy_from_missing() -> None:
     assert _classify_connect_error(lnx) == "SERIAL_PORT_BUSY"
     assert _classify_connect_error(FileNotFoundError("no such device")) == "SERIAL_PORT_NOT_FOUND"
     assert _classify_connect_error(PermissionError("nope")) == "SERIAL_PERMISSION_DENIED"
+
+
+# ─── hang-up vs silence (issue #4 follow-up) ───────────────────────
+@pytest.mark.asyncio
+async def test_shell_reports_link_refused_when_endpoint_hangs_up() -> None:
+    """An endpoint that accepts then immediately closes is NOT an unreachable
+    board — it is a bridge that could not reach the port (another program holds
+    it, the COM vanished). Blaming the board sends people to the bench to debug
+    a problem that lives on the other host. Observed for real on 2026-08-05.
+    """
+
+    async def handler(reader, writer) -> None:
+        writer.close()  # hang up without a byte
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=0.5)
+        r = await t.shell("echo ping", timeout=2)
+
+    assert not r.ok
+    assert r.error_code == "SERIAL_LINK_REFUSED"
+    assert "says nothing about the board" in r.stderr
+
+
+@pytest.mark.asyncio
+async def test_silent_but_open_endpoint_is_still_idle_not_refused() -> None:
+    """The other side of the split: an endpoint that stays connected and says
+    nothing is still the board's problem (BOARD_UNREACHABLE)."""
+
+    async def handler(reader, writer) -> None:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=0.5)
+        r = await t.shell("echo ping", timeout=2)
+
+    assert r.error_code == "BOARD_UNREACHABLE"
+
+
+def test_classified_bytes_beat_a_hang_up() -> None:
+    """What we read outranks how the socket ended: a real prompt (or a panic)
+    must not be overwritten by LINK_REFUSED just because the peer then closed."""
+    from alb.transport.serial_state import SerialState, SerialStateMachine
+
+    sm = SerialStateMachine()
+    sm.feed(b"\nconsole:/ $ ")
+    assert SerialTransport._empty_buffer_state(sm, hung_up=True) is SerialState.SHELL_USER
+
+    empty = SerialStateMachine()
+    assert SerialTransport._empty_buffer_state(empty, hung_up=True) is SerialState.LINK_REFUSED
+    assert SerialTransport._empty_buffer_state(empty, hung_up=False) is SerialState.IDLE

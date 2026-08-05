@@ -47,9 +47,20 @@ class SerialState(str, Enum):
     when trailing bytes don't match any known pattern."""
 
     IDLE = "idle"
-    """Buffer is empty. The endpoint emitted nothing. Likely causes:
-    board is powered off, UART isn't wired, or the bridge / ser2net is
-    connected but the device isn't."""
+    """Buffer is empty, but the connection is STILL OPEN. The endpoint is
+    there and emitted nothing. Likely causes: board is powered off, UART
+    isn't wired, or the bridge is connected but the device isn't."""
+
+    LINK_REFUSED = "link_refused"
+    """Buffer is empty because the endpoint HUNG UP — we connected and it
+    closed on us without a byte. Nothing was ever learned about the board.
+
+    Split from IDLE because the two point at opposite halves of the chain
+    and IDLE's advice ("check power / wiring / baud") sends you to the
+    bench for a problem that lives in the bridge: the ser2net / agent side
+    could not reach the port at all — most often another program holds it
+    exclusively. Told to check the board, you would find nothing wrong with
+    it. Not byte-derived (no PatternSet entry), same as IDLE and UNKNOWN."""
 
     CORRUPTED = "corrupted"
     """Mostly non-printable bytes. Almost always a baud-rate mismatch.
