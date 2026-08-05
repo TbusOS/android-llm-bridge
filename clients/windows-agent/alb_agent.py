@@ -746,6 +746,21 @@ async def _run_session(args: argparse.Namespace) -> None:
 
         hb = asyncio.create_task(_heartbeat(ws))
         channels: set[asyncio.Task[None]] = set()
+
+        def _forget(task: asyncio.Task[None]) -> None:
+            """Drop a finished side-task AND retrieve its exception.
+
+            Ctrl-C on Windows raises KeyboardInterrupt inside whatever task step
+            the main thread happens to be running — often one of these. Nobody
+            awaits them (they are fire-and-forget replies), so an unretrieved
+            exception makes asyncio log "Task exception was never retrieved"
+            with a full traceback when the task is garbage-collected: a clean
+            shutdown that reads as a crash. Retrieving it here marks it handled.
+            """
+            channels.discard(task)
+            if not task.cancelled():
+                task.exception()
+
         try:
             async for raw in ws:
                 if isinstance(raw, bytes):
@@ -760,26 +775,26 @@ async def _run_session(args: argparse.Namespace) -> None:
                         _handle_open_channel(args.hub_url, args.token, frame, ws)
                     )
                     channels.add(task)
-                    task.add_done_callback(channels.discard)
+                    task.add_done_callback(_forget)
                 elif verb == "list_adb":
                     # subprocess enumeration must not block the reader loop
                     # (it would delay subsequent open_channel frames) — run it
                     # as its own task.
                     task = asyncio.create_task(_reply_adb_list(ws))
                     channels.add(task)
-                    task.add_done_callback(channels.discard)
+                    task.add_done_callback(_forget)
                 elif verb == "restart_adb":
                     task = asyncio.create_task(
                         _restart_adb_and_report(ws, bool(frame.get("kill_conflicts")))
                     )
                     channels.add(task)
-                    task.add_done_callback(channels.discard)
+                    task.add_done_callback(_forget)
                 elif verb == "list_com":
                     # pyserial enumeration is sync → run as its own task so it
                     # doesn't block the reader loop.
                     task = asyncio.create_task(_reply_com_list(ws))
                     channels.add(task)
-                    task.add_done_callback(channels.discard)
+                    task.add_done_callback(_forget)
         finally:
             _STATUS.on_disconnected()
             hb.cancel()
@@ -788,7 +803,9 @@ async def _run_session(args: argparse.Namespace) -> None:
             for t in list(channels):
                 t.cancel()
             for t in list(channels):
-                with contextlib.suppress(asyncio.CancelledError, Exception):
+                # BaseException, not Exception: a KeyboardInterrupt that landed
+                # in a still-pending task must not escape the teardown loop.
+                with contextlib.suppress(BaseException):
                     await t
 
 
@@ -829,6 +846,13 @@ def _make_sigint_handler() -> Any:
             os._exit(130)
             return  # unreachable in production; keeps the fake-exit test honest
         print("stopping... (Ctrl-C again to force quit)", file=sys.stderr, flush=True)
+        # Tell the cooperative loops to wind down too. Without this the four
+        # `while not _shutdown.is_set()` loops never see the shutdown at all —
+        # everything rides on KeyboardInterrupt unwinding the stack, which only
+        # works because it happens to land somewhere unwindable. Runs on the
+        # loop's own thread (the handler fires between bytecodes in the main
+        # thread), so setting the Event directly is safe here.
+        _shutdown.set()
         raise KeyboardInterrupt
 
     return _handler
