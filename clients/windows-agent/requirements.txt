@@ -1,2 +1,4 @@
-websockets>=12.0
+# >=13.0: the agent imports websockets.asyncio.client (absent in 12.x) and
+# passes additional_headers= to connect() for the dial-back credentials.
+websockets>=13.0
 pyserial>=3.5

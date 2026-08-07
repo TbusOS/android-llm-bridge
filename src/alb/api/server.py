@@ -58,10 +58,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     projects every `tps_sample` for the dashboard's O(window) metric
     queries. attach() is idempotent, so a per-test create_app() that
     re-enters the lifespan against a shared bus can't double-register.
+    Also install the access-log redactor (ADR-055) — startup is the only
+    hook that runs after uvicorn's dictConfig on every launch path.
     """
+    from alb.api.access_log import install_access_log_redaction
     from alb.infra.event_bus import get_bus
     from alb.infra.metric_store import get_metric_store
 
+    install_access_log_redaction()
     get_metric_store().attach(get_bus())
     try:
         yield

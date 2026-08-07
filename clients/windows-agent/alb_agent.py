@@ -70,6 +70,12 @@ PROTOCOL_VERSION = 1
 ADB_TARGET = "127.0.0.1:5037"
 ALLOWED_TCP_TARGETS = frozenset({ADB_TARGET})
 
+# Dial-back credential headers (ADR-055) — mirror alb.remote.protocol. They
+# used to ride the query string, where the hub's access log recorded both in
+# clear text on every channel open. Headers are not logged.
+TOKEN_HEADER = "x-alb-token"
+CSECRET_HEADER = "x-alb-csecret"
+
 HEARTBEAT_INTERVAL_S = 20.0
 RECONNECT_BACKOFF_S = (1.0, 2.0, 5.0, 10.0)
 _CHUNK = 65536
@@ -362,17 +368,27 @@ def _web_ui_url(hub_url: str) -> str:
     return urlunsplit((scheme, parts.netloc, "/app/", "", ""))
 
 
-def _channel_url(hub_url: str, cid: str, token: str | None, csecret: str | None) -> str:
-    """Derive wss://<host>/agent/channel?cid=...&token=...&csecret=... from the
-    hub URL. The csecret is the hub-minted per-channel secret carried by the
-    open_channel frame; the hub verifies it on dial-back (DEBT-084)."""
+def _channel_url(hub_url: str, cid: str) -> str:
+    """Derive wss://<host>/agent/channel?cid=... from the hub URL.
+
+    Only the cid rides the query string: it is a routing key, not a
+    credential, and keeping it visible is what makes a channel traceable in
+    the hub log. The token and the per-channel secret go in headers instead
+    (_channel_headers) — see ADR-055."""
     parts = urlsplit(hub_url)
-    query = {"cid": cid}
+    return urlunsplit((parts.scheme, parts.netloc, "/agent/channel", urlencode({"cid": cid}), ""))
+
+
+def _channel_headers(token: str | None, csecret: str | None) -> dict[str, str]:
+    """Dial-back credentials as HTTP headers (ADR-055). The csecret is the
+    hub-minted per-channel secret carried by the open_channel frame; the hub
+    verifies it on dial-back (DEBT-084)."""
+    headers: dict[str, str] = {}
     if token:
-        query["token"] = token
+        headers[TOKEN_HEADER] = token
     if csecret:
-        query["csecret"] = csecret
-    return urlunsplit((parts.scheme, parts.netloc, "/agent/channel", urlencode(query), ""))
+        headers[CSECRET_HEADER] = csecret
+    return headers
 
 
 # ── adb device enumeration (best-effort) ─────────────────────────────
@@ -460,9 +476,10 @@ async def _handle_tcp_channel(
         await _report_channel_error(ws, cid, f"cannot reach {target}: {e}")
         return
 
-    url = _channel_url(hub_url, cid, token, csecret)
+    url = _channel_url(hub_url, cid)
+    headers = _channel_headers(token, csecret)
     try:
-        async with ws_connect(url, max_size=None) as data_ws:
+        async with ws_connect(url, max_size=None, additional_headers=headers) as data_ws:
             _STATUS.channel_opened(cid, "adb", target)
             await _bridge(reader, writer, data_ws)
     except Exception as e:
@@ -508,9 +525,10 @@ async def _handle_serial_channel(
         return
     _log.info("serial channel %s: opened %s @ %s", cid[:8], com, baud)
 
-    url = _channel_url(hub_url, cid, token, csecret)
+    url = _channel_url(hub_url, cid)
+    headers = _channel_headers(token, csecret)
     try:
-        async with ws_connect(url, max_size=None) as data_ws:
+        async with ws_connect(url, max_size=None, additional_headers=headers) as data_ws:
             _STATUS.channel_opened(cid, "serial", f"{com} @ {baud}")
             await _bridge_serial(ser, data_ws)
     except Exception as e:

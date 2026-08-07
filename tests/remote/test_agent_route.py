@@ -131,6 +131,88 @@ def test_channel_forwards_csecret_to_resolve(monkeypatch):
     assert captured == {"cid": "abc", "csecret": "xyz"}
 
 
+def _capture_resolve(monkeypatch) -> dict:
+    from alb.remote.registry import AgentRegistry
+
+    captured: dict = {}
+
+    def fake_resolve(self, cid, channel, csecret):
+        captured["cid"] = cid
+        captured["csecret"] = csecret
+        return False  # reject → route closes the WS → WebSocketDisconnect
+
+    monkeypatch.setattr(AgentRegistry, "resolve_pending", fake_resolve)
+    return captured
+
+
+def test_channel_reads_csecret_from_header(monkeypatch):
+    """ADR-055: the dial-back secret rides a header so it never lands in the
+    access log's request line."""
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    captured = _capture_resolve(monkeypatch)
+    with TestClient(create_app()) as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect(
+                "/agent/channel?cid=abc", headers={p.CSECRET_HEADER: "xyz"}
+            ) as ws:
+                ws.receive_bytes()
+    assert captured == {"cid": "abc", "csecret": "xyz"}
+
+
+def test_channel_token_from_header_accepted(monkeypatch):
+    monkeypatch.setenv("ALB_AGENT_TOKEN", "s3cret")
+    captured = _capture_resolve(monkeypatch)
+    with TestClient(create_app()) as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect(
+                "/agent/channel?cid=abc",
+                headers={p.TOKEN_HEADER: "s3cret", p.CSECRET_HEADER: "xyz"},
+            ) as ws:
+                ws.receive_bytes()
+    # got past the token gate — a rejected token never reaches resolve_pending
+    assert captured == {"cid": "abc", "csecret": "xyz"}
+
+
+def test_channel_bad_token_header_rejected(monkeypatch):
+    monkeypatch.setenv("ALB_AGENT_TOKEN", "s3cret")
+    captured = _capture_resolve(monkeypatch)
+    with TestClient(create_app()) as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect(
+                "/agent/channel?cid=abc", headers={p.TOKEN_HEADER: "wrong"}
+            ) as ws:
+                ws.receive_bytes()
+    assert captured == {}  # closed before the registry was consulted
+
+
+def test_channel_query_form_still_accepted(monkeypatch):
+    """Back-compat that is load-bearing: the agent lives on an operator's
+    machine and is redeployed by hand, so a hub upgrade must not lock out a
+    working agent that still sends credentials in the query string."""
+    monkeypatch.setenv("ALB_AGENT_TOKEN", "s3cret")
+    captured = _capture_resolve(monkeypatch)
+    with TestClient(create_app()) as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect("/agent/channel?cid=abc&token=s3cret&csecret=xyz") as ws:
+                ws.receive_bytes()
+    assert captured == {"cid": "abc", "csecret": "xyz"}
+
+
+def test_header_form_ignores_stale_query_creds(monkeypatch):
+    """A dial-back that presents headers is a new-style agent; a query param
+    must not be able to override what it sent."""
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    captured = _capture_resolve(monkeypatch)
+    with TestClient(create_app()) as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect(
+                "/agent/channel?cid=abc&csecret=from-query",
+                headers={p.CSECRET_HEADER: "from-header"},
+            ) as ws:
+                ws.receive_bytes()
+    assert captured["csecret"] == "from-header"
+
+
 def test_agent_survives_forwarder_bind_failure(monkeypatch):
     """ADR-051 hub-side robustness: if the adb forwarder can't bind its port
     (e.g. a local adb server already holds 5037), the agent session must STILL

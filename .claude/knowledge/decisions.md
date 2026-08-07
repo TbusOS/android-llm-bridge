@@ -2072,3 +2072,60 @@ UART 抓取最重要的用途（抓完整启动日志 = 先起抓取再触发重
 
 **关联**: ADR-050（每连接一条 channel —— serial 侧被本 ADR 修正）· ADR-051（forwarder 单例）·
 ADR-052（gateway bounded retry —— 本 ADR 用它覆盖 COM 句柄交接缝）· issue #4
+
+---
+
+## ADR-055 · dial-back 凭证走 header 不走 query，外加 access log 兜底脱敏
+
+**状态**: 已实现 · 2026-08-07
+
+**背景**: agent 拨回数据面时把 agent token 和 per-channel secret 放在 query string
+里(`/agent/channel?cid=…&token=…&csecret=…`)。uvicorn 的 access logger 打印**完整
+request line**,包含 query —— 于是每开一条 channel,两个活凭证就以明文写进 hub 日志。
+实际后果不是理论风险:排查 issue #4 时 `tail` hub 日志,token 直接出现在终端输出里。
+
+**决定**:
+1. **凭证改走 header**(`x-alb-token` / `x-alb-csecret`),query 里只留 `cid`。
+2. **query 形式继续接受**,但打一次 warning 提示重新部署 agent。
+3. **装脱敏 filter**(`alb/api/access_log.py`),把 `token=` / `csecret=` /
+   `password=` 等一批 key 的值换成 `***`,重写 `record.args` 而不是格式化后的文本。
+4. filter 在 **lifespan startup** 装,不在 `main()` 装。
+5. filter **同时挂 `uvicorn.access` 和 `uvicorn.error`**,并**逐个扫描字符串参数**,
+   不认死下标。
+
+**为什么**:
+- **为什么 header 而不是"关掉 access log"**:access log 是排查隧道问题的主要手段
+  (哪条 cid 什么时候拨回来、状态码是什么)。关掉等于为了防泄露把眼睛蒙上。改凭证位置
+  只损失"看得见凭证",不损失任何排查信息。
+- **为什么 query 形式还留着**:agent 跑在操作员的 Windows 机器上,靠人工重新部署。
+  hub 升级把还没更新的 agent 锁在门外 = 现场断连,而这正是远程调试最难恢复的故障。
+  留 fallback + 打 warning,让升级顺序解耦。
+- **为什么 filter 不是多余的**:fallback 存在期间,凭证仍然会出现在 query 里 —— filter
+  才是那些请求的实际保护。它同时覆盖将来任何"顺手把 secret 放 query"的路由。
+- **为什么改 `record.args` 不改 `record.msg`**:uvicorn 的日志 record 是结构化的
+  (`msg` 是格式串,`args` 是参数元组)。改格式化后的文本会让 JSON log shipper 拿到的
+  结构体仍然带明文;改 arg 则两条路径都干净。
+- **★ 为什么必须挂两个 logger、且不能认死下标**:uvicorn 把请求目标写在**两处不同格式**:
+  HTTP 走 `uvicorn.access`、格式 `'%s - "%s %s HTTP/%s" %d'`,目标在 `args[2]`;
+  **WebSocket 升级走 `uvicorn.error`**、格式 `'%s - "WebSocket %s" [accepted]'`,
+  目标在 `args[1]`(`uvicorn/protocols/websockets/websockets_impl.py:108` 取 logger、
+  `:263` 打这条行)。而拨回家用的**正是 WebSocket** —— 只挂 access + 认死 `args[2]`
+  的写法,恰好漏掉唯一真正泄露的那条行。**这条是拿真机 hub 日志比对时才发现的**:
+  单测按自己臆想的格式造 record,自然全绿。教训:验证"日志里没有 X"必须去看真日志,
+  不能只看自己构造的 record。
+- **为什么装在 lifespan 而不是 `main()`**:hub 也可以用 `uvicorn alb.api.server:app`
+  起,那条路径根本不走 `main()`;而 uvicorn 的 `dictConfig` 在导入 app **之前**执行,
+  startup 是唯一"一定在日志配置之后、且每条启动路径都会走"的点。
+
+**代价 / 已知**:
+- `websockets` 下限从 `>=12.0` 提到 `>=13.0` —— agent 用的 `websockets.asyncio.client`
+  在 12.x 里不存在(实测 12.0 wheel 无 `websockets/asyncio/client.py`),`additional_headers=`
+  也是这套新 API 的参数。原来的 `>=12.0` 本来就是错的下限。
+- **已经泄露的 token 必须轮换**:改代码不能把日志里已经写下的字节收回来。三处同时换
+  (hub env / agent.conf / 共享目录那份)+ 重启 hub 和 agent。
+
+**Enforcement**:
+- 新增任何"带凭证的连接"时,凭证一律 header / 帧内字段,**禁止 query param**。
+- 新增 query param 时自问:它会不会进 access log?会 → 它就不能是 secret。
+
+**关联**: ADR-050(拨回家拓扑)· ADR-053(per-channel secret 的由来)· DEBT-084

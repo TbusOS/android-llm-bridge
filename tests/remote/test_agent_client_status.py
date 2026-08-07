@@ -203,3 +203,22 @@ def test_status_page_links_web_console():
     assert snap["web_ui"] == "https://hub.example/app/"
     html = agent._render_status_html(snap)
     assert '<a href="https://hub.example/app/">' in html
+
+
+def test_channel_url_carries_only_cid():
+    """ADR-055: the dial-back URL must be safe to log verbatim — no token, no
+    per-channel secret, only the routing key."""
+    url = agent._channel_url("wss://hub.example/agent/connect", "c0ffee")
+    assert url == "wss://hub.example/agent/channel?cid=c0ffee"
+
+
+def test_channel_headers_carry_the_credentials():
+    headers = agent._channel_headers("tok", "sek")
+    assert headers == {agent.TOKEN_HEADER: "tok", agent.CSECRET_HEADER: "sek"}
+
+
+def test_channel_headers_omit_unset_values():
+    """No token configured is a supported posture (dev/no-auth hub) — an
+    empty header would be sent as a present-but-blank credential."""
+    assert agent._channel_headers(None, "sek") == {agent.CSECRET_HEADER: "sek"}
+    assert agent._channel_headers("", "") == {}

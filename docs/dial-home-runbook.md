@@ -156,3 +156,10 @@ Walk down the chain; each hop has an unambiguous "good" signal.
   token still can't claim a channel.
 - Set a token for any non-loopback hub. The status page binds `127.0.0.1` only
   and never shows the token.
+- The dial-back sends both the token and the per-channel secret as **headers**
+  (`x-alb-token` / `x-alb-csecret`, see `docs/web-api.md`), not query params,
+  so they never reach the access log. **If you ran a build from before this
+  change, treat the token as exposed** — it was written in clear text to the
+  hub's log on every channel open. Rotate it in all three places at once:
+  the hub's env file, the agent's `agent.conf`, and any staging copy of the
+  agent; then restart the hub and the agent.

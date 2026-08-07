@@ -289,10 +289,18 @@ shared token (`ALB_AGENT_TOKEN`); full bring-up in
 The agent's persistent signaling channel (hello / heartbeat / device lists /
 channel control). Not for browser use.
 
-### WS /agent/channel?cid=…&csecret=…
+### WS /agent/channel?cid=…
 
 Per-channel data connection the agent dials back, one per open channel,
-carrying raw bytes. Authenticated by the per-channel secret.
+carrying raw bytes. Authenticated by the per-channel secret, which — like
+the agent token — travels in a header (`x-alb-csecret` / `x-alb-token`),
+never in the query string: an access log records the full request line, so a
+secret placed there is written to disk in clear text on every channel open.
+Only the `cid` (a routing key, not a credential) stays in the URL.
+
+Agents older than this change still send both as query params; the hub keeps
+accepting that form so a hand-deployed agent is not locked out by a hub
+upgrade, and redacts the values out of the access log instead.
 
 ### GET /agent/status
 

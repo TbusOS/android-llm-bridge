@@ -4,14 +4,16 @@
                       frames only: hello / heartbeat / list_* / channel_*).
     /agent/channel  — a per-channel DATA WebSocket the agent dials back, one
                       per open_channel, carrying raw bytes. Correlated by the
-                      ?cid= query param and authenticated by the ?csecret=
-                      per-channel secret (DEBT-084) to the pending request.
+                      ?cid= query param and authenticated by the per-channel
+                      secret (DEBT-084) to the pending request.
 
 Security (ADR-050 §6): both endpoints validate the agent token (env
 ALB_AGENT_TOKEN; when unset the API is open, same posture as the rest of
 alb-api which prints a no-auth banner). The token check happens BEFORE any
 registry insert / forwarder attach. tcp channel targets are allowlisted to the
-local adb server on both sides.
+local adb server on both sides. Dial-back credentials ride HEADERS, never the
+query string (ADR-055) — only the cid, which is a routing key and not a
+secret, stays in the URL.
 
 The adb forwarder binds 127.0.0.1:5037 by default; ALB_ADB_FORWARD_PORT can
 override it (tests use 0 for an ephemeral port).
@@ -57,6 +59,36 @@ def _token_ok(supplied: str | None) -> bool:
     if not supplied:
         return False
     return hmac.compare_digest(supplied, expected)
+
+
+_warned_query_creds = False
+
+
+def _channel_credentials(ws: WebSocket) -> tuple[str | None, str | None]:
+    """Read (token, csecret) off a dial-back, headers first (ADR-055).
+
+    The query-param form is still accepted because the agent runs on an
+    operator's Windows box and is redeployed by hand: a hub upgrade must not
+    lock out an agent that is otherwise working. Those dial-backs are not
+    left exposed — `access_log.AccessLogRedactor` scrubs the query string
+    before any handler writes it. The warning fires once per process so the
+    operator knows a redeploy is still owed.
+    """
+    global _warned_query_creds
+    token = ws.headers.get(protocol.TOKEN_HEADER)
+    csecret = ws.headers.get(protocol.CSECRET_HEADER)
+    if token is not None or csecret is not None:
+        return token, csecret
+    q_token = ws.query_params.get("token")
+    q_csecret = ws.query_params.get("csecret")
+    if (q_token or q_csecret) and not _warned_query_creds:
+        _warned_query_creds = True
+        _log.warning(
+            "agent dialed back with credentials in the query string — this "
+            "agent predates ADR-055; redeploy clients/windows-agent so the "
+            "token and channel secret ride headers instead"
+        )
+    return q_token, q_csecret
 
 
 class _WsDataChannel:
@@ -232,8 +264,7 @@ async def agent_connect(ws: WebSocket) -> None:
 async def agent_channel(ws: WebSocket) -> None:
     await ws.accept()
     cid = ws.query_params.get("cid")
-    token = ws.query_params.get("token")
-    csecret = ws.query_params.get("csecret")
+    token, csecret = _channel_credentials(ws)
     if not cid or not _token_ok(token):
         with contextlib.suppress(Exception):
             await ws.close(code=1008)

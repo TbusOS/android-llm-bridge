@@ -31,6 +31,15 @@ PROTOCOL_VERSION = 1
 # on the remote machine's LAN. Enforced on BOTH the hub and the agent.
 ADB_TARGET = "127.0.0.1:5037"
 
+# Dial-back credential headers (ADR-055). The data-plane dial-back has to
+# present the agent token AND the per-channel secret; carrying them as HTTP
+# headers instead of query params keeps them out of the request line, which
+# every access log, proxy log and connection-error message reproduces
+# verbatim. Mirrored as string literals in clients/windows-agent/alb_agent.py
+# (the agent is standalone and cannot import alb).
+TOKEN_HEADER = "x-alb-token"
+CSECRET_HEADER = "x-alb-csecret"
+
 
 class ProtocolError(Exception):
     """A control frame is malformed or carries an unknown verb."""
@@ -101,8 +110,9 @@ def new_csecret() -> str:
     verifies with a constant-time compare (registry.resolve_pending). This binds
     the data channel to the agent that actually received the open_channel: a
     process that merely holds the shared agent token AND a live cid still cannot
-    claim the channel without this secret. 256-bit, URL-safe so it rides the
-    dial-back query string alongside the cid (same wss posture as the token).
+    claim the channel without this secret. 256-bit and URL-safe; it rides the
+    dial-back as a header (CSECRET_HEADER), not as a query param — see
+    ADR-055 for why the query string was the wrong place for it.
     """
     return secrets.token_urlsafe(32)
 
