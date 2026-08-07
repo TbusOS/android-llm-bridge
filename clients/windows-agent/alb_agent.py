@@ -933,6 +933,13 @@ async def _job_devices(data_ws: Any, fastboot: str) -> None:
         err,
         fail_code="FASTBOOT_NO_DEVICE" if rc == 0 else "FLASH_FAILED",
         ok_override=rc == 0 and listed,
+        # Say what was observed. The generic fallback ("fastboot failed") is
+        # right for a tool that crashed with no output, and useless here —
+        # this path knows exactly what happened: the query worked, the list
+        # was empty.
+        fail_error=(
+            "fastboot ran but listed no devices — the board is not in fastboot" if rc == 0 else ""
+        ),
     )
 
 
@@ -980,6 +987,7 @@ async def _job_finish(
     *,
     fail_code: str,
     ok_override: bool | None = None,
+    fail_error: str = "",
 ) -> None:
     ok = (rc == 0) if ok_override is None else ok_override
     with contextlib.suppress(Exception):
@@ -991,7 +999,9 @@ async def _job_finish(
                     "rc": rc,
                     "stdout": out[-_JOB_OUTPUT_CAP:],
                     "stderr": err[-_JOB_OUTPUT_CAP:],
-                    "error": "" if ok else (err.strip() or out.strip() or "fastboot failed"),
+                    "error": ""
+                    if ok
+                    else (fail_error or err.strip() or out.strip() or "fastboot failed"),
                     "code": "" if ok else fail_code,
                 }
             )

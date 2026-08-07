@@ -128,6 +128,30 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
     return final
 
 
+# Wording a failing tool emits when it has nothing specific to say. Treated
+# as "no message" so the catalog's sentence is used instead — printing
+# `FASTBOOT_NO_DEVICE: fastboot failed` tells the reader nothing they did not
+# already see in the code.
+_EMPTY_ERRORS = {"", "fastboot failed", "error", "failed", "unknown"}
+
+
+def _explain(code: str, error: str) -> tuple[str, str]:
+    """(what happened, what to do) for a failure.
+
+    The agent reports a code; the catalog in `infra.errors` already holds a
+    sentence and a remedy for it. Not consulting it was the bug: the code was
+    right and the message pointed nowhere, which is the same failure mode as
+    an error code pointing at the wrong subsystem — the reader still has to
+    go and find out for themselves."""
+    from alb.infra.errors import lookup
+
+    spec = lookup(code) if code else None
+    message = error.strip()
+    if message.lower() in _EMPTY_ERRORS:
+        message = spec.default_message if spec else "unknown failure"
+    return message, (spec.default_suggestion if spec else "")
+
+
 def _report(final: dict[str, Any]) -> None:
     artifacts = str(final.get("artifacts") or "")
     if final.get("ok"):
@@ -138,7 +162,10 @@ def _report(final: dict[str, Any]) -> None:
         _report_artifacts(artifacts)
         return
     code = str(final.get("code") or "")
-    typer.echo(f"[fail] {code or 'error'}: {final.get('error') or 'unknown'}", err=True)
+    message, advice = _explain(code, str(final.get("error") or ""))
+    typer.echo(f"[fail] {code or 'error'}: {message}", err=True)
+    if advice:
+        typer.echo(f"  try: {advice}", err=True)
     for stream in ("stdout", "stderr"):
         text = str(final.get(stream) or "").strip()
         if text:
