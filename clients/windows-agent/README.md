@@ -134,3 +134,14 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
 
 文件到约 5 MB 自动轮转，最多保留 3 份旧的（`agent.log.1` ~ `.3`），不会
 撑爆磁盘。报告问题时把这个文件一起发过来最有用。写 `log_file=none` 可关闭。
+
+---
+
+## 想让这台机器支持 fastboot 烧录？
+
+板子进 fastboot 之后会从 adb 里消失，默认情况下 hub 那边就够不着它了 ——
+连"把它重启回系统"都做不到。要补上这条路，照
+**[FASTBOOT-SETUP.md](FASTBOOT-SETUP.md)** 配一遍（装 platform-tools +
+在 `agent.conf` 里写 `fastboot_path=`），几分钟的事。
+
+不配也不影响 adb 和串口，只是 hub 会直接告诉调用方"这台不能烧"。
