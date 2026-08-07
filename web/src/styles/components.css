@@ -5291,3 +5291,277 @@ li:hover .screenshot-row__del,
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ── Flash tab (ADR-056) ──────────────────────────────────────────────
+   Baseline: docs/webui-preview-v2-flash.html. These rules are the app-side
+   half of the mockup-baseline rule: copying the class names into React is
+   only half the job — without the rules here the names point at nothing,
+   and the page renders as unstyled semantic HTML. Caught by a headless
+   browser screenshot; 268 unit tests and both design gates missed it,
+   because none of them look at the app's own stylesheet. */
+.flash-tab {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  gap: var(--space-4);
+}
+  .flash-tab__wide { grid-column: 1 / -1; }
+/* ---- state card (left column) ---- */
+.flash-state-card {
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 8px;
+  padding: var(--space-4);
+  align-self: start;
+}
+.flash-state-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+.flash-state-card__title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--anth-text-secondary);
+  margin: 0;
+}
+.flash-state-card__refresh {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #a85a26;  /* not --anth-orange: 3.12:1 on white fails contrast */
+  cursor: pointer;
+}
+.flash-state-card__verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--anth-text);
+  margin-bottom: 6px;
+}
+.flash-state-card__dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #4c8b5c;
+  flex: 0 0 auto;
+}
+  .flash-state-card__verdict[data-state="unavailable"] .flash-state-card__dot { background: var(--anth-medium-gray); }
+  .flash-state-card__verdict[data-state="busy"] .flash-state-card__dot { background: var(--anth-orange); }
+.flash-state-card__why {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--anth-text-secondary);
+  margin: 0 0 var(--space-3);
+}
+.flash-state-card__field {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid var(--anth-light-gray);
+  font-size: 12.5px;
+}
+.flash-state-card__field-label {
+  font-family: var(--font-mono);
+  color: var(--anth-text-secondary);
+}
+.flash-state-card__field-value {
+  font-family: var(--font-mono);
+  color: var(--anth-text);
+  text-align: right;
+  word-break: break-all;
+}
+/* ---- action column ---- */
+  .flash-actions { display: grid; gap: var(--space-4); align-content: start; }
+.flash-action-card {
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 8px;
+  padding: var(--space-4);
+}
+.flash-action-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.flash-action-card__title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--anth-text-secondary);
+  margin: 0;
+}
+.flash-action-card__hint {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--anth-text-secondary);
+  margin: 0 0 var(--space-3);
+}
+/* image import */
+.flash-drop {
+  border: 1px dashed var(--anth-medium-gray);
+  border-radius: 6px;
+  padding: var(--space-4);
+  text-align: center;
+  background: var(--anth-bg);
+}
+.flash-drop__label {
+  font-size: 13px;
+  color: var(--anth-text-secondary);
+  margin: 0 0 8px;
+}
+.flash-drop__button {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 6px 14px;
+  border: 1px solid var(--anth-text);
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--anth-text);
+  cursor: pointer;
+}
+.flash-file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--anth-light-gray);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+  .flash-file__name { color: var(--anth-text); word-break: break-all; }
+  .flash-file__meta { color: var(--anth-text-secondary); white-space: nowrap; }
+/* write row */
+.flash-action-card__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--space-3);
+}
+.flash-action-card__row label {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--anth-text-secondary);
+  min-width: 78px;
+}
+.flash-action-card__row select {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 5px 8px;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--anth-text);
+  flex: 1;
+}
+.flash-btn {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 18px;
+  border-radius: 4px;
+  border: 1px solid var(--anth-text);
+  background: var(--anth-text);
+  color: #ffffff;
+  cursor: pointer;
+}
+.flash-btn--ghost {
+  background: #ffffff;
+  color: var(--anth-text);
+}
+.flash-btn--danger {
+  border-color: #b54b3d;
+  background: #b54b3d;
+}
+.flash-arm {
+  margin-top: var(--space-3);
+  padding: 10px 12px;
+  border: 1px solid #b54b3d;
+  border-radius: 6px;
+  background: #fdf5f3;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #7d3629;
+}
+/* ---- timeline (full width) ---- */
+.flash-timeline {
+  background: #ffffff;
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 8px;
+  padding: var(--space-4);
+}
+.flash-timeline__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.flash-timeline__title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--anth-text-secondary);
+  margin: 0;
+}
+.flash-timeline__path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--anth-text-secondary);
+  word-break: break-all;
+}
+.flash-timeline__hint {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--anth-text-secondary);
+  margin: 0 0 var(--space-3);
+}
+.flash-timeline__bar {
+  height: 4px;
+  background: var(--anth-light-gray);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+}
+.flash-timeline__bar-fill {
+  height: 100%;
+  background: var(--anth-orange);
+}
+.flash-timeline__log {
+  margin: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--anth-bg);
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+  .flash-line { display: flex; gap: 10px; }
+.flash-line__t {
+  color: var(--anth-medium-gray);
+  flex: 0 0 auto;
+  min-width: 44px;
+  text-align: right;
+}
+.flash-line__src {
+  flex: 0 0 auto;
+  min-width: 38px;
+  color: var(--anth-text-secondary);
+}
+  .flash-line[data-src="uart"] .flash-line__src { color: #4a6fa5; }
+  .flash-line[data-src="job"] .flash-line__src { color: var(--anth-orange); }
+  .flash-line__text { color: var(--anth-text); white-space: pre-wrap; word-break: break-word; }
+@media (max-width: 860px) {
+  .flash-tab { grid-template-columns: 1fr; }
+}

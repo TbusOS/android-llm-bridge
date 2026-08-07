@@ -129,14 +129,20 @@ def test_resolve_fastboot_takes_configured_path_over_PATH(tmp_path):
 # ── the refuse-before-writing rule ──────────────────────────────────────
 
 
-async def _run_flash(ws, monkeypatch, *, fastboot="/nonexistent/fastboot"):
+async def _run_flash(ws, monkeypatch, *, fastboot="/nonexistent/fastboot", present=True):
     ran: list[list[str]] = []
 
-    async def fake_run(_ws, argv):
+    async def fake_run(_ws, argv, op=""):
         ran.append(argv)
         return 0, "OKAY", ""
 
+    async def fake_present(_fastboot):
+        return present
+
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    # Default to "a device is there" so each test exercises the path it names;
+    # the no-device path has its own tests below.
+    monkeypatch.setattr(agent, "_device_present", fake_present)
     reader = agent._JobReader(ws)
     req = await reader.read_control()
     await agent._job_flash(ws, reader, fastboot, req)
@@ -215,11 +221,15 @@ async def test_rejected_partition_never_transfers(monkeypatch):
 async def test_reboot_target_allowlist(monkeypatch):
     ran: list[list[str]] = []
 
-    async def fake_run(_ws, argv):
+    async def fake_run(_ws, argv, op=""):
         ran.append(argv)
         return 0, "", ""
 
+    async def yes(_fastboot):
+        return True
+
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
     ws = _FakeWs(b"")
     await agent._job_reboot(ws, "/opt/fastboot", "definitely-not-a-mode")
     assert ran == []
@@ -235,7 +245,7 @@ async def test_devices_with_no_output_reports_no_device(monkeypatch):
     """rc 0 with an empty listing is fastboot's way of saying "nothing here" —
     reporting that as success would send the caller off to flash nothing."""
 
-    async def fake_run(_ws, argv):
+    async def fake_run(_ws, argv, op=""):
         return 0, "   \n", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
@@ -245,7 +255,7 @@ async def test_devices_with_no_output_reports_no_device(monkeypatch):
 
 
 async def test_devices_with_a_listing_is_success(monkeypatch):
-    async def fake_run(_ws, argv):
+    async def fake_run(_ws, argv, op=""):
         return 0, "2870000540\tfastboot\n", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
@@ -254,3 +264,84 @@ async def test_devices_with_a_listing_is_success(monkeypatch):
     done = ws.done()
     assert done["ok"] is True
     assert done["code"] == ""
+
+
+# ── never block on a device that is not there ───────────────────────────
+#
+# Real-hardware regression (2026-08-07): a web click ran `fastboot reboot`
+# while the board was still in Android. fastboot printed
+# "< waiting for any device >" and sat there, holding the single-job lock
+# until the hub's 30-minute ceiling — a bench taken out of service by a
+# command that was never going to succeed.
+
+
+async def test_reboot_refuses_when_no_device_is_in_fastboot(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+
+    async def no_device(_fastboot):
+        return False
+
+    monkeypatch.setattr(agent, "_device_present", no_device)
+    ws = _FakeWs(b"")
+    await agent._job_reboot(ws, "/opt/fastboot", "")
+    assert ran == [], "must not invoke a command that would block"
+    done = ws.done()
+    assert done["code"] == "FASTBOOT_NO_DEVICE"
+    assert not ws.events("accepted")
+
+
+async def test_flash_refuses_before_receiving_the_image(monkeypatch):
+    """Checked BEFORE the transfer: streaming megabytes to a bench whose
+    board is not in fastboot wastes the tunnel and fails anyway."""
+    img = b"z" * 32
+    wire = _frame(
+        b"C",
+        json.dumps(
+            {
+                "op": "flash",
+                "partition": "boot",
+                "size": len(img),
+                "sha256": hashlib.sha256(img).hexdigest(),
+            }
+        ).encode(),
+    ) + _frame(b"D", img)
+    ws = _FakeWs(wire)
+
+    ran = await _run_flash(ws, monkeypatch, present=False)
+    assert ran == []
+    done = ws.done()
+    assert done["code"] == "FASTBOOT_NO_DEVICE"
+    assert "nothing was transferred" in done["error"]
+
+
+async def test_flash_proceeds_when_a_device_is_present(monkeypatch):
+    img = b"y" * 16
+    wire = _frame(
+        b"C",
+        json.dumps(
+            {
+                "op": "flash",
+                "partition": "boot",
+                "size": len(img),
+                "sha256": hashlib.sha256(img).hexdigest(),
+            }
+        ).encode(),
+    ) + _frame(b"D", img)
+    ws = _FakeWs(wire)
+
+    ran = await _run_flash(ws, monkeypatch, fastboot="/opt/fastboot", present=True)
+    assert len(ran) == 1
+
+
+def test_every_op_has_a_timeout():
+    """A missing entry silently falls back to 300 s — long enough for a
+    'waiting for device' hang to look like a working command."""
+    assert set(agent._FASTBOOT_TIMEOUT_S) == {"devices", "reboot", "flash"}
+    # a query must answer promptly; a partition write may legitimately take minutes
+    assert agent._FASTBOOT_TIMEOUT_S["devices"] < agent._FASTBOOT_TIMEOUT_S["flash"]

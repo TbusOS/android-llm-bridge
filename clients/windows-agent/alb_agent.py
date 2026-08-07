@@ -90,6 +90,14 @@ _FLASH_MAX_BYTES = 2 * 1024 * 1024 * 1024
 # Tool output is echoed back in the terminal frame; cap it so a chatty or
 # looping tool cannot turn one job into an unbounded message.
 _JOB_OUTPUT_CAP = 64 * 1024
+# fastboot BLOCKS waiting for a device when none is in fastboot mode
+# ("< waiting for any device >"). Without a ceiling one such command holds
+# the single-job lock until the hub's 30-minute timeout — a bench taken out
+# of service by a command that was never going to succeed. Per-op because
+# the right patience differs: a query should answer now, a partition write
+# legitimately takes minutes.
+_FASTBOOT_TIMEOUT_S = {"devices": 20.0, "reboot": 60.0, "flash": 900.0}
+_WAITING_MARKER = "waiting for any device"
 
 HEARTBEAT_INTERVAL_S = 20.0
 RECONNECT_BACKOFF_S = (1.0, 2.0, 5.0, 10.0)
@@ -821,6 +829,29 @@ async def _job_progress(data_ws: Any, phase: str, done: int, total: int, text: s
         )
 
 
+async def _device_present(fastboot: str) -> bool:
+    """Is a board actually in fastboot right now?
+
+    Everything else here depends on this. `fastboot flash` and
+    `fastboot reboot` BLOCK waiting for a device when none is present —
+    they print "< waiting for any device >" and sit there. Without this
+    check a bench where the board is still in Android answers every request
+    by holding the single-job lock until something times out, and the
+    operator sees a hang instead of the one-line truth: the board is not in
+    fastboot. Costs one ~20 ms query to turn that into an instant answer.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        fastboot, "devices", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), _FASTBOOT_TIMEOUT_S["devices"])
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError, OSError):
+            proc.kill()
+        return False
+    return bool(out.decode("utf-8", errors="replace").strip())
+
+
 async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[str, Any]) -> None:
     partition = str(req.get("partition") or "")
     size = int(req.get("size") or 0)
@@ -835,6 +866,16 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
         return
     if size <= 0 or size > _FLASH_MAX_BYTES:
         await _job_fail(data_ws, f"image size {size} out of range", code="FLASH_IMAGE_CORRUPT")
+        return
+
+    # Check BEFORE accepting the image: streaming megabytes to a bench whose
+    # board is not even in fastboot wastes the tunnel and then fails anyway.
+    if not await _device_present(fastboot):
+        await _job_fail(
+            data_ws,
+            "no device is in fastboot on this host — nothing was transferred",
+            code="FASTBOOT_NO_DEVICE",
+        )
         return
 
     await data_ws.send(_job_control({"ev": "accepted", "detail": f"receiving {size} bytes"}))
@@ -894,7 +935,9 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
 
         await _job_progress(data_ws, "flash", 0, 0, f"starting fastboot flash {partition}")
         # argv assembled HERE from vetted pieces — see the section header.
-        rc, out, err = await _run_fastboot(data_ws, [fastboot, "flash", partition, str(tmp_img)])
+        rc, out, err = await _run_fastboot(
+            data_ws, [fastboot, "flash", partition, str(tmp_img)], "flash"
+        )
         await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
     finally:
         # Also off-loop: deleting a multi-gigabyte file is not instant, and
@@ -911,9 +954,16 @@ async def _job_reboot(data_ws: Any, fastboot: str, target: str) -> None:
     if target and target not in _FASTBOOT_REBOOT_TARGETS:
         await _job_fail(data_ws, f"unsupported reboot target {target!r}", code="")
         return
+    if not await _device_present(fastboot):
+        await _job_fail(
+            data_ws,
+            "no device is in fastboot on this host — nothing to reboot",
+            code="FASTBOOT_NO_DEVICE",
+        )
+        return
     await data_ws.send(_job_control({"ev": "accepted", "detail": "rebooting"}))
     argv = [fastboot, "reboot"] + ([target] if target else [])
-    rc, out, err = await _run_fastboot(data_ws, argv)
+    rc, out, err = await _run_fastboot(data_ws, argv, "reboot")
     await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
 
 
@@ -921,7 +971,7 @@ async def _job_devices(data_ws: Any, fastboot: str) -> None:
     """`fastboot devices` — the only way to see a board that is in fastboot,
     since it has vanished from adb by then."""
     await data_ws.send(_job_control({"ev": "accepted", "detail": "listing"}))
-    rc, out, err = await _run_fastboot(data_ws, [fastboot, "devices"])
+    rc, out, err = await _run_fastboot(data_ws, [fastboot, "devices"], "devices")
     # An empty listing exits 0 — that is fastboot saying "nothing is here",
     # not "the query worked". Reporting it as success would send the caller
     # on to flash a device that is not in fastboot at all.
@@ -943,7 +993,7 @@ async def _job_devices(data_ws: Any, fastboot: str) -> None:
     )
 
 
-async def _run_fastboot(data_ws: Any, argv: list[str]) -> tuple[int, str, str]:
+async def _run_fastboot(data_ws: Any, argv: list[str], op: str = "") -> tuple[int, str, str]:
     """Run fastboot, relaying its stderr as progress while it works.
 
     fastboot writes its own progress to stderr, so relaying it is what makes
@@ -953,6 +1003,7 @@ async def _run_fastboot(data_ws: Any, argv: list[str]) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
+    timeout = _FASTBOOT_TIMEOUT_S.get(op, 300.0)
     out_chunks: list[bytes] = []
     err_chunks: list[bytes] = []
 
@@ -967,16 +1018,31 @@ async def _run_fastboot(data_ws: Any, argv: list[str]) -> tuple[int, str, str]:
                 if text:
                     await _job_progress(data_ws, "flash", 0, 0, text)
 
-    await asyncio.gather(
-        pump(proc.stdout, out_chunks, False),
-        pump(proc.stderr, err_chunks, True),
-    )
-    rc = await proc.wait()
-    return (
-        rc,
-        b"".join(out_chunks).decode("utf-8", errors="replace"),
-        b"".join(err_chunks).decode("utf-8", errors="replace"),
-    )
+    timed_out = False
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                pump(proc.stdout, out_chunks, False),
+                pump(proc.stderr, err_chunks, True),
+            ),
+            timeout,
+        )
+        rc = await proc.wait()
+    except TimeoutError:
+        timed_out = True
+        # Kill, do not just abandon: an orphaned fastboot keeps holding the
+        # USB interface and the next job would fail for a reason that has
+        # nothing to do with it.
+        with contextlib.suppress(ProcessLookupError, OSError):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        rc = -1
+    out = b"".join(out_chunks).decode("utf-8", errors="replace")
+    err = b"".join(err_chunks).decode("utf-8", errors="replace")
+    if timed_out:
+        err = (err + f"\n[agent] killed after {timeout:.0f}s").strip()
+    return rc, out, err
 
 
 async def _job_finish(
