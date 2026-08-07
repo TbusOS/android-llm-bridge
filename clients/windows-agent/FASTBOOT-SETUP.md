@@ -65,6 +65,11 @@ hub 那边会一直显示"不可用"。
 > ⚠ **不要拷 `agent.conf`**。共享目录里那份是留档，本机这份才是在用的真配置，
 > 覆盖了会把 token 和 hub 地址弄丢。
 
+> ⚠ **顺序不能反：先拷程序，再改配置。** 旧版 `alb_agent.py` 不认识
+> `fastboot_path` 这个键，而未知键是**硬错误**（拼错不该被静默忽略）——
+> 配置改在前面的话，agent 会直接拒绝启动，报
+> `unknown key 'fastboot_path'`，看起来像"这个功能不存在"。
+
 `requirements.txt` 里的 `websockets` 下限提到了 `>=13.0`。如果 agent 现在能正常跑，
 说明装的已经满足，**不需要重新 pip install**。（agent 用的
 `websockets.asyncio.client` 在 12.x 里根本不存在，跑得起来就说明 ≥13。）
@@ -72,6 +77,8 @@ hub 那边会一直显示"不可用"。
 ---
 
 ## 3. 改配置
+
+> 前提：第 2 步的 `alb_agent.py` 已经拷好。没拷就改配置，agent 会拒绝启动。
 
 编辑本机的 `agent.conf`（**不是** `agent.conf.example`），在文件末尾追加：
 
@@ -124,6 +131,8 @@ fastboot: not found — this agent will NOT advertise the fastboot capability
 | `not found`，但 `where fastboot` 有输出 | `agent.conf` 里的路径写错了，或指向一个不存在的文件 | 用 `where fastboot` 的原样输出，注意反斜杠不要转义 |
 | `not found`，`where fastboot` 也没输出 | 这台机器上确实没装 | 回第 1 步装 platform-tools |
 | 启动日志根本没有 `fastboot:` 这一行 | `alb_agent.py` 还是旧版 | 回第 2 步重新拷贝 |
+| agent 启动即退出，报 `agent.conf:N: unknown key 'fastboot_path'` | 同上 —— `alb_agent.py` 是旧版，它的合法键名单里还没有这个键 | 回第 2 步重新拷贝，**配置那行不用删**，拷完直接重启 |
+| 同上，但报的是 `unknown key 'flash_partitions'` | 同上 | 同上 |
 
 另外确认这一行还在（说明和 hub 的连接正常）：
 
