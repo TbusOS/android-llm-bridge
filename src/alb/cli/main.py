@@ -30,14 +30,15 @@ from alb.cli.common import get_transport, load_active_friendly, print_result, ru
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
+from alb.cli.flash_cli import app as flash_cli
+from alb.cli.info_cli import app as info_cli
+from alb.cli.metrics_cli import app as metrics_cli
+from alb.cli.playground_cli import app as playground_cli
 from alb.cli.power_cli import app as power_cli
 from alb.cli.serial_cli import app as serial_cli
 from alb.cli.session_cli import app as session_cli
 from alb.cli.setup_cli import app as setup_cli
 from alb.cli.skills_cli import app as skills_cli
-from alb.cli.info_cli import app as info_cli
-from alb.cli.metrics_cli import app as metrics_cli
-from alb.cli.playground_cli import app as playground_cli
 from alb.cli.ui_cli import app as ui_cli
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
 
@@ -158,9 +159,7 @@ def status(ctx: typer.Context) -> None:
 
 # `alb setup {adb,wifi,ssh,serial}` — guided setup (see setup_cli.py)
 app.add_typer(setup_cli, name="setup", help="Guided setup for each transport.")
-app.command("doctor", help="One-shot environment health check (env/config/transports).")(
-    run_doctor
-)
+app.command("doctor", help="One-shot environment health check (env/config/transports).")(run_doctor)
 
 
 # ─── Device / transport commands ───────────────────────────────────
@@ -217,7 +216,7 @@ def shell(
 def logcat(
     ctx: typer.Context,
     duration: int = typer.Option(60, "--duration", "-d"),
-    filter: str | None = typer.Option(None, "--filter", "-f"),  # noqa: A002
+    filter: str | None = typer.Option(None, "--filter", "-f"),
     tag: list[str] = typer.Option(None, "--tag", help="Tag filter (repeatable)."),
     clear: bool = typer.Option(False, "--clear", help="logcat -c before collecting."),
     device: str | None = typer.Option(None, "--device"),
@@ -260,9 +259,7 @@ def dmesg(
 ) -> None:
     """Collect kernel dmesg to workspace (or --output)."""
     transport = get_transport(ctx, device_serial=device)
-    result = run_async(
-        collect_dmesg(transport, duration=duration, device=device, output=output)
-    )
+    result = run_async(collect_dmesg(transport, duration=duration, device=device, output=output))
     print_result(ctx, result)
 
 
@@ -275,11 +272,14 @@ def dmesg(
 app.add_typer(filesync_cli, name="fs", help="File transfer commands (push/pull).")
 app.add_typer(diagnose_cli, name="diag", help="Diagnostic data (bugreport/anr/...)")
 app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-boot).")
+app.add_typer(flash_cli, name="flash", help="Flash / fastboot via the device agent.")
 app.add_typer(app_cli, name="app", help="APK management.")
 app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
 app.add_typer(skills_cli, name="skills", help="SKILL.md generator for LLM clients.")
 app.add_typer(chat_cli, name="chat", help="Interactive LLM agent REPL.")
-app.add_typer(session_cli, name="session", help="Inspect persisted chat sessions (list/show/replay).")
+app.add_typer(
+    session_cli, name="session", help="Inspect persisted chat sessions (list/show/replay)."
+)
 app.add_typer(ui_cli, name="ui", help="UI diagnostics (screenshot / uiautomator dump).")
 app.add_typer(info_cli, name="info", help="Structured device info (system/cpu/memory/...).")
 app.add_typer(metrics_cli, name="metrics", help="Live telemetry samples (cpu/mem/temp/io).")
@@ -300,9 +300,7 @@ def log_search(
     max_matches: int = typer.Option(200, "--max"),
 ) -> None:
     """Regex-search across collected logs."""
-    result = run_async(
-        search_logs(pattern, path=path, device=device, max_matches=max_matches)
-    )
+    result = run_async(search_logs(pattern, path=path, device=device, max_matches=max_matches))
     print_result(ctx, result)
 
 
@@ -315,9 +313,7 @@ def log_tail(
     to_line: int | None = typer.Option(None, "--to"),
 ) -> None:
     """Read the tail (or a range) of a workspace log file."""
-    result = run_async(
-        tail_log(path, lines=lines, from_line=from_line, to_line=to_line)
-    )
+    result = run_async(tail_log(path, lines=lines, from_line=from_line, to_line=to_line))
     print_result(ctx, result)
 
 

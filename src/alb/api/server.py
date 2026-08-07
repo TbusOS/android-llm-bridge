@@ -28,6 +28,7 @@ from alb.api.devices_route import router as devices_router
 from alb.api.diag_route import router as diag_router
 from alb.api.doctor_route import router as doctor_router
 from alb.api.files_route import router as files_router
+from alb.api.flash_route import router as flash_router
 from alb.api.info_route import router as info_router
 from alb.api.log_search_route import router as log_search_router
 from alb.api.logcat_stream_route import router as logcat_stream_router
@@ -71,16 +72,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         from alb.capabilities.metrics import shutdown_all_streamers
+
         await shutdown_all_streamers()
         # DEBT-019: backends keep a long-lived httpx.AsyncClient open for
         # connection reuse; close on shutdown so we don't leave half-open
         # TCP sockets in tests / dev reload.
         from alb.agent.backends import close_probe_cache
+
         await close_probe_cache()
         get_metric_store().detach()
         # ADR-051: the adb + serial forwarders are process-level singletons
         # attached on first agent connect; close their OS listeners on shutdown.
         from alb.remote.forwarder import shutdown_forwarders
+
         await shutdown_forwarders()
 
 
@@ -109,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(diag_router)
     app.include_router(doctor_router)
     app.include_router(files_router)
+    app.include_router(flash_router)
     app.include_router(info_router)
     app.include_router(log_search_router)
     app.include_router(metrics_router)

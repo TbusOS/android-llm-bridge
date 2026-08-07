@@ -136,6 +136,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B", "SIM"]
+# main.py imports every subcommand module AFTER load_env_files(), on purpose:
+# the sub-apps read env at import time (typer envvar=), so loading .env first
+# is what makes those defaults work. Flagging that as E402 forever just
+# trains people to ignore the linter on this file.
+"src/alb/cli/main.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
