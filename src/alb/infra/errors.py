@@ -226,6 +226,53 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Shell command exited with a non-zero status",
         "Inspect exit_code + stderr; fix the command or handle the failure",
     ),
+    # ─── fastboot / flash (ADR-056) ──────────────────────────────────
+    # Five distinct codes rather than one FLASH_FAILED, because the fixes
+    # have nothing in common: install a tool, wait for someone else, put the
+    # board in the right mode, re-copy the image, read the tool's output.
+    # Collapsing them would put the caller back to reading prose.
+    "FASTBOOT_UNAVAILABLE": ErrorSpec(
+        "FASTBOOT_UNAVAILABLE",
+        "transport",
+        "The connected agent has no fastboot executable",
+        "Install platform-tools on the agent host, or set fastboot_path in "
+        "agent.conf, then restart the agent",
+    ),
+    "FASTBOOT_BUSY": ErrorSpec(
+        "FASTBOOT_BUSY",
+        "transport",
+        "Another flash job is already running on this agent",
+        "Wait for it to finish — the device can only serve one job at a time; "
+        "`/agent/status` shows the job in flight",
+    ),
+    "FASTBOOT_NO_DEVICE": ErrorSpec(
+        "FASTBOOT_NO_DEVICE",
+        "transport",
+        "No device is visible to fastboot on the agent host",
+        "Put the board in fastboot (`alb power reboot fastboot`) and check the "
+        "USB cable / driver on the agent host",
+    ),
+    "FLASH_IMAGE_CORRUPT": ErrorSpec(
+        "FLASH_IMAGE_CORRUPT",
+        "transport",
+        "The image did not survive the transfer intact (digest mismatch)",
+        "Retry — nothing was written to the device, the digest is checked "
+        "before fastboot is invoked",
+    ),
+    "FLASH_PARTITION_REJECTED": ErrorSpec(
+        "FLASH_PARTITION_REJECTED",
+        "transport",
+        "The agent refused the requested partition name",
+        "Use a partition on the agent's allowlist, or widen it in agent.conf "
+        "if you are certain",
+    ),
+    "FLASH_FAILED": ErrorSpec(
+        "FLASH_FAILED",
+        "transport",
+        "fastboot ran but reported a failure",
+        "Read the captured fastboot output; if the board is now half-written, "
+        "re-flash before rebooting it",
+    ),
 }
 
 

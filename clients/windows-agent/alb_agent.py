@@ -37,13 +37,17 @@ import argparse
 import asyncio
 import contextlib
 import csv
+import hashlib
 import json
 import logging
 import os
 import re
+import shutil
 import signal
+import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -75,6 +79,17 @@ ALLOWED_TCP_TARGETS = frozenset({ADB_TARGET})
 # clear text on every channel open. Headers are not logged.
 TOKEN_HEADER = "x-alb-token"
 CSECRET_HEADER = "x-alb-csecret"
+
+# Flash job limits (ADR-056). A partition name becomes an argv element, so
+# the shape check is a security control, not tidiness: a name carrying a
+# path separator, a space or a leading dash would either escape into another
+# argument or point fastboot somewhere else entirely.
+_PARTITION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
+_FASTBOOT_REBOOT_TARGETS = frozenset({"bootloader", "fastboot", "recovery"})
+_FLASH_MAX_BYTES = 2 * 1024 * 1024 * 1024
+# Tool output is echoed back in the terminal frame; cap it so a chatty or
+# looping tool cannot turn one job into an unbounded message.
+_JOB_OUTPUT_CAP = 64 * 1024
 
 HEARTBEAT_INTERVAL_S = 20.0
 RECONNECT_BACKOFF_S = (1.0, 2.0, 5.0, 10.0)
@@ -346,12 +361,18 @@ def _frame(verb: str, **fields: Any) -> str:
 
 
 def _hello(agent_id: str, name: str, token: str | None) -> str:
+    # caps is how the hub answers "can this bench flash?" without sending a
+    # job and waiting for it to time out (ADR-056 §决定 7). Advertise
+    # `fastboot` only when the executable is actually resolvable here.
+    caps = ["adb"]
+    if _fastboot_path():
+        caps.append("fastboot")
     return _frame(
         "hello",
         agent_id=agent_id,
         name=name,
         agent_version=PROTOCOL_VERSION,
-        caps=["adb"],
+        caps=caps,
         token=token,
     )
 
@@ -442,6 +463,8 @@ async def _handle_open_channel(
         await _handle_tcp_channel(hub_url, token, frame, ws)
     elif ctype == "serial":
         await _handle_serial_channel(hub_url, token, frame, ws)
+    elif ctype == "job":
+        await _handle_job_channel(hub_url, token, frame, ws)
     else:
         _log.warning("unsupported channel type %r", ctype)
         await _report_channel_error(ws, cid, f"unsupported channel type {ctype!r}")
@@ -602,6 +625,377 @@ async def _bridge(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, da
         t.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await t
+
+
+# ── job channel: fastboot on this host (ADR-056) ─────────────────────
+#
+# Mirrors alb.remote.jobframe + the job vocabulary in alb.remote.protocol.
+# Frame: kind(1B) + length(4B BE) + payload;  kind = b"C" control JSON /
+# b"D" data chunk.
+#
+# The security shape of this whole section (ADR-056 §决定 5): the hub sends
+# STRUCTURED FIELDS — an op name, a partition name, a size, a digest. It
+# never sends a command line, a file path or an executable name. Everything
+# that ends up in argv is assembled here, from this host's own config. A
+# job channel that accepted a command string would be a remote-execution
+# back door wearing a flashing-tool costume.
+
+_JOB_HEADER = struct.Struct(">cI")
+_JOB_KIND_CONTROL = b"C"
+_JOB_KIND_DATA = b"D"
+_JOB_MAX_FRAME = 8 * 1024 * 1024
+
+# Only one job may touch the device at a time. Not a queue: a caller whose
+# flash is refused should learn that NOW, not sit in a line behind an
+# unrelated job it cannot see (ADR-056 §决定 3).
+_job_lock = asyncio.Lock()
+
+
+class _JobProtocolError(Exception):
+    """The hub sent a frame this agent cannot interpret."""
+
+
+def _job_encode(kind: bytes, payload: bytes) -> bytes:
+    return _JOB_HEADER.pack(kind, len(payload)) + payload
+
+
+def _job_control(msg: dict[str, Any]) -> bytes:
+    return _job_encode(
+        _JOB_KIND_CONTROL, json.dumps(msg, ensure_ascii=False, separators=(",", ":")).encode()
+    )
+
+
+class _JobReader:
+    """Reassembles job frames off the data WS."""
+
+    def __init__(self, ws: Any) -> None:
+        self._ws = ws
+        self._buf = bytearray()
+
+    async def read(self) -> tuple[bytes, bytes] | None:
+        header = await self._fill(5, allow_eof=True)
+        if header is None:
+            return None
+        kind, length = _JOB_HEADER.unpack(bytes(header))
+        if kind not in (_JOB_KIND_CONTROL, _JOB_KIND_DATA):
+            raise _JobProtocolError(f"unknown frame kind {kind!r}")
+        if length > _JOB_MAX_FRAME:
+            raise _JobProtocolError(f"frame claims {length} bytes, over the cap")
+        payload = await self._fill(length, allow_eof=False)
+        return kind, bytes(payload or b"")
+
+    async def read_control(self) -> dict[str, Any] | None:
+        frame = await self.read()
+        if frame is None:
+            return None
+        kind, payload = frame
+        if kind != _JOB_KIND_CONTROL:
+            raise _JobProtocolError("expected a control frame, got a data frame")
+        msg = json.loads(payload)
+        if not isinstance(msg, dict):
+            raise _JobProtocolError("control frame must be a JSON object")
+        return msg
+
+    async def _fill(self, n: int, *, allow_eof: bool) -> bytearray | None:
+        while len(self._buf) < n:
+            chunk = await self._ws.recv()
+            if isinstance(chunk, str):
+                chunk = chunk.encode()
+            if not chunk:
+                if allow_eof and not self._buf:
+                    return None
+                raise _JobProtocolError(f"channel closed mid-frame ({len(self._buf)} of {n} bytes)")
+            self._buf.extend(chunk)
+        out = self._buf[:n]
+        del self._buf[:n]
+        return out
+
+
+# Set once at startup from agent.conf / flags. Module-level because a job
+# channel is handled far from the arg parsing, and threading the two values
+# through every call would be noise.
+_FASTBOOT_PATH = ""
+_FLASH_PARTITIONS: frozenset[str] = frozenset()
+
+
+def _resolve_fastboot(configured: str) -> str:
+    """Where this host's fastboot lives. Explicit config first, then PATH.
+
+    Returns "" when there is none — which becomes a missing `fastboot`
+    capability at hello time, so the hub can tell a caller "this bench
+    cannot flash" instead of letting it discover that by timing out
+    (ADR-056 §决定 7)."""
+    configured = (configured or "").strip()
+    if configured:
+        return configured if Path(configured).is_file() else ""
+    return shutil.which("fastboot") or ""
+
+
+def _fastboot_path() -> str:
+    return _FASTBOOT_PATH
+
+
+def _partition_allowed(name: str) -> bool:
+    """Partition names this agent will pass to fastboot.
+
+    Deliberately a shape check plus an optional allowlist, both evaluated
+    HERE. `_PARTITION_RE` alone already stops the dangerous class — a name
+    with a path separator, a space, or a leading dash would otherwise turn
+    into an extra argv element or a path escape once fastboot parses it."""
+    if not _PARTITION_RE.match(name):
+        return False
+    return True if not _FLASH_PARTITIONS else name in _FLASH_PARTITIONS
+
+
+async def _handle_job_channel(
+    hub_url: str, token: str | None, frame: dict[str, Any], ws: Any = None
+) -> None:
+    cid = str(frame.get("cid") or "")
+    csecret = str(frame.get("csecret") or "")
+    fastboot = _fastboot_path()
+    if not fastboot:
+        await _report_channel_error(ws, cid, "no fastboot executable on this agent host")
+        return
+    if _job_lock.locked():
+        # Refuse immediately rather than dial back and then block: the caller
+        # is holding a device it thinks is about to be written.
+        await _report_channel_error(ws, cid, "another flash job is already running")
+        return
+
+    url = _channel_url(hub_url, cid)
+    headers = _channel_headers(token, csecret)
+    try:
+        async with ws_connect(url, max_size=None, additional_headers=headers) as data_ws:
+            _STATUS.channel_opened(cid, "job", "fastboot")
+            async with _job_lock:
+                await _run_job(data_ws, fastboot)
+    except Exception as e:
+        _log.warning("job channel %s ended: %s", cid[:8], e)
+    finally:
+        _STATUS.channel_closed(cid)
+
+
+async def _run_job(data_ws: Any, fastboot: str) -> None:
+    reader = _JobReader(data_ws)
+    try:
+        req = await reader.read_control()
+    except (_JobProtocolError, ValueError) as e:
+        await _job_fail(data_ws, f"bad opening frame: {e}", code="")
+        return
+    if req is None:
+        return
+    op = str(req.get("op") or "")
+    if op == "flash":
+        await _job_flash(data_ws, reader, fastboot, req)
+    elif op == "reboot":
+        await _job_reboot(data_ws, fastboot, str(req.get("target") or ""))
+    elif op == "devices":
+        await _job_devices(data_ws, fastboot)
+    else:
+        await _job_fail(data_ws, f"unsupported job op {op!r}", code="")
+
+
+async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1) -> None:
+    with contextlib.suppress(Exception):
+        await data_ws.send(
+            _job_control(
+                {
+                    "ev": "done",
+                    "ok": False,
+                    "rc": rc,
+                    "stdout": "",
+                    "stderr": "",
+                    "error": error,
+                    "code": code,
+                }
+            )
+        )
+
+
+async def _job_progress(data_ws: Any, phase: str, done: int, total: int, text: str = "") -> None:
+    with contextlib.suppress(Exception):
+        await data_ws.send(
+            _job_control(
+                {"ev": "progress", "phase": phase, "done": done, "total": total, "text": text}
+            )
+        )
+
+
+async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[str, Any]) -> None:
+    partition = str(req.get("partition") or "")
+    size = int(req.get("size") or 0)
+    want_digest = str(req.get("sha256") or "").lower()
+
+    if not _partition_allowed(partition):
+        await _job_fail(
+            data_ws,
+            f"partition {partition!r} rejected by this agent",
+            code="FLASH_PARTITION_REJECTED",
+        )
+        return
+    if size <= 0 or size > _FLASH_MAX_BYTES:
+        await _job_fail(data_ws, f"image size {size} out of range", code="FLASH_IMAGE_CORRUPT")
+        return
+
+    await data_ws.send(_job_control({"ev": "accepted", "detail": f"receiving {size} bytes"}))
+
+    # Receive to a temp file under this host's own temp dir. The hub never
+    # names a path; if it could, "flash this file" would become "write
+    # anywhere on the agent host".
+    digest = hashlib.sha256()
+    received = 0
+    tmp_dir = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="alb-flash-"))
+    tmp_img = tmp_dir / "image.bin"
+    try:
+        # Every disk touch here goes through a worker thread. Writing a large
+        # image synchronously would stall this event loop for seconds at a
+        # time — and the serial pump shares that loop, so the UART view that
+        # is meant to run ALONGSIDE the flash would freeze exactly when it
+        # matters most (ADR-056 §决定 4).
+        fh = await asyncio.to_thread(open, tmp_img, "wb")
+        try:
+            while received < size:
+                frame = await reader.read()
+                if frame is None:
+                    await _job_fail(
+                        data_ws,
+                        f"transfer ended early: {received} of {size} bytes",
+                        code="FLASH_IMAGE_CORRUPT",
+                    )
+                    return
+                kind, payload = frame
+                if kind != _JOB_KIND_DATA:
+                    await _job_fail(data_ws, "expected image data, got a control frame", code="")
+                    return
+                if not payload:
+                    break
+                if received + len(payload) > size:
+                    await _job_fail(
+                        data_ws, "sender exceeded the declared size", code="FLASH_IMAGE_CORRUPT"
+                    )
+                    return
+                await asyncio.to_thread(fh.write, payload)
+                digest.update(payload)
+                received += len(payload)
+                await _job_progress(data_ws, "transfer", received, size)
+        finally:
+            await asyncio.to_thread(fh.close)
+
+        # ADR-056 §决定 6: verify BEFORE touching the device. This is the last
+        # moment when "is the image intact" is a free question; afterwards the
+        # only way to find out is a board that will not boot.
+        if received != size or digest.hexdigest() != want_digest:
+            await _job_fail(
+                data_ws,
+                f"image digest mismatch ({received}/{size} bytes received) — nothing was written",
+                code="FLASH_IMAGE_CORRUPT",
+            )
+            return
+
+        await _job_progress(data_ws, "flash", 0, 0, f"starting fastboot flash {partition}")
+        # argv assembled HERE from vetted pieces — see the section header.
+        rc, out, err = await _run_fastboot(data_ws, [fastboot, "flash", partition, str(tmp_img)])
+        await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
+    finally:
+        # Also off-loop: deleting a multi-gigabyte file is not instant, and
+        # this runs on the path back out of a job that may have just failed.
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(tmp_img.unlink, missing_ok=True)
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(tmp_dir.rmdir)
+
+
+async def _job_reboot(data_ws: Any, fastboot: str, target: str) -> None:
+    """`fastboot reboot [bootloader]` — the way back out of fastboot, which
+    is the state alb itself can push a board into."""
+    if target and target not in _FASTBOOT_REBOOT_TARGETS:
+        await _job_fail(data_ws, f"unsupported reboot target {target!r}", code="")
+        return
+    await data_ws.send(_job_control({"ev": "accepted", "detail": "rebooting"}))
+    argv = [fastboot, "reboot"] + ([target] if target else [])
+    rc, out, err = await _run_fastboot(data_ws, argv)
+    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
+
+
+async def _job_devices(data_ws: Any, fastboot: str) -> None:
+    """`fastboot devices` — the only way to see a board that is in fastboot,
+    since it has vanished from adb by then."""
+    await data_ws.send(_job_control({"ev": "accepted", "detail": "listing"}))
+    rc, out, err = await _run_fastboot(data_ws, [fastboot, "devices"])
+    # An empty listing exits 0 — that is fastboot saying "nothing is here",
+    # not "the query worked". Reporting it as success would send the caller
+    # on to flash a device that is not in fastboot at all.
+    listed = bool(out.strip())
+    await _job_finish(
+        data_ws,
+        rc,
+        out,
+        err,
+        fail_code="FASTBOOT_NO_DEVICE" if rc == 0 else "FLASH_FAILED",
+        ok_override=rc == 0 and listed,
+    )
+
+
+async def _run_fastboot(data_ws: Any, argv: list[str]) -> tuple[int, str, str]:
+    """Run fastboot, relaying its stderr as progress while it works.
+
+    fastboot writes its own progress to stderr, so relaying it is what makes
+    a long write visible instead of a frozen bar. Reading it concurrently
+    also keeps the pipe from filling and deadlocking the child."""
+    _log.info("job: running %s", " ".join(argv[1:]))
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    out_chunks: list[bytes] = []
+    err_chunks: list[bytes] = []
+
+    async def pump(stream: Any, sink: list[bytes], relay: bool) -> None:
+        while True:
+            line = await stream.readline()
+            if not line:
+                return
+            sink.append(line)
+            if relay:
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    await _job_progress(data_ws, "flash", 0, 0, text)
+
+    await asyncio.gather(
+        pump(proc.stdout, out_chunks, False),
+        pump(proc.stderr, err_chunks, True),
+    )
+    rc = await proc.wait()
+    return (
+        rc,
+        b"".join(out_chunks).decode("utf-8", errors="replace"),
+        b"".join(err_chunks).decode("utf-8", errors="replace"),
+    )
+
+
+async def _job_finish(
+    data_ws: Any,
+    rc: int,
+    out: str,
+    err: str,
+    *,
+    fail_code: str,
+    ok_override: bool | None = None,
+) -> None:
+    ok = (rc == 0) if ok_override is None else ok_override
+    with contextlib.suppress(Exception):
+        await data_ws.send(
+            _job_control(
+                {
+                    "ev": "done",
+                    "ok": ok,
+                    "rc": rc,
+                    "stdout": out[-_JOB_OUTPUT_CAP:],
+                    "stderr": err[-_JOB_OUTPUT_CAP:],
+                    "error": "" if ok else (err.strip() or out.strip() or "fastboot failed"),
+                    "code": "" if ok else fail_code,
+                }
+            )
+        )
 
 
 # ── signaling connection ─────────────────────────────────────────────
@@ -1010,6 +1404,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="also log to this file, rotating at ~5 MB x3 (relative paths are"
         " resolved next to this script; 'none' disables)",
     )
+    ap.add_argument(
+        "--fastboot-path",
+        default=None,
+        help="fastboot executable (or fastboot_path in agent.conf); "
+        "defaults to whatever is on PATH. Absent = this agent reports no "
+        "fastboot capability and the hub says so immediately",
+    )
+    ap.add_argument(
+        "--flash-partitions",
+        default=None,
+        help="comma-separated partition allowlist (or flash_partitions in "
+        "agent.conf). Empty = any well-formed name is accepted",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
 
     pre, _ = ap.parse_known_args(argv)
@@ -1081,11 +1488,32 @@ def _log_environment(args: argparse.Namespace) -> None:
     web_ui = _web_ui_url(args.hub_url)
     if web_ui:
         _log.info("hub web console: %s", web_ui)
+    # Say it at startup, not at the first failed flash: "no fastboot here" is
+    # a five-minute fix on this host and an hour of confusion from the hub.
+    if _fastboot_path():
+        allow = ",".join(sorted(_FLASH_PARTITIONS)) if _FLASH_PARTITIONS else "(any well-formed)"
+        _log.info("fastboot: %s · partitions %s", _fastboot_path(), allow)
+    else:
+        _log.info(
+            "fastboot: not found — this agent will NOT advertise the fastboot "
+            "capability (set fastboot_path in agent.conf to enable flashing)"
+        )
     ports = _enumerate_com()
     _log.info(
         "serial ports here: %s",
         ", ".join(p["port"] for p in ports) if ports else "NONE",
     )
+
+
+def _apply_flash_config(args: argparse.Namespace) -> None:
+    """Resolve the flash settings once, before anything can use them.
+
+    Runs before the first `hello`, because the resolved path is what decides
+    whether this agent claims the `fastboot` capability at all."""
+    global _FASTBOOT_PATH, _FLASH_PARTITIONS
+    _FASTBOOT_PATH = _resolve_fastboot(getattr(args, "fastboot_path", None) or "")
+    raw = (getattr(args, "flash_partitions", None) or "").strip()
+    _FLASH_PARTITIONS = frozenset(p.strip() for p in raw.split(",") if p.strip())
 
 
 def main() -> None:
@@ -1097,6 +1525,7 @@ def main() -> None:
     )
     if args.log_file:
         _setup_file_logging(args.log_file)
+    _apply_flash_config(args)
     _log_environment(args)
 
     with contextlib.suppress(KeyboardInterrupt):
