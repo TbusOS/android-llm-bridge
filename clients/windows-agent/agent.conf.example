@@ -35,3 +35,19 @@ name=bench-01
 # problems can be analyzed after the console window is closed. Relative
 # paths are resolved next to this script. Set to none to disable.
 log_file=logs/agent.log
+
+# ── fastboot / flashing (optional) ────────────────────────────────────
+# Path to fastboot on THIS machine. Leave unset to use whatever is on PATH;
+# leave it unresolvable and this agent simply does not advertise the
+# `fastboot` capability — the hub then answers "this bench cannot flash"
+# immediately instead of letting a caller discover it by timing out.
+#   fastboot_path=D:\platform-tools\fastboot.exe
+#fastboot_path=
+
+# Partition allowlist for `alb flash write`. Empty = any well-formed name is
+# accepted (names are still shape-checked here: no separators, no spaces, no
+# leading dash, since the name becomes an argv element). Set it when a bench
+# should only ever write a known set — flashing the wrong partition is not
+# undoable and the board may not come back to report it.
+#   flash_partitions=vendor_cfg,boot,dtbo
+#flash_partitions=
