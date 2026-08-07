@@ -35,7 +35,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from alb.remote.jobframe import FrameReader, JobProtocolError, encode_control, encode_data
 from alb.remote.protocol import (
@@ -49,6 +49,9 @@ from alb.remote.protocol import (
     job_reboot,
 )
 from alb.remote.registry import DataChannel
+
+if TYPE_CHECKING:
+    from alb.remote.flash_timeline import FlashTimeline
 
 _log = logging.getLogger(__name__)
 
@@ -90,6 +93,8 @@ class FlashResult:
     stderr: str = ""
     duration_s: float = 0.0
     events: list[FlashEvent] = field(default_factory=list)
+    # Where the timeline + raw UART landed. Empty when nothing was recorded.
+    artifacts: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +105,7 @@ class FlashResult:
             "stdout": self.stdout,
             "stderr": self.stderr,
             "duration_s": round(self.duration_s, 3),
+            "artifacts": self.artifacts,
         }
 
 
@@ -225,6 +231,7 @@ class FlashService:
         request: dict[str, Any],
         on_event: EventSink | None,
         after_request: Callable[[DataChannel], Any] | None = None,
+        watch_uart: bool = True,
     ) -> FlashResult:
         if not self.available():
             agent = self._get_agent()
@@ -241,21 +248,34 @@ class FlashService:
         async with self._lock:
             self._current = label
             started = time.monotonic()
+            timeline = await _open_timeline(label, request, enabled=watch_uart)
+            sink = _tee(on_event, timeline)
             try:
-                return await asyncio.wait_for(
-                    self._drive(request, on_event, after_request), JOB_TIMEOUT_S
+                result = await asyncio.wait_for(
+                    self._drive(request, sink, after_request), JOB_TIMEOUT_S
                 )
+                return _finish(result, timeline)
             except TimeoutError:
-                return _fail(
-                    "FLASH_FAILED",
-                    f"job '{label}' exceeded {JOB_TIMEOUT_S:.0f}s and was abandoned",
+                return _finish(
+                    _fail(
+                        "FLASH_FAILED",
+                        f"job '{label}' exceeded {JOB_TIMEOUT_S:.0f}s and was abandoned",
+                    ),
+                    timeline,
                 )
             except JobProtocolError as e:
-                return _fail("FLASH_FAILED", f"agent spoke an unexpected frame: {e}")
+                return _finish(
+                    _fail("FLASH_FAILED", f"agent spoke an unexpected frame: {e}"), timeline
+                )
             except Exception as e:  # channel open / send failures
-                return _fail("FLASH_FAILED", f"job '{label}' failed: {e or type(e).__name__}")
+                return _finish(
+                    _fail("FLASH_FAILED", f"job '{label}' failed: {e or type(e).__name__}"),
+                    timeline,
+                )
             finally:
                 self._current = ""
+                if timeline is not None:
+                    await timeline.aclose()
                 _log.info("flash job %r finished in %.1fs", label, time.monotonic() - started)
 
     async def _drive(
@@ -347,6 +367,61 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
         # ACCEPTED and anything unknown: ignore. A forward-compatible agent
         # may add events; refusing to proceed on an unrecognised one would
         # make every future agent addition a breaking change.
+
+
+# ── timeline plumbing (ADR-056 §决定 4) ──────────────────────────────
+#
+# Recording lives HERE rather than in the CLI or the route because every
+# caller funnels through this service. Put it at the edge and the answer to
+# "what was the board saying while it was written" would depend on which
+# client happened to start the job.
+
+
+async def _open_timeline(
+    label: str, request: dict[str, Any], *, enabled: bool
+) -> FlashTimeline | None:
+    """Start recording. Any failure here downgrades to "no recording" —
+    a bench that cannot write artifacts must still be able to flash."""
+    if not enabled:
+        return None
+    try:
+        from alb.remote.flash_timeline import new_timeline
+
+        timeline = new_timeline(label.replace(" ", "-"))
+        # The whole request, digest included: six months later "which exact
+        # image went onto this board" is the question the record has to
+        # answer, and the digest is the only thing that answers it.
+        timeline.header(label=label, detail=dict(request))
+        await timeline.attach_uart()
+        return timeline
+    except Exception as e:
+        _log.warning("flash timeline unavailable (continuing without it): %s", e)
+        return None
+
+
+def _tee(on_event: EventSink | None, timeline: FlashTimeline | None) -> EventSink | None:
+    """Fan one event stream out to the caller and the recorder — the half of
+    ADR-054 that DOES apply here: many observers, same data."""
+    if timeline is None:
+        return on_event
+
+    def sink(ev: FlashEvent) -> None:
+        with contextlib.suppress(Exception):
+            timeline.job_event(ev)
+        if on_event is not None:
+            on_event(ev)
+
+    return sink
+
+
+def _finish(result: FlashResult, timeline: FlashTimeline | None) -> FlashResult:
+    """Record the verdict and tell the caller where to read the story."""
+    if timeline is None:
+        return result
+    with contextlib.suppress(Exception):
+        timeline.job_result(result)
+        result.artifacts = str(timeline.dir)
+    return result
 
 
 _SERVICE: FlashService | None = None

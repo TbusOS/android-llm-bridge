@@ -324,7 +324,10 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "method": "POST",
         "path": "/api/flash/flash",
         "description": "Write a workspace image to one partition; digest is verified "
-        "on the agent before anything is written (NDJSON stream)",
+        "on the agent before anything is written (NDJSON stream). Every job "
+        "records workspace/devices/*/flash/<job>-<ts>/ with timeline.jsonl "
+        "(job events + UART lines on one clock), uart.log and job.json; the "
+        "terminal frame carries the path in `artifacts`",
     },
 ]
 

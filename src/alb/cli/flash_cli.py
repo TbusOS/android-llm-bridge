@@ -129,11 +129,13 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
 
 
 def _report(final: dict[str, Any]) -> None:
+    artifacts = str(final.get("artifacts") or "")
     if final.get("ok"):
         out = str(final.get("stdout") or "").strip()
         typer.echo(f"[ok] {final.get('duration_s', 0)}s")
         if out:
             typer.echo(out)
+        _report_artifacts(artifacts)
         return
     code = str(final.get("code") or "")
     typer.echo(f"[fail] {code or 'error'}: {final.get('error') or 'unknown'}", err=True)
@@ -141,7 +143,18 @@ def _report(final: dict[str, Any]) -> None:
         text = str(final.get(stream) or "").strip()
         if text:
             typer.echo(f"  {stream}: {text}", err=True)
+    _report_artifacts(artifacts, err=True)
     raise typer.Exit(code=1)
+
+
+def _report_artifacts(directory: str, *, err: bool = False) -> None:
+    """Point at the recording. Named specifically rather than "see the logs":
+    after a flash that did not come back, `timeline.jsonl` — job events and
+    UART lines on one clock — is where the answer is, and nobody finds a file
+    they were not told about."""
+    if not directory:
+        return
+    typer.echo(f"  record: {directory}/timeline.jsonl (job + UART, one timeline)", err=err)
 
 
 @app.command("status")
