@@ -248,7 +248,10 @@ def test_health_abc_default_raises() -> None:
 
     b = _NoProbeBackend()
     with pytest.raises(NotImplementedError):
-        asyncio.get_event_loop().run_until_complete(b.health())
+        # asyncio.run, not get_event_loop(): the latter only works when some
+        # earlier test happened to leave a loop installed in this thread, so
+        # the test passed or failed depending on what ran before it.
+        asyncio.run(b.health())
 
 
 def test_health_init_failure(client, monkeypatch) -> None:

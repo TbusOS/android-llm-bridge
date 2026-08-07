@@ -578,4 +578,21 @@ def forwarder_status() -> dict[str, Any]:
             # (capture + shell + web console can now coexist — issue #4)
             "readers": getattr(_SERIAL_FORWARDER, "session_refs", 0),
         },
+        # Not a forwarder (ADR-056 — there is no port to bind), but it belongs
+        # in the same snapshot: an operator asking "why won't my flash start"
+        # needs `available` (is there a fastboot-capable agent at all) and
+        # `busy` (is someone else mid-job) from the same place they already
+        # look for adb and serial.
+        "flash": _flash_view(),
     }
+
+
+def _flash_view() -> dict[str, Any]:
+    """Read the flash service WITHOUT creating it — same no-side-effects rule
+    as the forwarder views, so polling status never allocates."""
+    from alb.remote import flash as _flash
+
+    service = _flash._SERVICE
+    if service is None:
+        return {"available": False, "busy": False, "job": ""}
+    return service.status()

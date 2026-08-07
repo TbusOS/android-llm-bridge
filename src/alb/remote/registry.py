@@ -263,9 +263,7 @@ class AgentRegistry:
         pending = self._pending.get(cid)
         if pending is None or pending.fut.done():
             return False
-        pending.fut.set_exception(
-            ChannelOpenError(reason or "agent reported channel open failure")
-        )
+        pending.fut.set_exception(ChannelOpenError(reason or "agent reported channel open failure"))
         return True
 
     def discard_pending(self, cid: str) -> None:
