@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import json
 import struct
+from typing import ClassVar
 
 import pytest
 
@@ -297,3 +298,43 @@ async def test_capability_variants_refused(caps):
     assert (await _service(_Agent(_Channel([]), caps=caps)).devices()).code == (
         "FASTBOOT_UNAVAILABLE"
     )
+
+
+# ── /agent/status must not contradict /api/flash/status ─────────────────
+
+
+def test_status_view_reports_capability_before_the_service_exists(monkeypatch):
+    """Real-hardware regression: `alb flash status` said ready while
+    `/agent/status` said available=false, because the snapshot read a
+    singleton nothing had created yet. Availability is a fact about the
+    bench, not about whether anything has used the service."""
+    from alb.remote import flash as flash_mod
+    from alb.remote import forwarder
+    from alb.remote.registry import get_agent_registry
+
+    class _Agent:
+        agent_id = "a"
+        caps: ClassVar[list[str]] = ["adb", "fastboot"]
+
+    monkeypatch.setattr(flash_mod, "_SERVICE", None)  # nothing has used it yet
+    monkeypatch.setattr(type(get_agent_registry()), "current_agent", lambda self: _Agent())
+    view = forwarder._flash_view()
+    assert view["available"] is True
+    assert view["busy"] is False
+
+
+def test_status_view_false_without_a_capable_agent(monkeypatch):
+    from alb.remote import flash as flash_mod
+    from alb.remote import forwarder
+    from alb.remote.registry import get_agent_registry
+
+    class _Agent:
+        agent_id = "a"
+        caps: ClassVar[list[str]] = ["adb"]
+
+    monkeypatch.setattr(flash_mod, "_SERVICE", None)
+    monkeypatch.setattr(type(get_agent_registry()), "current_agent", lambda self: _Agent())
+    assert forwarder._flash_view()["available"] is False
+
+    monkeypatch.setattr(type(get_agent_registry()), "current_agent", lambda self: None)
+    assert forwarder._flash_view()["available"] is False

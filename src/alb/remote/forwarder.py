@@ -27,7 +27,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from alb.remote.protocol import ADB_TARGET, ChannelRole, ChannelType
+from alb.remote.protocol import ADB_TARGET, CAP_FASTBOOT, ChannelRole, ChannelType
 from alb.remote.registry import ChannelOpener, ChannelOpenError, DataChannel
 
 _log = logging.getLogger(__name__)
@@ -588,11 +588,26 @@ def forwarder_status() -> dict[str, Any]:
 
 
 def _flash_view() -> dict[str, Any]:
-    """Read the flash service WITHOUT creating it — same no-side-effects rule
-    as the forwarder views, so polling status never allocates."""
-    from alb.remote import flash as _flash
+    """Flash capability + job state, WITHOUT creating the service — same
+    no-side-effects rule as the forwarder views, so polling never allocates.
 
+    `available` is derived from the agent's advertised caps rather than from
+    the service, because it is a fact about the bench, not about whether
+    anything has used the service yet. Reporting False just because the
+    singleton is still unborn made this endpoint contradict
+    `/api/flash/status` (which does create it) — two answers to one question,
+    and the wrong one is the one an operator reaches for first.
+
+    `busy` still comes from the service, and its absence is a sound
+    inference rather than a guess: with no service there is no lock, so no
+    job can be running.
+    """
+    from alb.remote import flash as _flash
+    from alb.remote.registry import get_agent_registry
+
+    agent = get_agent_registry().current_agent()
+    available = agent is not None and CAP_FASTBOOT in getattr(agent, "caps", [])
     service = _flash._SERVICE
     if service is None:
-        return {"available": False, "busy": False, "job": ""}
-    return service.status()
+        return {"available": available, "busy": False, "job": ""}
+    return {**service.status(), "available": available}
