@@ -1327,6 +1327,12 @@ _CONFIG_KEYS: dict[str, Any] = {
     "status_port": _port_number,
     "status_host": str,
     "log_file": str,
+    # ADR-056 flashing. Keys here MUST stay in lockstep with the argparse
+    # options in _parse_args — an unknown key is a hard error by design, so a
+    # flag that exists only on the command line reads to the operator as
+    # "this build does not support it" rather than "use --flag instead".
+    "fastboot_path": str,
+    "flash_partitions": str,
 }
 
 

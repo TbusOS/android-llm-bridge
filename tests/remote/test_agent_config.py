@@ -238,3 +238,71 @@ def test_setup_file_logging_none_disables():
     before = list(root.handlers)
     agent._setup_file_logging("none")
     assert root.handlers == before
+
+
+# ── config keys vs command-line flags must stay in lockstep ─────────────
+#
+# The bug this locks (hit for real 2026-08-07): `--fastboot-path` was added
+# to argparse but not to `_CONFIG_KEYS`. An unknown key is a HARD ERROR by
+# design, so the agent refused to start and told the operator the key did not
+# exist — which reads as "this build cannot do fastboot", not "use the flag
+# instead". A flag nobody can put in agent.conf is a flag nobody uses.
+
+# dests that are deliberately command-line only.
+_CLI_ONLY_DESTS = {
+    "config",  # chicken-and-egg: it names the file being read
+    "config_used",  # set after parsing, not an input at all
+    "verbose",  # a per-run debugging choice, not bench configuration
+}
+
+
+def test_every_flag_is_settable_from_the_config_file(tmp_path):
+    cfg = tmp_path / "agent.conf"
+    cfg.write_text("hub_url=ws://h/agent/connect\n", encoding="utf-8")
+    args = agent._parse_args(["--config", str(cfg)])
+    dests = {k for k in vars(args) if not k.startswith("_")}
+    missing = dests - _CLI_ONLY_DESTS - set(agent._CONFIG_KEYS)
+    assert not missing, (
+        f"these flags cannot be set from agent.conf: {sorted(missing)} — "
+        "add them to _CONFIG_KEYS or to _CLI_ONLY_DESTS"
+    )
+
+
+def test_every_config_key_reaches_a_real_flag(tmp_path):
+    """The other direction: a key in _CONFIG_KEYS with no matching argparse
+    dest would be silently accepted and then ignored."""
+    cfg = tmp_path / "agent.conf"
+    cfg.write_text("hub_url=ws://h/agent/connect\n", encoding="utf-8")
+    args = agent._parse_args(["--config", str(cfg)])
+    orphans = set(agent._CONFIG_KEYS) - set(vars(args))
+    assert not orphans, f"config keys that go nowhere: {sorted(orphans)}"
+
+
+def test_flash_keys_load_from_the_config_file(tmp_path):
+    cfg = tmp_path / "agent.conf"
+    cfg.write_text(
+        "hub_url=ws://h/agent/connect\n"
+        "fastboot_path=D:\\platform-tools\\fastboot.exe\n"
+        "flash_partitions=vendor_cfg,boot\n",
+        encoding="utf-8",
+    )
+    args = agent._parse_args(["--config", str(cfg)])
+    assert args.fastboot_path == "D:\\platform-tools\\fastboot.exe"
+    assert args.flash_partitions == "vendor_cfg,boot"
+
+
+def test_flash_config_reaches_the_module_globals(tmp_path, monkeypatch):
+    """_apply_flash_config is what turns the parsed values into the state the
+    hello frame reads — a value that stops at the Namespace changes nothing."""
+    exe = tmp_path / "fastboot"
+    exe.write_text("#!/bin/sh\n")
+    cfg = tmp_path / "agent.conf"
+    cfg.write_text(
+        f"hub_url=ws://h/agent/connect\nfastboot_path={exe}\nflash_partitions=boot, dtbo\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent, "_FASTBOOT_PATH", "")
+    monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset())
+    agent._apply_flash_config(agent._parse_args(["--config", str(cfg)]))
+    assert agent._FASTBOOT_PATH == str(exe)
+    assert agent._FLASH_PARTITIONS == frozenset({"boot", "dtbo"})  # whitespace trimmed
