@@ -25,10 +25,13 @@ from typing import Any
 
 import httpx
 import typer
-from rich.console import Console
 
 app = typer.Typer(help="Flash / fastboot via the connected device agent.")
-_console = Console()
+
+# Plain typer.echo, not rich: every line here can carry text produced by
+# fastboot on the agent host, and rich eats square brackets in it as markup —
+# fastboot's own progress output is full of them, and the `[ok]` / `[fail]`
+# markers vanished for exactly that reason. Matches serial_cli's convention.
 
 # A partition write can legitimately run for minutes; the hub applies its own
 # ceiling (flash.JOB_TIMEOUT_S). A short client timeout here would only make
@@ -53,8 +56,8 @@ def _timeout() -> httpx.Timeout:
 
 
 def _hub_unreachable(e: Exception) -> None:
-    _console.print(f"[red]cannot reach alb-api at {hub_url()}[/red]: {e}")
-    _console.print("[dim]fastboot runs on the hub — start alb-api, or set ALB_API_URL[/dim]")
+    typer.echo(f"[fail] cannot reach alb-api at {hub_url()}: {e}", err=True)
+    typer.echo("        fastboot runs on the hub — start alb-api, or set ALB_API_URL", err=True)
     raise typer.Exit(code=2)
 
 
@@ -69,7 +72,7 @@ def _render_progress(msg: dict[str, Any], state: dict[str, Any]) -> None:
     done, total = int(msg.get("done") or 0), int(msg.get("total") or 0)
     text = str(msg.get("text") or "")
     if text:
-        _console.print(f"  [dim]{phase}[/dim] {text}")
+        typer.echo(f"  {phase}: {text}")
         return
     if total > 0:
         pct = done * 100 // total
@@ -78,7 +81,7 @@ def _render_progress(msg: dict[str, Any], state: dict[str, Any]) -> None:
         step = pct // 10
         if state.get("step") != step:
             state["step"] = step
-            _console.print(f"  [dim]{phase}[/dim] {done}/{total} bytes ({pct}%)")
+            typer.echo(f"  {phase}: {done}/{total} bytes ({pct}%)")
 
 
 def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -93,7 +96,7 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
         ):
             if resp.status_code >= 400:
                 resp.read()
-                _console.print(f"[red]hub rejected the request ({resp.status_code})[/red]")
+                typer.echo(f"[fail] hub rejected the request ({resp.status_code})", err=True)
                 detail = ""
                 try:
                     detail = str(resp.json().get("detail", ""))
@@ -102,7 +105,7 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
                     # proxy's text is still worth showing verbatim.
                     detail = resp.text[:400]
                 if detail:
-                    _console.print(f"  {detail}")
+                    typer.echo(f"  {detail}", err=True)
                 raise typer.Exit(code=2)
             for line in resp.iter_lines():
                 if not line.strip():
@@ -117,8 +120,10 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
     if not final:
         # The stream ended without a verdict. Say exactly that — "no result"
         # is not "failed", and after a partition write the difference matters.
-        _console.print("[red]the hub closed the stream without reporting a result[/red]")
-        _console.print("[dim]the device state is unknown — check the hub log before retrying[/dim]")
+        typer.echo("[fail] the hub closed the stream without reporting a result", err=True)
+        typer.echo(
+            "        the device state is unknown — check the hub log before retrying", err=True
+        )
         raise typer.Exit(code=3)
     return final
 
@@ -126,16 +131,16 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
 def _report(final: dict[str, Any]) -> None:
     if final.get("ok"):
         out = str(final.get("stdout") or "").strip()
-        _console.print(f"[green][ok][/green] {final.get('duration_s', 0)}s")
+        typer.echo(f"[ok] {final.get('duration_s', 0)}s")
         if out:
-            _console.print(out)
+            typer.echo(out)
         return
     code = str(final.get("code") or "")
-    _console.print(f"[red][fail][/red] {code or 'error'}: {final.get('error') or 'unknown'}")
+    typer.echo(f"[fail] {code or 'error'}: {final.get('error') or 'unknown'}", err=True)
     for stream in ("stdout", "stderr"):
         text = str(final.get(stream) or "").strip()
         if text:
-            _console.print(f"[dim]{stream}:[/dim] {text}")
+            typer.echo(f"  {stream}: {text}", err=True)
     raise typer.Exit(code=1)
 
 
@@ -148,16 +153,16 @@ def cmd_status() -> None:
     except httpx.HTTPError as e:
         _hub_unreachable(e)
     if not data.get("available"):
-        _console.print("[yellow]fastboot unavailable[/yellow]")
-        _console.print(
-            "[dim]no connected agent advertises the fastboot capability — "
-            "set fastboot_path in the agent's agent.conf and restart it[/dim]"
+        typer.echo("[fail] fastboot unavailable")
+        typer.echo(
+            "        no connected agent advertises the fastboot capability — "
+            "set fastboot_path in the agent's agent.conf and restart it"
         )
         raise typer.Exit(code=1)
     if data.get("busy"):
-        _console.print(f"[yellow]busy[/yellow]: {data.get('job') or 'a job is running'}")
+        typer.echo(f"[busy] {data.get('job') or 'a job is running'}")
         return
-    _console.print("[green]ready[/green]")
+    typer.echo("[ok] ready")
 
 
 @app.command("devices")
@@ -188,6 +193,6 @@ def cmd_write(
     undoable from here, and the board may not come back to tell you.
     """
     if not yes:
-        _console.print(f"about to write [bold]{image}[/bold] to partition [bold]{partition}[/bold]")
+        typer.echo(f"about to write {image} to partition {partition}")
         typer.confirm("proceed?", abort=True)
     _report(_run_job("flash", {"partition": partition, "image": str(image)}))
