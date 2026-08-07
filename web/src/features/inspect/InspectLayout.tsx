@@ -14,18 +14,26 @@
  * Active-tab state comes from `useParams({ strict: false })`, the same
  * pattern used by `SessionDetailPage`.
  */
-import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Suspense } from "react";
 import { SubNav } from "../../components/SubNav";
-import { type InspectTabKey } from "../../router";
+import { INSPECT_TAB_KEYS, type InspectTabKey } from "../../router";
 import { useApp } from "../../stores/app";
 
 export function InspectLayout() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const navigate = useNavigate();
-  const params = useParams({ strict: false }) as { tabKey?: InspectTabKey };
-  const active: InspectTabKey = params.tabKey ?? "system";
+  // Derived from the PATH, not from params: the 13 tab routes are declared
+  // with literal paths (`path: "flash"`), so nothing ever populates a
+  // `tabKey` param and `useParams()` returned {} on every one of them — the
+  // sub-nav highlight sat on "System Info" no matter which tab was open.
+  // Only the unknown-key fallback route is param-based.
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const segment = pathname.split("/inspect/")[1]?.split("/")[0] ?? "";
+  const active: InspectTabKey = (INSPECT_TAB_KEYS as string[]).includes(segment)
+    ? (segment as InspectTabKey)
+    : "system";
 
   const setTab = (next: InspectTabKey) => {
     navigate({ to: "/inspect/$tabKey", params: { tabKey: next } });
