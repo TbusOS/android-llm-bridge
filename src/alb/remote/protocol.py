@@ -48,6 +48,10 @@ class ProtocolError(Exception):
 class ChannelType(str, enum.Enum):
     TCP = "tcp"
     SERIAL = "serial"
+    # ADR-056: not a byte-stream proxy at all — it carries one request/reply
+    # job (send an image, run fastboot on the agent host, stream progress
+    # back). There is no endpoint on the agent side to "connect" to.
+    JOB = "job"
 
 
 class ChannelRole(str, enum.Enum):
@@ -56,14 +60,61 @@ class ChannelRole(str, enum.Enum):
     #             Fail fast, NO retry.
     #   GATEWAY — proxied endpoint is a per-connection exclusive gateway
     #             (ser2net-style serial bridge). Bounded retry allowed.
+    #   JOB     — one-shot unit of work (ADR-056). Same no-retry policy as
+    #             DAEMON, kept distinct so nobody reads a fastboot channel as
+    #             "proxies a daemon": retrying is wrong here for a different
+    #             reason — the work may have already had a side effect on the
+    #             device, so a silent second attempt is not a repeat, it is a
+    #             second write.
     DAEMON = "daemon"
     GATEWAY = "gateway"
+    JOB = "job"
 
 
 _DEFAULT_ROLE: dict[ChannelType, ChannelRole] = {
     ChannelType.TCP: ChannelRole.DAEMON,
     ChannelType.SERIAL: ChannelRole.GATEWAY,
+    ChannelType.JOB: ChannelRole.JOB,
 }
+
+# Agent capabilities advertised in `hello`. The hub uses these to answer
+# "can this bench flash?" immediately instead of discovering it by timeout
+# (ADR-056 §决定 7).
+CAP_ADB = "adb"
+CAP_FASTBOOT = "fastboot"
+
+
+# The three job enums below use enum.StrEnum while their older neighbours
+# use (str, enum.Enum). Not an oversight: StrEnum is the correct form on
+# this target (py311) and new code should not repeat a lint the linter
+# already flags. Converting the older three is a separate change — their
+# str() rendering differs, and they are compared in tests.
+class JobOp(enum.StrEnum):
+    """What a job channel was opened to do. Sent in the opening control
+    frame; the agent builds the actual argv itself (ADR-056 §决定 5) — the
+    hub never sends a command line."""
+
+    FLASH = "flash"
+    REBOOT = "reboot"
+    DEVICES = "devices"
+
+
+class JobEvent(enum.StrEnum):
+    """Agent → hub frames on a job channel."""
+
+    ACCEPTED = "accepted"  # request understood; work is starting
+    PROGRESS = "progress"
+    DONE = "done"
+
+
+class JobPhase(enum.StrEnum):
+    """Which half of a flash the progress refers to. Two phases, not one
+    percentage: transferring 1 KB over the tunnel and writing it to a
+    partition fail for completely different reasons, and a caller staring at
+    a stalled bar needs to know which one it is stuck in."""
+
+    TRANSFER = "transfer"
+    FLASH = "flash"
 
 
 def default_role(ctype: ChannelType) -> ChannelRole:
@@ -229,3 +280,75 @@ def decode_control(text: str) -> dict[str, Any]:
     if verb not in _VERB_VALUES:
         raise ProtocolError(f"unknown verb: {verb!r}")
     return obj
+
+
+# ── job channel messages (ADR-056) ───────────────────────────────────
+#
+# These ride the job channel's frames (alb.remote.jobframe), NOT the
+# signaling WS, so they carry no `verb` and are not validated by
+# decode_control. Builders live here anyway so the hub and the agent share
+# one definition of the vocabulary.
+
+
+def job_flash(*, partition: str, size: int, sha256: str) -> dict[str, Any]:
+    """Opening frame of a flash job.
+
+    Carries the digest UP FRONT so the agent can refuse a corrupt transfer
+    before it touches the device (ADR-056 §决定 6) — the one moment when
+    "is this image intact" is still a cheap question. Note what is absent:
+    no file name, no path, no command line. The agent names its own temp
+    file and assembles its own argv."""
+    return {"op": JobOp.FLASH.value, "partition": partition, "size": size, "sha256": sha256}
+
+
+def job_reboot(*, target: str) -> dict[str, Any]:
+    """Ask the agent to run `fastboot reboot [target]`. The remedy for a
+    board that alb itself pushed into fastboot and cannot get out of."""
+    return {"op": JobOp.REBOOT.value, "target": target}
+
+
+def job_devices() -> dict[str, Any]:
+    """`fastboot devices` on the agent host — the only way to learn whether
+    the board is actually in fastboot, since it vanishes from adb there."""
+    return {"op": JobOp.DEVICES.value}
+
+
+def job_accepted(*, detail: str = "") -> dict[str, Any]:
+    return {"ev": JobEvent.ACCEPTED.value, "detail": detail}
+
+
+def job_progress(*, phase: str, done: int, total: int, text: str = "") -> dict[str, Any]:
+    """`total` may be 0 when the agent cannot know it (fastboot's own output
+    is not always quantified) — renderers must treat 0 as "indeterminate"
+    rather than dividing by it."""
+    return {
+        "ev": JobEvent.PROGRESS.value,
+        "phase": phase,
+        "done": done,
+        "total": total,
+        "text": text,
+    }
+
+
+def job_done(
+    *,
+    ok: bool,
+    rc: int,
+    stdout: str = "",
+    stderr: str = "",
+    error: str = "",
+    code: str = "",
+) -> dict[str, Any]:
+    """Terminal frame. `code` is an alb error code (infra.errors) when the
+    agent can name the failure precisely; `error` is the human sentence.
+    Both are present on failure so the caller can branch on the code without
+    parsing prose."""
+    return {
+        "ev": JobEvent.DONE.value,
+        "ok": ok,
+        "rc": rc,
+        "stdout": stdout,
+        "stderr": stderr,
+        "error": error,
+        "code": code,
+    }

@@ -2129,3 +2129,121 @@ request line**,包含 query —— 于是每开一条 channel,两个活凭证就
 - 新增 query param 时自问:它会不会进 access log?会 → 它就不能是 secret。
 
 **关联**: ADR-050(拨回家拓扑)· ADR-053(per-channel secret 的由来)· DEBT-084
+
+---
+
+## ADR-056 · fastboot 走"作业通道"而不是第三个 forwarder;烧录与 UART 编进同一条时间轴
+
+**状态**: 设计已定 · 2026-08-07 · 实现分期(见末尾)
+
+**背景**: alb 能把板子**推进** fastboot(`cli/power_cli.py:22` 的 mode 收 `fastboot`),
+但隧道里只有两条路(`remote/forwarder.py:234` AdbForwarder · `:387` SerialForwarder),
+`grep -rn "ChannelForwarder)" src/` 没有第三条。净效果是**能进不能出**:进去之后远端只能
+从串口看见它在 fastboot,`errors.py:214` `BOARD_IN_FASTBOOT` 给的建议原文
+"Use adb / fastboot tools to leave fastboot" —— 而那两样远端都够不着,唯一恢复手段是
+有人去碰那台 Windows 机器。对着"无人值守"的 CI 和 agent 场景,这比"暂不支持 fastboot"
+更咬人:功能缺失可预期,"能进不能出"要到现场才发现。
+
+### 决定 1 · fastboot 是**作业通道(job channel)**,不是 ChannelForwarder 子类
+
+前两条 channel 是**字节流代理**:两端各有一个真实端点(监听 socket / 字符设备),中间对拷。
+fastboot **没有可代理的端点** —— USB 协议由 `fastboot.exe` 自己讲完。需要的动作是
+"把一个文件送过去 + 在对端跑一条命令 + 收回进度和退出码",这是 RPC 不是 proxy。
+
+**没有它会怎样**: 硬套 forwarder 会得到一个假抽象 —— 要么在 hub 侧凭空造一个"本地
+fastboot 端口"(不存在),要么把 argv 当字节流灌过去(见决定 5,那是后门)。
+
+**替代方案为什么没选**:
+- **USB-over-IP**(usbip / 商用 USB 网络共享):两侧都要内核模块 / 签名驱动,而 fastboot
+  内部会触发 USB reset,usbip 对 reset 不稳。为"只做烧录"这个收敛场景开销过大。
+- **在 agent 上开一个 fastboot TCP 服务再用 AdbForwarder 代理**:等于多一个进程、多一份
+  生命周期,而且它天然是 daemon 语义(多客户端),掩盖了"设备一次只能被一个作业独占"这件事。
+
+### 决定 2 · 作业通道复用现有 data channel,只加一层 5 字节帧头
+
+不新开 WS 路由。`AgentConnection.open_data_channel(ctype=JOB, ...)` 直接复用已经打磨过的
+那条拨回流程:per-channel secret(ADR-053)、pending 超时、`channel_error` 快速失败(issue #4)。
+帧格式 `kind(1B) + length(4B BE) + payload`,`kind` 只有 `C`(控制 JSON)/ `D`(数据块)。
+
+**为什么不用 WS 原生 text/binary 帧区分**: 那要新开一条拨回路由,把 csecret 校验、pending
+注册、超时、错误回帧**全部再实现一遍**。第二套鉴权路径是最容易长歪的东西 —— 新增 60 行
+可测的 codec,比新增一条平行的认证入口便宜得多。
+
+**为什么不用"JSON 一行 + 紧跟裸字节"**: `recv()` 返回的是任意切分的 chunk,行边界和二进制
+载荷混在一个流里,解析器要处理"半行 + 半块"的所有交错。定长帧头把这些歧义一次消掉。
+
+### 决定 3 · 并发模型:**烧录串行 + UART fan-out**,两件事分开
+
+ADR-054 定的是"被代理端独占 → 必须共享 + fan-out"。fastboot 也独占设备,但**结论相反**:
+
+| | UART | fastboot |
+|---|---|---|
+| 介质语义 | **广播** —— 板子打的每个字节所有读方都该看见 | **独占作业** —— 两个人同时烧同一个分区没有任何正确语义 |
+| 正确做法 | 共享一条 channel + fan-out 给所有读方 | **一把锁,一次一个作业**;第二个请求明确报"忙",不排队不静默 |
+| fan-out 用在哪 | 读方 | **只用于进度流** —— CLI / web / 日志都该看见同一份进度 |
+
+**没有分清会怎样**: 照 ADR-054 抄成"共享 + fan-out"会做出"两个人能同时烧"——最坏结果。
+照 adb 抄成"每连接一条 channel"则是同一个错的另一面。**判据不是"独占吗",而是
+"多个读方看同一份数据有意义吗"**:UART 有,烧录没有。
+
+### 决定 4 · ★ 烧录会话把 UART 编进**同一条时间轴**,不是让人自己开第二条命令
+
+`alb flash` 在串口已配置时**默认挂上 UART**,产物落
+`workspace/devices/<serial>/flash/<ts>/`:
+
+| 文件 | 内容 |
+|---|---|
+| `timeline.jsonl` | **主产物** —— 作业事件与 UART 行交错,同一个时钟盖章 |
+| `uart.log` | 裸字节原样留档(bootloader 阶段有大量非行导向的字节,行化会丢东西) |
+| `job.json` | 作业结果:分区 / 大小 / sha256 / 退出码 / 耗时 |
+
+**为什么必须在采集端合并**: 裸串口字节流**自身没有时间戳**。如果让调用方开两条命令、
+事后把两个文件按时间凑起来,时间信息在采集那一刻就已经丢了,谁也补不回来。而"边烧边看 UART"的
+**全部价值就是相关性** —— "写 `vendor_cfg` 的那 3 秒里板子打了什么"。合并晚一步做,
+这个问题就永远答不了。对 AI 尤其致命:它只能读到两个各自独立、时间凑不到一起的文件。
+
+**什么场景会用到**: 烧完不起来 —— timeline 里能直接看到 flash 成功之后 bootloader
+在哪一步停住;烧录中途板子掉电 —— UART 最后几行就是原因。
+
+### 决定 5 · argv 由 **agent 侧模板拼装**,hub 只送结构化字段
+
+hub 发 `{op, partition, size, sha256}`;分区名过 agent 自己的白名单,镜像路径由 agent
+生成临时文件,`fastboot.exe` 路径来自 agent 自己的配置。**hub 永远不能传一整条命令行**。
+
+**没有它会怎样**: 这条通道就成了"让远端在那台 Windows 上跑任意可执行文件"——一个后门。
+这和现在 tcp channel 的 `ALLOWED_TCP_TARGETS` 是同一条规矩:**代理方永远不信任控制方
+给的目标,自己再查一遍**。
+
+### 决定 6 · 先核对完整性再开烧,宁可不烧也不烧一半
+
+控制帧先带 `size + sha256`,agent 收齐、核对通过才启动 `fastboot.exe`。校验失败直接报错,
+不落盘、不执行。**写分区被打断可能让板子起不来**,而"传输是否完整"是唯一能在动手之前
+就确定的事 —— 不利用它是白白把风险留到不可逆的那一步。
+
+### 决定 7 · 能力协商,不靠超时发现
+
+agent 的 `hello` 现在写死 `caps=["adb"]`(`alb_agent.py:354`)。加 `fastboot` cap:
+agent 找不到 `fastboot.exe` 就不报这个 cap,hub 直接告诉调用方"这台 agent 没有 fastboot",
+而不是发过去等超时。**能立刻知道的事不要用超时去发现**。
+
+### 代价 / 已知
+
+- agent 多一个执行外部程序的能力 —— 用决定 5 和 7 把它约束成"只能跑自己配置里的那一个
+  程序、参数自己拼"。
+- hub 侧多一个有状态单例(作业锁 + 当前作业),`/agent/status` 要暴露 `flash.busy`,
+  运维要能看见"是谁占着"。
+- 大镜像走流式会压满隧道。本 ADR **只覆盖流式**;SMB 路径留到 P3,判据是"单文件 > 256MB
+  且同一镜像会反复烧"。
+
+### 分期(按"先解掉真实阻塞"排,不按代码量)
+
+| 期 | 内容 | 解决什么 |
+|---|---|---|
+| P0 | job 通道 + `fastboot devices` / `fastboot reboot` | **能进不能出** |
+| P1 | 单分区流式烧录 + sha256 校验 + 进度 | 几百字节的厂商配置分区(今天的实际阻塞) |
+| P2 | UART 编进同一条时间轴(决定 4) | 烧完不起来时能当场看到原因 |
+| P3 | 整目录烧录 · SMB 大镜像 · web 一键页面 | CI 全量烧 / 易用性 |
+
+**关联**: ADR-050(拨回家 + 数据面)· ADR-052(channel retry 角色)· ADR-054(独占端点
+共享 + fan-out —— 本 ADR 给出它的**边界**:判据是"多读方看同一份数据有没有意义")·
+issue #3
