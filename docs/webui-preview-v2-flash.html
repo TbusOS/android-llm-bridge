@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Flash tab — webui preview v2 (extension)</title>
+    <meta name="description" content="Mockup baseline for the Inspect Flash tab: fastboot state, image import, one-click partition write, and the job/UART timeline.">
+    <meta property="og:title" content="Flash tab — webui preview v2">
+    <meta property="og:description" content="Mockup baseline for the Inspect Flash tab: fastboot state, image import, partition write, job/UART timeline.">
+    <link rel="stylesheet" href="assets/fonts.css">
+    <link rel="stylesheet" href="assets/anthropic.css">
+    <style>
+      body { background: var(--anth-bg); padding: 0; }
+      .brand-stripe {
+        height: 3px;
+        background: linear-gradient(90deg, var(--anth-orange) 0%, var(--anth-orange) 70%, rgba(217,119,87,0) 100%);
+      }
+      .flash-tab-wrap { padding: var(--space-6); }
+      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; }
+
+      .flash-tab {
+        max-width: 980px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(260px, 320px) 1fr;
+        gap: var(--space-4);
+      }
+      .flash-tab__wide { grid-column: 1 / -1; }
+
+      /* ---- state card (left column) ---- */
+      .flash-state-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        padding: var(--space-4);
+        align-self: start;
+      }
+      .flash-state-card__head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: var(--space-3);
+      }
+      .flash-state-card__title {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: .02em;
+        color: var(--anth-text-secondary);
+        margin: 0;
+      }
+      .flash-state-card__refresh {
+        background: none;
+        border: 0;
+        padding: 0;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: #a85a26;  /* not --anth-orange: 3.12:1 on white fails contrast */
+        cursor: pointer;
+      }
+      .flash-state-card__refresh:hover { text-decoration: underline; }
+      .flash-state-card__verdict {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 19px;
+        font-weight: 500;
+        color: var(--anth-text);
+        margin-bottom: 6px;
+      }
+      .flash-state-card__dot {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: #4c8b5c;
+        flex: 0 0 auto;
+      }
+      .flash-state-card__verdict[data-state="unavailable"] .flash-state-card__dot { background: var(--anth-medium-gray); }
+      .flash-state-card__verdict[data-state="busy"] .flash-state-card__dot { background: var(--anth-orange); }
+      .flash-state-card__why {
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--anth-text-secondary);
+        margin: 0 0 var(--space-3);
+      }
+      .flash-state-card__field {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 5px 0;
+        border-top: 1px solid var(--anth-light-gray);
+        font-size: 12.5px;
+      }
+      .flash-state-card__field-label {
+        font-family: var(--font-mono);
+        color: var(--anth-text-secondary);
+      }
+      .flash-state-card__field-value {
+        font-family: var(--font-mono);
+        color: var(--anth-text);
+        text-align: right;
+        word-break: break-all;
+      }
+
+      /* ---- action column ---- */
+      .flash-actions { display: grid; gap: var(--space-4); align-content: start; }
+      .flash-action-card {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        padding: var(--space-4);
+      }
+      .flash-action-card__head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .flash-action-card__title {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--anth-text-secondary);
+        margin: 0;
+      }
+      .flash-action-card__hint {
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--anth-text-secondary);
+        margin: 0 0 var(--space-3);
+      }
+
+      /* image import */
+      .flash-drop {
+        border: 1px dashed var(--anth-medium-gray);
+        border-radius: 6px;
+        padding: var(--space-4);
+        text-align: center;
+        background: var(--anth-bg);
+      }
+      .flash-drop__label {
+        font-size: 13px;
+        color: var(--anth-text-secondary);
+        margin: 0 0 8px;
+      }
+      .flash-drop__button {
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        padding: 6px 14px;
+        border: 1px solid var(--anth-text);
+        border-radius: 4px;
+        background: #ffffff;
+        color: var(--anth-text);
+        cursor: pointer;
+      }
+      .flash-file {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: var(--space-3);
+        padding-top: var(--space-3);
+        border-top: 1px solid var(--anth-light-gray);
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+      }
+      .flash-file__name { color: var(--anth-text); word-break: break-all; }
+      .flash-file__meta { color: var(--anth-text-secondary); white-space: nowrap; }
+
+      /* write row */
+      .flash-action-card__row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: var(--space-3);
+      }
+      .flash-action-card__row label {
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        color: var(--anth-text-secondary);
+        min-width: 78px;
+      }
+      .flash-action-card__row select {
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        padding: 5px 8px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 4px;
+        background: #ffffff;
+        color: var(--anth-text);
+        flex: 1;
+      }
+      .flash-btn {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        padding: 8px 18px;
+        border-radius: 4px;
+        border: 1px solid var(--anth-text);
+        background: var(--anth-text);
+        color: #ffffff;
+        cursor: pointer;
+      }
+      .flash-btn--ghost {
+        background: #ffffff;
+        color: var(--anth-text);
+      }
+      .flash-btn--danger {
+        border-color: #b54b3d;
+        background: #b54b3d;
+      }
+      .flash-btn:disabled {
+        opacity: .45;
+        cursor: not-allowed;
+      }
+      .flash-arm {
+        margin-top: var(--space-3);
+        padding: 10px 12px;
+        border: 1px solid #b54b3d;
+        border-radius: 6px;
+        background: #fdf5f3;
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: #7d3629;
+      }
+
+      /* ---- timeline (full width) ---- */
+      .flash-timeline {
+        background: #ffffff;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 8px;
+        padding: var(--space-4);
+      }
+      .flash-timeline__head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .flash-timeline__title {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--anth-text-secondary);
+        margin: 0;
+      }
+      .flash-timeline__path {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        color: var(--anth-text-secondary);
+        word-break: break-all;
+      }
+      .flash-timeline__hint {
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--anth-text-secondary);
+        margin: 0 0 var(--space-3);
+      }
+      .flash-timeline__bar {
+        height: 4px;
+        background: var(--anth-light-gray);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: var(--space-3);
+      }
+      .flash-timeline__bar-fill {
+        height: 100%;
+        background: var(--anth-orange);
+      }
+      .flash-timeline__log {
+        margin: 0;
+        max-height: 260px;
+        overflow-y: auto;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1.7;
+        background: var(--anth-bg);
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 6px;
+        padding: 10px 12px;
+      }
+      .flash-line { display: flex; gap: 10px; }
+      .flash-line__t {
+        color: var(--anth-medium-gray);
+        flex: 0 0 auto;
+        min-width: 44px;
+        text-align: right;
+      }
+      .flash-line__src {
+        flex: 0 0 auto;
+        min-width: 38px;
+        color: var(--anth-text-secondary);
+      }
+      .flash-line[data-src="uart"] .flash-line__src { color: #4a6fa5; }
+      .flash-line[data-src="job"] .flash-line__src { color: var(--anth-orange); }
+      .flash-line__text { color: var(--anth-text); white-space: pre-wrap; word-break: break-word; }
+
+      /* Standalone viewing only — in the app the language switch lives in
+         the shell, so the React port does NOT carry this button. */
+      .lang-toggle {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        padding: 5px 12px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 4px;
+        background: #ffffff;
+        color: var(--anth-text-secondary);
+        cursor: pointer;
+      }
+
+      @media (max-width: 860px) {
+        .flash-tab { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand-stripe"></div>
+    <button class="lang-toggle" id="langBtn" aria-label="Toggle language" type="button" onclick="toggleLang()">
+      <span class="lang-en">中文</span><span class="lang-zh">EN</span>
+    </button>
+    <div class="flash-tab-wrap">
+      <h1 style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
+        <span class="lang-en">Flash tab — Inspect</span>
+        <span class="lang-zh">Flash 烧录面板 — Inspect</span>
+      </h1>
+      <main class="flash-tab" role="region" aria-label="Flash tab">
+
+        <!-- ---- state ---- -->
+        <section class="flash-state-card">
+          <header class="flash-state-card__head">
+            <h2 class="flash-state-card__title">fastboot</h2>
+            <button type="button" class="flash-state-card__refresh">
+              <span class="lang-en">refresh</span><span class="lang-zh">刷新</span>
+            </button>
+          </header>
+          <p class="flash-state-card__verdict" data-state="ready">
+            <span class="flash-state-card__dot"></span>
+            <span class="lang-en">ready</span><span class="lang-zh">就绪</span>
+          </p>
+          <p class="flash-state-card__why">
+            <span class="lang-en">The connected agent advertises fastboot and no job is running.</span>
+            <span class="lang-zh">已连接的 agent 报告了 fastboot 能力，当前没有作业在跑。</span>
+          </p>
+          <div class="flash-state-card__field">
+            <span class="flash-state-card__field-label">agent</span>
+            <span class="flash-state-card__field-value">bench-01</span>
+          </div>
+          <div class="flash-state-card__field">
+            <span class="flash-state-card__field-label">uart</span>
+            <span class="flash-state-card__field-value">COM27 @ 115200</span>
+          </div>
+          <div class="flash-state-card__field">
+            <span class="flash-state-card__field-label">readers</span>
+            <span class="flash-state-card__field-value">1</span>
+          </div>
+        </section>
+
+        <div class="flash-actions">
+
+          <!-- ---- import ---- -->
+          <section class="flash-action-card">
+            <header class="flash-action-card__head">
+              <h2 class="flash-action-card__title">image</h2>
+            </header>
+            <p class="flash-action-card__hint">
+              <span class="lang-en">The file is uploaded to the hub workspace first, then flashed from there — so re-writing the same image costs no second upload.</span>
+              <span class="lang-zh">文件先传到 hub 的工作区，再从那里烧 —— 同一个镜像重烧一次不用再传一遍。</span>
+            </p>
+            <div class="flash-drop">
+              <p class="flash-drop__label">
+                <span class="lang-en">Drop a file here</span>
+                <span class="lang-zh">把文件拖到这里</span>
+              </p>
+              <button type="button" class="flash-drop__button">
+                <span class="lang-en">choose file</span><span class="lang-zh">选择文件</span>
+              </button>
+            </div>
+            <div class="flash-file">
+              <span class="flash-file__name">vendor_cfg.bin</span>
+              <span class="flash-file__meta">1.2 KB · sha256 3f9a…c1</span>
+            </div>
+          </section>
+
+          <!-- ---- write ---- -->
+          <section class="flash-action-card">
+            <header class="flash-action-card__head">
+              <h2 class="flash-action-card__title">write</h2>
+            </header>
+            <p class="flash-action-card__hint">
+              <span class="lang-en">The agent verifies the digest before it touches the device — a damaged transfer costs a retry, not a half-written partition.</span>
+              <span class="lang-zh">agent 会在动设备之前先核对摘要 —— 传坏了的代价是重传一次，不是写了一半的分区。</span>
+            </p>
+            <div class="flash-action-card__row">
+              <label for="flash-partition">partition</label>
+              <select id="flash-partition">
+                <option>vendor_cfg</option>
+                <option>boot</option>
+                <option>dtbo</option>
+              </select>
+            </div>
+            <button type="button" class="flash-btn flash-btn--danger">
+              <span class="lang-en">flash</span><span class="lang-zh">烧录</span>
+            </button>
+            <div class="flash-arm">
+              <span class="lang-en">Writing <b>vendor_cfg</b> cannot be undone from here, and the board may not come back to report it. Click flash again to confirm.</span>
+              <span class="lang-zh">写 <b>vendor_cfg</b> 在这里撤不回来，板子也可能起不来告诉你结果。再点一次"烧录"确认。</span>
+            </div>
+          </section>
+
+          <!-- ---- leave fastboot ---- -->
+          <section class="flash-action-card">
+            <header class="flash-action-card__head">
+              <h2 class="flash-action-card__title">leave fastboot</h2>
+            </header>
+            <p class="flash-action-card__hint">
+              <span class="lang-en">A board in fastboot has dropped off adb. This is the way back — without it, recovering needs someone at the machine.</span>
+              <span class="lang-zh">进了 fastboot 的板子已经从 adb 里消失。这是回去的路 —— 没有它，恢复就得有人到机器跟前。</span>
+            </p>
+            <button type="button" class="flash-btn flash-btn--ghost">
+              <span class="lang-en">reboot to system</span><span class="lang-zh">重启回系统</span>
+            </button>
+          </section>
+        </div>
+
+        <!-- ---- timeline ---- -->
+        <section class="flash-timeline flash-tab__wide">
+          <header class="flash-timeline__head">
+            <h2 class="flash-timeline__title">timeline</h2>
+            <span class="flash-timeline__path">workspace/devices/…/flash/flash-vendor_cfg-2026-08-07T19-22-04/</span>
+          </header>
+          <p class="flash-timeline__hint">
+            <span class="lang-en">Job progress and the board's UART on one clock — the point of watching is being able to line them up.</span>
+            <span class="lang-zh">作业进度和板子的 UART 用同一个时钟 —— 看 UART 的意义就在于能把两者对上。</span>
+          </p>
+          <div class="flash-timeline__bar"><div class="flash-timeline__bar-fill" style="width: 64%"></div></div>
+          <div class="flash-timeline__log">
+            <div class="flash-line" data-src="job"><span class="flash-line__t">0.00</span><span class="flash-line__src">job</span><span class="flash-line__text">accepted — receiving 1248 bytes</span></div>
+            <div class="flash-line" data-src="job"><span class="flash-line__t">0.14</span><span class="flash-line__src">job</span><span class="flash-line__text">transfer 1248/1248 bytes (100%)</span></div>
+            <div class="flash-line" data-src="job"><span class="flash-line__t">0.21</span><span class="flash-line__src">job</span><span class="flash-line__text">starting fastboot flash vendor_cfg</span></div>
+            <div class="flash-line" data-src="uart"><span class="flash-line__t">0.68</span><span class="flash-line__src">uart</span><span class="flash-line__text">fastboot: processing commands</span></div>
+            <div class="flash-line" data-src="job"><span class="flash-line__t">1.02</span><span class="flash-line__src">job</span><span class="flash-line__text">Sending 'vendor_cfg' (1 KB)</span></div>
+            <div class="flash-line" data-src="uart"><span class="flash-line__t">1.44</span><span class="flash-line__src">uart</span><span class="flash-line__text">mmc0: writing partition vendor_cfg</span></div>
+            <div class="flash-line" data-src="job"><span class="flash-line__t">1.90</span><span class="flash-line__src">job</span><span class="flash-line__text">Writing 'vendor_cfg' OKAY</span></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script>
+      function toggleLang() {
+        const el = document.documentElement;
+        el.lang = el.lang === "zh" ? "en" : "zh";
+      }
+    </script>
+  </body>
+</html>

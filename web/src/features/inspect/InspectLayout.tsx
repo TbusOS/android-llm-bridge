@@ -44,6 +44,7 @@ export function InspectLayout() {
     { key: "log-search" as const, label: lang === "zh" ? "日志搜索" : "Log Search" },
     { key: "diag" as const, label: lang === "zh" ? "诊断" : "Diag" },
     { key: "app" as const, label: lang === "zh" ? "应用" : "App" },
+    { key: "flash" as const, label: lang === "zh" ? "烧录" : "Flash" },
   ];
 
   return (

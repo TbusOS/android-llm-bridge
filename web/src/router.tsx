@@ -90,7 +90,8 @@ export type InspectTabKey =
   | "power"
   | "log-search"
   | "diag"
-  | "app";
+  | "app"
+  | "flash";
 export const INSPECT_TAB_KEYS: InspectTabKey[] = [
   "system",
   "charts",
@@ -104,6 +105,7 @@ export const INSPECT_TAB_KEYS: InspectTabKey[] = [
   "log-search",
   "diag",
   "app",
+  "flash",
 ];
 
 // Lazy-loaded tab components — each tab chunk only fetches on demand,
@@ -166,6 +168,11 @@ const InspectTabComponents: Record<
   ),
   app: lazy(() =>
     import("./features/inspect/AppTab").then((m) => ({ default: m.AppTab })),
+  ),
+  flash: lazy(() =>
+    import("./features/inspect/FlashTab").then((m) => ({
+      default: m.FlashTab,
+    })),
   ),
 };
 
