@@ -32,9 +32,30 @@ import {
 // Hard-coding it as THE list was a real defect: on a bench whose allowlist is
 // a single custom partition, none of these four is accepted, so every flash
 // from the web page ended at FLASH_PARTITION_REJECTED while the CLI worked.
+/**
+ * A snapshot taken when the job STARTS, not read live off the form.
+ *
+ * The distinction is the whole point: `partition` and the picked file are
+ * editable while the result is on screen, so rendering the banner from live
+ * state would relabel a finished job with whatever is selected now. A result
+ * that describes something other than what ran is worse than no result —
+ * it is the same defect class as the hard-coded partition picker, where the
+ * label and the reality drifted apart without anything failing.
+ */
+interface LastJob {
+  op: string;
+  partition: string;
+  imageName: string;
+  size: number;
+  ok: boolean;
+  code: string;
+  error: string;
+  duration_s: number;
+}
+
 const FALLBACK_PARTITIONS = ["vendor_cfg", "boot", "dtbo", "recovery"];
 
-function StateCard() {
+function StateCard({ lastJob }: { lastJob: LastJob | null }) {
   const lang = useApp((s) => s.lang);
   const { data, isLoading, isError, refetch, isFetching } = useFlashStatus();
 
@@ -95,6 +116,22 @@ function StateCard() {
           <span className="flash-state-card__field-value">{data.job}</span>
         </div>
       ) : null}
+      {/* The rest of this card answers "can this bench flash?", which stays
+          `ready` after a job finishes — so on its own the card gives no
+          feedback at all about the thing you just did. This row answers
+          "how did the last one go?". */}
+      {lastJob ? (
+        <div className="flash-state-card__field">
+          <span className="flash-state-card__field-label">
+            {lang === "zh" ? "上次作业" : "last job"}
+          </span>
+          <span className="flash-state-card__field-value">
+            {`${lastJob.op}${lastJob.partition ? ` ${lastJob.partition}` : ""} · ${
+              lastJob.ok ? "ok" : "fail"
+            } · ${lastJob.duration_s.toFixed(2)}s`}
+          </span>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -117,6 +154,10 @@ export function FlashTab() {
   const [image, setImage] = useState<{ path: string; size: number } | null>(null);
   const [partition, setPartition] = useState("");
   const [armed, setArmed] = useState(false);
+  const [lastJob, setLastJob] = useState<LastJob | null>(null);
+  const pending = useRef<{ op: string; partition: string; imageName: string; size: number } | null>(
+    null,
+  );
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement | null>(null);
 
@@ -133,6 +174,24 @@ export function FlashTab() {
     if (!partitions.includes(partition)) setPartition(partitions[0] ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [partitionKey, partition]);
+
+  useEffect(() => {
+    // `verdict` is the terminal line of the NDJSON stream. Pair it with the
+    // snapshot taken at launch; without the pairing the banner would show the
+    // current form values, not what actually ran.
+    if (!verdict) return;
+    const p = pending.current;
+    setLastJob({
+      op: p?.op ?? "flash",
+      partition: p?.partition ?? "",
+      imageName: p?.imageName ?? "",
+      size: p?.size ?? 0,
+      ok: verdict.ok,
+      code: verdict.code,
+      error: verdict.error,
+      duration_s: verdict.duration_s,
+    });
+  }, [verdict]);
 
   const busy = running || !!status?.busy;
   const canFlash = !!image && !!partition && !!status?.available && !busy;
@@ -156,6 +215,12 @@ export function FlashTab() {
       return;
     }
     setArmed(false);
+    pending.current = {
+      op: "flash",
+      partition,
+      imageName: image.path.split("/").pop() ?? image.path,
+      size: image.size,
+    };
     void run("flash", { partition, image: image.path });
   }
 
@@ -163,7 +228,7 @@ export function FlashTab() {
   // one only because it renders standalone with no surrounding page.
   return (
     <main className="flash-tab" aria-label={lang === "zh" ? "烧录面板" : "Flash tab"}>
-      <StateCard />
+      <StateCard lastJob={lastJob} />
 
       <div className="flash-actions">
         {/* ---- import ---- */}
@@ -264,7 +329,10 @@ export function FlashTab() {
           <button
             type="button"
             className="flash-btn flash-btn--ghost"
-            onClick={() => void run("reboot", { target: "" })}
+            onClick={() => {
+              pending.current = { op: "reboot", partition: "", imageName: "", size: 0 };
+              void run("reboot", { target: "" });
+            }}
             disabled={busy || !status?.available}
           >
             {lang === "zh" ? "重启回系统" : "reboot to system"}
@@ -285,6 +353,61 @@ export function FlashTab() {
             ? "作业进度实时在下面；板子的 UART 与它用同一个时钟记进上面那个文件 —— 烧完起不来时，答案在那里。"
             : "Job progress streams below; the board's UART is recorded into the file above on the same clock — when a flash does not come back, that is where the answer is."}
         </p>
+        {/* The result banner. Before this, the only signal that a job
+            succeeded was the word `ok` on the timeline's last line — same
+            size, same column, same styling as every `job` label above it.
+            On real hardware that is genuinely hard to spot. */}
+        {lastJob ? (
+          <div className="flash-result" data-ok={lastJob.ok ? "true" : "false"}>
+            <div className="flash-result__head">
+              <span className="flash-result__verdict">
+                {lastJob.ok
+                  ? lastJob.op === "flash"
+                    ? lang === "zh"
+                      ? "已写入"
+                      : "wrote"
+                    : lang === "zh"
+                      ? "完成"
+                      : "done"
+                  : lang === "zh"
+                    ? "失败"
+                    : "failed"}
+              </span>
+              <span className="flash-result__what">
+                {lastJob.op === "flash"
+                  ? `${lastJob.partition} ← ${lastJob.imageName} (${lastJob.size} bytes)`
+                  : lastJob.op}
+              </span>
+              <span className="flash-result__took">{lastJob.duration_s.toFixed(2)}s</span>
+            </div>
+            {lastJob.ok && lastJob.op === "flash" ? (
+              /* Says exactly what was established and no more. `Writing OKAY`
+                 is fastboot reporting that it wrote — it is not a readback,
+                 and alb performs none. Letting the banner imply otherwise
+                 would be the same overclaim that made `partition size: 0`
+                 look like a diagnosis on 2026-08-10. */
+              <p className="flash-result__scope">
+                {lang === "zh" ? (
+                  <>
+                    fastboot 报告写入成功。<strong>没有回读校验</strong>
+                    ——内容要紧的话，等板子起来后去板上验一下。
+                  </>
+                ) : (
+                  <>
+                    fastboot reported the write succeeded. The partition was{" "}
+                    <strong>not read back</strong> — if the contents matter, check on the board
+                    after it boots.
+                  </>
+                )}
+              </p>
+            ) : null}
+            {!lastJob.ok ? (
+              <span className="flash-result__code">
+                {lastJob.code ? `${lastJob.code}: ${lastJob.error}` : lastJob.error}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {running || pct > 0 ? (
           <div className="flash-timeline__bar">
             <div className="flash-timeline__bar-fill" style={{ width: `${pct}%` }} />

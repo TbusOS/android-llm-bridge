@@ -5561,6 +5561,61 @@ li:hover .screenshot-row__del,
 }
   .flash-line[data-src="uart"] .flash-line__src { color: #4a6fa5; }
   .flash-line[data-src="job"] .flash-line__src { color: var(--anth-orange); }
+
+/* 结果横幅 —— 作业结束后的判据。
+   在此之前,"成没成"只能靠时间轴最后一行那个 ok/fail 三个字母,
+   和上面每一行的 job/uart 标签同字号同位置,扫一眼分不出来。
+   真机截图看下来这是最弱的一环,所以给它独立的块、独立的边框。 */
+.flash-result {
+  border: 1px solid var(--anth-light-gray);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  background: #fff;
+}
+.flash-result[data-ok="true"]  { border-left-color: #4a7c59; }
+.flash-result[data-ok="false"] { border-left-color: #b54b3d; }
+.flash-result__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.flash-result__verdict {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.flash-result[data-ok="true"]  .flash-result__verdict { color: #4a7c59; }
+.flash-result[data-ok="false"] .flash-result__verdict { color: #b54b3d; }
+.flash-result__what {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--anth-text);
+}
+.flash-result__took {
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+  margin-left: auto;
+}
+/* 边界声明。fastboot 说 OKAY 只表示它写了,不等于内容对 ——
+   这一行防的就是把"写入返回成功"读成"已验证"。 */
+.flash-result__scope {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--anth-text-secondary);
+}
+.flash-result__code {
+  display: inline-block;
+  margin-top: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: #b54b3d;
+}
+
   .flash-line__text { color: var(--anth-text); white-space: pre-wrap; word-break: break-word; }
 @media (max-width: 860px) {
   .flash-tab { grid-template-columns: 1fr; }
