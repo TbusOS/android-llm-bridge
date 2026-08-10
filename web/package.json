@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "android-llm-bridge Web UI — React + Vite + TypeScript, built into docs/app/.",
+  "description": "android-llm-bridge Web UI \u2014 React + Vite + TypeScript, built into docs/app/.",
   "scripts": {
     "dev": "vite",
     "dev:fresh": "rm -rf node_modules/.vite && vite",
@@ -15,7 +15,8 @@
     "format": "biome format --write ./src",
     "lint": "biome lint ./src",
     "web-check": "cd .. && node web/scripts/web_check.mjs",
-    "web-check:dashboard": "cd .. && WEB_CHECK_WAIT_FOR_SELECTOR=article node web/scripts/web_check.mjs /app/"
+    "web-check:dashboard": "cd .. && WEB_CHECK_WAIT_FOR_SELECTOR=article node web/scripts/web_check.mjs /app/",
+    "e2e:flash": "cd .. && node web/scripts/flash_e2e.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
