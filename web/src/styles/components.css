@@ -5562,6 +5562,77 @@ li:hover .screenshot-row__del,
   .flash-line[data-src="uart"] .flash-line__src { color: #4a6fa5; }
   .flash-line[data-src="job"] .flash-line__src { color: var(--anth-orange); }
 
+/* 板载配置回读。烧录只能告诉你 fastboot 认为它写了;这一块显示
+   板子上【现在实际是什么】。分区不靠名字找,靠内容认(头部能解析成
+   KEY="VALUE" 的那个)—— by-name 标签每个产品都不一样,写死或让人手输
+   就是分区下拉那个错的翻版。 */
+.cfg-card {
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 10px;
+  padding: 18px 20px;
+  background: #fff;
+}
+.cfg-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.cfg-card__title {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.cfg-card__node {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--anth-text-secondary);
+  margin-left: auto;
+}
+.cfg-card__hint {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--anth-text-secondary);
+  margin: 0 0 14px;
+}
+.cfg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+}
+.cfg-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--anth-text-secondary);
+  border-bottom: 1px solid var(--anth-light-gray);
+  padding: 5px 8px 5px 0;
+}
+.cfg-table td {
+  padding: 5px 8px 5px 0;
+  border-bottom: 1px solid #f0eeea;
+  vertical-align: top;
+}
+.cfg-table td.cfg-table__key { color: var(--anth-text-secondary); white-space: nowrap; }
+.cfg-table td.cfg-table__val { word-break: break-all; }
+/* 解析不出来时显示原始字节 —— 空表格会被读成"配置是空的",
+   而真相通常是"读错分区了"。 */
+.cfg-raw {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--anth-bg);
+  border: 1px solid var(--anth-light-gray);
+  border-radius: 6px;
+  color: var(--anth-text);
+}
+
+
 /* 结果横幅 —— 作业结束后的判据。
    在此之前,"成没成"只能靠时间轴最后一行那个 ok/fail 三个字母,
    和上面每一行的 job/uart 标签同字号同位置,扫一眼分不出来。

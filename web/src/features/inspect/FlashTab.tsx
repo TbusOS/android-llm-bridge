@@ -19,6 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useApp } from "../../stores/app";
+import { BoardConfigCard } from "./BoardConfigCard";
 import {
   uploadImage,
   useFlashJob,
@@ -341,6 +342,8 @@ export function FlashTab() {
       </div>
 
       {/* ---- timeline ---- */}
+      <BoardConfigCard />
+
       <section className="flash-timeline flash-tab__wide">
         <header className="flash-timeline__head">
           <h2 className="flash-timeline__title">timeline</h2>

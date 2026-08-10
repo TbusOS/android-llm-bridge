@@ -26,6 +26,7 @@ from alb.infra.env_loader import load_env_files
 load_env_files()
 from alb.cli.app_cli import app as app_cli
 from alb.cli.chat_cli import app as chat_cli
+from alb.cli.config_cli import app as config_cli
 from alb.cli.common import get_transport, load_active_friendly, print_result, run_async
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.doctor_cli import run_doctor
@@ -166,6 +167,7 @@ def status(ctx: typer.Context) -> None:
 
 
 # `alb setup {adb,wifi,ssh,serial}` — guided setup (see setup_cli.py)
+app.add_typer(config_cli, name="config", help="Read the board's config partition.")
 app.add_typer(setup_cli, name="setup", help="Guided setup for each transport.")
 app.command("doctor", help="One-shot environment health check (env/config/transports).")(run_doctor)
 

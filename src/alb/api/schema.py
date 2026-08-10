@@ -315,6 +315,18 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "board that dropped off adb by entering fastboot (NDJSON stream)",
     },
     {
+        "method": "GET",
+        "path": "/api/board-config/scan",
+        "description": "Partitions whose head parses as KEY=\"VALUE\" — detection is by "
+        "CONTENT, not by name, because the by-name label differs per product",
+    },
+    {
+        "method": "GET",
+        "path": "/api/board-config/read",
+        "description": "Read and parse a config partition's head — the readback the "
+        "flash path does not perform (Writing OKAY is not a verification)",
+    },
+    {
         "method": "POST",
         "path": "/api/flash/getvar",
         "description": "fastboot getvar <name> (empty = all); the device's answer is "
