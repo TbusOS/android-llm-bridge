@@ -222,7 +222,7 @@ def test_serial_endpoint_none_when_forwarder_absent(monkeypatch):
 # ── service integration ─────────────────────────────────────────────────
 
 
-async def test_service_records_and_reports_the_artifact_dir(monkeypatch):
+async def test_service_records_and_reports_the_artifact_dir(monkeypatch, tmp_path):
     """Recording lives in the service so the answer does not depend on which
     client started the job."""
     from alb.remote.flash import FlashService
@@ -244,7 +244,7 @@ async def test_service_records_and_reports_the_artifact_dir(monkeypatch):
     import alb.remote.flash_timeline as mod
 
     monkeypatch.setattr(mod, "serial_endpoint", lambda: None)
-    result = await FlashService(lambda: _Agent()).devices()
+    result = await FlashService(lambda: _Agent()).flash("boot", _image(tmp_path))
     assert result.artifacts, "the caller must be told where the story landed"
     from pathlib import Path
 
@@ -280,3 +280,82 @@ async def test_service_survives_a_broken_recorder(monkeypatch):
     assert result.artifacts == ""  # nothing recorded
     assert result.code == "FLASH_FAILED"  # the job itself still ran and reported
     assert flash_mod is not None
+
+
+def _image(tmp_path):
+    """A minimal real file — flash() hashes it before opening any channel."""
+    p = tmp_path / "img.bin"
+    p.write_bytes(b"x" * 32)
+    return p
+
+
+# ── what each op records (2026-08-10 regression) ────────────────────────
+#
+# `devices` used to record like every other op, and recording means opening
+# the board's PHYSICAL serial port. It is also the op people POLL. A 4-second
+# poll loop of it opened COM-port after COM-port until the agent stopped
+# answering keepalives and dropped its session. The cost of recording has to
+# match the value of the record.
+
+
+async def test_devices_records_nothing(monkeypatch):
+    """A ~60 ms query whose whole answer is its return value."""
+    import alb.remote.flash_timeline as mod
+    from alb.remote.flash import FlashService
+
+    opened = []
+    monkeypatch.setattr(mod, "serial_endpoint", lambda: opened.append(1) or None)
+    result = await FlashService(lambda: _capable_agent()).devices()
+    assert result.artifacts == ""
+    assert opened == [], "must not even look for a serial endpoint"
+
+
+async def test_reboot_records_but_does_not_open_the_uart(monkeypatch):
+    """The command returns in ~0.1 s; the board has not said anything yet.
+    Keep the record, skip the port."""
+    import alb.remote.flash_timeline as mod
+    from alb.remote.flash import FlashService
+
+    attached = []
+
+    async def spy(self):
+        attached.append(1)
+
+    monkeypatch.setattr(mod.FlashTimeline, "attach_uart", spy)
+    result = await FlashService(lambda: _capable_agent()).reboot()
+    assert result.artifacts, "the outcome is still worth recording"
+    assert attached == [], "but the physical port must not be opened"
+
+
+async def test_flash_does_open_the_uart(monkeypatch, tmp_path):
+    """The one op where §决定 4's correlation is the whole point."""
+    import alb.remote.flash_timeline as mod
+    from alb.remote.flash import FlashService
+
+    attached = []
+
+    async def spy(self):
+        attached.append(1)
+
+    monkeypatch.setattr(mod.FlashTimeline, "attach_uart", spy)
+    result = await FlashService(lambda: _capable_agent()).flash("boot", _image(tmp_path))
+    assert result.artifacts
+    assert attached == [1]
+
+
+def _capable_agent():
+    class _Ch:
+        async def send(self, data): ...
+        async def recv(self):
+            return b""
+
+        async def aclose(self): ...
+
+    class _Agent:
+        agent_id = "a"
+        caps: ClassVar[list[str]] = ["adb", "fastboot"]
+
+        async def open_data_channel(self, **kw):
+            return _Ch()
+
+    return _Agent()

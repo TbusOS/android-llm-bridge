@@ -215,12 +215,26 @@ class FlashService:
             label=f"reboot {target or 'normal'}",
             request=job_reboot(target=target),
             on_event=on_event,
+            # No UART: the command returns in ~0.1 s, long before the board
+            # has said anything worth correlating. The boot log people
+            # actually want arrives afterwards and belongs to a capture.
+            watch_uart=False,
         )
 
     async def devices(self, *, on_event: EventSink | None = None) -> FlashResult:
         """`fastboot devices` on the agent host — a board in fastboot has
         vanished from adb, so this is the only way to see it."""
-        return await self._run(label="devices", request=job_devices(), on_event=on_event)
+        return await self._run(
+            label="devices",
+            request=job_devices(),
+            on_event=on_event,
+            # Records nothing: a ~60 ms query whose whole answer is its return
+            # value, and the op most likely to be POLLED. Recording used to
+            # mean opening the board's PHYSICAL serial port on every single
+            # call — a poll loop of these wedged a live agent (keepalive ping
+            # timeout, 2026-08-10).
+            record=False,
+        )
 
     # ── plumbing ─────────────────────────────────────────────────────
 
@@ -231,6 +245,7 @@ class FlashService:
         request: dict[str, Any],
         on_event: EventSink | None,
         after_request: Callable[[DataChannel], Any] | None = None,
+        record: bool = True,
         watch_uart: bool = True,
     ) -> FlashResult:
         if not self.available():
@@ -248,7 +263,7 @@ class FlashService:
         async with self._lock:
             self._current = label
             started = time.monotonic()
-            timeline = await _open_timeline(label, request, enabled=watch_uart)
+            timeline = await _open_timeline(label, request, enabled=record, watch_uart=watch_uart)
             sink = _tee(on_event, timeline)
             try:
                 result = await asyncio.wait_for(
@@ -378,10 +393,17 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
 
 
 async def _open_timeline(
-    label: str, request: dict[str, Any], *, enabled: bool
+    label: str, request: dict[str, Any], *, enabled: bool, watch_uart: bool
 ) -> FlashTimeline | None:
     """Start recording. Any failure here downgrades to "no recording" —
-    a bench that cannot write artifacts must still be able to flash."""
+    a bench that cannot write artifacts must still be able to flash.
+
+    `watch_uart` is a SEPARATE knob from `enabled` because the two costs
+    differ by orders of magnitude. Writing a timeline file is free; attaching
+    the UART opens a channel to the agent, which opens the board's PHYSICAL
+    serial port. Worth it while a partition is being written, absurd for a
+    query — and doing it on a polled op is what took a live agent down
+    (keepalive ping timeout, 2026-08-10)."""
     if not enabled:
         return None
     try:
@@ -392,7 +414,8 @@ async def _open_timeline(
         # image went onto this board" is the question the record has to
         # answer, and the digest is the only thing that answers it.
         timeline.header(label=label, detail=dict(request))
-        await timeline.attach_uart()
+        if watch_uart:
+            await timeline.attach_uart()
         return timeline
     except Exception as e:
         _log.warning("flash timeline unavailable (continuing without it): %s", e)
