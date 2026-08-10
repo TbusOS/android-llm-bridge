@@ -46,6 +46,7 @@ from alb.remote.protocol import (
     JobPhase,
     job_devices,
     job_flash,
+    job_getvar,
     job_reboot,
 )
 from alb.remote.registry import DataChannel
@@ -247,6 +248,28 @@ class FlashService:
             # mean opening the board's PHYSICAL serial port on every single
             # call — a poll loop of these wedged a live agent (keepalive ping
             # timeout, 2026-08-10).
+            record=False,
+        )
+
+    async def getvar(self, name: str = "", *, on_event: EventSink | None = None) -> FlashResult:
+        """`fastboot getvar <name>` (empty = `getvar all`), answer passed
+        through untouched.
+
+        Transport, not interpretation. The verb is protocol level and
+        survives a platform change; the meaning of the values does not —
+        this bench answers `partition-size:cfg` with `0` on flashes that
+        succeed. Turning that into "the partition is missing" would ship the
+        misreading that cost a day on 2026-08-10, so nothing here parses the
+        output.
+
+        Same tier as `devices` (ADR-056 / afe8052): a fast query, recorded
+        nowhere and with no UART attached — recording means opening the
+        board's physical serial port, which is far too much for a question.
+        """
+        return await self._run(
+            label="getvar",
+            request=job_getvar(name=name),
+            on_event=on_event,
             record=False,
         )
 

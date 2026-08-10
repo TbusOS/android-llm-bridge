@@ -342,6 +342,105 @@ async def test_flash_proceeds_when_a_device_is_present(monkeypatch):
 def test_every_op_has_a_timeout():
     """A missing entry silently falls back to 300 s — long enough for a
     'waiting for device' hang to look like a working command."""
-    assert set(agent._FASTBOOT_TIMEOUT_S) == {"devices", "reboot", "flash"}
+    assert set(agent._FASTBOOT_TIMEOUT_S) == {"devices", "getvar", "reboot", "flash"}
     # a query must answer promptly; a partition write may legitimately take minutes
     assert agent._FASTBOOT_TIMEOUT_S["devices"] < agent._FASTBOOT_TIMEOUT_S["flash"]
+    # getvar is a query like devices, not a write — same tier
+    assert agent._FASTBOOT_TIMEOUT_S["getvar"] == agent._FASTBOOT_TIMEOUT_S["devices"]
+
+
+# ── getvar: transport only, and the same refuse-early rules ─────────────
+
+
+@pytest.mark.parametrize("name", ["", "all", "version", "partition-size:cfg", "has-slot:boot", "is-userspace"])
+def test_getvar_names_accepted(name):
+    """Colons are legal here and illegal in partition names, so the two
+    checks cannot share a rule — `partition-size:cfg` is a real variable."""
+    assert agent._getvar_allowed(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "-w",  # a leading dash reads as a flag
+        "a b",  # a space would split into two argv elements
+        "../etc/passwd",
+        "x;rm -rf /",
+        "x" * 65,
+        ".hidden",
+    ],
+)
+def test_getvar_names_rejected(name):
+    assert not agent._getvar_allowed(name)
+
+
+def test_getvar_has_no_allowlist(monkeypatch):
+    """Which variables exist is PLATFORM-SPECIFIC. A hub- or agent-side list
+    would hide variables the device really has — the same defect as the
+    hard-coded web partition picker, which offered four names this bench
+    refuses. Shape is checked; membership is the device's business."""
+    monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"cfg"}))
+    # the partition allowlist must not leak into variable names
+    assert agent._getvar_allowed("vendor-specific-thing")
+    assert not agent._partition_allowed("vendor-specific-thing")
+
+
+async def test_getvar_refuses_when_no_device_is_in_fastboot(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    async def no_device(_fastboot):
+        return False
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", no_device)
+    ws = _FakeWs(b"")
+    await agent._job_getvar(ws, "/opt/fastboot", "all")
+    assert ran == [], "must not run a command that would block on 'waiting for any device'"
+    assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
+
+
+async def test_getvar_argv_and_passthrough(monkeypatch):
+    """The agent assembles argv itself, and the output is handed back
+    verbatim — nothing on this path parses a value."""
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", "partition-size:cfg: 0x0\nFinished.\n"
+
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+
+    ws = _FakeWs(b"")
+    await agent._job_getvar(ws, "/opt/fastboot", "partition-size:cfg")
+    assert ran == [["/opt/fastboot", "getvar", "partition-size:cfg"]]
+    done = ws.done()
+    assert done["ok"] is True
+    # 0x0 stays 0x0. Interpreting it here is exactly the misreading that cost
+    # a day on 2026-08-10 — this bench answers 0 on flashes that SUCCEED.
+    assert "0x0" in done["stderr"]
+
+    ws2 = _FakeWs(b"")
+    await agent._job_getvar(ws2, "/opt/fastboot", "")
+    assert ran[-1] == ["/opt/fastboot", "getvar", "all"], "empty name means `getvar all`"
+
+
+async def test_getvar_rejects_a_malformed_name_without_running_anything(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    ws = _FakeWs(b"")
+    await agent._job_getvar(ws, "/opt/fastboot", "-w")
+    assert ran == []
+    assert ws.done()["code"] == "FLASH_VAR_REJECTED"

@@ -316,6 +316,13 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     },
     {
         "method": "POST",
+        "path": "/api/flash/getvar",
+        "description": "fastboot getvar <name> (empty = all); the device's answer is "
+        "passed through untouched — the verb is protocol level, what the values mean "
+        "is platform-specific (NDJSON stream)",
+    },
+    {
+        "method": "POST",
         "path": "/api/flash/reboot",
         "description": "fastboot reboot [target]; empty target returns the board to "
         "the system — the way out of fastboot (NDJSON stream)",

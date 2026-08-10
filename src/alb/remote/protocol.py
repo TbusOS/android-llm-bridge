@@ -97,6 +97,7 @@ class JobOp(enum.StrEnum):
     FLASH = "flash"
     REBOOT = "reboot"
     DEVICES = "devices"
+    GETVAR = "getvar"
 
 
 class JobEvent(enum.StrEnum):
@@ -311,6 +312,22 @@ def job_devices() -> dict[str, Any]:
     """`fastboot devices` on the agent host — the only way to learn whether
     the board is actually in fastboot, since it vanishes from adb there."""
     return {"op": JobOp.DEVICES.value}
+
+
+def job_getvar(*, name: str) -> dict[str, Any]:
+    """Ask the agent to run `fastboot getvar <name>` and hand back what the
+    device said, verbatim.
+
+    Deliberately a transport, not a reading. The `getvar` verb is protocol
+    level and survives a platform change; **what the values mean does not**.
+    This bench answers `partition-size:cfg` with `0` on flashes that succeed —
+    a UI that turned that into "partition not found" would be shipping the
+    misreading that cost a day on 2026-08-10. So the hub carries the question
+    and the raw answer, and declines to interpret either.
+
+    `name` is empty for `getvar all`.
+    """
+    return {"op": JobOp.GETVAR.value, "name": name}
 
 
 def job_accepted(*, detail: str = "") -> dict[str, Any]:

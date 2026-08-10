@@ -96,7 +96,7 @@ _JOB_OUTPUT_CAP = 64 * 1024
 # of service by a command that was never going to succeed. Per-op because
 # the right patience differs: a query should answer now, a partition write
 # legitimately takes minutes.
-_FASTBOOT_TIMEOUT_S = {"devices": 20.0, "reboot": 60.0, "flash": 900.0}
+_FASTBOOT_TIMEOUT_S = {"devices": 20.0, "getvar": 20.0, "reboot": 60.0, "flash": 900.0}
 _WAITING_MARKER = "waiting for any device"
 
 HEARTBEAT_INTERVAL_S = 20.0
@@ -761,6 +761,23 @@ def _fastboot_path() -> str:
     return _FASTBOOT_PATH
 
 
+# getvar 变量名的形状。与分区名**不能共用一条规则**:变量名里合法地带冒号
+# (`partition-size:cfg`、`has-slot:boot`),而分区名里冒号是非法的。
+# 放宽的只有冒号这一项 —— 仍然禁开头的 `-`(会被当成 flag)、禁空白(会拆成
+# 两个 argv 元素)、禁路径分隔符,并限长。空字符串是合法输入,代表 `getvar all`。
+_GETVAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+
+
+def _getvar_allowed(name: str) -> bool:
+    """`getvar` 的变量名会进 argv,所以照分区名同样的最小权限对待。
+
+    这里**没有**白名单:变量名的集合是平台相关的(标准名之外厂商还会加),
+    hub 侧无从知道哪些合法,写死一份反而会把这台设备真有的变量挡在外面 ——
+    那正是 web 分区下拉写死四个名字的同一个错。形状对了就放行,答不答由设备说。
+    """
+    return name == "" or bool(_GETVAR_RE.match(name))
+
+
 def _partition_allowed(name: str) -> bool:
     """Partition names this agent will pass to fastboot.
 
@@ -817,6 +834,8 @@ async def _run_job(data_ws: Any, fastboot: str) -> None:
         await _job_reboot(data_ws, fastboot, str(req.get("target") or ""))
     elif op == "devices":
         await _job_devices(data_ws, fastboot)
+    elif op == "getvar":
+        await _job_getvar(data_ws, fastboot, str(req.get("name") or ""))
     else:
         await _job_fail(data_ws, f"unsupported job op {op!r}", code="")
 
@@ -982,6 +1001,36 @@ async def _job_reboot(data_ws: Any, fastboot: str, target: str) -> None:
     await data_ws.send(_job_control({"ev": "accepted", "detail": "rebooting"}))
     argv = [fastboot, "reboot"] + ([target] if target else [])
     rc, out, err = await _run_fastboot(data_ws, argv, "reboot")
+    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
+
+
+async def _job_getvar(data_ws: Any, fastboot: str, name: str) -> None:
+    """`fastboot getvar <name>`(name 为空 = `getvar all`),原样回传。
+
+    ★ 这个函数刻意不解读任何值。`getvar` 这个动词是协议级的、换平台不变,
+    但**值的含义会变**:这台板子对 `partition-size:cfg` 答 `0`,而且是在三次
+    **成功**烧录里都答 0。把 `0` 翻成"分区不存在"就是把 2026-08-10 那次误读
+    做进产品。所以 agent 只负责把设备说的话搬回去。
+
+    fastboot 把 getvar 的结果写在 **stderr**,不是 stdout —— 所以两条都回传,
+    由上层决定显示哪个。这不是猜的:同一个二进制烧录时的 `Writing ... OKAY`
+    也走 stderr,今天的 job.json 里 stdout 一直是空的。
+    """
+    if not _getvar_allowed(name):
+        await _job_fail(data_ws, f"variable name {name!r} rejected", code="FLASH_VAR_REJECTED")
+        return
+    if not await _device_present(fastboot):
+        # 跟 flash / reboot 同一条规矩:板子不在 fastboot 里就别去跑一条注定
+        # 「< waiting for any device >」挂死的命令(ADR-056,`e5fbc46` 的教训)。
+        await _job_fail(
+            data_ws,
+            "no device is in fastboot on this host",
+            code="FASTBOOT_NO_DEVICE",
+        )
+        return
+    await data_ws.send(_job_control({"ev": "accepted", "detail": name or "all"}))
+    argv = [fastboot, "getvar"] + ([name] if name else ["all"])
+    rc, out, err = await _run_fastboot(data_ws, argv, "getvar")
     await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
 
 

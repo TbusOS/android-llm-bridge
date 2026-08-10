@@ -8,6 +8,10 @@ Endpoints:
         timeout (§决定 7).
 
     POST /api/flash/devices
+    POST /api/flash/getvar     Body: {"name": "" | "partition-size:cfg" | ...}
+                               Passes the device's answer through untouched —
+                               the verb is protocol level, the meaning of the
+                               values is not (see FlashService.getvar).
     POST /api/flash/reboot     Body: {"target": "" | "bootloader" | ...}
     POST /api/flash/flash      Body: {"partition": str, "image": <workspace path>}
 
@@ -146,6 +150,21 @@ def _line(obj: dict[str, Any]) -> bytes:
 async def flash_devices() -> StreamingResponse:
     service = get_flash_service()
     return await _stream(lambda cb: service.devices(on_event=cb))
+
+
+class GetvarBody(BaseModel):
+    # Empty = `getvar all`. The shape check lives on the AGENT (it owns the
+    # argv), so this bound is only a sanity ceiling — no allowlist here,
+    # because which variables exist is platform-specific and a hub-side list
+    # would hide variables this device really has. That is exactly how the
+    # hard-coded partition picker broke.
+    name: str = Field("", max_length=64, description='"" = getvar all')
+
+
+@router.post("/getvar")
+async def flash_getvar(body: GetvarBody) -> StreamingResponse:
+    service = get_flash_service()
+    return await _stream(lambda cb: service.getvar(body.name, on_event=cb))
 
 
 @router.post("/reboot")

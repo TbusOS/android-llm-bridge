@@ -212,6 +212,23 @@ def cmd_devices() -> None:
     _report(_run_job("devices"))
 
 
+@app.command("getvar")
+def cmd_getvar(
+    name: str = typer.Argument(
+        "", help='variable name, e.g. partition-size:cfg; empty = getvar all'
+    ),
+) -> None:
+    """`fastboot getvar <name>` — ask the device and print what it said.
+
+    Deliberately prints the answer raw. `getvar` is a protocol-level verb and
+    survives a platform change, but **what the values mean does not**: this
+    bench answers `partition-size:cfg` with `0` on flashes that succeed, so
+    anything that translated that into "the partition is missing" would be
+    shipping a misreading. Read the device's own words.
+    """
+    _report(_run_job("getvar", {"name": name}))
+
+
 @app.command("reboot")
 def cmd_reboot(
     target: str = typer.Argument("", help="empty = back to the system; or bootloader/recovery"),
