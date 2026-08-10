@@ -1,7 +1,10 @@
 """AdbTransport — method A (USB) and B (adb over WiFi).
 
-Wraps the `adb` binary. Respects ADB_SERVER_SOCKET so the Xshell reverse-tunnel
-scenario (A, see docs/methods/01-ssh-tunnel-adb.md) works transparently.
+Wraps the `adb` binary. Which adb *server* it talks to is decided by
+:mod:`alb.infra.adb_endpoint` (ADR-057), not by this module — the reverse-tunnel
+scenario (A, see docs/methods/01-ssh-tunnel-adb.md) and alb's own forwarder both
+put a second adb server on the machine, and picking the wrong one produces an
+empty device list rather than an error.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from alb.infra.adb_endpoint import AdbEndpoint, endpoint_conflict
 from alb.infra.permissions import PermissionResult, default_check
 from alb.infra.process import run as proc_run, spawn_stream
 
@@ -44,8 +48,15 @@ class AdbTransport(Transport):
     Args:
         serial: target device serial (None lets adb use the only device).
         bin_path: path to the adb executable. Falls back to PATH lookup.
-        server_socket: value to pass via ADB_SERVER_SOCKET env — required for
-            scenario A (Xshell reverse tunnel to a Windows-side adb server).
+        server_socket: value to pass via ADB_SERVER_SOCKET env — which adb
+            server to talk to. Callers should get this from
+            :func:`alb.infra.adb_endpoint.resolve_endpoint` rather than
+            inventing it; see ADR-057 for why the environment alone is not a
+            safe answer.
+        server_socket_source: where that value came from (config / env / hub /
+            default). Reported by :meth:`health` and otherwise unused — an adb
+            server that answers proves nothing about being the *right* one, so
+            a diagnosis that cannot name the source cannot be acted on.
     """
 
     name = "adb"
@@ -57,10 +68,21 @@ class AdbTransport(Transport):
         serial: str | None = None,
         bin_path: str = "adb",
         server_socket: str | None = None,
+        server_socket_source: str = "",
     ) -> None:
         self.serial = serial
         self._bin = shutil.which(bin_path) or bin_path
         self._server_socket = server_socket or os.environ.get("ADB_SERVER_SOCKET")
+        # Direct constructions (tests, one-off scripts) still get an honest
+        # label rather than a blank one.
+        if server_socket_source:
+            self._server_socket_source = server_socket_source
+        elif server_socket:
+            self._server_socket_source = "explicit"
+        elif self._server_socket:
+            self._server_socket_source = "env"
+        else:
+            self._server_socket_source = "default"
 
     # ── Internal ──────────────────────────────────────────────────
     def _env(self) -> dict[str, str]:
@@ -312,6 +334,7 @@ class AdbTransport(Transport):
             "bin_path": self._bin,
             "bin_found": bin_ok,
             "server_socket": self._server_socket,
+            "server_socket_source": self._server_socket_source,
         }
         if not bin_ok:
             info["ok"] = False
@@ -328,6 +351,20 @@ class AdbTransport(Transport):
         if r.ok:
             info["devices"] = parse_devices_output(r.stdout)
         info["ok"] = r.ok
+
+        # 4. reachable but empty — the one case where "healthy" was a lie
+        #    (ADR-057). Reaching *an* adb server says nothing about reaching
+        #    the right one, and this is exactly where the operator stops
+        #    looking. Only asked when the list is empty, and off the event
+        #    loop because the probe may be a blocking HTTP call.
+        if r.ok and not info.get("devices"):
+            conflict = await asyncio.to_thread(
+                endpoint_conflict,
+                AdbEndpoint(self._server_socket, self._server_socket_source),
+            )
+            if conflict:
+                info["hint"] = conflict
+                info["ok"] = False
         if not r.ok:
             info["error"] = r.error_code or "ADB_SERVER_UNREACHABLE"
         return info

@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from alb.cli._probes import check_binary, check_tcp_listen
+from alb.infra.adb_endpoint import resolve_endpoint
 from alb.infra.config import global_config_path, load_active
 from alb.transport.adb import AdbTransport
 from alb.transport.serial import SerialTransport
@@ -151,20 +152,18 @@ async def probe_adb_async() -> Layer:
         return layer
     try:
         settings = load_active()
+        endpoint = resolve_endpoint(settings.config.adb.server_socket)
         t = AdbTransport(
             bin_path=settings.config.adb.bin_path,
-            server_socket=(
-                settings.config.adb.server_socket
-                or os.environ.get("ADB_SERVER_SOCKET")
-                or None
-            ),
+            server_socket=endpoint.socket,
+            server_socket_source=endpoint.source,
         )
         health = await t.health()
         reachable = bool(health.get("server_reachable"))
         layer.add(
             "server reachable",
             "ok" if reachable else "err",
-            "" if reachable else "adb server not running; try `adb start-server`",
+            endpoint.described if reachable else "adb server not running; try `adb start-server`",
         )
         devs = health.get("devices", []) or []
         if devs:
@@ -178,8 +177,13 @@ async def probe_adb_async() -> Layer:
                 detail,
             )
         else:
+            # ADR-057: when alb can name the contradiction, say it instead of
+            # listing three things to go check.
+            hint = health.get("hint")
             layer.add(
-                "devices", "warn", "0 visible — plug in / authorize / check tunnel"
+                "devices",
+                "err" if hint else "warn",
+                hint or "0 visible — plug in / authorize / check tunnel",
             )
     except Exception as e:  # noqa: BLE001
         layer.add("probe", "err", str(e))

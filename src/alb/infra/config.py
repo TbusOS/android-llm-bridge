@@ -29,7 +29,11 @@ from alb.infra.workspace import (
 @dataclass(frozen=True)
 class AdbConfig:
     bin_path: str = "adb"
-    server_socket: str | None = None  # tcp:localhost:5037 for Xshell tunnel
+    # Which adb server to talk to, e.g. "tcp:127.0.0.1:15037". Highest
+    # precedence, above ADB_SERVER_SOCKET (ADR-057) — set it only to override a
+    # machine deliberately, since a hand-written port cannot report going
+    # stale. Left None, alb discovers its own forwarder at runtime instead.
+    server_socket: str | None = None
 
 
 @dataclass(frozen=True)

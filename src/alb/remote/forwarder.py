@@ -188,7 +188,19 @@ class ChannelForwarder:
                 _err_text(e),
             )
             return
-        await self._shuttle(reader, writer, channel)
+        # Log the SUCCESS too, not only the failure. Until 2026-08-10 this path
+        # was silent on both ends, so "the adb tunnel is broken" could not be
+        # confirmed or refuted from any log — absence of errors was read as
+        # absence of traffic, and a working tunnel was worked around for a day.
+        # A channel open is a rare, operator-meaningful event; one INFO line
+        # each is what makes the log answer the question that gets asked of it.
+        _log.info(
+            "%s channel opened -> %s", self._channel_type.value, self._params.get("target", "")
+        )
+        try:
+            await self._shuttle(reader, writer, channel)
+        finally:
+            _log.info("%s channel closed", self._channel_type.value)
 
     async def _shuttle(
         self,

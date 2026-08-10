@@ -40,7 +40,9 @@ from alb.cli.session_cli import app as session_cli
 from alb.cli.setup_cli import app as setup_cli
 from alb.cli.skills_cli import app as skills_cli
 from alb.cli.ui_cli import app as ui_cli
+from alb.infra.adb_endpoint import endpoint_conflict, resolve_endpoint
 from alb.infra.registry import CAPABILITIES, TRANSPORTS
+from alb.transport.factory import active_settings
 
 app = typer.Typer(
     name="alb",
@@ -149,12 +151,18 @@ def status(ctx: typer.Context) -> None:
         print(json.dumps(health, indent=2, default=str))
         return
 
+    # The hint is a paragraph, not a cell — ADR-057. Rendering it as a table
+    # row wraps it into unreadable slivers, and this is the one line that tells
+    # the operator what to actually do, so it gets its own panel below.
+    hint = health.pop("hint", "")
     table = Table(title="alb status")
     table.add_column("key")
     table.add_column("value")
     for k, v in health.items():
         table.add_row(k, str(v))
     console.print(table)
+    if hint:
+        console.print(Panel.fit(hint, title="adb endpoint", border_style="red"))
 
 
 # `alb setup {adb,wifi,ssh,serial}` — guided setup (see setup_cli.py)
@@ -178,7 +186,16 @@ def devices(ctx: typer.Context) -> None:
 
     if not devs:
         console.print("[yellow]No devices found.[/]")
-        console.print("Run [bold]alb status[/] to diagnose.")
+        # ADR-057: "no devices" and "looking at the wrong adb server" are the
+        # same observation. When alb can tell them apart it must, here —
+        # sending the operator to another command is how a day gets lost.
+        conflict = endpoint_conflict(
+            resolve_endpoint(active_settings().config.adb.server_socket)
+        )
+        if conflict:
+            console.print(f"[red]{conflict}[/]")
+        else:
+            console.print("Run [bold]alb status[/] to diagnose.")
         return
 
     table = Table(title="connected devices")

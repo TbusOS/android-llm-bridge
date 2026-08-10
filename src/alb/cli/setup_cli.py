@@ -27,6 +27,7 @@ from rich.table import Table
 from alb.cli._probes import check_binary as _check_binary
 from alb.cli._probes import check_tcp_listen as _check_tcp_listen
 from alb.cli.common import load_active_friendly, run_async
+from alb.infra.adb_endpoint import resolve_endpoint
 from alb.infra.config import global_config_path
 from alb.transport.adb import AdbTransport
 from alb.transport.serial import SerialTransport
@@ -106,21 +107,27 @@ def setup_adb() -> None:
             _probe(f"tunnel {host}:{port} listening", ok_tcp,
                    "" if ok_tcp else "Xshell tunnel not active?")
     else:
-        _probe("ADB_SERVER_SOCKET not set", False,
-               "(fine for local USB; required for Xshell-tunnel scenario)")
+        # Not a defect. Since ADR-057 an unset variable is the *preferred*
+        # state: alb then follows its own forwarder wherever it is bound,
+        # instead of trusting a hand-copied port that cannot report going stale.
+        _probe("ADB_SERVER_SOCKET not set", True,
+               "(alb will resolve the endpoint itself — see `adb endpoint` below)")
 
     # Probe devices
     if ok_bin:
         try:
             settings = load_active_friendly()
+            endpoint = resolve_endpoint(settings.config.adb.server_socket)
+            _probe("adb endpoint", True, endpoint.described)
             t = AdbTransport(
                 bin_path=settings.config.adb.bin_path,
-                server_socket=settings.config.adb.server_socket or server_sock or None,
+                server_socket=endpoint.socket,
+                server_socket_source=endpoint.source,
             )
             health = run_async(t.health())
             devs = health.get("devices", [])
             _probe("adb reachable", bool(health.get("server_reachable")))
-            _probe(f"{len(devs)} device(s) visible", bool(devs))
+            _probe(f"{len(devs)} device(s) visible", bool(devs), health.get("hint", ""))
             if devs:
                 table = Table(title="Devices")
                 table.add_column("serial")
@@ -139,9 +146,11 @@ def setup_adb() -> None:
             "[bold]Next steps if something is off:[/]\n\n"
             "  1. Install platform-tools: https://developer.android.com/tools/adb\n"
             "  2. On the device: Settings → Developer options → USB debugging\n"
-            "  3. For Xshell reverse-tunnel scenario:\n"
-            "     export ADB_SERVER_SOCKET=tcp:localhost:5037\n"
-            "     Add the Remote tunnel in Xshell as per docs/methods/01-ssh-tunnel-adb.md\n\n"
+            "  3. Remote bench (alb forwarder): leave ADB_SERVER_SOCKET UNSET —\n"
+            "     alb reads the port from the running hub, so it stays correct\n"
+            "     even when the forwarder moves. Only set it by hand for an\n"
+            "     SSH reverse tunnel alb did not create, and then point it at\n"
+            "     that tunnel's port (docs/methods/01-ssh-tunnel-adb.md).\n\n"
             "[dim]Docs: docs/methods/01-ssh-tunnel-adb.md[/]",
             border_style="yellow",
         )
@@ -163,9 +172,11 @@ def setup_wifi(
         raise typer.Exit(1)
 
     settings = load_active_friendly()
+    endpoint = resolve_endpoint(settings.config.adb.server_socket)
     t = AdbTransport(
         bin_path=settings.config.adb.bin_path,
-        server_socket=settings.config.adb.server_socket,
+        server_socket=endpoint.socket,
+        server_socket_source=endpoint.source,
     )
 
     # 1. Make sure device is visible first (USB-connected presumably).

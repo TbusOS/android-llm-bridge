@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 
+from alb.infra.adb_endpoint import resolve_endpoint
 from alb.infra.config import ActiveSettings, load_active
 from alb.infra.workspace import InvalidDeviceSerial, is_safe_device
 from alb.transport.adb import AdbTransport
@@ -47,10 +48,16 @@ def build_transport(
     which = override or os.environ.get("ALB_TRANSPORT") or settings.primary_transport
 
     if which == "adb":
+        # ADR-057: the endpoint is resolved here, not left to whatever the
+        # shell happens to export. This is the single door every entry point
+        # (cli / api / mcp) walks through, so it is the one place where "which
+        # adb server" can be answered consistently.
+        endpoint = resolve_endpoint(settings.config.adb.server_socket)
         return AdbTransport(
             serial=device_serial,
             bin_path=settings.config.adb.bin_path,
-            server_socket=settings.config.adb.server_socket,
+            server_socket=endpoint.socket,
+            server_socket_source=endpoint.source,
         )
     if which == "ssh":
         sc = settings.config.ssh
