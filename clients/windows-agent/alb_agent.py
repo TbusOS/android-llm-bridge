@@ -512,6 +512,16 @@ async def _handle_tcp_channel(
     try:
         async with ws_connect(url, max_size=None, additional_headers=headers) as data_ws:
             _STATUS.channel_opened(cid, "adb", target)
+            # Log the SUCCESS, not only the failure (ADR-057). Until
+            # 2026-08-10 this path updated the status page and wrote nothing,
+            # while the serial path logged "opened COM27". So a log with no
+            # adb lines in it could not distinguish "the hub never asked" from
+            # "it asked and it worked" — and absence of errors got read as
+            # absence of traffic. A working tunnel was worked around for a day
+            # on that reading. The status page only shows *now*; the log is
+            # what gets consulted about an hour ago.
+            # Same shape as the serial line above it, so one grep finds both.
+            _log.info("adb channel %s: opened -> %s", cid[:8], target)
             await _bridge(reader, writer, data_ws)
     except Exception as e:
         _log.warning("channel %s ended: %s", cid[:8], e)
