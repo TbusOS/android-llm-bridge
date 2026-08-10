@@ -619,7 +619,13 @@ def _flash_view() -> dict[str, Any]:
 
     agent = get_agent_registry().current_agent()
     available = agent is not None and CAP_FASTBOOT in getattr(agent, "caps", [])
+    # The agent's own allowlist, so a UI can offer names this bench will
+    # actually accept. Shipped here rather than left to the client: a
+    # hard-coded picker offered four partitions, none of which this bench
+    # permits, so every web flash died at FLASH_PARTITION_REJECTED — the
+    # plumbing worked end to end and the page was still unusable.
+    partitions = list(getattr(agent, "flash_partitions", []) or []) if agent else []
     service = _flash._SERVICE
     if service is None:
-        return {"available": available, "busy": False, "job": ""}
-    return {**service.status(), "available": available}
+        return {"available": available, "busy": False, "job": "", "partitions": partitions}
+    return {**service.status(), "available": available, "partitions": partitions}

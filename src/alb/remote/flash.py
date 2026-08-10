@@ -181,8 +181,22 @@ class FlashService:
         agent = self._get_agent()
         return agent is not None and CAP_FASTBOOT in getattr(agent, "caps", [])
 
+    def partitions(self) -> list[str]:
+        """The agent's own allowlist. Empty = it configured none, which means
+        "any well-formed name" — NOT "none allowed". Callers that render a
+        picker must treat empty as "we don't know, offer something generic",
+        because offering an empty list is indistinguishable from a bench that
+        cannot flash at all."""
+        agent = self._get_agent()
+        return list(getattr(agent, "flash_partitions", []) or []) if agent else []
+
     def status(self) -> dict[str, Any]:
-        return {"available": self.available(), "busy": self.busy, "job": self._current}
+        return {
+            "available": self.available(),
+            "busy": self.busy,
+            "job": self._current,
+            "partitions": self.partitions(),
+        }
 
     # ── operations ───────────────────────────────────────────────────
 

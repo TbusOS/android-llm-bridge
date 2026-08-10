@@ -20,6 +20,14 @@ export interface FlashStatus {
   available: boolean;
   busy: boolean;
   job: string;
+  /**
+   * Partitions this bench permits, straight from the agent's own allowlist.
+   * Empty means the agent configured none, i.e. "any well-formed name" — NOT
+   * "nothing allowed", so a picker must fall back to a generic list rather
+   * than render nothing. (A hard-coded picker used to offer four names this
+   * bench refuses; every web flash died at FLASH_PARTITION_REJECTED.)
+   */
+  partitions: string[];
 }
 
 export interface FlashLine {
@@ -56,6 +64,7 @@ export function useFlashStatus() {
         available: !!body.available,
         busy: !!body.busy,
         job: String(body.job ?? ""),
+        partitions: Array.isArray(body.partitions) ? body.partitions.map(String) : [],
       };
     },
   });

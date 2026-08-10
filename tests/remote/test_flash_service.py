@@ -111,7 +111,11 @@ async def test_agent_without_the_capability_is_refused_without_a_channel():
 
 async def test_status_reports_availability():
     svc = _service(_Agent(_Channel([])))
-    assert svc.status() == {"available": True, "busy": False, "job": ""}
+    # Exact equality on purpose: this is the payload a UI builds itself from,
+    # so a silently-added key should have to be acknowledged here. `partitions`
+    # is empty because this double advertises no allowlist — which downstream
+    # means "any well-formed name", not "nothing allowed".
+    assert svc.status() == {"available": True, "busy": False, "job": "", "partitions": []}
 
 
 # ── the job round trip ──────────────────────────────────────────────────

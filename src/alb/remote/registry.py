@@ -83,11 +83,17 @@ class AgentConnection:
         caps: list[str],
         send_control: SendControl,
         registry: AgentRegistry,
+        flash_partitions: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
         self.version = version
         self.caps = caps
+        # Partitions this bench permits, straight from the agent's hello.
+        # Empty = no allowlist configured = any well-formed name is accepted.
+        # Callers must not read empty as "nothing allowed" — see the web
+        # partition picker, which falls back to a generic list in that case.
+        self.flash_partitions: list[str] = list(flash_partitions or [])
         self._send_control = send_control
         self._registry = registry
         self.epoch = 0
@@ -201,6 +207,7 @@ class AgentRegistry:
                 "name": c.name,
                 "version": c.version,
                 "caps": c.caps,
+                "flash_partitions": c.flash_partitions,
                 "adb_devices": c.adb_devices,
                 "adb_conflicts": c.adb_conflicts,
                 "com_ports": c.com_ports,

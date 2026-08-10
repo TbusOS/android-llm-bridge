@@ -16,7 +16,7 @@
  *     itself can put a board into, and burying it under the write controls
  *     would hide the remedy behind the hazard.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useApp } from "../../stores/app";
 import {
@@ -26,10 +26,13 @@ import {
   type FlashLine,
 } from "./useFlash";
 
-// Kept short and boring on purpose — the agent has the authoritative
-// allowlist (it is the side that can be sure), this only spares the operator
-// from typing.
-const PARTITIONS = ["vendor_cfg", "boot", "dtbo", "recovery"];
+// Fallback only. The agent has the authoritative allowlist and now ships it
+// in `status.partitions`; this list is what we offer when the agent has
+// configured none — which means "any well-formed name", not "none allowed".
+// Hard-coding it as THE list was a real defect: on a bench whose allowlist is
+// a single custom partition, none of these four is accepted, so every flash
+// from the web page ended at FLASH_PARTITION_REJECTED while the CLI worked.
+const FALLBACK_PARTITIONS = ["vendor_cfg", "boot", "dtbo", "recovery"];
 
 function StateCard() {
   const lang = useApp((s) => s.lang);
@@ -112,13 +115,27 @@ export function FlashTab() {
   const { lines, verdict, running, pct, run } = useFlashJob();
 
   const [image, setImage] = useState<{ path: string; size: number } | null>(null);
-  const [partition, setPartition] = useState(PARTITIONS[0]);
+  const [partition, setPartition] = useState("");
   const [armed, setArmed] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement | null>(null);
 
+  // The agent's list when it has one; ours only as a stand-in. Empty from the
+  // agent means "no allowlist configured", so falling back is correct — it is
+  // NOT the same as a bench that allows nothing.
+  const partitions = status?.partitions?.length ? status.partitions : FALLBACK_PARTITIONS;
+  const partitionKey = partitions.join(",");
+  useEffect(() => {
+    // The list arrives after the first render (and can change when a different
+    // agent reconnects). Re-anchor the selection instead of leaving a value
+    // this bench would refuse — which is exactly how the old hard-coded picker
+    // failed, just quietly.
+    if (!partitions.includes(partition)) setPartition(partitions[0] ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partitionKey, partition]);
+
   const busy = running || !!status?.busy;
-  const canFlash = !!image && !!status?.available && !busy;
+  const canFlash = !!image && !!partition && !!status?.available && !busy;
 
   async function onPick(file: File | undefined) {
     if (!file) return;
@@ -210,7 +227,7 @@ export function FlashTab() {
                 setArmed(false); // a changed target must be re-confirmed
               }}
             >
-              {PARTITIONS.map((p) => (
+              {partitions.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>

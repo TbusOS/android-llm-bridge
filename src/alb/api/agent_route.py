@@ -205,6 +205,11 @@ async def agent_connect(ws: WebSocket) -> None:
             name=str(hello.get("name") or agent_id),
             version=int(hello.get("agent_version") or 0),
             caps=list(hello.get("caps") or []),
+            # Absent on agents older than this field — an empty list then means
+            # "unknown", which coincides with "no allowlist" and is handled the
+            # same way downstream (fall back to a generic partition list rather
+            # than claiming the bench allows nothing).
+            flash_partitions=[str(p) for p in (hello.get("flash_partitions") or [])],
             send_control=send_control,
             registry=registry,
         )

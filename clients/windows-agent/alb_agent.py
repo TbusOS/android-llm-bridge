@@ -381,6 +381,14 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
         name=name,
         agent_version=PROTOCOL_VERSION,
         caps=caps,
+        # The allowlist travels with the hello because THIS side is the one
+        # that can be sure — the hub cannot know which partitions a given
+        # bench permits, and a UI that guesses offers names the agent will
+        # refuse. Empty list = no allowlist configured = any well-formed name
+        # (the agent still applies its shape check either way), which is a
+        # different statement from "no partitions allowed" and must stay
+        # distinguishable at the far end.
+        flash_partitions=sorted(_FLASH_PARTITIONS),
         token=token,
     )
 
