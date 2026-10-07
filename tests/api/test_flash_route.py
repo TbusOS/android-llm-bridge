@@ -37,6 +37,9 @@ class _FakeService:
     async def reboot(self, target="", *, on_event=None):
         return self._run(("reboot", target), on_event)
 
+    async def oem(self, command, *, on_event=None):
+        return self._run(("oem", command), on_event)
+
     async def flash(self, partition, image, *, on_event=None):
         return self._run(("flash", partition, str(image)), on_event)
 
@@ -156,3 +159,20 @@ def test_partition_is_required(monkeypatch):
         assert (
             c.post("/api/flash/flash", json={"partition": "", "image": "x.bin"}).status_code == 422
         )
+
+
+def test_oem_passes_the_command(monkeypatch):
+    svc = _install(monkeypatch, _FakeService(FlashResult(ok=True, rc=0)))
+    with TestClient(create_app()) as c:
+        resp = c.post("/api/flash/oem", json={"command": "at-lock-vboot"})
+    assert resp.status_code == 200
+    assert svc.calls == [("oem", "at-lock-vboot")]
+
+
+def test_oem_command_is_required(monkeypatch):
+    """No default: an empty oem request is a mistake, not `oem` with nothing."""
+    svc = _install(monkeypatch, _FakeService(FlashResult(ok=True, rc=0)))
+    with TestClient(create_app()) as c:
+        resp = c.post("/api/flash/oem", json={})
+    assert resp.status_code == 422
+    assert svc.calls == []

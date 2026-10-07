@@ -55,6 +55,7 @@ def test_no_code_and_no_message_still_says_something():
         "FASTBOOT_NO_DEVICE",
         "FLASH_IMAGE_CORRUPT",
         "FLASH_PARTITION_REJECTED",
+        "FLASH_OEM_REJECTED",
         "FLASH_FAILED",
     ],
 )

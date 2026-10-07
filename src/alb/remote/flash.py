@@ -47,6 +47,7 @@ from alb.remote.protocol import (
     job_devices,
     job_flash,
     job_getvar,
+    job_oem,
     job_reboot,
 )
 from alb.remote.registry import DataChannel
@@ -271,6 +272,22 @@ class FlashService:
             request=job_getvar(name=name),
             on_event=on_event,
             record=False,
+        )
+
+    async def oem(self, command: str, *, on_event: EventSink | None = None) -> FlashResult:
+        """`fastboot oem <command>`; the agent refuses anything off its
+        allowlist (see `job_oem`).
+
+        Recorded like `reboot`, because it changes the device and a later
+        "why is this board locked" deserves a timeline entry. No UART: the
+        command returns in well under a second, and the boot log that shows
+        whether the lock took arrives on the next boot, in a capture.
+        """
+        return await self._run(
+            label=f"oem {command}",
+            request=job_oem(command=command),
+            on_event=on_event,
+            watch_uart=False,
         )
 
     # ── plumbing ─────────────────────────────────────────────────────

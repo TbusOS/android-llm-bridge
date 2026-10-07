@@ -342,11 +342,13 @@ async def test_flash_proceeds_when_a_device_is_present(monkeypatch):
 def test_every_op_has_a_timeout():
     """A missing entry silently falls back to 300 s — long enough for a
     'waiting for device' hang to look like a working command."""
-    assert set(agent._FASTBOOT_TIMEOUT_S) == {"devices", "getvar", "reboot", "flash"}
+    assert set(agent._FASTBOOT_TIMEOUT_S) == {"devices", "getvar", "reboot", "flash", "oem"}
     # a query must answer promptly; a partition write may legitimately take minutes
     assert agent._FASTBOOT_TIMEOUT_S["devices"] < agent._FASTBOOT_TIMEOUT_S["flash"]
     # getvar is a query like devices, not a write — same tier
     assert agent._FASTBOOT_TIMEOUT_S["getvar"] == agent._FASTBOOT_TIMEOUT_S["devices"]
+    # oem writes one small state item, not a partition: short, like reboot
+    assert agent._FASTBOOT_TIMEOUT_S["oem"] <= agent._FASTBOOT_TIMEOUT_S["reboot"]
 
 
 # ── getvar: transport only, and the same refuse-early rules ─────────────
@@ -444,3 +446,114 @@ async def test_getvar_rejects_a_malformed_name_without_running_anything(monkeypa
     await agent._job_getvar(ws, "/opt/fastboot", "-w")
     assert ran == []
     assert ws.done()["code"] == "FLASH_VAR_REJECTED"
+
+
+# ── oem: an allowlist, unlike getvar ────────────────────────────────────
+#
+# getvar has no allowlist because it only asks. `oem` CHANGES the device, and
+# what an oem command does is vendor-defined — some are one-way (some bootloader
+# docs list `oem at-disable-unlock-vboot`, which permanently forbids unlocking).
+# So the agent passes only commands someone has checked are reversible, and the
+# check lives here, on the side that builds the argv (ADR-056).
+
+
+def test_oem_allowlist_is_exactly_the_reversible_lock_pair():
+    """Exact equality on purpose: widening this list must be a reviewed change,
+    not something that slips in next to another edit."""
+    assert agent._OEM_COMMANDS == frozenset({"at-lock-vboot", "at-unlock-vboot"})
+
+
+@pytest.mark.parametrize("command", ["at-lock-vboot", "at-unlock-vboot"])
+def test_oem_commands_accepted(command):
+    assert agent._oem_allowed(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "",
+        "at-disable-unlock-vboot",  # one-way where implemented — must never pass
+        "unlock",
+        "AT-LOCK-VBOOT",  # no case folding: the device would not fold it either
+        "at-lock-vboot extra",  # a space would add an argv element
+        "at-lock-vboot;reboot",
+        "-w",
+        " at-lock-vboot",
+    ],
+)
+def test_oem_commands_rejected(command):
+    assert not agent._oem_allowed(command)
+
+
+async def test_oem_rejects_an_unlisted_command_without_running_anything(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    ws = _FakeWs(b"")
+    await agent._job_oem(ws, "/opt/fastboot", "at-disable-unlock-vboot")
+    assert ran == []
+    assert ws.done()["code"] == "FLASH_OEM_REJECTED"
+    assert not ws.events("accepted"), "a rejected job must not be accepted first"
+
+
+async def test_oem_refuses_when_no_device_is_in_fastboot(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    async def no_device(_fastboot):
+        return False
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", no_device)
+    ws = _FakeWs(b"")
+    await agent._job_oem(ws, "/opt/fastboot", "at-lock-vboot")
+    assert ran == [], "must not run a command that would block on 'waiting for any device'"
+    assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
+
+
+async def test_oem_argv_and_passthrough(monkeypatch):
+    """The agent assembles argv itself and hands the device's words back —
+    whether the lock took is read from the device afterwards, not inferred."""
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", "OKAY [  0.012s]\nFinished. Total time: 0.013s\n"
+
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    ws = _FakeWs(b"")
+    await agent._job_oem(ws, "/opt/fastboot", "at-unlock-vboot")
+    assert ran == [["/opt/fastboot", "oem", "at-unlock-vboot"]]
+    done = ws.done()
+    assert done["ok"] is True
+    assert "OKAY" in done["stderr"]
+
+
+async def test_oem_is_dispatched_by_run_job(monkeypatch):
+    """The op has to be wired into the dispatcher, or the hub gets
+    'unsupported job op' from an agent that has the handler."""
+    seen: list[str] = []
+
+    async def fake_oem(_ws, _fastboot, command):
+        seen.append(command)
+
+    monkeypatch.setattr(agent, "_job_oem", fake_oem)
+    payload = json.dumps({"op": "oem", "command": "at-lock-vboot"}).encode()
+    ws = _FakeWs(_frame(b"C", payload))
+    await agent._run_job(ws, "/opt/fastboot")
+    assert seen == ["at-lock-vboot"]

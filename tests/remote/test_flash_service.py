@@ -139,6 +139,15 @@ async def test_reboot_with_no_target_is_back_to_the_system():
     assert ch.request() == {"op": "reboot", "target": ""}
 
 
+async def test_oem_sends_only_the_command_name():
+    """The hub names the command; the agent decides whether it is allowed and
+    builds the argv (ADR-056). No command line crosses the wire."""
+    ch = _Channel([_ctl({"ev": "done", "ok": True, "rc": 0})])
+    r = await _service(_Agent(ch)).oem("at-lock-vboot")
+    assert r.ok is True
+    assert ch.request() == {"op": "oem", "command": "at-lock-vboot"}
+
+
 async def test_flash_sends_digest_up_front_then_the_image(tmp_path):
     img = tmp_path / "cfg.bin"
     payload = b"\x00\x01\x02" * 1000

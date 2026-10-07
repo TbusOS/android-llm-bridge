@@ -96,7 +96,13 @@ _JOB_OUTPUT_CAP = 64 * 1024
 # of service by a command that was never going to succeed. Per-op because
 # the right patience differs: a query should answer now, a partition write
 # legitimately takes minutes.
-_FASTBOOT_TIMEOUT_S = {"devices": 20.0, "getvar": 20.0, "reboot": 60.0, "flash": 900.0}
+_FASTBOOT_TIMEOUT_S = {
+    "devices": 20.0,
+    "getvar": 20.0,
+    "oem": 30.0,
+    "reboot": 60.0,
+    "flash": 900.0,
+}
 _WAITING_MARKER = "waiting for any device"
 
 HEARTBEAT_INTERVAL_S = 20.0
@@ -778,6 +784,23 @@ def _getvar_allowed(name: str) -> bool:
     return name == "" or bool(_GETVAR_RE.match(name))
 
 
+# `oem` 命令的白名单。跟 getvar 相反,这里**必须**有白名单:getvar 只是问,
+# oem 会改设备,而且 oem 命令做什么是厂商自己定义的 —— 有的是单向的
+# (有的 bootloader 文档列了 `oem at-disable-unlock-vboot`,永久禁止解锁)。
+# 所以只放行查过「可逆」的命令,检查放在拼 argv 的这一侧(ADR-056)。
+# 现有两条:u-boot fastboot 实现里的 AVB 锁定 / 解锁(f_fastboot.c 里的两个 oem
+# 分支),互为逆操作,解锁不需要授权;锁定只写 lock_state,不碰刷机锁
+# flash_lock_state,锁着也照样能 flash(按代码读的,2026-09-30)。
+# 要加别的,先查清它可不可逆。
+_OEM_COMMANDS = frozenset({"at-lock-vboot", "at-unlock-vboot"})
+
+
+def _oem_allowed(command: str) -> bool:
+    """只认白名单里一字不差的命令:不做大小写折叠、不去空白 ——
+    设备那边也不会替你折叠,多一个空格就会变成两个 argv 元素。"""
+    return command in _OEM_COMMANDS
+
+
 def _partition_allowed(name: str) -> bool:
     """Partition names this agent will pass to fastboot.
 
@@ -836,6 +859,8 @@ async def _run_job(data_ws: Any, fastboot: str) -> None:
         await _job_devices(data_ws, fastboot)
     elif op == "getvar":
         await _job_getvar(data_ws, fastboot, str(req.get("name") or ""))
+    elif op == "oem":
+        await _job_oem(data_ws, fastboot, str(req.get("command") or ""))
     else:
         await _job_fail(data_ws, f"unsupported job op {op!r}", code="")
 
@@ -1031,6 +1056,33 @@ async def _job_getvar(data_ws: Any, fastboot: str, name: str) -> None:
     await data_ws.send(_job_control({"ev": "accepted", "detail": name or "all"}))
     argv = [fastboot, "getvar"] + ([name] if name else ["all"])
     rc, out, err = await _run_fastboot(data_ws, argv, "getvar")
+    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
+
+
+async def _job_oem(data_ws: Any, fastboot: str, command: str) -> None:
+    """`fastboot oem <command>`,命令只能是 `_OEM_COMMANDS` 里的。
+
+    跟 getvar 一样只搬话不解读:锁没锁上,要事后从设备读
+    (`getprop ro.boot.vbmeta.device_state`、串口 `Device is: LOCKED`),
+    不从这条命令的返回值推断 —— fastboot 回 OKAY 只说明设备收下了命令。
+    """
+    if not _oem_allowed(command):
+        await _job_fail(
+            data_ws,
+            f"oem command {command!r} is not on this agent's allowlist",
+            code="FLASH_OEM_REJECTED",
+        )
+        return
+    if not await _device_present(fastboot):
+        # 跟 flash / reboot / getvar 同一条规矩(ADR-056,`e5fbc46` 的教训)
+        await _job_fail(
+            data_ws,
+            "no device is in fastboot on this host",
+            code="FASTBOOT_NO_DEVICE",
+        )
+        return
+    await data_ws.send(_job_control({"ev": "accepted", "detail": command}))
+    rc, out, err = await _run_fastboot(data_ws, [fastboot, "oem", command], "oem")
     await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
 
 

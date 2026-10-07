@@ -266,6 +266,14 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Use a partition on the agent's allowlist, or widen it in agent.conf "
         "if you are certain",
     ),
+    "FLASH_OEM_REJECTED": ErrorSpec(
+        "FLASH_OEM_REJECTED",
+        "transport",
+        "The agent refused the oem command — it is not on the agent's allowlist",
+        "Only commands checked to be reversible are allowed (see _OEM_COMMANDS in "
+        "alb_agent.py); some vendor oem commands are one-way, so widen that list "
+        "only after confirming the command can be undone",
+    ),
     "FLASH_FAILED": ErrorSpec(
         "FLASH_FAILED",
         "transport",

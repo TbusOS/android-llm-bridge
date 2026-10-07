@@ -98,6 +98,7 @@ class JobOp(enum.StrEnum):
     REBOOT = "reboot"
     DEVICES = "devices"
     GETVAR = "getvar"
+    OEM = "oem"
 
 
 class JobEvent(enum.StrEnum):
@@ -328,6 +329,17 @@ def job_getvar(*, name: str) -> dict[str, Any]:
     `name` is empty for `getvar all`.
     """
     return {"op": JobOp.GETVAR.value, "name": name}
+
+
+def job_oem(*, command: str) -> dict[str, Any]:
+    """Ask the agent to run `fastboot oem <command>`.
+
+    Only the command NAME crosses the wire. Which oem commands are allowed is
+    the agent's decision, not the hub's: an oem command changes the device and
+    what it does is vendor-defined (some are one-way), so the allowlist lives
+    next to the code that builds the argv (ADR-056).
+    """
+    return {"op": JobOp.OEM.value, "command": command}
 
 
 def job_accepted(*, detail: str = "") -> dict[str, Any]:

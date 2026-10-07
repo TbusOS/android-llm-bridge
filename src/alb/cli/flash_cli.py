@@ -11,6 +11,7 @@ command is a client of it.
     alb flash status
     alb flash devices
     alb flash reboot [target]
+    alb flash oem <command>
     alb flash write <partition> <image>
 
 `write`, not `flash flash`: the verb reads as what it does to the device.
@@ -236,6 +237,23 @@ def cmd_reboot(
     """Leave fastboot. With no argument this reboots the board back into the
     system — the way out of the state `alb power reboot fastboot` puts it in."""
     _report(_run_job("reboot", {"target": target}))
+
+
+@app.command("oem")
+def cmd_oem(
+    command: str = typer.Argument(..., help="e.g. at-lock-vboot / at-unlock-vboot"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+) -> None:
+    """`fastboot oem <command>` — only commands on the agent's allowlist.
+
+    The agent refuses anything not checked to be reversible: oem commands
+    change the device and some vendor ones are one-way. Whether the change
+    took is read from the device afterwards, not from this command's OKAY.
+    """
+    if not yes:
+        typer.echo(f"about to run `fastboot oem {command}` on the board")
+        typer.confirm("proceed?", abort=True)
+    _report(_run_job("oem", {"command": command}))
 
 
 @app.command("write")

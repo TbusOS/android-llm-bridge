@@ -335,6 +335,12 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     },
     {
         "method": "POST",
+        "path": "/api/flash/oem",
+        "description": "fastboot oem <command>; only commands on the agent's allowlist "
+        "(checked to be reversible — some vendor oem commands are one-way) (NDJSON stream)",
+    },
+    {
+        "method": "POST",
         "path": "/api/flash/reboot",
         "description": "fastboot reboot [target]; empty target returns the board to "
         "the system — the way out of fastboot (NDJSON stream)",
