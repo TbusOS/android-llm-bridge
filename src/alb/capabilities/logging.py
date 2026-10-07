@@ -638,6 +638,10 @@ def _parse_dmesg_line(line: bytes) -> dict[str, str]:
     return {"is_error": "1" if is_error else ""}
 
 
+# Longest run without a newline that _drain_stream holds for line stats.
+_MAX_PARTIAL_LINE = 64 * 1024
+
+
 async def _drain_stream(
     stream_iter: Any,
     out_file: Path,
@@ -647,23 +651,49 @@ async def _drain_stream(
     line_parser: Any,
     topic: str,
 ) -> None:
-    """Write the stream to `out_file` while updating `stats` until timeout."""
+    """Write the stream to `out_file` while updating `stats` until timeout.
+
+    Chunks are not lines: adb / ssh yield one line per chunk, but a serial
+    link yields whatever bytes arrived (several lines, or half of one).
+    Stats are therefore taken per line, re-assembled across chunks.
+    """
     start = perf_counter()
     event_bus = bus()
     out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _account(line: bytes) -> None:
+        parsed = line_parser(line)
+        if parsed:
+            if topic == "logcat.line":
+                stats.update_logcat(parsed)
+            elif topic in ("dmesg.line", "uart.line"):
+                stats.update_dmesg(parsed)
+
+    pending = b""
     with out_file.open("wb") as f:
-        async for chunk in stream_iter:
-            f.write(chunk)
-            parsed = line_parser(chunk)
-            if parsed:
-                if topic == "logcat.line":
-                    stats.update_logcat(parsed)
-                elif topic in ("dmesg.line", "uart.line"):
-                    stats.update_dmesg(parsed)
-            # Fan-out to any subscribers (CLI printer, Web UI, etc.)
-            await event_bus.publish(topic, chunk)
-            if perf_counter() - start >= max_seconds:
-                break
+        try:
+            async for chunk in stream_iter:
+                f.write(chunk)
+                # Flush per chunk: callers tail the artifact while the capture
+                # runs, and a capture stopped with SIGTERM must not lose the
+                # last write buffer (up to 8 KiB, measured as a 0-byte file).
+                f.flush()
+                pending += chunk
+                *complete, pending = pending.split(b"\n")
+                for line in complete:
+                    _account(line + b"\n")
+                if len(pending) > _MAX_PARTIAL_LINE:
+                    # No newline for a long stretch (binary noise): count it
+                    # as one line rather than buffering without bound.
+                    _account(pending)
+                    pending = b""
+                # Fan-out to any subscribers (CLI printer, Web UI, etc.)
+                await event_bus.publish(topic, chunk)
+                if perf_counter() - start >= max_seconds:
+                    break
+        finally:
+            if pending:
+                _account(pending)
 
 
 _RECONNECT_BACKOFF_S = 0.5

@@ -236,6 +236,63 @@ async def test_capture_uart_catches_late_data_after_reconnect(monkeypatch, tmp_p
     assert b"kernel start" in content
 
 
+@pytest.mark.asyncio
+async def test_capture_uart_counts_lines_not_chunks(tmp_path: Path) -> None:
+    """A serial link hands over arbitrary byte chunks, not lines: one chunk
+    can carry several lines, one line can straddle two chunks. The summary
+    must count real lines. Pre-fix it counted chunks, so a 30870-line boot
+    log reported ``lines: 5540`` — and an error keyword split across two
+    chunks was never seen at all.
+    """
+    chunks = [
+        b"[    0.100000] Booting Linux\n[    0.200000] mmc0: err",
+        b"or -110 whilst initialising\n[    0.300000] ok\n[    0.400",
+        b"000] no trailing newline",
+    ]
+    t = _mk_serial_mock(chunks)
+    out = tmp_path / "split.log"
+    r = await capture_uart(t, duration=1, output=out)
+
+    assert r.ok
+    assert r.data is not None
+    assert r.data.lines == 4, f"expected 4 lines, got {r.data.lines}"
+    assert r.data.errors == 1, f"the 'error' split across chunks must count once, got {r.data.errors}"
+    assert out.read_bytes() == b"".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_capture_uart_flushes_each_chunk_to_disk(tmp_path: Path) -> None:
+    """Every received chunk must be on disk before the next one is read.
+
+    Otherwise up to one write buffer (8 KiB) sits in the process: a capture
+    stopped with plain ``kill`` (SIGTERM) loses it, and ``tail`` on the
+    artifact lags behind the board. Measured 2026-10-07: a capture killed
+    with SIGTERM left a 0-byte file although a probe line had arrived.
+    """
+    out = tmp_path / "flush.log"
+    seen_on_disk: list[bytes] = []
+
+    def _factory(*_a, **_kw):
+        async def _gen():
+            yield b"first line\n"
+            # Resumed only after capture_uart handled the chunk above.
+            seen_on_disk.append(out.read_bytes())
+            yield b"second line\n"
+            seen_on_disk.append(out.read_bytes())
+
+        return _gen()
+
+    t = AsyncMock()
+    t.name = "serial"
+    t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
+    t.stream_read = _factory
+
+    r = await capture_uart(t, duration=1, output=out)
+
+    assert r.ok
+    assert seen_on_disk[:2] == [b"first line\n", b"first line\nsecond line\n"]
+
+
 # ── send_uart (P3) ───────────────────────────────────────────────────
 
 
