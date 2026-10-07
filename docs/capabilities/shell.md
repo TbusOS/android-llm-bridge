@@ -26,6 +26,15 @@ alb shell "<cmd>" [options]
 - `--allow-dangerous` 绕过 ask 级权限（deny 级仍拦截）
 - `--json` 结构化输出
 
+输出（不加 `--json` 时，跟 `adb shell` 一样）：
+- 设备上命令的 stdout 原样写到 stdout，stderr 原样写到 stderr —— 不加 `stdout:` 之类的标签，不解析 `[...]`，不按终端宽度折行
+- 退出码就是设备上命令的退出码；alb 自己没能把命令跑起来（超时、找不到设备、被权限规则拦下……）时退出码是 1，原因写一行到 stderr
+- 超时的时候，已经收到的那部分 stdout 照样写出来
+- `alb serial shell` 走串口：回显和提示符要剥掉、内核打印分到 stderr，stdout 是按行重新拼出来的，alb 会补上最后一行的换行；`alb shell`（adb）不补，设备上 `printf x` 没换行，这里也没有
+- 要耗时等元数据，用 `--json`
+
+> 2026-10-07 之前这里走的是通用的美化打印：`[false]` 这类文本被当成 rich 的样式标签吞掉，不接终端时长行按 80 列插换行，命令退出码非 0 时 stdout 不显示。回归测试在 `tests/cli/test_shell_output.py`。
+
 例子：
 ```bash
 alb shell "getprop ro.build.version.sdk"

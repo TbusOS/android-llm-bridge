@@ -8,7 +8,7 @@ import typer
 
 from alb.capabilities.logging import capture_uart
 from alb.capabilities.shell import execute as shell_execute
-from alb.cli.common import get_transport, print_result, run_async
+from alb.cli.common import get_transport, print_result, print_shell_result, run_async
 from alb.transport.serial import SerialTransport
 
 app = typer.Typer(help="UART / serial commands (method G).")
@@ -79,7 +79,7 @@ def cmd_shell(
     """Execute a shell command via UART (prompt-based, best-effort)."""
     t = _force_serial(ctx, device)
     result = run_async(shell_execute(t, cmd, timeout=timeout))
-    print_result(ctx, result)
+    print_shell_result(ctx, result, terminate_last_line=True)
 
 
 @app.command("health")

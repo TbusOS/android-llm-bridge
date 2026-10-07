@@ -27,7 +27,13 @@ load_env_files()
 from alb.cli.app_cli import app as app_cli
 from alb.cli.chat_cli import app as chat_cli
 from alb.cli.config_cli import app as config_cli
-from alb.cli.common import get_transport, load_active_friendly, print_result, run_async
+from alb.cli.common import (
+    get_transport,
+    load_active_friendly,
+    print_result,
+    print_shell_result,
+    run_async,
+)
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
@@ -228,7 +234,7 @@ def shell(
             allow_dangerous=allow_dangerous,
         )
     )
-    print_result(ctx, result)
+    print_shell_result(ctx, result)
 
 
 @app.command()
