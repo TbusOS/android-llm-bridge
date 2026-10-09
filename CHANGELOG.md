@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+### 许可证改为 Apache 2.0(2026-10-10)
+- `LICENSE` 换成 Apache License 2.0 全文,新增 `NOTICE`;`pyproject.toml`、`alb.__license__`、生成的 `SKILL.md`、README 和网页页脚同步改。
+- 原因:Apache 2.0 带明确的专利授权,设备厂商的法务评审更容易通过;和 AOSP、Gemma 4 用同一个许可证。
+- 2026-10-10 之前发布的版本(到 `4d912d9` 为止)仍是 MIT,已经拿到的副本按 MIT 使用。
+
 ### M1 · 核心完成（W1-W3）
 - ✅ 4 个传输 beta：AdbTransport（A/B）、SshTransport（C）、SerialTransport（G）、HybridTransport（智能路由）
 - ✅ 6 个能力 beta：shell / logging（含 UART）/ filesync（含 rsync）/ diagnose / power / app

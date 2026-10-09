@@ -199,4 +199,5 @@ uv run alb setup wifi        # Method B
 
 ## License
 
-[MIT](./LICENSE) © 2026 sky &lt;skyzhangbinghua@gmail.com&gt;
+[Apache License 2.0](./LICENSE) © 2026 sky &lt;skyzhangbinghua@gmail.com&gt; — see also [NOTICE](./NOTICE).
+Releases before 2026-10-10 were MIT-licensed; copies obtained under those terms remain MIT.

@@ -278,4 +278,5 @@ uv run alb serial shell "dmesg | tail"
 
 ## License
 
-[MIT](./LICENSE) © 2026 sky &lt;skyzhangbinghua@gmail.com&gt;
+[Apache License 2.0](./LICENSE) © 2026 sky &lt;skyzhangbinghua@gmail.com&gt;,另见 [NOTICE](./NOTICE)。
+2026-10-10 之前发布的版本采用 MIT 许可,已经拿到的副本仍按 MIT 使用。

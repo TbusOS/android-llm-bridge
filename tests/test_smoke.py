@@ -7,7 +7,7 @@ def test_package_imports() -> None:
     import alb
 
     assert alb.__version__
-    assert alb.__license__ == "MIT"
+    assert alb.__license__ == "Apache-2.0"
 
 
 def test_registry_non_empty() -> None:

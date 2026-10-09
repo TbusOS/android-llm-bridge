@@ -36,7 +36,7 @@ description: >
   and a future Web API.
 version: {version}
 homepage: https://github.com/TbusOS/android-llm-bridge
-license: MIT
+license: Apache-2.0
 ---
 
 # android-llm-bridge · SKILL.md
