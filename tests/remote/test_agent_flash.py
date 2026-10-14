@@ -342,7 +342,14 @@ async def test_flash_proceeds_when_a_device_is_present(monkeypatch):
 def test_every_op_has_a_timeout():
     """A missing entry silently falls back to 300 s — long enough for a
     'waiting for device' hang to look like a working command."""
-    assert set(agent._FASTBOOT_TIMEOUT_S) == {"devices", "getvar", "reboot", "flash", "oem"}
+    assert set(agent._FASTBOOT_TIMEOUT_S) == {
+        "devices",
+        "getvar",
+        "reboot",
+        "flash",
+        "oem",
+        "erase",
+    }
     # a query must answer promptly; a partition write may legitimately take minutes
     assert agent._FASTBOOT_TIMEOUT_S["devices"] < agent._FASTBOOT_TIMEOUT_S["flash"]
     # getvar is a query like devices, not a write — same tier
@@ -557,3 +564,150 @@ async def test_oem_is_dispatched_by_run_job(monkeypatch):
     ws = _FakeWs(_frame(b"C", payload))
     await agent._run_job(ws, "/opt/fastboot")
     assert seen == ["at-lock-vboot"]
+
+
+# ── erase: same allowlist as flash, same refuse-early rules ─────────────
+
+
+async def test_erase_argv_is_built_by_the_agent(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append([*argv, f"op={op}"])
+        return 0, "", "Erasing 'misc' OKAY [  0.010s]\n"
+
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    ws = _FakeWs(b"")
+    await agent._job_erase(ws, "/opt/fastboot", "misc")
+    assert ran == [["/opt/fastboot", "erase", "misc", "op=erase"]]
+    assert ws.done()["ok"] is True
+
+
+@pytest.mark.parametrize("name", ["../misc", "misc data", "-w", ""])
+async def test_erase_rejects_malformed_names_without_running_anything(monkeypatch, name):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    ws = _FakeWs(b"")
+    await agent._job_erase(ws, "/opt/fastboot", name)
+    assert ran == []
+    assert ws.done()["code"] == "FLASH_PARTITION_REJECTED"
+
+
+async def test_erase_obeys_the_flash_allowlist(monkeypatch):
+    """Erasing takes no more authority than writing, so it is governed by
+    the same list — a partition that may not be flashed may not be erased."""
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"boot_a"}))
+    ws = _FakeWs(b"")
+    await agent._job_erase(ws, "/opt/fastboot", "misc")
+    assert ran == []
+    assert ws.done()["code"] == "FLASH_PARTITION_REJECTED"
+
+
+async def test_erase_refuses_when_no_device_is_in_fastboot(monkeypatch):
+    ran: list[list[str]] = []
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 0, "", ""
+
+    async def no(_fastboot):
+        return False
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", no)
+    ws = _FakeWs(b"")
+    await agent._job_erase(ws, "/opt/fastboot", "misc")
+    assert ran == [], "must not run a command that would block on 'waiting for any device'"
+    assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
+
+
+async def test_erase_is_dispatched_by_run_job(monkeypatch):
+    seen: list[str] = []
+
+    async def fake_erase(_ws, _fastboot, partition):
+        seen.append(partition)
+
+    monkeypatch.setattr(agent, "_job_erase", fake_erase)
+    payload = json.dumps({"op": "erase", "partition": "misc"}).encode()
+    ws = _FakeWs(_frame(b"C", payload))
+    await agent._run_job(ws, "/opt/fastboot")
+    assert seen == ["misc"]
+
+
+# ── image size: the agent's free temp space, not a fixed ceiling ───────
+
+
+def _flash_request(size: int) -> bytes:
+    return _frame(
+        b"C",
+        json.dumps(
+            {"op": "flash", "partition": "super", "size": size, "sha256": "00" * 32}
+        ).encode(),
+    )
+
+
+async def test_an_image_over_2_gib_is_not_refused_for_its_size(monkeypatch):
+    """The old fixed ceiling refused a 2.2 GB super image outright. Now the
+    size gate passes and the request goes on to the next check — here the
+    device-present check, stubbed to say no, so nothing is transferred."""
+    size = 2_236_037_804
+
+    async def plenty():
+        return size * 4
+
+    monkeypatch.setattr(agent, "_tmp_free_bytes", plenty)
+    ws = _FakeWs(_flash_request(size))
+    ran = await _run_flash(ws, monkeypatch, present=False)
+    assert ran == []
+    assert ws.done()["code"] == "FASTBOOT_NO_DEVICE", ws.done()
+
+
+async def test_too_little_temp_space_refuses_before_any_transfer(monkeypatch):
+    size = 3 * 1024 * 1024 * 1024
+    checked: list[str] = []
+
+    async def little():
+        return size  # no room for the reserve on top
+
+    async def fake_present(_fastboot):
+        checked.append("present")
+        return True
+
+    monkeypatch.setattr(agent, "_tmp_free_bytes", little)
+    ws = _FakeWs(_flash_request(size))
+    reader = agent._JobReader(ws)
+    req = await reader.read_control()
+    monkeypatch.setattr(agent, "_device_present", fake_present)
+    await agent._job_flash(ws, reader, "/opt/fastboot", req)
+    done = ws.done()
+    assert done["code"] == "FLASH_AGENT_NO_SPACE"
+    assert "nothing was transferred" in done["error"]
+    assert not ws.events("accepted"), "must refuse before accepting the image"
+    assert checked == [], "refused on space before asking the device anything"
+
+
+def test_hello_advertises_erase_and_large_images_with_fastboot(monkeypatch):
+    """A flash plan checks these before its first row; an agent that has the
+    ops but does not say so would be refused for nothing."""
+    monkeypatch.setattr(agent, "_FASTBOOT_PATH", "/usr/bin/fastboot")
+    caps = json.loads(agent._hello("a", "n", None))["caps"]
+    assert {"fastboot", "fastboot-erase", "fastboot-large-image"} <= set(caps)
+    monkeypatch.setattr(agent, "_FASTBOOT_PATH", "")
+    caps = json.loads(agent._hello("a", "n", None))["caps"]
+    assert "fastboot-erase" not in caps and "fastboot-large-image" not in caps

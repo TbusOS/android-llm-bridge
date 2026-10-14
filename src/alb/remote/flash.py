@@ -35,8 +35,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from alb.remote.flash_plan import AgentView, Plan, PlanResult, PlanRow
 from alb.remote.jobframe import FrameReader, JobProtocolError, encode_control, encode_data
 from alb.remote.protocol import (
     CAP_FASTBOOT,
@@ -45,6 +46,7 @@ from alb.remote.protocol import (
     JobEvent,
     JobPhase,
     job_devices,
+    job_erase,
     job_flash,
     job_getvar,
     job_oem,
@@ -72,6 +74,15 @@ DIAL_BACK_TIMEOUT_S = 30.0
 # later caller — the failure mode this is protecting against is not a slow
 # flash, it is a permanently busy bench.
 JOB_TIMEOUT_S = 30 * 60.0
+
+# After a plan's `reboot-bootloader`: how long to wait for the board to come
+# back to fastboot (callers may override per run), how often to look, and how
+# long a board still listed after the reboot is given before it counts as
+# "back". That last one exists because a fast reboot can leave and return
+# between two polls — never seen gone is not proof it never left.
+REBOOT_WAIT_S = 120.0
+REBOOT_POLL_S = 1.0
+REBOOT_SETTLE_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -112,6 +123,7 @@ class FlashResult:
 
 
 EventSink = Callable[[FlashEvent], None]
+_R = TypeVar("_R", FlashResult, PlanResult)
 
 
 def _as_int(value: object, default: int) -> int:
@@ -191,6 +203,13 @@ class FlashService:
         cannot flash at all."""
         agent = self._get_agent()
         return list(getattr(agent, "flash_partitions", []) or []) if agent else []
+
+    def agent_view(self) -> AgentView | None:
+        """What a flash plan checks itself against before its first row."""
+        agent = self._get_agent()
+        if agent is None:
+            return None
+        return AgentView(caps=list(getattr(agent, "caps", []) or []), partitions=self.partitions())
 
     def status(self) -> dict[str, Any]:
         return {
@@ -292,16 +311,159 @@ class FlashService:
 
     # ── plumbing ─────────────────────────────────────────────────────
 
-    async def _run(
+    async def run_plan(
         self,
+        plan: Plan,
         *,
-        label: str,
-        request: dict[str, Any],
-        on_event: EventSink | None,
-        after_request: Callable[[DataChannel], Any] | None = None,
-        record: bool = True,
-        watch_uart: bool = True,
+        reboot_wait_s: float = REBOOT_WAIT_S,
+        on_event: EventSink | None = None,
+    ) -> PlanResult:
+        """Run every row of a checked plan, in order, under ONE hold of the lock.
+
+        One hold, not one per row: between rows the lock would otherwise be
+        free, and a web click or a second CLI could write a partition in the
+        middle of a package — a board no manifest describes. The first
+        failing row stops the run; later rows are reported as not run.
+
+        One timeline for the whole plan, UART attached throughout: what the
+        board printed across a `reboot-bootloader` is exactly the evidence a
+        failed package flash needs, and it falls between rows.
+        """
+        if not plan.ok:
+            return PlanResult(
+                ok=False,
+                manifest=plan.manifest,
+                rows=plan.rows,
+                code="FLASH_PLAN_REJECTED",
+                error="; ".join(plan.problems),
+            )
+        refused = self._refusal()
+        if refused is not None:
+            return PlanResult(
+                ok=False,
+                manifest=plan.manifest,
+                rows=plan.rows,
+                code=refused.code,
+                error=refused.error,
+            )
+
+        async with self._lock:
+            started = time.monotonic()
+            label = f"plan {Path(plan.manifest).stem}"
+            self._current = label
+            detail = {"op": "plan", **plan.as_dict()}
+            timeline = await _open_timeline(label, detail, enabled=True, watch_uart=True)
+            sink = _tee(on_event, timeline)
+            result = PlanResult(ok=True, manifest=plan.manifest, rows=plan.rows)
+            todo = sum(1 for r in plan.rows if r.runs)
+            n = 0
+            try:
+                for row in plan.rows:
+                    if not row.runs:
+                        row.status = "skipped"
+                        _say(
+                            sink, "skip", n, todo, f"line {row.line}: {row.describe()} ({row.skip})"
+                        )
+                        continue
+                    n += 1
+                    self._current = f"{label}: line {row.line} ({n}/{todo}) {row.describe()}"
+                    _say(sink, "step", n, todo, f"line {row.line}: {row.describe()}")
+                    t0 = time.monotonic()
+                    outcome = await self._run_row(row, sink, reboot_wait_s)
+                    row.duration_s = time.monotonic() - t0
+                    if outcome.ok:
+                        row.status = "ok"
+                        continue
+                    row.status, row.code, row.error = "failed", outcome.code, outcome.error
+                    result.ok = False
+                    result.code = outcome.code or "FLASH_FAILED"
+                    result.error = outcome.error
+                    result.failed_line = row.line
+                    result.stdout, result.stderr = outcome.stdout, outcome.stderr
+                    break
+                for row in plan.rows:
+                    if row.status == "pending":
+                        row.status = "not-run" if row.runs else "skipped"
+                result.duration_s = time.monotonic() - started
+                return _finish(result, timeline)
+            finally:
+                self._current = ""
+                if timeline is not None:
+                    await timeline.aclose()
+                _log.info("flash plan %r finished in %.1fs", label, time.monotonic() - started)
+
+    async def _run_row(
+        self, row: PlanRow, sink: EventSink | None, reboot_wait_s: float
     ) -> FlashResult:
+        label = row.describe()
+        if row.action == "flash" and row.path is not None:
+            image = row.path
+
+            async def send_image(channel: DataChannel) -> None:
+                await _stream_file(channel, image)
+
+            # The digest is the one computed when the plan was built — the
+            # one the caller confirmed. A file changed since then fails the
+            # agent's check, and nothing is written.
+            request = job_flash(partition=row.partition, size=row.size, sha256=row.sha256)
+            return await self._step(request, sink, send_image, label=label)
+        if row.action == "erase":
+            return await self._step(job_erase(partition=row.partition), sink, None, label=label)
+        if row.action == "reboot":
+            return await self._step(job_reboot(target=""), sink, None, label=label)
+        if row.action == "reboot-bootloader":
+            outcome = await self._step(job_reboot(target="bootloader"), sink, None, label=label)
+            if not outcome.ok:
+                return outcome
+            return await self._await_fastboot(reboot_wait_s, sink)
+        # build_plan never lets such a row run; refuse rather than guess.
+        return _fail("FLASH_PLAN_REJECTED", f"line {row.line}: {label} cannot run")
+
+    async def _await_fastboot(self, timeout_s: float, sink: EventSink | None) -> FlashResult:
+        """Wait for the board to be listed by `fastboot devices` again.
+
+        Back means: seen gone and then listed, or still listed once
+        REBOOT_SETTLE_S has passed (a reboot quicker than one poll interval
+        is never seen gone). Polls go straight to `_drive` — this runs inside
+        the plan's hold of the lock, and `devices()` would report busy."""
+        started = time.monotonic()
+        _say(
+            sink,
+            "wait",
+            0,
+            0,
+            f"waiting up to {timeout_s:.0f}s for the device to return to fastboot",
+        )
+        seen_gone = False
+        while True:
+            await asyncio.sleep(REBOOT_POLL_S)
+            elapsed = time.monotonic() - started
+            if not await self._fastboot_listed():
+                seen_gone = True
+            elif seen_gone or elapsed >= REBOOT_SETTLE_S:
+                how = "" if seen_gone else " (never seen leaving — it rebooted between polls)"
+                _say(sink, "wait", 0, 0, f"device back in fastboot after {elapsed:.1f}s{how}")
+                return FlashResult(ok=True, rc=0, duration_s=elapsed)
+            if time.monotonic() - started >= timeout_s:
+                return _fail(
+                    "FASTBOOT_NO_DEVICE",
+                    f"the device did not come back to fastboot within {timeout_s:.0f}s "
+                    "after reboot-bootloader",
+                )
+
+    async def _fastboot_listed(self) -> bool:
+        try:
+            outcome = await asyncio.wait_for(
+                self._drive(job_devices(), None, None), DIAL_BACK_TIMEOUT_S + 10.0
+            )
+        except Exception:
+            # The agent's USB view can be briefly confused while the board
+            # re-enumerates; one failed poll is "not back yet", not the end.
+            return False
+        return outcome.ok
+
+    def _refusal(self) -> FlashResult | None:
+        """Why a job cannot start right now, or None."""
         if not self.available():
             agent = self._get_agent()
             if agent is None:
@@ -313,6 +475,21 @@ class FlashService:
         if self._lock.locked():
             # Refuse NOW rather than await the lock: see the module docstring.
             return _fail("FASTBOOT_BUSY", f"another job is running ({self._current})")
+        return None
+
+    async def _run(
+        self,
+        *,
+        label: str,
+        request: dict[str, Any],
+        on_event: EventSink | None,
+        after_request: Callable[[DataChannel], Any] | None = None,
+        record: bool = True,
+        watch_uart: bool = True,
+    ) -> FlashResult:
+        refused = self._refusal()
+        if refused is not None:
+            return refused
 
         async with self._lock:
             self._current = label
@@ -320,32 +497,34 @@ class FlashService:
             timeline = await _open_timeline(label, request, enabled=record, watch_uart=watch_uart)
             sink = _tee(on_event, timeline)
             try:
-                result = await asyncio.wait_for(
-                    self._drive(request, sink, after_request), JOB_TIMEOUT_S
-                )
+                result = await self._step(request, sink, after_request, label=label)
                 return _finish(result, timeline)
-            except TimeoutError:
-                return _finish(
-                    _fail(
-                        "FLASH_FAILED",
-                        f"job '{label}' exceeded {JOB_TIMEOUT_S:.0f}s and was abandoned",
-                    ),
-                    timeline,
-                )
-            except JobProtocolError as e:
-                return _finish(
-                    _fail("FLASH_FAILED", f"agent spoke an unexpected frame: {e}"), timeline
-                )
-            except Exception as e:  # channel open / send failures
-                return _finish(
-                    _fail("FLASH_FAILED", f"job '{label}' failed: {e or type(e).__name__}"),
-                    timeline,
-                )
             finally:
                 self._current = ""
                 if timeline is not None:
                     await timeline.aclose()
                 _log.info("flash job %r finished in %.1fs", label, time.monotonic() - started)
+
+    async def _step(
+        self,
+        request: dict[str, Any],
+        sink: EventSink | None,
+        after_request: Callable[[DataChannel], Any] | None,
+        *,
+        label: str,
+    ) -> FlashResult:
+        """One job on one channel, every failure turned into a FlashResult.
+        The caller must already hold the lock."""
+        try:
+            return await asyncio.wait_for(self._drive(request, sink, after_request), JOB_TIMEOUT_S)
+        except TimeoutError:
+            return _fail(
+                "FLASH_FAILED", f"job '{label}' exceeded {JOB_TIMEOUT_S:.0f}s and was abandoned"
+            )
+        except JobProtocolError as e:
+            return _fail("FLASH_FAILED", f"agent spoke an unexpected frame: {e}")
+        except Exception as e:  # channel open / send failures
+            return _fail("FLASH_FAILED", f"job '{label}' failed: {e or type(e).__name__}")
 
     async def _drive(
         self,
@@ -476,6 +655,14 @@ async def _open_timeline(
         return None
 
 
+def _say(sink: EventSink | None, phase: str, done: int, total: int, text: str) -> None:
+    """A plan's own events (which row, skipped, waiting) ride the same
+    stream as the agent's, so the CLI, the web and the timeline all see
+    them in order with the job progress they frame."""
+    if sink is not None:
+        sink(FlashEvent(phase=phase, done=done, total=total, text=text))
+
+
 def _tee(on_event: EventSink | None, timeline: FlashTimeline | None) -> EventSink | None:
     """Fan one event stream out to the caller and the recorder — the half of
     ADR-054 that DOES apply here: many observers, same data."""
@@ -491,7 +678,7 @@ def _tee(on_event: EventSink | None, timeline: FlashTimeline | None) -> EventSin
     return sink
 
 
-def _finish(result: FlashResult, timeline: FlashTimeline | None) -> FlashResult:
+def _finish(result: _R, timeline: FlashTimeline | None) -> _R:
     """Record the verdict and tell the caller where to read the story."""
     if timeline is None:
         return result

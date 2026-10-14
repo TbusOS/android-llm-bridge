@@ -86,7 +86,13 @@ CSECRET_HEADER = "x-alb-csecret"
 # argument or point fastboot somewhere else entirely.
 _PARTITION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
 _FASTBOOT_REBOOT_TARGETS = frozenset({"bootloader", "fastboot", "recovery"})
-_FLASH_MAX_BYTES = 2 * 1024 * 1024 * 1024
+# An image is received into a temp file before fastboot sees it (fastboot
+# needs a real file: it splits large images into sparse chunks itself). So
+# the real ceiling is this host's free temp space, not a fixed number — the
+# fixed 2 GiB ceiling this replaced refused a 2.2 GB super image that the
+# disk had room for many times over. The reserve keeps one transfer from
+# filling the disk the OS and this agent's own log also live on.
+_FLASH_TMP_RESERVE_BYTES = 256 * 1024 * 1024
 # Tool output is echoed back in the terminal frame; cap it so a chatty or
 # looping tool cannot turn one job into an unbounded message.
 _JOB_OUTPUT_CAP = 64 * 1024
@@ -102,6 +108,9 @@ _FASTBOOT_TIMEOUT_S = {
     "oem": 30.0,
     "reboot": 60.0,
     "flash": 900.0,
+    # Erasing a large partition (userdata) can mean a full-device discard;
+    # a small one (misc) answers at once. Sized for the large case.
+    "erase": 300.0,
 }
 _WAITING_MARKER = "waiting for any device"
 
@@ -380,7 +389,11 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
     # `fastboot` only when the executable is actually resolvable here.
     caps = ["adb"]
     if _fastboot_path():
-        caps.append("fastboot")
+        # The two after `fastboot` say what THIS version can do beyond the
+        # original ops. A flash plan checks them before running its first
+        # row, so an agent lacking one is refused up front instead of failing
+        # at row 30 with the board half-written.
+        caps += ["fastboot", "fastboot-erase", "fastboot-large-image"]
     return _frame(
         "hello",
         agent_id=agent_id,
@@ -861,6 +874,8 @@ async def _run_job(data_ws: Any, fastboot: str) -> None:
         await _job_getvar(data_ws, fastboot, str(req.get("name") or ""))
     elif op == "oem":
         await _job_oem(data_ws, fastboot, str(req.get("command") or ""))
+    elif op == "erase":
+        await _job_erase(data_ws, fastboot, str(req.get("partition") or ""))
     else:
         await _job_fail(data_ws, f"unsupported job op {op!r}", code="")
 
@@ -926,8 +941,21 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
             code="FLASH_PARTITION_REJECTED",
         )
         return
-    if size <= 0 or size > _FLASH_MAX_BYTES:
+    if size <= 0:
         await _job_fail(data_ws, f"image size {size} out of range", code="FLASH_IMAGE_CORRUPT")
+        return
+    free = await _tmp_free_bytes()
+    if free < size + _FLASH_TMP_RESERVE_BYTES:
+        # Refuse before a single byte crosses the tunnel: running out of
+        # disk halfway through a multi-gigabyte transfer costs the whole
+        # transfer and then fails anyway.
+        await _job_fail(
+            data_ws,
+            f"not enough temp space on the agent host: image is {size} bytes, "
+            f"{free} free (keeping {_FLASH_TMP_RESERVE_BYTES} in reserve) — "
+            "nothing was transferred",
+            code="FLASH_AGENT_NO_SPACE",
+        )
         return
 
     # Check BEFORE accepting the image: streaming megabytes to a bench whose
@@ -1008,6 +1036,39 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
             await asyncio.to_thread(tmp_img.unlink, missing_ok=True)
         with contextlib.suppress(Exception):
             await asyncio.to_thread(tmp_dir.rmdir)
+
+
+async def _tmp_free_bytes() -> int:
+    """Free bytes where `_job_flash` puts the received image."""
+    usage = await asyncio.to_thread(shutil.disk_usage, tempfile.gettempdir())
+    return int(usage.free)
+
+
+async def _job_erase(data_ws: Any, fastboot: str, partition: str) -> None:
+    """`fastboot erase <partition>`。
+
+    跟 flash 用**同一份**分区白名单:擦掉一个分区不比写它需要更多权限 ——
+    flash 本来就会把整个分区换掉。单独再立一份 erase 白名单,只是多一份要跟
+    第一份保持同步的清单,保护的东西没有任何不同。
+    """
+    if not _partition_allowed(partition):
+        await _job_fail(
+            data_ws,
+            f"partition {partition!r} rejected by this agent",
+            code="FLASH_PARTITION_REJECTED",
+        )
+        return
+    if not await _device_present(fastboot):
+        # 跟 flash / reboot / getvar / oem 同一条规矩(ADR-056,`e5fbc46` 的教训)
+        await _job_fail(
+            data_ws,
+            "no device is in fastboot on this host — nothing was erased",
+            code="FASTBOOT_NO_DEVICE",
+        )
+        return
+    await data_ws.send(_job_control({"ev": "accepted", "detail": f"erasing {partition}"}))
+    rc, out, err = await _run_fastboot(data_ws, [fastboot, "erase", partition], "erase")
+    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
 
 
 async def _job_reboot(data_ws: Any, fastboot: str, target: str) -> None:

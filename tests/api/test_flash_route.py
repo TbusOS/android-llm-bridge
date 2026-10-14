@@ -176,3 +176,132 @@ def test_oem_command_is_required(monkeypatch):
         resp = c.post("/api/flash/oem", json={})
     assert resp.status_code == 422
     assert svc.calls == []
+
+
+# ── /api/flash/plan and /plan/run ───────────────────────────────────────
+
+_PLAN_MANIFEST = "tool flash boot_a boot.img\ntool erase misc\ntool reboot\n"
+_PLAN_CAPS = ["adb", "fastboot", "fastboot-erase", "fastboot-large-image"]
+
+
+class _PlanService:
+    def __init__(self, partitions: list[str] | None = None) -> None:
+        self.partitions = partitions or []
+        self.runs: list = []
+
+    def agent_view(self):
+        from alb.remote.flash_plan import AgentView
+
+        return AgentView(caps=_PLAN_CAPS, partitions=self.partitions)
+
+    async def run_plan(self, plan, *, reboot_wait_s, on_event=None):
+        from alb.remote.flash_plan import PlanResult
+
+        self.runs.append((plan, reboot_wait_s))
+        if on_event:
+            step = "line 1: flash boot_a <- boot.img"
+            on_event(FlashEvent(phase="step", done=1, total=3, text=step))
+        for row in plan.rows:
+            row.status = "ok"
+        return PlanResult(ok=True, manifest=plan.manifest, rows=plan.rows)
+
+
+def _workspace_package() -> str:
+    from alb.infra.workspace import workspace_root
+
+    pkg = workspace_root() / "images" / "board-x"
+    pkg.mkdir(parents=True)
+    (pkg / "boot.img").write_bytes(b"B" * 64)
+    (pkg / "flash.txt").write_text(_PLAN_MANIFEST, encoding="utf-8")
+    return "images/board-x/flash.txt"
+
+
+def test_plan_returns_rows_digests_and_a_fingerprint(monkeypatch):
+    _install(monkeypatch, _PlanService())
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        body = c.post("/api/flash/plan", json={"manifest": rel}).json()
+    assert body["ok"] is True, body["problems"]
+    assert (body["total"], body["run"], body["skipped"]) == (3, 3, 0)
+    assert body["rows"][0]["size"] == 64 and len(body["rows"][0]["md5"]) == 32
+    assert len(body["fingerprint"]) == 64
+    assert "path" not in body["rows"][0], "the hub's own file path stays on the hub"
+
+
+def test_plan_reports_problems_with_a_200(monkeypatch):
+    """Problems are the answer to "what is wrong with this plan", not a
+    failed request — the rows still come back so they can be shown."""
+    _install(monkeypatch, _PlanService(partitions=["boot_a"]))
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        body = c.post("/api/flash/plan", json={"manifest": rel, "skip": ["nope"]}).json()
+    assert body["ok"] is False
+    assert len(body["rows"]) == 3
+    joined = " ".join(body["problems"])
+    assert "--skip nope matches no row" in joined
+    assert "misc (line 2)" in joined
+
+
+def test_plan_manifest_must_be_in_the_workspace(monkeypatch):
+    _install(monkeypatch, _PlanService())
+    with TestClient(create_app()) as c:
+        assert c.post("/api/flash/plan", json={"manifest": "../../etc/passwd"}).status_code == 400
+        assert c.post("/api/flash/plan", json={"manifest": "not-there.txt"}).status_code == 400
+
+
+def test_plan_run_needs_the_fingerprint(monkeypatch):
+    svc = _install(monkeypatch, _PlanService())
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        resp = c.post("/api/flash/plan/run", json={"manifest": rel})
+    assert resp.status_code == 422
+    assert svc.runs == []
+
+
+def test_plan_run_refuses_a_plan_that_changed_since_it_was_shown(monkeypatch):
+    svc = _install(monkeypatch, _PlanService())
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        shown = c.post("/api/flash/plan", json={"manifest": rel}).json()
+        from alb.infra.workspace import workspace_root
+
+        (workspace_root() / "images" / "board-x" / "boot.img").write_bytes(b"C" * 64)
+        resp = c.post(
+            "/api/flash/plan/run", json={"manifest": rel, "fingerprint": shown["fingerprint"]}
+        )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "FLASH_PLAN_CHANGED"
+    assert svc.runs == []
+
+
+def test_plan_run_refuses_a_plan_with_problems(monkeypatch):
+    svc = _install(monkeypatch, _PlanService(partitions=["boot_a"]))
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        shown = c.post("/api/flash/plan", json={"manifest": rel}).json()
+        resp = c.post(
+            "/api/flash/plan/run", json={"manifest": rel, "fingerprint": shown["fingerprint"]}
+        )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "FLASH_PLAN_REJECTED"
+    assert any("misc" in p for p in detail["problems"])
+    assert svc.runs == []
+
+
+def test_plan_run_streams_steps_and_ends_with_every_row(monkeypatch):
+    svc = _install(monkeypatch, _PlanService())
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        shown = c.post("/api/flash/plan", json={"manifest": rel}).json()
+        resp = c.post(
+            "/api/flash/plan/run",
+            json={"manifest": rel, "fingerprint": shown["fingerprint"], "reboot_wait_s": 30},
+        )
+    assert resp.status_code == 200
+    lines = _lines(resp)
+    assert lines[0]["phase"] == "step"
+    done = lines[-1]
+    assert done["ev"] == "done" and done["ok"] is True
+    assert [r["status"] for r in done["rows"]] == ["ok", "ok", "ok"]
+    assert svc.runs[0][1] == 30

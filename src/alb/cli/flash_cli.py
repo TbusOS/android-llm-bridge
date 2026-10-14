@@ -13,6 +13,7 @@ command is a client of it.
     alb flash reboot [target]
     alb flash oem <command>
     alb flash write <partition> <image>
+    alb flash plan <manifest> [--skip p1,p2] [--skip-action a] [--dry-run] [--yes]
 
 `write`, not `flash flash`: the verb reads as what it does to the device.
 """
@@ -85,9 +86,35 @@ def _render_progress(msg: dict[str, Any], state: dict[str, Any]) -> None:
             typer.echo(f"  {phase}: {done}/{total} bytes ({pct}%)")
 
 
-def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _print_rejection(resp: httpx.Response) -> None:
+    """Show why the hub said no. `detail` is a string for most refusals and
+    `{"code", "problems": [...]}` for a flash plan — one problem per line,
+    because a plan refusal is a list to work through, not a sentence."""
+    typer.echo(f"[fail] hub rejected the request ({resp.status_code})", err=True)
+    detail: Any = ""
+    try:
+        detail = resp.json().get("detail", "")
+    except Exception:
+        # The body need not be JSON — an error page or a proxy's text is
+        # still worth showing verbatim.
+        detail = resp.text[:400]
+    if isinstance(detail, dict):
+        if detail.get("code"):
+            typer.echo(f"  {detail['code']}", err=True)
+        for problem in detail.get("problems") or []:
+            typer.echo(f"  - {problem}", err=True)
+    elif detail:
+        typer.echo(f"  {detail}", err=True)
+
+
+def _run_job(
+    path: str,
+    payload: dict[str, Any] | None = None,
+    render: Any = None,
+) -> dict[str, Any]:
     """POST and consume the NDJSON stream; return the terminal `done` frame."""
     url = f"{hub_url()}/api/flash/{path}"
+    render = render or _render_progress
     state: dict[str, Any] = {}
     final: dict[str, Any] = {}
     try:
@@ -97,23 +124,14 @@ def _run_job(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]
         ):
             if resp.status_code >= 400:
                 resp.read()
-                typer.echo(f"[fail] hub rejected the request ({resp.status_code})", err=True)
-                detail = ""
-                try:
-                    detail = str(resp.json().get("detail", ""))
-                except Exception:
-                    # The body need not be JSON — an error page or a
-                    # proxy's text is still worth showing verbatim.
-                    detail = resp.text[:400]
-                if detail:
-                    typer.echo(f"  {detail}", err=True)
+                _print_rejection(resp)
                 raise typer.Exit(code=2)
             for line in resp.iter_lines():
                 if not line.strip():
                     continue
                 msg = json.loads(line)
                 if msg.get("ev") == "progress":
-                    _render_progress(msg, state)
+                    render(msg, state)
                 elif msg.get("ev") == "done":
                     final = msg
     except httpx.HTTPError as e:
@@ -271,3 +289,159 @@ def cmd_write(
         typer.echo(f"about to write {image} to partition {partition}")
         typer.confirm("proceed?", abort=True)
     _report(_run_job("flash", {"partition": partition, "image": str(image)}))
+
+
+# ── plan: a whole flashing manifest, checked first, run once ───────────
+
+
+def _row_text(row: dict[str, Any]) -> str:
+    action = str(row.get("action") or "")
+    if action == "flash":
+        return f"flash {row.get('partition')} <- {row.get('file')}"
+    if action == "erase":
+        return f"erase {row.get('partition')}"
+    if action == "setvar":
+        return f"setvar {row.get('key')} {row.get('value')}"
+    return action
+
+
+def _print_plan(plan: dict[str, Any]) -> None:
+    """Every row with its decision. Size and md5 are there so the plan can
+    be held against the vendor tool's own listing before anything is sent."""
+    typer.echo(
+        f"plan: {plan.get('manifest')} · {plan.get('total', 0)} rows · "
+        f"run {plan.get('run', 0)} · skip {plan.get('skipped', 0)}"
+    )
+    typer.echo(f"  {'line':>4}  {'row':<44}  {'decision':<30}  {'bytes':>12}  md5")
+    for row in plan.get("rows") or []:
+        decision = f"skip ({row['skip']})" if row.get("skip") else "run"
+        size = str(row["size"]) if row.get("size") else ""
+        typer.echo(
+            f"  {row.get('line', 0):>4}  {_row_text(row):<44}  {decision:<30}  "
+            f"{size:>12}  {row.get('md5') or ''}".rstrip()
+        )
+    typer.echo(f"  fingerprint: {plan.get('fingerprint')}")
+
+
+def _render_plan_progress(msg: dict[str, Any], state: dict[str, Any]) -> None:
+    phase = msg.get("phase", "")
+    if phase == "step":
+        state.clear()  # a new row's transfer starts from 0% again
+        typer.echo(f"[{msg.get('done')}/{msg.get('total')}] {msg.get('text')}")
+        return
+    if phase == "skip":
+        typer.echo(f"  skip {msg.get('text')}")
+        return
+    _render_progress(msg, state)
+
+
+def _report_plan(final: dict[str, Any]) -> None:
+    rows = final.get("rows") or []
+    head = (
+        f"{final.get('total', 0)} rows · ran {final.get('ran', 0)} · "
+        f"skipped {final.get('skipped', 0)}"
+    )
+    skipped = [r for r in rows if r.get("status") == "skipped"]
+    if final.get("ok"):
+        typer.echo(f"[ok] plan finished · {head} · {final.get('duration_s', 0)}s")
+        for r in skipped:
+            typer.echo(f"  skipped line {r.get('line')}: {_row_text(r)} ({r.get('skip')})")
+        _report_artifacts(str(final.get("artifacts") or ""))
+        return
+    code = str(final.get("code") or "")
+    message, advice = _explain(code, str(final.get("error") or ""))
+    line = int(final.get("failed_line") or 0)
+    failed = next((r for r in rows if r.get("line") == line), None)
+    where = f"line {line} {_row_text(failed)}: " if failed else ""
+    typer.echo(f"[fail] {where}{code or 'error'}: {message}", err=True)
+    if advice:
+        typer.echo(f"  try: {advice}", err=True)
+    for stream in ("stdout", "stderr"):
+        text = str(final.get(stream) or "").strip()
+        if text:
+            typer.echo(f"  {stream}: {text}", err=True)
+    typer.echo(f"  {head} · not run {final.get('not_run', 0)}", err=True)
+    for r in skipped:
+        typer.echo(f"  skipped line {r.get('line')}: {_row_text(r)} ({r.get('skip')})", err=True)
+    not_run = [str(r.get("line")) for r in rows if r.get("status") == "not-run"]
+    if not_run:
+        typer.echo(f"  not run: line {', '.join(not_run)}", err=True)
+    _report_artifacts(str(final.get("artifacts") or ""), err=True)
+    raise typer.Exit(code=1)
+
+
+def _fetch_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        with httpx.Client(timeout=_timeout()) as client:
+            resp = client.post(f"{hub_url()}/api/flash/plan", json=payload)
+    except httpx.HTTPError as e:
+        _hub_unreachable(e)
+    if resp.status_code >= 400:
+        _print_rejection(resp)
+        raise typer.Exit(code=2)
+    data: dict[str, Any] = resp.json()
+    return data
+
+
+@app.command("plan")
+def cmd_plan(
+    manifest: str = typer.Argument(
+        ..., help="flashing manifest — a path under the hub's alb workspace; image names "
+        "in it are relative to the manifest's directory"
+    ),
+    skip: list[str] = typer.Option(
+        None, "--skip", help="partition(s) to leave untouched: exact names, comma-separated "
+        "or repeated; a name that matches no row refuses the plan"
+    ),
+    skip_action: list[str] = typer.Option(
+        None, "--skip-action", help="rows without a partition to leave out: setvar, "
+        "reboot-bootloader, reboot (comma-separated or repeated)"
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="print the plan and stop"),
+    reboot_wait: float = typer.Option(
+        120.0, "--reboot-wait", help="seconds to wait for the board to return to fastboot "
+        "after reboot-bootloader (10-600)"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+) -> None:
+    """Flash a whole package by its manifest, leaving out named partitions.
+
+    The plan is checked as a whole first — unknown action, missing image,
+    malformed name, a skip that matches nothing, a partition the agent will
+    refuse: any one of them and NO row runs. Then it is shown, confirmed
+    once, and run in order under one hold of the job lock; the first failing
+    row stops it.
+
+    Exit codes: 0 done (or a clean dry run) · 1 the plan has problems or a
+    row failed · 2 the hub refused the request or cannot be reached.
+    """
+    payload: dict[str, Any] = {
+        "manifest": manifest,
+        "skip": list(skip or []),
+        "skip_actions": list(skip_action or []),
+    }
+    plan = _fetch_plan(payload)
+    _print_plan(plan)
+    problems = plan.get("problems") or []
+    if problems:
+        typer.echo(
+            f"[fail] FLASH_PLAN_REJECTED: {len(problems)} problem(s), nothing was run", err=True
+        )
+        for problem in problems:
+            typer.echo(f"  - {problem}", err=True)
+        raise typer.Exit(code=1)
+    if dry_run:
+        typer.echo("[dry-run] plan is valid; nothing was run")
+        return
+    if not yes:
+        typer.echo(
+            f"about to run {plan.get('run', 0)} row(s) of {plan.get('manifest')} on the board "
+            f"({plan.get('skipped', 0)} skipped)"
+        )
+        typer.confirm("proceed?", abort=True)
+    run_payload = {
+        **payload,
+        "fingerprint": plan.get("fingerprint"),
+        "reboot_wait_s": reboot_wait,
+    }
+    _report_plan(_run_job("plan/run", run_payload, render=_render_plan_progress))

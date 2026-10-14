@@ -281,6 +281,30 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Read the captured fastboot output; if the board is now half-written, "
         "re-flash before rebooting it",
     ),
+    "FLASH_AGENT_NO_SPACE": ErrorSpec(
+        "FLASH_AGENT_NO_SPACE",
+        "transport",
+        "The agent host has too little free temp space to receive the image",
+        "Free disk space on the agent host (the image is staged in its temp "
+        "directory before fastboot runs) — nothing was transferred or written",
+    ),
+    # A flash plan (alb flash plan) is checked as a whole before any row runs.
+    # Two codes because the remedies differ: fix the manifest / skips / agent,
+    # versus simply look at the plan again.
+    "FLASH_PLAN_REJECTED": ErrorSpec(
+        "FLASH_PLAN_REJECTED",
+        "transport",
+        "The flash plan has problems; no row was executed",
+        "Run `alb flash plan <manifest> --dry-run` to see every problem with "
+        "its line number",
+    ),
+    "FLASH_PLAN_CHANGED": ErrorSpec(
+        "FLASH_PLAN_CHANGED",
+        "transport",
+        "The plan differs from the one that was confirmed (an image, the "
+        "manifest or the skips changed); no row was executed",
+        "Run the command again and confirm the plan as it is now",
+    ),
 }
 
 

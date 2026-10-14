@@ -354,6 +354,21 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "(job events + UART lines on one clock), uart.log and job.json; the "
         "terminal frame carries the path in `artifacts`",
     },
+    {
+        "method": "POST",
+        "path": "/api/flash/plan",
+        "description": "Parse a line-based flashing manifest into a checked plan — every "
+        "row with its decision (run / skip), image size, md5 and sha256, every problem "
+        "with its line number, and a fingerprint. Runs nothing",
+    },
+    {
+        "method": "POST",
+        "path": "/api/flash/plan/run",
+        "description": "Run a plan: rebuilt and refused (409) if it has problems or no "
+        "longer matches the confirmed fingerprint; otherwise every row runs in order "
+        "under one hold of the job lock, stopping at the first failure (NDJSON stream; "
+        "the terminal frame lists each row's outcome)",
+    },
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

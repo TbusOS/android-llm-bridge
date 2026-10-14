@@ -17,6 +17,15 @@ Endpoints:
                                change the device; some are one-way).
     POST /api/flash/reboot     Body: {"target": "" | "bootloader" | ...}
     POST /api/flash/flash      Body: {"partition": str, "image": <workspace path>}
+    POST /api/flash/plan       Body: {"manifest": <workspace path>, "skip": [...],
+                                      "skip_actions": [...]}
+                               Parse a flashing manifest into a checked plan and
+                               return it with every problem found. Runs nothing.
+    POST /api/flash/plan/run   Same body + "fingerprint" (from /plan) and
+                               "reboot_wait_s". Rebuilds the plan, refuses (409)
+                               if it has problems or no longer matches the
+                               fingerprint, otherwise runs every row under one
+                               hold of the job lock (NDJSON stream).
 
 Why the three job endpoints stream NDJSON instead of returning one JSON
 object: a flash is the one operation in alb where the caller genuinely
@@ -41,14 +50,15 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from alb.api.schema import API_VERSION
-from alb.remote.flash import FlashEvent, FlashResult, get_flash_service
+from alb.remote.flash import REBOOT_WAIT_S, FlashEvent, get_flash_service
+from alb.remote.flash_plan import Plan, build_plan
 from alb.remote.protocol import JobEvent
 
 router = APIRouter(prefix="/api/flash", tags=["flash"])
@@ -84,7 +94,11 @@ def _resolve_image(rel: str) -> Path:
     return path
 
 
-JobRunner = Callable[[Callable[[FlashEvent], None]], Coroutine[Any, Any, FlashResult]]
+class _Verdict(Protocol):
+    def as_dict(self) -> dict[str, Any]: ...
+
+
+JobRunner = Callable[[Callable[[FlashEvent], None]], Coroutine[Any, Any, _Verdict]]
 
 
 async def _stream(run: JobRunner) -> StreamingResponse:
@@ -99,7 +113,7 @@ async def _stream(run: JobRunner) -> StreamingResponse:
         queue.put_nowait(ev)
 
     async def body() -> AsyncIterator[bytes]:
-        task: asyncio.Task[FlashResult] = asyncio.create_task(run(on_event))
+        task: asyncio.Task[_Verdict] = asyncio.create_task(run(on_event))
         try:
             while True:
                 getter = asyncio.create_task(queue.get())
@@ -132,7 +146,7 @@ async def _stream(run: JobRunner) -> StreamingResponse:
                                 "text": ev.text,
                             }
                         )
-                result: FlashResult = task.result()
+                result = task.result()
                 yield _line({"ev": JobEvent.DONE.value, **result.as_dict()})
                 return
         finally:
@@ -194,3 +208,69 @@ async def flash_partition(body: FlashBody) -> StreamingResponse:
     image = _resolve_image(body.image)
     service = get_flash_service()
     return await _stream(lambda cb: service.flash(body.partition, image, on_event=cb))
+
+
+class PlanBody(BaseModel):
+    manifest: str = Field(..., min_length=1, description="workspace-relative path")
+    # Bounded only as a sanity ceiling; the plan itself rejects a skip that
+    # matches no row, which is the check that actually protects anything.
+    skip: list[str] = Field(default_factory=list, max_length=128)
+    skip_actions: list[str] = Field(default_factory=list, max_length=8)
+
+
+class PlanRunBody(PlanBody):
+    # Required: running a plan means running the plan that was SHOWN. A
+    # caller without a fingerprint has not looked, and would be confirming
+    # nothing.
+    fingerprint: str = Field(..., min_length=64, max_length=64)
+    reboot_wait_s: float = Field(REBOOT_WAIT_S, ge=10.0, le=600.0)
+
+
+async def _build(body: PlanBody) -> Plan:
+    from alb.api.files_route import _resolve_workspace_path
+    from alb.infra.workspace import workspace_root
+
+    manifest = _resolve_workspace_path(body.manifest)
+    if not manifest.is_file():
+        raise HTTPException(
+            status_code=400, detail=f"no such manifest in the workspace: {body.manifest}"
+        )
+    return await build_plan(
+        manifest,
+        name=body.manifest,
+        root=workspace_root().resolve(),
+        skip=body.skip,
+        skip_actions=body.skip_actions,
+        agent=get_flash_service().agent_view(),
+    )
+
+
+@router.post("/plan")
+async def flash_plan(body: PlanBody) -> dict[str, Any]:
+    plan = await _build(body)
+    return {"v": API_VERSION, "ok": plan.ok, **plan.as_dict()}
+
+
+@router.post("/plan/run")
+async def flash_plan_run(body: PlanRunBody) -> StreamingResponse:
+    plan = await _build(body)
+    if not plan.ok:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "FLASH_PLAN_REJECTED", "problems": plan.problems},
+        )
+    if plan.fingerprint != body.fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "FLASH_PLAN_CHANGED",
+                "problems": [
+                    "the plan no longer matches the one that was shown — an image, the "
+                    "manifest or the skips changed since; nothing was run"
+                ],
+            },
+        )
+    service = get_flash_service()
+    return await _stream(
+        lambda cb: service.run_plan(plan, reboot_wait_s=body.reboot_wait_s, on_event=cb)
+    )

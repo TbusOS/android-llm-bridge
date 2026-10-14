@@ -82,6 +82,17 @@ _DEFAULT_ROLE: dict[ChannelType, ChannelRole] = {
 # (ADR-056 §决定 7).
 CAP_ADB = "adb"
 CAP_FASTBOOT = "fastboot"
+# Finer-grained fastboot abilities, advertised alongside CAP_FASTBOOT by
+# agents new enough to have them. They exist for one reason: a flash PLAN
+# (alb.remote.flash_plan) must refuse up front when the agent cannot run one
+# of its rows. Without them, an older agent would accept the first twenty
+# writes and then answer "unsupported job op" at the `erase` near the end —
+# the board left half-written, which is the outcome a plan exists to prevent.
+CAP_FASTBOOT_ERASE = "fastboot-erase"
+# The agent sizes an image against its temp disk's free space instead of the
+# fixed 2 GiB ceiling older agents apply (LEGACY_FLASH_MAX_BYTES).
+CAP_FASTBOOT_LARGE_IMAGE = "fastboot-large-image"
+LEGACY_FLASH_MAX_BYTES = 2 * 1024 * 1024 * 1024
 
 
 # The three job enums below use enum.StrEnum while their older neighbours
@@ -99,6 +110,7 @@ class JobOp(enum.StrEnum):
     DEVICES = "devices"
     GETVAR = "getvar"
     OEM = "oem"
+    ERASE = "erase"
 
 
 class JobEvent(enum.StrEnum):
@@ -340,6 +352,16 @@ def job_oem(*, command: str) -> dict[str, Any]:
     next to the code that builds the argv (ADR-056).
     """
     return {"op": JobOp.OEM.value, "command": command}
+
+
+def job_erase(*, partition: str) -> dict[str, Any]:
+    """Ask the agent to run `fastboot erase <partition>`.
+
+    Governed by the same partition allowlist as `flash`, on purpose: erasing
+    a partition takes no more authority than writing it — a flash already
+    replaces every byte. A separate erase allowlist would be a second list to
+    keep in step with the first, for no difference in what it protects."""
+    return {"op": JobOp.ERASE.value, "partition": partition}
 
 
 def job_accepted(*, detail: str = "") -> dict[str, Any]:
