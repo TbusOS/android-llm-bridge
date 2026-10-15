@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,6 +18,20 @@ from alb.remote.registry import (
     get_agent_registry,
     reset_agent_registry,
 )
+
+_AGENT_PATH = Path(__file__).resolve().parents[2] / "clients" / "windows-agent" / "alb_agent.py"
+
+
+def _load_agent():
+    spec = importlib.util.spec_from_file_location("alb_agent_registry_under_test", _AGENT_PATH)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_agent = _load_agent()
 
 
 class _DummyChannel:
@@ -186,7 +204,15 @@ def test_singleton_reset():
 # ── device enumeration cache (P4-deferred → enumeration increment) ────
 
 
-async def test_request_device_list_adb_only_without_serial_cap():
+@pytest.mark.parametrize("fastboot", [None, "fastboot"])
+async def test_request_device_list_asks_for_com_ports_with_the_shipped_agents_caps(
+    monkeypatch, fastboot
+):
+    # caps come from the shipped agent's own hello, not typed here: a typed
+    # ["adb", "serial"] is how this passed while every real bench reported
+    # no COM ports — the real agent has never sent `serial`.
+    monkeypatch.setattr(_agent, "_fastboot_path", lambda: fastboot)
+    caps = json.loads(_agent._hello("a", "n", None))["caps"]
     reg = AgentRegistry()
     sent: list[str] = []
 
@@ -197,27 +223,7 @@ async def test_request_device_list_adb_only_without_serial_cap():
         agent_id="a",
         name="a",
         version=1,
-        caps=["adb"],
-        send_control=send,
-        registry=reg,
-    )
-    await conn.request_device_list()
-    assert "list_adb" in sent
-    assert "list_com" not in sent  # no serial cap → don't ask for COM ports
-
-
-async def test_request_device_list_includes_com_with_serial_cap():
-    reg = AgentRegistry()
-    sent: list[str] = []
-
-    async def send(m: dict[str, Any]) -> None:
-        sent.append(m["verb"])
-
-    conn = AgentConnection(
-        agent_id="a",
-        name="a",
-        version=1,
-        caps=["adb", "serial"],
+        caps=caps,
         send_control=send,
         registry=reg,
     )

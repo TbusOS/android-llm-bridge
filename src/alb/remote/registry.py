@@ -120,8 +120,10 @@ class AgentConnection:
         web Connection Center polls /agent/status, so the next poll reflects it."""
         with suppress(Exception):
             await self._send_control(protocol.list_adb())
-            if "serial" in self.caps:
-                await self._send_control(protocol.list_com())
+            # Asked unconditionally: every agent has answered list_com since
+            # the first one (059c7f3), and none has ever put `serial` in its
+            # caps — gating on that cap left com_ports empty on every bench.
+            await self._send_control(protocol.list_com())
 
     async def request_adb_restart(self, *, kill_conflicts: bool = False) -> None:
         """Fire-and-forget: ask the agent to restart ITS local adb server and

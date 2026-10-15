@@ -312,7 +312,7 @@ def test_apply_agent_frame_updates_device_cache():
         agent_id="a",
         name="a",
         version=1,
-        caps=["adb", "serial"],
+        caps=["adb"],
         send_control=_send,
         registry=reg,
     )
@@ -346,8 +346,9 @@ def test_adb_restart_sends_verb_to_current_agent(monkeypatch):
         with c.websocket_connect("/agent/connect") as ws:
             ws.send_text(_hello(None))
             assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
-            # register() fires a device refresh — drain it (caps=["adb"] → list_adb only)
+            # register() fires a device refresh — drain it (list_adb, then list_com)
             assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_ADB.value
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_COM.value
             body = c.post("/api/agent/adb/restart").json()
             assert body["ok"] is True
             assert body["agent_id"] == "agent-1"
@@ -369,6 +370,7 @@ def test_adb_restart_kill_conflicts_flag_in_frame(monkeypatch):
             ws.send_text(_hello(None))
             assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
             assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_ADB.value
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_COM.value
             body = c.post("/api/agent/adb/restart?kill_conflicts=true").json()
             assert body["kill_conflicts"] is True
             frame = p.decode_control(ws.receive_text())
@@ -418,6 +420,7 @@ def test_channel_error_frame_is_dispatched_to_fail_pending(monkeypatch):
             ws.send_text(_hello(None))
             assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
             assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_ADB.value
+            assert p.decode_control(ws.receive_text())["verb"] == p.Verb.LIST_COM.value
 
             ws.send_text(
                 p.encode_control(
