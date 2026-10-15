@@ -66,8 +66,15 @@ rem -- 5. serial ports visible to this machine, for quick eyeballing.
 echo.
 echo [run-agent] status page: http://127.0.0.1:8731 by default -- the agent
 echo [run-agent] log below prints the actual URL.
+rem Tells the agent it was started from here, so a remote update restarts
+rem it the same way: through this script, in a window of its own.
+set "ALB_AGENT_LAUNCHER=run-agent.bat"
 %PY% alb_agent.py %*
 set "RC=%errorlevel%"
+
+rem 75 = a newer instance of this agent took over (a restart or a remote
+rem update); it runs in its own window, so close this one without pausing.
+if "%RC%"=="75" exit /b 75
 
 rem -- keep the window open so exit reasons are readable on double-click
 rem    (e.g. a rejected token stops the agent on purpose).

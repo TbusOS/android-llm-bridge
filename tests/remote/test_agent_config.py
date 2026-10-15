@@ -253,6 +253,9 @@ _CLI_ONLY_DESTS = {
     "config",  # chicken-and-egg: it names the file being read
     "config_used",  # set after parsing, not an input at all
     "verbose",  # a per-run debugging choice, not bench configuration
+    "self_check",  # a mode the update path runs, not bench configuration
+    "config_explicit",  # set after parsing, not an input at all
+    "agent_id_explicit",  # set after parsing, not an input at all
 }
 
 

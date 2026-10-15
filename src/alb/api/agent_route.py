@@ -214,6 +214,10 @@ async def agent_connect(ws: WebSocket) -> None:
             # None (absent) = an agent from before the op table — the
             # connection infers one from caps (ADR-059 决定 4).
             ops=parse_ops(hello.get("ops")),
+            # Which code the agent runs and what its last remote update did
+            # (ADR-060). Both absent on older agents.
+            build=str(hello.get("build") or ""),
+            last_update=hello.get("update") if isinstance(hello.get("update"), dict) else None,
             send_control=send_control,
             registry=registry,
         )

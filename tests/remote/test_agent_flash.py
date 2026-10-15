@@ -734,4 +734,4 @@ def test_hello_reports_the_op_table_instead_of_ability_strings(monkeypatch):
     monkeypatch.setattr(agent, "_OPS", _ops(""))
     hello = json.loads(agent._hello("a", "n", None))
     assert hello["caps"] == ["adb"]
-    assert [op["name"] for op in hello["ops"]] == ["usb-list"]
+    assert [op["name"] for op in hello["ops"]] == ["usb-list", "agent-update"]

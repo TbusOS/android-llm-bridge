@@ -469,6 +469,37 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Check that the file exists on the bench host and the agent's account "
         "may read it; `alb bench ops` lists the sources this agent offers",
     ),
+    # Remote agent update (ADR-060). Four codes because each points at a
+    # different place to look: the bundle, the new code, the bench host's
+    # update log, or the bench host itself.
+    "AGENT_UPDATE_REJECTED": ErrorSpec(
+        "AGENT_UPDATE_REJECTED",
+        "transport",
+        "The agent refused the update bundle; it keeps running unchanged",
+        "Check the hub's clients/windows-agent folder (only flat file names, "
+        "alb_agent.py present) and that the agent was started with a config file",
+    ),
+    "AGENT_UPDATE_CHECK_FAILED": ErrorSpec(
+        "AGENT_UPDATE_CHECK_FAILED",
+        "transport",
+        "The new agent build failed its self-check on the bench host; nothing was replaced",
+        "Read the error text (syntax error, missing Python package, bad agent.conf "
+        "key); fix it in the repo, or pip install the package on the bench host",
+    ),
+    "AGENT_UPDATE_ROLLED_BACK": ErrorSpec(
+        "AGENT_UPDATE_ROLLED_BACK",
+        "transport",
+        "The new agent build did not reach the hub, so the old build was put back",
+        "`alb bench log update` shows what the update helper saw; the agent's own "
+        "log (`alb bench log agent`) shows why the new build could not connect",
+    ),
+    "AGENT_UPDATE_NO_RETURN": ErrorSpec(
+        "AGENT_UPDATE_NO_RETURN",
+        "transport",
+        "The agent restarted for an update and has not reconnected",
+        "Look at the bench host: the agent window, and .alb-agent/update.log in "
+        "the agent's folder. It may still come back after its rollback finishes",
+    ),
 }
 
 

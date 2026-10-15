@@ -86,11 +86,20 @@ class AgentConnection:
         registry: AgentRegistry,
         flash_partitions: list[str] | None = None,
         ops: dict[str, OpSpec] | None = None,
+        build: str = "",
+        last_update: dict[str, Any] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
         self.version = version
         self.caps = caps
+        # `version` is the PROTOCOL number and is the same for every build;
+        # `build` is a digest of the agent's own file ("" = an agent from
+        # before ADR-060). It is how an update is confirmed after the restart.
+        self.build = build
+        # {"id", "outcome", "from_build", "to_build", "at"} of the agent's last
+        # remote update, as the bench host's update helper recorded it.
+        self.last_update: dict[str, Any] = dict(last_update or {})
         # Partitions this bench permits, straight from the agent's hello.
         # Empty = no allowlist configured = any well-formed name is accepted.
         # Callers must not read empty as "nothing allowed" — see the web
@@ -215,6 +224,8 @@ class AgentRegistry:
                 "agent_id": c.agent_id,
                 "name": c.name,
                 "version": c.version,
+                "build": c.build,
+                "last_update": c.last_update,
                 "caps": c.caps,
                 "flash_partitions": c.flash_partitions,
                 "ops": sorted(c.op_table),

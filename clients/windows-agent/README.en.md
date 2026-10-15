@@ -116,7 +116,8 @@ so a new op on the agent needs no hub code.
 | `set-active` | `fastboot set_active a` or `b` | yes |
 | `boot` | `fastboot boot <image>`: runs from RAM, writes no partition | yes |
 | `usb-list` | USB devices as Windows sees them: name, VID:PID, serial, driver, problem code, interface class ids — tells "cable not on this machine" from "driver missing" when `fastboot devices` is empty | no |
-| `log-tail` | last N lines of a host log, optional substring filter. Sources are names only: `agent` (this agent's own log, when `log_file` is set) and `setupapi` (Windows' driver-install log) | no |
+| `log-tail` | last N lines of a host log, optional substring filter. Sources are names only: `agent` (this agent's own log, when `log_file` is set), `setupapi` (Windows' driver-install log) and `update` (the last remote update, once there has been one) | no |
+| `agent-update` | replace this agent's own files and restart it — see below | no |
 
 Two rules do not change:
 
@@ -128,9 +129,42 @@ Two rules do not change:
   lock, so they answer during a running flash. fastboot ops run one at a
   time; a second one is refused at once, not queued.
 
-Without a fastboot executable the table holds only `usb-list` / `log-tail`,
-and the hub tells callers this bench cannot flash. The status page lists the
-table on its `ops` row.
+Without a fastboot executable the table holds only `usb-list` / `log-tail` /
+`agent-update`, and the hub tells callers this bench cannot flash. The status
+page lists the table on its `ops` row.
+
+## Updating the agent from the hub
+
+Install by hand **once** (copy the folder, close the old agent window, run
+`run-agent.bat`): an agent from before this feature cannot receive updates.
+After that, from the hub side:
+
+```bash
+alb bench agent-update                      # program files only; agent.conf here is kept
+alb bench agent-update --config agent.conf  # also replace agent.conf
+```
+
+The hub sends its own `clients/windows-agent/` folder. On this host:
+
+1. The bundle is checked (size, sha256, flat file names only).
+2. The new code runs `alb_agent.py --self-check` (compiles, imports, reads
+   the config). A failure refuses the update; the old build keeps running.
+3. An update helper starts and the old agent exits; its window closes.
+4. The helper backs the current files up to `.alb-agent/backup/`, installs
+   the new ones and starts the new build in a new window.
+5. If the new build has not reached the hub within 60 s, the old files go
+   back and the old build starts again; the hub reports
+   `AGENT_UPDATE_ROLLED_BACK` and `alb bench log update` shows why.
+
+Identical files restart nothing. `alb bench ops` shows the build this host
+runs and says when the hub has a newer one.
+
+### One instance per agent
+
+Starting an agent that is already running stops the running one first (it
+exits and its window closes); one in the middle of a flash is waited for.
+"The same agent" means the same config file: for two boards on one host,
+copy the whole folder and give the copy its own `agent_id` / `name`.
 
 ## Security
 
@@ -139,3 +173,6 @@ table on its `ops` row.
   it can never be turned into an open proxy on your LAN.
 - Traffic rides the same authenticated `wss://` connection as the hub API.
 - Configure a token (`--token` / `ALB_AGENT_TOKEN`) for any non-loopback hub.
+- `agent-update` lets whoever drives the hub replace this agent's code, i.e.
+  run code on this host. That is accepted for a bench on a trusted network
+  (ADR-060); the hub API has no authentication of its own.

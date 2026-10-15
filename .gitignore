@@ -126,6 +126,8 @@ docs/reference/
 # **/ 前缀：目录被复制（deploy/hub-bench2/）或文件被挪到仓根调试时同样兜住
 # （同 2026-05-02 web/.claude/ 漏 ignore 的教训 — secret 类 ignore 一律 depth-agnostic）
 **/agent.conf
+# the agent's runtime state: instance records, update staging/backup/log (ADR-060)
+**/.alb-agent/
 **/hub.env
 
 # ─────────────────────────────────────────────

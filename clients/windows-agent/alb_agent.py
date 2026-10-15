@@ -52,6 +52,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -107,6 +108,22 @@ _CHUNK = 65536
 DEFAULT_STATUS_PORT = 8731
 
 _shutdown = asyncio.Event()
+
+
+def _file_build(path: Path) -> str:
+    """Which code this is: the first 12 hex of the file's sha256.
+
+    `agent_version` in hello is the PROTOCOL number and stays 1 across every
+    build, so the hub could not tell an old agent from a new one — the very
+    thing a remote update has to confirm (ADR-060). Content-derived, so there
+    is no version number for anyone to forget to bump."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+_BUILD = _file_build(Path(__file__).resolve())
 
 
 # ── local status surface ─────────────────────────────────────────────
@@ -223,6 +240,7 @@ class AgentStatus:
             return {
                 "agent_id": self.agent_id,
                 "name": self.name,
+                "build": _BUILD,
                 "hub_url": self.hub_url,
                 "web_ui": _web_ui_url(self.hub_url),
                 "connected": self.connected,
@@ -264,6 +282,7 @@ def _render_status_html(snap: dict[str, Any]) -> str:
         # the one clickable row — so nobody has to ask where the console is
         ("web console", f'<a href="{web_ui}">{web_ui}</a>' if web_ui else "—"),
         ("agent", f"{esc(snap['name'])} · {esc(snap['agent_id'][:8])}"),
+        ("build", esc(snap.get("build", "")) or "—"),
         ("uptime", f"{snap['uptime_s']}s"),
         ("connected for", f"{snap['connected_for_s']}s" if up else "—"),
         ("reconnects", str(snap["reconnects"])),
@@ -391,6 +410,9 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
         agent_id=agent_id,
         name=name,
         agent_version=PROTOCOL_VERSION,
+        # Which code is running (ADR-060): what `alb bench agent-update` compares
+        # after the restart to tell "updated" from "rolled back".
+        build=_BUILD,
         caps=caps,
         # The op table (ADR-059): what this bench can do, each op with its
         # parameter rules, so the hub, the CLI and the web page all drive
@@ -406,6 +428,8 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
         # different statement from "no partitions allowed" and must stay
         # distinguishable at the far end.
         flash_partitions=sorted(_FLASH_PARTITIONS),
+        # Outcome of the last remote update, if any (ADR-060).
+        update=_LAST_UPDATE or None,
         token=token,
     )
 
@@ -491,6 +515,10 @@ async def _handle_open_channel(
     cid = str(frame.get("cid") or "")
     ctype = frame.get("channel_type")
     if not cid:
+        return
+    if _STOP_REASON:
+        # About to exit: opening it now would only cut it a moment later.
+        await _report_channel_error(ws, cid, _STOP_REASON)
         return
     if ctype == "tcp":
         await _handle_tcp_channel(hub_url, token, frame, ws)
@@ -954,7 +982,9 @@ class ParamSpec:
 
 
 # A builtin gets the op's row and the validated values; it returns (stdout,
-# data) for the done frame or raises _JobRejected. A verdict turns a tool's
+# data) for the done frame or raises _JobRejected. An image builtin finds the
+# received, verified file under the reserved key "image" (no param may use
+# that name — it is the {image} placeholder of argv rows). A verdict turns a tool's
 # (rc, stdout, stderr) into (ok, code, error) when exit code 0 is not the
 # whole story.
 _Builtin = Callable[["OpSpec", Mapping[str, Any]], Awaitable[tuple[str, dict[str, Any]]]]
@@ -1010,7 +1040,9 @@ class OpSpec:
             elif key not in names:
                 raise ValueError(f"op {self.name}: placeholder {el} names no param")
             used.add(key)
-        if self.image and "image" not in used:
+        if any(p.name == "image" for p in self.params):
+            raise ValueError(f"op {self.name}: 'image' is reserved for the received image")
+        if self.image and self.argv and "image" not in used:
             raise ValueError(f"op {self.name}: image op without an {{image}} element")
 
     def describe(self) -> dict[str, Any]:
@@ -1316,6 +1348,11 @@ def _log_sources() -> dict[str, Path]:
     if sys.platform == "win32":
         windir = Path(os.environ.get("WINDIR") or r"C:\Windows")
         sources["setupapi"] = windir / "INF" / "setupapi.dev.log"
+    # What the last remote update did (ADR-060) — readable from the hub, so
+    # "why did it roll back" needs nobody at this machine.
+    update_log = _state_dir(_install_dir()) / "update.log"
+    if update_log.is_file():
+        sources["update"] = update_log
     return sources
 
 
@@ -1581,6 +1618,23 @@ def _host_rows(log_sources: Mapping[str, Path]) -> list[OpSpec]:
                 builtin=functools.partial(_op_log_tail, sources=dict(log_sources)),
             )
         )
+    # ADR-060: this agent's own files. Exclusive, so it never lands in the
+    # middle of a flash; "mutates" because it restarts the bench's only link.
+    rows.append(
+        OpSpec(
+            "agent-update",
+            "host",
+            "replace this agent's files with the pushed bundle and restart it; "
+            "the old files come back if the new build does not reach the hub",
+            image=True,
+            max_image_bytes=_BUNDLE_MAX_BYTES,
+            mutates=True,
+            exclusive=True,
+            record="events",
+            timeout_s=_SELF_CHECK_TIMEOUT_S + 30.0,
+            builtin=_op_agent_update,
+        )
+    )
     return rows
 
 
@@ -1810,7 +1864,7 @@ async def _run_image_op(
     except (TypeError, ValueError):
         size = 0
     want_digest = str(req.get("sha256") or "").lower()
-    fastboot = spec.argv[0]
+    fastboot = spec.argv[0] if spec.argv else _fastboot_path()
 
     if size <= 0:
         await _job_fail(
@@ -1892,6 +1946,16 @@ async def _run_image_op(
             )
             return
 
+        if spec.builtin is not None:
+            # A builtin image op (agent-update): it gets the verified file,
+            # never a path the hub named.
+            try:
+                out, data = await spec.builtin(spec, {**values, "image": str(tmp_img)})
+            except _JobRejected as e:
+                await _job_fail(data_ws, e.message, code=e.code)
+                return
+            await _job_finish(data_ws, 0, out, "", fail_code="", data=data)
+            return
         # argv assembled HERE from vetted pieces — see the section header.
         argv = spec.assemble(values, image=str(tmp_img))
         shown = " ".join(spec.assemble(values, image="<image>")[1:])
@@ -1995,6 +2059,986 @@ async def _job_finish(
         msg["data"] = data
     with contextlib.suppress(Exception):
         await data_ws.send(_job_control(msg))
+
+
+# ── self-update and single instance (ADR-060) ────────────────────────
+# Two things that share one mechanism:
+#
+#  * every start first stops the previous instance of the SAME agent;
+#  * the hub can push a new copy of this folder (`agent-update`), and the
+#    agent restarts itself on it — or goes back to the old copy when the
+#    new one does not reach the hub.
+#
+# "The same agent" is the same config file: one agent.conf = one bench
+# identity. Two agents on one host, each with its own folder (or its own
+# --config), never touch each other. Each running agent leaves a record in
+# <its folder>/.alb-agent/instance-<key>.json; a newer start reads it, asks
+# that process to stop through a stop-<pid> file the process polls, and
+# kills it only when it does not go.
+#
+# The file swap is done by a COPY of the running file, in a separate process
+# (`--apply-update <plan>`): this process has to exit before its files can be
+# replaced and its COM ports reopened, and the code doing the swap should be
+# the code already proven to run here, not the code that just arrived.
+
+_EXIT_REPLACED = 75  # run-agent.bat closes its window on this instead of pausing
+_STATE_DIR_NAME = ".alb-agent"
+_LAUNCHER_ENV = "ALB_AGENT_LAUNCHER"  # set by run-agent.bat
+_LAUNCHER_BAT = "run-agent.bat"
+# The bundle rules. MUST stay in lockstep with alb.remote.agent_update, which
+# builds the bundle: flat names only (no separator, no leading dot), so no
+# member can land outside the folder it is unpacked into.
+_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_BUNDLE_SUFFIXES = (".py", ".bat", ".md", ".txt", ".example")
+_BUNDLE_CONFIG = "agent.conf"
+_BUNDLE_MAIN = "alb_agent.py"
+_BUNDLE_MAX_BYTES = 16 * 1024 * 1024
+_BUNDLE_MAX_FILES = 64
+_SELF_CHECK_TIMEOUT_S = 60.0
+_UPDATE_HEALTH_TIMEOUT_S = 60.0
+# How long the old agent has to send its `done` frame before the helper asks
+# it to stop; and how long an agent that was asked to stop gets before it is
+# killed (unless it reports a job in progress — see _stop_instance).
+_UPDATE_SETTLE_S = 3.0
+_STOP_GRACE_S = 15.0
+_STOP_POLL_S = 1.0
+# If the helper never asks this agent to stop, stop refusing channels.
+_UPDATE_STALL_S = 120.0
+
+_CREATE_NEW_CONSOLE = 0x00000010
+_DETACHED_PROCESS = 0x00000008
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+# Set when this process is about to stop (a newer instance asked, or an
+# update is being applied): new channels are refused with this reason rather
+# than opened and then cut.
+_STOP_REASON = ""
+_EXIT_CODE = 0
+# This process's own record and where it lives (None until claimed).
+_INSTANCE_PATH: Path | None = None
+_INSTANCE: dict[str, Any] = {}
+# How this process was started — what a restart repeats.
+_LAUNCH_ARGV: list[str] = []
+_CONFIG_USED = ""
+_CONFIG_EXPLICIT = False
+# False when nothing pins this agent's identity (no config file, no
+# --agent-id): a restarted copy would get a new random id and a new record,
+# and the helper could never tell that it came back.
+_IDENTITY_STABLE = False
+# What the last update did, read at start-up and sent in hello: how the hub
+# tells "came back on the new build" from "came back rolled back" when the
+# two builds have the same agent file.
+_LAST_UPDATE: dict[str, Any] = {}
+
+
+def _own_file() -> Path:
+    return Path(__file__).resolve()
+
+
+def _install_dir() -> Path:
+    return _own_file().parent
+
+
+def _state_dir(install: Path) -> Path:
+    return install / _STATE_DIR_NAME
+
+
+def _instance_key(config_used: str, agent_id: str) -> str:
+    if config_used:
+        ident = str(Path(config_used).resolve())
+        if sys.platform == "win32":
+            ident = ident.lower()  # one file, however its path is spelled
+        return "conf-" + hashlib.sha256(ident.encode("utf-8")).hexdigest()[:12]
+    return "id-" + hashlib.sha256(agent_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _replace_retry(src: Path, dst: Path) -> None:
+    """os.replace, retried: on Windows a reader holding `dst` open (the
+    helper polls the instance record) makes the replace fail for a moment."""
+    for attempt in range(20):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.25)
+
+
+def _write_json(path: Path, data: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    _replace_retry(tmp, path)
+
+
+# ── processes: is it still the one we recorded, and how to stop it ──
+
+
+@functools.lru_cache(maxsize=1)
+def _win_kernel32() -> Any:
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    k32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    k32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    return k32
+
+
+def _process_created(pid: int) -> float | None:
+    """Windows: when the LIVE process `pid` was created (epoch seconds), or
+    None when no such process is running."""
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = _win_kernel32()
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:
+            return None  # 259 = STILL_ACTIVE
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not k32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+            return None
+        ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        return float(ticks / 1e7 - 11644473600.0)  # FILETIME counts from 1601
+    finally:
+        k32.CloseHandle(handle)
+
+
+def _win_console_ancestor(pid: int) -> int:
+    """Windows: the cmd.exe running run-agent.bat for agent `pid` (through
+    the py launcher when the bat used it), or 0."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Entry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    k32 = _win_kernel32()
+    k32.Process32FirstW.argtypes = (wintypes.HANDLE, ctypes.POINTER(_Entry))
+    k32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.POINTER(_Entry))
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return 0
+    table: dict[int, tuple[int, str]] = {}
+    try:
+        entry = _Entry()
+        entry.dwSize = ctypes.sizeof(_Entry)
+        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            table[int(entry.th32ProcessID)] = (
+                int(entry.th32ParentProcessID),
+                str(entry.szExeFile).lower(),
+            )
+            ok = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+    cur = table.get(pid, (0, ""))[0]
+    for _ in range(4):
+        parent, exe = table.get(cur, (0, ""))
+        if exe == "cmd.exe":
+            return cur
+        if exe not in ("py.exe", "python.exe", "pythonw.exe"):
+            return 0
+        cur = parent
+    return 0
+
+
+def _posix_alive(pid: int) -> bool:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        stat = ""
+    if stat:
+        # A zombie still answers kill(pid, 0); its state letter follows the
+        # ")" that closes the command name.
+        return stat.rpartition(")")[2].split()[:1] != ["Z"]
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _posix_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        return raw.replace(b"\0", b" ").decode("utf-8", errors="replace")
+    except OSError:
+        pass
+    try:
+        return subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _own_created() -> float:
+    if sys.platform == "win32":
+        return _process_created(os.getpid()) or 0.0
+    return time.time()
+
+
+def _same_process(rec: Mapping[str, Any]) -> bool:
+    """Is the process this record describes still running?
+
+    The PID alone is not enough: after a reboot the number belongs to some
+    other program, and "stop the previous agent" would stop that one.
+    Windows: the creation time must match what the process recorded about
+    itself. Elsewhere: its command line must still name alb_agent.py."""
+    try:
+        pid = int(rec.get("pid") or 0)
+        recorded = float(rec.get("created") or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0 or pid == os.getpid():
+        return False
+    if sys.platform == "win32":
+        created = _process_created(pid)
+        return created is not None and abs(created - recorded) < 2.0
+    return _posix_alive(pid) and _BUNDLE_MAIN in _posix_cmdline(pid)
+
+
+def _kill_tree(pid: int) -> None:
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        return
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and _posix_alive(pid):
+        time.sleep(0.1)
+    if _posix_alive(pid):
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def _stop_flag(state: Path, pid: int) -> Path:
+    return state / f"stop-{pid}"
+
+
+def _stop_instance(
+    state: Path,
+    rec: Mapping[str, Any],
+    say: Callable[[str], None],
+    grace_s: float = _STOP_GRACE_S,
+) -> bool:
+    """Ask the process `rec` describes to stop; kill it if it does not.
+    True once it is gone.
+
+    No time limit while it reports a job in progress: killing fastboot
+    halfway through a partition write costs more than waiting for it."""
+    if not _same_process(rec):
+        return True
+    pid = int(rec["pid"])
+    flag = _stop_flag(state, pid)
+    busy = flag.with_name(flag.name + ".busy")
+    with contextlib.suppress(OSError):
+        state.mkdir(parents=True, exist_ok=True)
+        flag.touch()
+    say(f"asked pid {pid} to stop")
+    deadline = time.monotonic() + grace_s
+    noted = 0.0
+    while _same_process(rec):
+        now = time.monotonic()
+        if busy.exists():
+            deadline = now + grace_s
+            if now - noted > 30.0:
+                say(f"pid {pid} is finishing a running job first — waiting for it")
+                noted = now
+        elif now > deadline:
+            say(f"pid {pid} did not stop within {grace_s:.0f}s — killing it")
+            console = int(rec.get("console_pid") or 0)
+            # Its window too: a killed agent leaves run-agent.bat at "press
+            # any key", reading a file that is about to be replaced.
+            if (
+                console
+                and sys.platform == "win32"
+                and _same_process({"pid": console, "created": rec.get("console_created")})
+            ):
+                _kill_tree(console)
+            _kill_tree(pid)
+            break
+        time.sleep(0.25)
+    end = time.monotonic() + 5.0
+    while time.monotonic() < end and _same_process(rec):
+        time.sleep(0.1)
+    for leftover in (flag, busy):
+        with contextlib.suppress(OSError):
+            leftover.unlink(missing_ok=True)
+    return not _same_process(rec)
+
+
+def _spawn(
+    cmd: list[str] | str,
+    *,
+    console: bool,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Start a process that outlives this one. `console`: a window of its own
+    (the agent); otherwise none at all (the update helper)."""
+    if sys.platform == "win32":
+        flags = _CREATE_NEW_CONSOLE if console else (_DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP)
+        quiet: dict[str, Any] = (
+            {}
+            if console
+            else {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+        )
+        try:
+            # Out of the job object this process may run in (Task Scheduler
+            # starts tasks in one), so ending this process's task cannot take
+            # the new process with it. Not every job allows that: retry inside.
+            return subprocess.Popen(
+                cmd,
+                creationflags=flags | _CREATE_BREAKAWAY_FROM_JOB,
+                cwd=cwd,
+                env=env,
+                close_fds=True,
+                **quiet,
+            )
+        except OSError:
+            return subprocess.Popen(
+                cmd, creationflags=flags, cwd=cwd, env=env, close_fds=True, **quiet
+            )
+    return subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+
+# ── this process's record ────────────────────────────────────────────
+
+
+def _claim_instance(args: argparse.Namespace) -> None:
+    """Stop the previous instance of THIS agent, then record this one."""
+    global _INSTANCE_PATH, _INSTANCE, _LAST_UPDATE
+    state = _state_dir(_install_dir())
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        _log.warning(
+            "cannot create %s (%s) — previous instances are not stopped and remote "
+            "update is unavailable",
+            state,
+            e,
+        )
+        return
+    path = state / f"instance-{_instance_key(args.config_used, args.agent_id)}.json"
+    old = _read_json(path)
+    if old and _same_process(old):
+        _log.info(
+            "the previous instance of this agent is still running (pid %s) — stopping it first",
+            old.get("pid"),
+        )
+        if not _stop_instance(state, old, _log.info):
+            sys.exit(
+                f"could not stop the previous instance (pid {old.get('pid')}) — "
+                "stop it by hand, then start this one again"
+            )
+    launcher = os.environ.get(_LAUNCHER_ENV, "")
+    rec: dict[str, Any] = {
+        "pid": os.getpid(),
+        "created": _own_created(),
+        "build": _BUILD,
+        "config": args.config_used,
+        "launcher": launcher,
+        "started_at": time.time(),
+        "connected_at": 0.0,
+    }
+    if sys.platform == "win32" and launcher == _LAUNCHER_BAT:
+        with contextlib.suppress(Exception):
+            console = _win_console_ancestor(os.getpid())
+            if console:
+                rec["console_pid"] = console
+                rec["console_created"] = _process_created(console) or 0.0
+    try:
+        _write_json(path, rec)
+    except OSError as e:
+        _log.warning("cannot write %s (%s) — remote update is unavailable", path, e)
+        return
+    _INSTANCE_PATH, _INSTANCE = path, rec
+    _LAST_UPDATE = _read_json(state / "update-result.json")
+
+
+def _mark_connected() -> None:
+    """The signal the update helper waits for: this build reached the hub."""
+    if _INSTANCE_PATH is None:
+        return
+    _INSTANCE["connected_at"] = time.time()
+    with contextlib.suppress(OSError):
+        _write_json(_INSTANCE_PATH, _INSTANCE)
+
+
+def _release_instance() -> None:
+    if _INSTANCE_PATH is None:
+        return
+    flag = _stop_flag(_INSTANCE_PATH.parent, os.getpid())
+    for leftover in (flag, flag.with_name(flag.name + ".busy")):
+        with contextlib.suppress(OSError):
+            leftover.unlink(missing_ok=True)
+    if _read_json(_INSTANCE_PATH).get("pid") == os.getpid():
+        with contextlib.suppress(OSError):
+            _INSTANCE_PATH.unlink()
+
+
+async def _watch_stop_requests() -> None:
+    """Stop when a newer instance (or the update helper) asks."""
+    global _STOP_REASON, _EXIT_CODE
+    if _INSTANCE_PATH is None:
+        return
+    flag = _stop_flag(_INSTANCE_PATH.parent, os.getpid())
+    while not _shutdown.is_set():
+        await asyncio.sleep(_STOP_POLL_S)
+        if not await asyncio.to_thread(flag.exists):
+            continue
+        _log.info("a newer instance of this agent asked this one to stop")
+        _STOP_REASON = _STOP_REASON or "this agent is being replaced by a newer instance"
+        if _job_lock.locked():
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(flag.with_name(flag.name + ".busy").touch)
+            _log.info("waiting for the running job to finish before stopping")
+        # Taken and never released: no job can start between here and exit.
+        await _job_lock.acquire()
+        _EXIT_CODE = _EXIT_REPLACED
+        _shutdown.set()
+        return
+
+
+# ── builtin: agent-update ────────────────────────────────────────────
+
+
+def _bundle_member_ok(name: str) -> bool:
+    if not _BUNDLE_NAME_RE.match(name):
+        return False
+    return name == _BUNDLE_CONFIG or name.endswith(_BUNDLE_SUFFIXES)
+
+
+def _reject_bundle(why: str) -> _JobRejected:
+    return _JobRejected("AGENT_UPDATE_REJECTED", f"{why} — nothing was changed")
+
+
+def _unpack_bundle(bundle: Path, dest: Path) -> list[str]:
+    """Unpack a pushed bundle into `dest` (emptied first); return the names.
+    Anything but a flat set of allowed names is refused whole."""
+    try:
+        zf = zipfile.ZipFile(bundle)
+    except (zipfile.BadZipFile, OSError) as e:
+        raise _reject_bundle(f"the bundle is not a zip archive ({e})") from e
+    with zf:
+        infos = zf.infolist()
+        if len(infos) > _BUNDLE_MAX_FILES:
+            raise _reject_bundle(f"the bundle has {len(infos)} entries, over {_BUNDLE_MAX_FILES}")
+        seen: set[str] = set()
+        total = 0
+        for info in infos:
+            name = info.filename
+            if info.is_dir() or not _bundle_member_ok(name):
+                raise _reject_bundle(f"bundle entry {name!r} is not an allowed file name")
+            # Windows file names ignore case: two entries differing only in
+            # case would overwrite each other there.
+            if name.lower() in seen:
+                raise _reject_bundle(f"bundle entry {name!r} appears twice")
+            seen.add(name.lower())
+            total += info.file_size
+            if total > _BUNDLE_MAX_BYTES:
+                raise _reject_bundle(f"the bundle unpacks to more than {_BUNDLE_MAX_BYTES} bytes")
+        names = [i.filename for i in infos]
+        if _BUNDLE_MAIN not in names:
+            raise _reject_bundle(f"the bundle has no {_BUNDLE_MAIN}")
+        shutil.rmtree(dest, ignore_errors=True)
+        dest.mkdir(parents=True)
+        for info in infos:
+            try:
+                data = zf.read(info)  # checks the CRC
+            except (zipfile.BadZipFile, OSError) as e:
+                raise _reject_bundle(f"bundle entry {info.filename!r} is damaged ({e})") from e
+            (dest / info.filename).write_bytes(data)
+    return sorted(names)
+
+
+def _changed_files(
+    staged: Path, install: Path, files: list[str], config_target: Path | None
+) -> list[str]:
+    def differs(new: Path, old: Path) -> bool:
+        try:
+            return new.read_bytes() != old.read_bytes()
+        except OSError:
+            return True
+
+    changed = [n for n in files if differs(staged / n, install / n)]
+    if config_target is not None and differs(staged / _BUNDLE_CONFIG, config_target):
+        changed.append(_BUNDLE_CONFIG)
+    return changed
+
+
+def _without_option(argv: list[str], name: str) -> list[str]:
+    """argv minus `name VALUE` / `name=VALUE`."""
+    out: list[str] = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg == name:
+            skip = True
+            continue
+        if arg.startswith(name + "="):
+            continue
+        out.append(arg)
+    return out
+
+
+def _relaunch_argv() -> list[str]:
+    """This process's arguments, with the config path made absolute: the
+    restart runs from another working directory."""
+    argv = _without_option(list(_LAUNCH_ARGV), "--config")
+    if _CONFIG_EXPLICIT and _CONFIG_USED:
+        argv += ["--config", str(Path(_CONFIG_USED).resolve())]
+    return argv
+
+
+def _relaunch_mode(install: Path) -> str:
+    """Restart the way it was started: through run-agent.bat (its own window,
+    its environment checks) when that is how this one came up."""
+    if (
+        sys.platform == "win32"
+        and os.environ.get(_LAUNCHER_ENV) == _LAUNCHER_BAT
+        and (install / _LAUNCHER_BAT).is_file()
+    ):
+        return "bat"
+    return "python"
+
+
+async def _self_check(script: Path, config: Path | None, argv: list[str]) -> dict[str, Any]:
+    """Run the NEW build's --self-check against the config it will use.
+
+    The last moment a broken bundle (syntax error, missing dependency, bad
+    config key, no hub_url) costs nothing: the old build is still running
+    and still connected."""
+    cmd = [sys.executable, str(script), "--self-check", *_without_option(argv, "--config")]
+    if config is not None:
+        cmd += ["--config", str(config)]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(script.parent),
+    )
+    try:
+        out_b, err_b = await asyncio.wait_for(proc.communicate(), _SELF_CHECK_TIMEOUT_S)
+    except TimeoutError:
+        await _reap(proc)
+        raise _JobRejected(
+            "AGENT_UPDATE_CHECK_FAILED",
+            f"the new build's self-check did not finish within {_SELF_CHECK_TIMEOUT_S:.0f}s "
+            "— nothing was changed",
+        ) from None
+    except BaseException:
+        await _reap(proc)
+        raise
+    out = out_b.decode("utf-8", errors="replace")
+    err = err_b.decode("utf-8", errors="replace")
+    if proc.returncode != 0:
+        detail = (err.strip() or out.strip() or f"exit code {proc.returncode}")[-2000:]
+        raise _JobRejected(
+            "AGENT_UPDATE_CHECK_FAILED",
+            f"the new build failed its self-check — nothing was changed: {detail}",
+        )
+    for line in reversed(out.splitlines()):
+        with contextlib.suppress(ValueError):
+            data = json.loads(line)
+            if isinstance(data, dict):
+                return data
+    raise _JobRejected(
+        "AGENT_UPDATE_CHECK_FAILED",
+        "the new build's self-check printed no result — nothing was changed",
+    )
+
+
+def _update_stalled() -> None:
+    global _STOP_REASON
+    if not _shutdown.is_set() and _STOP_REASON.startswith("this agent is restarting"):
+        _log.warning(
+            "the update helper never asked this agent to stop — carrying on with build %s "
+            "(see .alb-agent/update.log)",
+            _BUILD,
+        )
+        _STOP_REASON = ""
+
+
+async def _op_agent_update(_spec: OpSpec, values: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    global _STOP_REASON
+    if _INSTANCE_PATH is None:
+        raise _JobRejected(
+            "AGENT_UPDATE_REJECTED",
+            "this agent could not record itself at start-up (see its log), so it "
+            "cannot restart itself — nothing was changed",
+        )
+    if not _IDENTITY_STABLE:
+        raise _JobRejected(
+            "AGENT_UPDATE_REJECTED",
+            "this agent has no fixed identity (no agent.conf, no --agent-id), so its "
+            "restarted copy could not be recognised — nothing was changed",
+        )
+    install = _install_dir()
+    state = _state_dir(install)
+    staged = state / "staged"
+    names = await asyncio.to_thread(_unpack_bundle, Path(values["image"]), staged)
+    has_config = _BUNDLE_CONFIG in names
+    code_files = [n for n in names if n != _BUNDLE_CONFIG]
+    config_target = Path(_CONFIG_USED) if _CONFIG_USED else install / _BUNDLE_CONFIG
+    changed = await asyncio.to_thread(
+        _changed_files, staged, install, code_files, config_target if has_config else None
+    )
+    to_build = await asyncio.to_thread(_file_build, staged / _BUNDLE_MAIN)
+    summary: dict[str, Any] = {
+        "from_build": _BUILD,
+        "to_build": to_build,
+        "changed": changed,
+        "config": has_config,
+    }
+    if not changed:
+        await asyncio.to_thread(shutil.rmtree, staged, True)
+        return f"already running these files (build {_BUILD}); nothing to do", {
+            **summary,
+            "restarting": False,
+        }
+    check_config = (
+        staged / _BUNDLE_CONFIG if has_config else (Path(_CONFIG_USED) if _CONFIG_USED else None)
+    )
+    await _self_check(staged / _BUNDLE_MAIN, check_config, _LAUNCH_ARGV)
+
+    update_id = uuid.uuid4().hex[:12]
+    plan = {
+        "id": update_id,
+        "install_dir": str(install),
+        "staged_dir": str(staged),
+        "files": code_files,
+        "changed": changed,
+        "config_target": str(config_target) if has_config else "",
+        "instance_file": str(_INSTANCE_PATH),
+        "old": dict(_INSTANCE),
+        "from_build": _BUILD,
+        "to_build": to_build,
+        "relaunch": {
+            "mode": _relaunch_mode(install),
+            "python": sys.executable,
+            "argv": _relaunch_argv(),
+        },
+        "health_timeout_s": _UPDATE_HEALTH_TIMEOUT_S,
+        "settle_s": _UPDATE_SETTLE_S,
+    }
+    plan_path = state / "update-plan.json"
+    runner = state / "apply-update.py"
+    await asyncio.to_thread(_write_json, plan_path, plan)
+    await asyncio.to_thread(shutil.copyfile, _own_file(), runner)
+    _STOP_REASON = "this agent is restarting to apply an update"
+    try:
+        await asyncio.to_thread(
+            _spawn,
+            [sys.executable, str(runner), "--apply-update", str(plan_path)],
+            console=False,
+            cwd=state,
+        )
+    except OSError as e:
+        _STOP_REASON = ""
+        raise _JobRejected(
+            "AGENT_UPDATE_REJECTED", f"cannot start the update helper ({e}) — nothing was changed"
+        ) from e
+    asyncio.get_running_loop().call_later(_UPDATE_STALL_S, _update_stalled)
+    _log.info(
+        "update %s staged: build %s -> %s, changed %s; the agent restarts now",
+        update_id,
+        _BUILD,
+        to_build,
+        ", ".join(changed),
+    )
+    return (
+        f"build {_BUILD} -> {to_build}: {len(changed)} file(s) change; "
+        "the agent restarts now and reconnects",
+        {**summary, "restarting": True, "update_id": update_id},
+    )
+
+
+# ── the update helper (`alb_agent.py --apply-update <plan>`) ─────────
+
+
+def _update_logger(path: Path) -> Callable[[str], None]:
+    with contextlib.suppress(OSError):
+        if path.stat().st_size > 1_000_000:
+            path.write_bytes(path.read_bytes()[-200_000:])
+
+    def say(msg: str) -> None:
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} [helper pid {os.getpid()}] {msg}\n"
+        with contextlib.suppress(OSError), path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    return say
+
+
+def _put_file(src: Path, dst: Path) -> None:
+    tmp = dst.with_name(dst.name + ".alb-new")
+    shutil.copy2(src, tmp)
+    _replace_retry(tmp, dst)
+
+
+def _backup_files(
+    install: Path, files: list[str], config_target: Path | None, backup: Path
+) -> dict[str, Any]:
+    shutil.rmtree(backup, ignore_errors=True)
+    backup.mkdir(parents=True)
+    existed: dict[str, bool] = {}
+    for name in files:
+        src = install / name
+        existed[name] = src.is_file()
+        if existed[name]:
+            shutil.copy2(src, backup / name)
+    manifest: dict[str, Any] = {"files": existed, "config": None}
+    if config_target is not None:
+        manifest["config"] = config_target.is_file()
+        if manifest["config"]:
+            shutil.copy2(config_target, backup / (_BUNDLE_CONFIG + ".previous"))
+    _write_json(backup / "manifest.json", manifest)
+    return manifest
+
+
+def _install_files(
+    staged: Path, install: Path, files: list[str], config_target: Path | None
+) -> None:
+    for name in files:
+        _put_file(staged / name, install / name)
+    if config_target is not None:
+        _put_file(staged / _BUNDLE_CONFIG, config_target)
+
+
+def _restore_files(
+    install: Path,
+    backup: Path,
+    manifest: Mapping[str, Any],
+    config_target: Path | None,
+    say: Callable[[str], None],
+) -> None:
+    targets = [(install / n, backup / n, bool(e)) for n, e in manifest["files"].items()]
+    if config_target is not None and manifest.get("config") is not None:
+        targets.append(
+            (config_target, backup / (_BUNDLE_CONFIG + ".previous"), bool(manifest["config"]))
+        )
+    for dst, saved, existed in targets:
+        try:
+            if existed:
+                _put_file(saved, dst)
+            else:
+                dst.unlink(missing_ok=True)
+        except OSError as e:
+            say(f"could not restore {dst.name}: {e}")
+
+
+def _launch_agent(install: Path, relaunch: Mapping[str, Any]) -> subprocess.Popen[bytes]:
+    argv = [str(a) for a in relaunch.get("argv") or []]
+    env = dict(os.environ)
+    if relaunch.get("mode") == "bat":
+        bat = install / _LAUNCHER_BAT
+        # /s: cmd strips exactly the outer pair of quotes, so quoted
+        # arguments inside survive.
+        line = f'cmd.exe /d /s /c "{subprocess.list2cmdline([str(bat), *argv])}"'
+        return _spawn(line, console=True, cwd=install, env=env)
+    env.pop(_LAUNCHER_ENV, None)
+    python = str(relaunch.get("python") or sys.executable)
+    return _spawn([python, str(install / _BUNDLE_MAIN), *argv], console=True, cwd=install, env=env)
+
+
+def _launch_and_wait(
+    plan: Mapping[str, Any],
+    build: str,
+    say: Callable[[str], None],
+    *,
+    stop_on_timeout: bool,
+) -> bool:
+    """Start the agent in the install folder; True once THAT build has
+    reached the hub (its record says connected after this start)."""
+    install = Path(plan["install_dir"])
+    instance = Path(plan["instance_file"])
+    timeout = float(plan.get("health_timeout_s") or _UPDATE_HEALTH_TIMEOUT_S)
+    since = time.time()
+    try:
+        proc = _launch_agent(install, plan["relaunch"])
+    except OSError as e:
+        say(f"could not start the agent: {e}")
+        return False
+    say(f"started build {build} ({plan['relaunch'].get('mode')}, pid {proc.pid})")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rec = _read_json(instance)
+        if (
+            rec.get("build") == build
+            and float(rec.get("connected_at") or 0) >= since
+            and _same_process(rec)
+        ):
+            return True
+        if proc.poll() is not None and plan["relaunch"].get("mode") != "bat":
+            say(f"the agent exited with code {proc.returncode} before reaching the hub")
+            break
+        time.sleep(0.5)
+    if stop_on_timeout:
+        rec = _read_json(instance)
+        if rec.get("build") == build and _same_process(rec):
+            _stop_instance(_state_dir(install), rec, say, grace_s=10.0)
+        if proc.poll() is None:
+            _kill_tree(proc.pid)
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=5)
+    return False
+
+
+def _apply_update(plan_path: Path) -> int:
+    """Swap the files and confirm the new build reaches the hub; otherwise
+    put the old files back and start the old build again."""
+    plan = _read_json(plan_path)
+    if not plan:
+        return 2
+    install = Path(plan["install_dir"])
+    state = _state_dir(install)
+    say = _update_logger(state / "update.log")
+    result_path = state / "update-result.json"
+    staged = Path(plan["staged_dir"])
+    files = [str(n) for n in plan["files"]]
+    config_target = Path(plan["config_target"]) if plan.get("config_target") else None
+    from_build, to_build = str(plan["from_build"]), str(plan["to_build"])
+
+    def result(outcome: str) -> None:
+        with contextlib.suppress(OSError):
+            _write_json(
+                result_path,
+                {
+                    "id": plan.get("id", ""),
+                    "outcome": outcome,
+                    "from_build": from_build,
+                    "to_build": to_build,
+                    "at": time.time(),
+                },
+            )
+
+    say(f"update {plan.get('id')}: build {from_build} -> {to_build}, changed {plan.get('changed')}")
+    time.sleep(float(plan.get("settle_s", _UPDATE_SETTLE_S)))
+    if not _stop_instance(state, plan["old"], say):
+        say("the running agent could not be stopped — update abandoned, nothing was changed")
+        return 1
+    # run-agent.bat reads itself line by line while it runs: let the stopped
+    # agent's window finish its last lines before that file is replaced.
+    time.sleep(2.0)
+    backup = state / "backup"
+    try:
+        manifest = _backup_files(install, files, config_target, backup)
+    except OSError as e:
+        say(f"backup failed ({e}) — nothing was changed; starting build {from_build} again")
+        result("aborted")
+        _launch_and_wait(plan, from_build, say, stop_on_timeout=False)
+        return 1
+    result("pending")
+    try:
+        _install_files(staged, install, files, config_target)
+    except OSError as e:
+        say(f"installing the new files failed ({e}) — putting the previous ones back")
+        _restore_files(install, backup, manifest, config_target, say)
+        result("rolled_back")
+        _launch_and_wait(plan, from_build, say, stop_on_timeout=False)
+        return 1
+    if _launch_and_wait(plan, to_build, say, stop_on_timeout=True):
+        say(f"updated: build {to_build} is connected to the hub")
+        result("updated")
+        shutil.rmtree(staged, ignore_errors=True)
+        return 0
+    say(
+        f"build {to_build} did not reach the hub within "
+        f"{float(plan.get('health_timeout_s') or 0):.0f}s — rolling back to {from_build}"
+    )
+    _restore_files(install, backup, manifest, config_target, say)
+    result("rolled_back")
+    if _launch_and_wait(plan, from_build, say, stop_on_timeout=False):
+        say(f"rolled back: build {from_build} is connected again")
+    else:
+        say(
+            f"rolled back, but build {from_build} has not reached the hub either — "
+            "look at the agent window / log on this host"
+        )
+    return 1
+
+
+def _apply_update_main(plan_arg: str) -> int:
+    plan_path = Path(plan_arg)
+    try:
+        return _apply_update(plan_path)
+    except Exception as e:  # last resort: never die silently mid-swap
+        _update_logger(plan_path.parent / "update.log")(f"update helper crashed: {e!r}")
+        return 3
+
+
+def _self_check_main(args: argparse.Namespace) -> int:
+    """`--self-check`: load the config and build the op table, then report
+    and exit. Run by the OLD build on a NEW bundle before anything is
+    replaced."""
+    _apply_flash_config(args)
+    try:
+        import serial  # noqa: F401
+
+        pyserial = True
+    except ImportError:
+        pyserial = False
+    print(json.dumps({"build": _BUILD, "ops": list(_OPS), "pyserial": pyserial}))
+    return 0
 
 
 # ── signaling connection ─────────────────────────────────────────────
@@ -2169,6 +3213,7 @@ async def _run_session(args: argparse.Namespace) -> None:
             raise _HandshakeRejected(f"unexpected handshake reply: {msg!r}")
         _log.info("connected to %s as %s", args.hub_url, args.agent_id)
         _STATUS.on_connected()
+        await asyncio.to_thread(_mark_connected)
 
         hb = asyncio.create_task(_heartbeat(ws))
         stopper = asyncio.create_task(_close_on_shutdown(ws))
@@ -2442,6 +3487,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "agent.conf). Empty = any well-formed name is accepted",
     )
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument(
+        "--self-check",
+        action="store_true",
+        help="load the config, build the op table, print a JSON summary and exit "
+        "(run on a pushed update before it replaces anything)",
+    )
 
     pre, _ = ap.parse_known_args(argv)
     config_used: Path | None = None
@@ -2458,8 +3509,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = ap.parse_args(argv)
     if not args.hub_url:
         ap.error(f"missing hub URL — set hub_url in {DEFAULT_CONFIG_NAME} or pass --hub-url")
+    args.agent_id_explicit = bool(args.agent_id)
     args.agent_id = args.agent_id or uuid.uuid4().hex
     args.config_used = str(config_used) if config_used else ""
+    args.config_explicit = bool(pre.config)
     return args
 
 
@@ -2551,7 +3604,13 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # The update helper is this same file, copied aside and started with
+    # `--apply-update <plan>` (ADR-060); it never runs the agent itself.
+    if len(sys.argv) == 3 and sys.argv[1] == "--apply-update":
+        sys.exit(_apply_update_main(sys.argv[2]))
     args = _parse_args()
+    if args.self_check:
+        sys.exit(_self_check_main(args))
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -2559,20 +3618,37 @@ def main() -> None:
     )
     if args.log_file:
         _setup_file_logging(args.log_file)
+    global _LAUNCH_ARGV, _CONFIG_USED, _CONFIG_EXPLICIT, _IDENTITY_STABLE
+    _LAUNCH_ARGV = sys.argv[1:]
+    _CONFIG_USED = args.config_used
+    _CONFIG_EXPLICIT = args.config_explicit
+    _IDENTITY_STABLE = bool(args.config_used) or args.agent_id_explicit
+    # Before anything opens a COM port or the status page: the previous
+    # instance of this agent holds both until it is gone.
+    _claim_instance(args)
     _apply_flash_config(args)
     _log_environment(args)
 
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run(args))
+    try:
+        with contextlib.suppress(KeyboardInterrupt):
+            asyncio.run(_run(args))
+    finally:
+        _release_instance()
+    if _EXIT_CODE:
+        sys.exit(_EXIT_CODE)
 
 
 async def _run(args: argparse.Namespace) -> None:
     _install_signal_handlers()
     _STATUS.init(hub_url=args.hub_url, agent_id=args.agent_id, name=args.name)
     httpd = _start_status_server(args.status_host, args.status_port) if args.status_port else None
+    watcher = asyncio.create_task(_watch_stop_requests())
     try:
         await _main_loop(args)
     finally:
+        watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await watcher
         if httpd is not None:
             with contextlib.suppress(Exception):
                 httpd.shutdown()

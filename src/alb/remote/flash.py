@@ -261,7 +261,11 @@ class FlashService:
         agent = self._get_agent()
         if agent is None:
             return None
-        return {"id": str(agent.agent_id), "name": str(getattr(agent, "name", "") or "")}
+        return {
+            "id": str(agent.agent_id),
+            "name": str(getattr(agent, "name", "") or ""),
+            "build": str(getattr(agent, "build", "") or ""),
+        }
 
     def status(self) -> dict[str, Any]:
         return {

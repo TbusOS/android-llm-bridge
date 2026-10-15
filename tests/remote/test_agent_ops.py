@@ -380,8 +380,9 @@ def test_the_table_matches_the_contract_rows():
         "boot",
         "usb-list",
         "log-tail",
+        "agent-update",
     ]
-    assert {n for n, s in ops.items() if s.image} == {"flash", "boot"}
+    assert {n for n, s in ops.items() if s.image} == {"flash", "boot", "agent-update"}
     assert {n for n, s in ops.items() if not s.mutates} == {
         "devices",
         "getvar",
@@ -389,7 +390,12 @@ def test_the_table_matches_the_contract_rows():
         "log-tail",
     }
     assert {n for n, s in ops.items() if not s.exclusive} == {"usb-list", "log-tail"}
-    assert {n for n, s in ops.items() if s.needs == ""} == {"devices", "usb-list", "log-tail"}
+    assert {n for n, s in ops.items() if s.needs == ""} == {
+        "devices",
+        "usb-list",
+        "log-tail",
+        "agent-update",
+    }
     assert {n for n, s in ops.items() if s.record == "uart"} == {"flash", "boot"}
     assert ops["set-active"].timeout_s == 30.0
     assert ops["boot"].timeout_s == 120.0
@@ -401,7 +407,7 @@ def test_the_table_matches_the_contract_rows():
 
 
 def test_fastboot_rows_exist_only_with_a_fastboot_executable():
-    assert [s.group for s in _ops("").values()] == ["host"]
+    assert [s.group for s in _ops("").values()] == ["host", "host"]
     assert all(s.argv[0] == FB for s in _ops(FB).values() if s.argv)
     assert agent._FASTBOOT_OP_NAMES == {
         "devices",

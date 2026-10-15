@@ -5,6 +5,8 @@
     alb bench usb                               USB devices on the bench host, with the
                                                 mode each board is in
     alb bench log <source> [-n LINES] [-g TEXT] tail a log on the bench host
+    alb bench agent-update [--config FILE]      send the hub's agent files to the bench
+                                                host and restart the agent there
 
 `run` is the generic form: any op the agent reports, parameters by name.
 `usb` and `log` are short forms for the two read-only ops people reach for
@@ -101,6 +103,15 @@ def cmd_ops(as_json: bool = typer.Option(False, "--json", help="raw table")) -> 
         typer.echo("[fail] no agent is connected to the hub", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"agent {agent.get('name') or agent.get('id')}")
+    build = str(agent.get("build") or "")
+    bundle = str(data.get("bundle_build") or "")
+    if bundle and build != bundle:
+        typer.echo(
+            f"  build {build or '(older than build reporting)'} — this hub has {bundle}; "
+            "`alb bench agent-update` brings the bench host up to date"
+        )
+    elif build:
+        typer.echo(f"  build {build} (same as this hub's copy)")
     if not data.get("reported"):
         typer.echo(
             "  this agent predates the op table — the list below is inferred from its "
@@ -229,3 +240,53 @@ def cmd_log(
         typer.echo(text.rstrip("\n"))
     note = " (older lines exist beyond the window read)" if data.get("truncated") else ""
     typer.echo(f"[ok] {data.get('lines', 0)} line(s) from {data.get('source', source)}{note}")
+
+
+@app.command("agent-update")
+def cmd_agent_update(
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        help="also replace the bench agent's agent.conf with this file "
+        "(default: keep the one on the bench host)",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+    as_json: bool = typer.Option(False, "--json", help="print the done frame as JSON"),
+) -> None:
+    """Send the hub's clients/windows-agent files to the bench host and
+    restart the agent there (ADR-060).
+
+    The bench host stops only THIS agent (another agent with its own folder
+    keeps running), swaps the files and starts the new build. If the new
+    build does not reach the hub within 60 s, the old files go back and the
+    old build starts again — the result then says AGENT_UPDATE_ROLLED_BACK.
+    """
+    payload: dict[str, Any] = {}
+    if config is not None:
+        try:
+            # Bytes, not text mode: keep the file's line endings exactly.
+            payload["config_text"] = config.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            typer.echo(f"[fail] cannot read {config}: {e}", err=True)
+            raise typer.Exit(code=2) from e
+    if not yes:
+        what = " and its agent.conf" if config is not None else ""
+        typer.echo(
+            f"about to replace the bench agent's files{what} and restart it — "
+            "the bench link drops for a few seconds"
+        )
+        typer.confirm("proceed?", abort=True)
+    final = _finish(_run_job("agent-update", payload, base="/api/bench"), as_json=as_json)
+    if as_json:
+        return
+    data = final.get("data") or {}
+    if not data.get("restarting"):
+        typer.echo(f"[ok] {str(final.get('stdout') or '').strip() or 'nothing to change'}")
+        return
+    typer.echo(
+        f"[ok] updated: build {data.get('from_build')} -> {data.get('build')} "
+        f"({final.get('duration_s', 0)}s)"
+    )
+    changed = data.get("changed") or []
+    if changed:
+        typer.echo(f"  changed: {', '.join(str(c) for c in changed)}")

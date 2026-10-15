@@ -159,7 +159,8 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 | `set-active` | `fastboot set_active a` 或 `b`，切启动槽 | 是 |
 | `boot` | `fastboot boot <镜像>`，镜像只进内存、不写分区 | 是 |
 | `usb-list` | 列这台 Windows 上的 USB 设备：名称、VID:PID、序列号、驱动、问题码、接口类型。`fastboot devices` 为空时，用它分清是线没插在这台机器还是驱动没装 | 否 |
-| `log-tail` | 读本机日志的最后 N 行，可按关键字筛。来源只有名字：`agent`（本 agent 自己的日志，`log_file` 配了才有）、`setupapi`（Windows 的驱动安装日志） | 否 |
+| `log-tail` | 读本机日志的最后 N 行，可按关键字筛。来源只有名字：`agent`（本 agent 自己的日志，`log_file` 配了才有）、`setupapi`（Windows 的驱动安装日志）、`update`（上一次远程更新的经过，更新过才有） | 否 |
+| `agent-update` | 换这个 agent 自己的文件并重启，见下一节 | 否 |
 
 两条规矩不变：
 
@@ -169,5 +170,42 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 - `usb-list` 和 `log-tail` 只读本机信息、不碰板子，所以**不占烧录锁** —— 正在烧录
   时也能查。fastboot 类操作一次只跑一个，第二个会被立刻拒绝，不排队。
 
-fastboot 没配（见上一节）时，表里只有 `usb-list` / `log-tail`，hub 会直接告诉调用方
-这台不能烧。状态页（http://127.0.0.1:8731）的 `ops` 一行列的就是这张表。
+fastboot 没配（见上一节）时，表里只有 `usb-list` / `log-tail` / `agent-update`，hub
+会直接告诉调用方这台不能烧。状态页（http://127.0.0.1:8731）的 `ops` 一行列的就是这张表。
+
+## 更新 agent：在 Linux 那边推，不用到这台机器上拷
+
+**只有第一次要手动装**：把整个文件夹拷到这台机器（比如 `D:\alb-windows-agent\`），
+关掉旧的 agent 窗口，双击 `run-agent.bat`。在这之前跑的旧版 agent 不认识远程更新。
+
+之后每次更新，在 Linux 那边跑：
+
+```bash
+alb bench agent-update                      # 只换程序文件，这台机器上的 agent.conf 不动
+alb bench agent-update --config agent.conf  # 连 agent.conf 一起换
+```
+
+推过来的是 hub 自己那份 `clients/windows-agent/` 文件夹。这台机器上依次发生：
+
+1. 收到压缩包，校验大小和 sha256；包里只许有平铺的文件名，带路径的一律拒绝。
+2. 用新代码跑一次自检（`alb_agent.py --self-check`：能不能编译、依赖在不在、
+   agent.conf 读不读得进）。不过就直接拒绝，旧版照常跑，什么都没换。
+3. 拉起一个换版进程，旧 agent 退出，它的窗口自动关掉。
+4. 换版进程把现有文件备份到 `.alb-agent\backup\`，换上新文件，在新窗口里启动新版。
+5. 新版 60 秒内连上 hub 就算成功；没连上，就把旧文件放回去、重新启动旧版。
+   Linux 那边会报 `AGENT_UPDATE_ROLLED_BACK`，`alb bench log update` 能看到经过。
+
+文件一样就什么都不做，不会重启。`alb bench ops` 的第二行会写出这台机器跑的是哪一版
+（build 号），跟 hub 那份不一样时会提示你更新。
+
+文件夹里多出来的 `.alb-agent\` 放的是运行记录、更新暂存、备份和 `update.log`。
+删掉也能用，下次启动会重新建；但最近一次更新的备份在里面，正在更新时别删。
+
+### 同一个 agent 只会跑一份
+
+双击 `run-agent.bat` 时，如果这个 agent 已经在跑，会先让旧的退出（旧窗口自动关），
+再启动新的。旧的正在烧录时，会等烧完再接手，不会把烧了一半的分区打断。
+
+"同一个"按 agent.conf 判断。要在一台机器上接两块板，就把整个文件夹再复制一份
+（比如 `D:\alb-windows-agent-2\`），改那份 agent.conf 里的 `agent_id`、`name`。
+两份各自更新、互不影响。
