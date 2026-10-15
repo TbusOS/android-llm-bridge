@@ -193,6 +193,16 @@ CAPABILITIES: list[CapabilitySpec] = [
         description="adbd state, verified by reading the uid back after the restart.",
     ),
     CapabilitySpec(
+        name="port",
+        impl_path="alb.remote.port_channel",
+        cli_command="alb port open / check",
+        mcp_tools=[],
+        supported_transports=["adb"],
+        status="beta",
+        description="A local TCP port bridged to a port on the device through the adb "
+        "server's own protocol (gdbserver, device-side services) — no `adb forward`.",
+    ),
+    CapabilitySpec(
         name="bench",
         impl_path="alb.remote.bench_ops",
         cli_command="alb bench ops / run / usb / log",

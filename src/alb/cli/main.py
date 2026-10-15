@@ -39,6 +39,7 @@ from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
 from alb.cli.adb_cli import app as adb_cli
 from alb.cli.bench_cli import app as bench_cli
+from alb.cli.port_cli import app as port_cli
 from alb.cli.flash_cli import app as flash_cli
 from alb.cli.info_cli import app as info_cli
 from alb.cli.metrics_cli import app as metrics_cli
@@ -302,6 +303,9 @@ app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-bo
 app.add_typer(flash_cli, name="flash", help="Flash / fastboot via the device agent.")
 app.add_typer(adb_cli, name="adb", help="adbd state (root / unroot / remount).")
 app.add_typer(bench_cli, name="bench", help="Ops on the bench host (USB list, logs, fastboot).")
+app.add_typer(
+    port_cli, name="port", help="Reach a TCP port on the device through the adb server (no adb forward)."
+)
 app.add_typer(app_cli, name="app", help="APK management.")
 app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")
 app.add_typer(skills_cli, name="skills", help="SKILL.md generator for LLM clients.")

@@ -355,6 +355,47 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Read each file's error in the result; run `alb adb root` if they say permission "
         "denied, otherwise check `alb devices`",
     ),
+    # ─── device port channel (alb port) ──────────────────────────────
+    # A TCP stream to a port ON the device, opened through the adb server's
+    # own protocol (host:transport + tcp:<port>) — no `adb forward`, whose
+    # listener would sit on the bench host and be unreachable from here.
+    "PORT_DEVICE_REFUSED": ErrorSpec(
+        "PORT_DEVICE_REFUSED",
+        "device",
+        "The device refused the connection to that port (nothing is listening there)",
+        "Start the server on the device first (e.g. `gdbserver :<port> --attach <pid>`), "
+        "then `alb port check <port>`",
+    ),
+    "PORT_DEVICE_AMBIGUOUS": ErrorSpec(
+        "PORT_DEVICE_AMBIGUOUS",
+        "device",
+        "More than one device is attached; the target must be named",
+        "Run `alb devices` and pass `--serial <one of them>`",
+    ),
+    "PORT_BIND_NOT_LOOPBACK": ErrorSpec(
+        "PORT_BIND_NOT_LOOPBACK",
+        "input",
+        "Refusing to expose a device port on a non-loopback address",
+        "Bind 127.0.0.1, or pass `--allow-remote` if sharing it on the network is intended",
+    ),
+    "PORT_LOCAL_BUSY": ErrorSpec(
+        "PORT_LOCAL_BUSY",
+        "transport",
+        "The requested local port is already in use",
+        "Pick another with `--local`, or omit it to take a free port",
+    ),
+    "ADB_ENDPOINT_UNSUPPORTED": ErrorSpec(
+        "ADB_ENDPOINT_UNSUPPORTED",
+        "transport",
+        "The resolved adb server endpoint is not a tcp: socket",
+        "Set ADB_SERVER_SOCKET or config `server_socket` to `tcp:<host>:<port>`",
+    ),
+    "ADB_PROTOCOL_ERROR": ErrorSpec(
+        "ADB_PROTOCOL_ERROR",
+        "transport",
+        "The endpoint did not answer like an adb server (bad reply, hung up, or timed out)",
+        "Check that the endpoint is an adb server: `alb status`",
+    ),
     # ─── bench op table (ADR-059) ────────────────────────────────────
     # Four codes, four different fixes: pick an op the agent has, fix a
     # value, update the agent, or look at the bench host's disk.
