@@ -19,9 +19,10 @@ import alb.remote.flash as flash_mod
 from alb.remote.flash import FlashService
 from alb.remote.flash_plan import AgentView, build_plan
 from alb.remote.jobframe import KIND_CONTROL, KIND_DATA
+from tests.remote.bench_tables import new_agent_ops
 
 _HDR = struct.Struct(">cI")
-CAPS = ["adb", "fastboot", "fastboot-erase", "fastboot-large-image"]
+CAPS = ["adb", "fastboot"]
 
 MANIFEST = """\
 tool setvar model model-x
@@ -57,6 +58,8 @@ class _Bench:
     def __init__(self) -> None:
         self.agent_id = "agent-1"
         self.caps = list(CAPS)
+        self.op_table = new_agent_ops()
+        self.ops_reported = True
         self.flash_partitions: list[str] = []
         self.requests: list[dict] = []
         self.images: dict[str, bytes] = {}
@@ -154,7 +157,7 @@ async def _plan(tmp_path: Path, bench: _Bench, *, skip_actions=("setvar", "reboo
         root=_resolved(tmp_path),
         skip=["loader_a", "loader_b"],
         skip_actions=list(skip_actions),
-        agent=AgentView(caps=bench.caps, partitions=bench.flash_partitions),
+        agent=AgentView(caps=bench.caps, partitions=bench.flash_partitions, ops=bench.op_table),
     )
 
 

@@ -37,6 +37,7 @@ import argparse
 import asyncio
 import contextlib
 import csv
+import functools
 import hashlib
 import json
 import logging
@@ -51,6 +52,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
@@ -84,7 +86,7 @@ CSECRET_HEADER = "x-alb-csecret"
 # the shape check is a security control, not tidiness: a name carrying a
 # path separator, a space or a leading dash would either escape into another
 # argument or point fastboot somewhere else entirely.
-_PARTITION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
+_PARTITION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\Z")
 _FASTBOOT_REBOOT_TARGETS = frozenset({"bootloader", "fastboot", "recovery"})
 # An image is received into a temp file before fastboot sees it (fastboot
 # needs a real file: it splits large images into sparse chunks itself). So
@@ -96,22 +98,7 @@ _FLASH_TMP_RESERVE_BYTES = 256 * 1024 * 1024
 # Tool output is echoed back in the terminal frame; cap it so a chatty or
 # looping tool cannot turn one job into an unbounded message.
 _JOB_OUTPUT_CAP = 64 * 1024
-# fastboot BLOCKS waiting for a device when none is in fastboot mode
-# ("< waiting for any device >"). Without a ceiling one such command holds
-# the single-job lock until the hub's 30-minute timeout — a bench taken out
-# of service by a command that was never going to succeed. Per-op because
-# the right patience differs: a query should answer now, a partition write
-# legitimately takes minutes.
-_FASTBOOT_TIMEOUT_S = {
-    "devices": 20.0,
-    "getvar": 20.0,
-    "oem": 30.0,
-    "reboot": 60.0,
-    "flash": 900.0,
-    # Erasing a large partition (userdata) can mean a full-device discard;
-    # a small one (misc) answers at once. Sized for the large case.
-    "erase": 300.0,
-}
+# Per-op timeouts live on the op table rows (`_fastboot_rows`).
 _WAITING_MARKER = "waiting for any device"
 
 HEARTBEAT_INTERVAL_S = 20.0
@@ -153,6 +140,7 @@ class AgentStatus:
     adb_devices: list[str] = field(default_factory=list)
     adb_conflicts: list[str] = field(default_factory=list)
     com_ports: list[dict[str, str]] = field(default_factory=list)
+    ops: list[str] = field(default_factory=list)
     _channels: dict[str, _ChannelInfo] = field(default_factory=dict)
     _channels_total: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -208,6 +196,10 @@ class AgentStatus:
         with self._lock:
             self.com_ports = list(ports)
 
+    def set_ops(self, ops: list[str]) -> None:
+        with self._lock:
+            self.ops = list(ops)
+
     def snapshot(self) -> dict[str, Any]:
         """JSON-safe view for /status.json + the HTML page. Never includes the
         token. Durations are seconds (ints) computed from monotonic clocks."""
@@ -243,6 +235,7 @@ class AgentStatus:
                 "adb_devices": list(self.adb_devices),
                 "adb_conflicts": list(self.adb_conflicts),
                 "com_ports": list(self.com_ports),
+                "ops": list(self.ops),
             }
 
 
@@ -282,6 +275,9 @@ def _render_status_html(snap: dict[str, Any]) -> str:
             esc(", ".join(p.get("port", "") for p in snap["com_ports"])) or "—",
         ),
         ("channels (total)", str(snap["channels_total"])),
+        # the op table as reported to the hub — "can this bench erase?" is
+        # answered here without logging into the hub
+        ("ops", esc(", ".join(snap.get("ops", []))) or "—"),
     ]
     info = "\n".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows)
     if snap["active_channels"]:
@@ -389,17 +385,19 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
     # `fastboot` only when the executable is actually resolvable here.
     caps = ["adb"]
     if _fastboot_path():
-        # The two after `fastboot` say what THIS version can do beyond the
-        # original ops. A flash plan checks them before running its first
-        # row, so an agent lacking one is refused up front instead of failing
-        # at row 30 with the board half-written.
-        caps += ["fastboot", "fastboot-erase", "fastboot-large-image"]
+        caps.append("fastboot")
     return _frame(
         "hello",
         agent_id=agent_id,
         name=name,
         agent_version=PROTOCOL_VERSION,
         caps=caps,
+        # The op table (ADR-059): what this bench can do, each op with its
+        # parameter rules, so the hub, the CLI and the web page all drive
+        # the same rows and a flash plan can ask "is there an `erase` row"
+        # instead of reading a capability string that had to be kept in
+        # step by hand. Fastboot rows are present only when the tool is.
+        ops=[spec.describe() for spec in _OPS.values()],
         # The allowlist travels with the hello because THIS side is the one
         # that can be sure — the hub cannot know which partitions a given
         # bench permits, and a UI that guesses offers names the agent will
@@ -672,7 +670,7 @@ async def _bridge(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, da
             await t
 
 
-# ── job channel: fastboot on this host (ADR-056) ─────────────────────
+# ── job channel: bench ops on this host (ADR-056 · ADR-059) ──────────
 #
 # Mirrors alb.remote.jobframe + the job vocabulary in alb.remote.protocol.
 # Frame: kind(1B) + length(4B BE) + payload;  kind = b"C" control JSON /
@@ -684,6 +682,13 @@ async def _bridge(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, da
 # that ends up in argv is assembled here, from this host's own config. A
 # job channel that accepted a command string would be a remote-execution
 # back door wearing a flashing-tool costume.
+#
+# ADR-059 collects the ops into ONE table (`_build_ops`). A row names the
+# op, the rule every parameter must pass, and either an argv TEMPLATE or a
+# builtin coroutine. The agent reports the table in `hello`, so the hub
+# learns what this bench can do from the bench itself instead of from
+# capability strings that had to be kept in step by hand — and a new op is
+# one row here, no hub code.
 
 _JOB_HEADER = struct.Struct(">cI")
 _JOB_KIND_CONTROL = b"C"
@@ -692,7 +697,10 @@ _JOB_MAX_FRAME = 8 * 1024 * 1024
 
 # Only one job may touch the device at a time. Not a queue: a caller whose
 # flash is refused should learn that NOW, not sit in a line behind an
-# unrelated job it cannot see (ADR-056 §决定 3).
+# unrelated job it cannot see (ADR-056 §决定 3). Ops that only read this
+# host (usb-list, log-tail) never take it — they must answer DURING a
+# thirty-minute flash, since that is when someone wants to know whether the
+# board is even on the bus.
 _job_lock = asyncio.Lock()
 
 
@@ -757,10 +765,13 @@ class _JobReader:
 
 
 # Set once at startup from agent.conf / flags. Module-level because a job
-# channel is handled far from the arg parsing, and threading the two values
+# channel is handled far from the arg parsing, and threading the values
 # through every call would be noise.
 _FASTBOOT_PATH = ""
 _FLASH_PARTITIONS: frozenset[str] = frozenset()
+# Where this agent's own log lands (None = file logging off). It is the only
+# file `log-tail agent` will ever read.
+_AGENT_LOG_PATH: Path | None = None
 
 
 def _resolve_fastboot(configured: str) -> str:
@@ -780,11 +791,16 @@ def _fastboot_path() -> str:
     return _FASTBOOT_PATH
 
 
+# ── the three value rules the table's rows encode ────────────────────
+# They stay as named functions, next to the reasoning that produced them:
+# the table row says WHICH rule a parameter follows, these say WHY the rule
+# is shaped the way it is.
+
 # getvar 变量名的形状。与分区名**不能共用一条规则**:变量名里合法地带冒号
 # (`partition-size:cfg`、`has-slot:boot`),而分区名里冒号是非法的。
 # 放宽的只有冒号这一项 —— 仍然禁开头的 `-`(会被当成 flag)、禁空白(会拆成
 # 两个 argv 元素)、禁路径分隔符,并限长。空字符串是合法输入,代表 `getvar all`。
-_GETVAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+_GETVAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
 
 
 def _getvar_allowed(name: str) -> bool:
@@ -820,10 +836,773 @@ def _partition_allowed(name: str) -> bool:
     Deliberately a shape check plus an optional allowlist, both evaluated
     HERE. `_PARTITION_RE` alone already stops the dangerous class — a name
     with a path separator, a space, or a leading dash would otherwise turn
-    into an extra argv element or a path escape once fastboot parses it."""
+    into an extra argv element or a path escape once fastboot parses it.
+    `erase` shares the list with `flash`: erasing a partition takes no more
+    authority than rewriting it, and a second list would only be a second
+    thing to keep in step."""
     if not _PARTITION_RE.match(name):
         return False
     return True if not _FLASH_PARTITIONS else name in _FLASH_PARTITIONS
+
+
+# ── the op table ─────────────────────────────────────────────────────
+
+
+class _JobRejected(Exception):
+    """A request this agent will not act on. `code` is the wire error code
+    the done frame carries; `message` is the human-readable reason."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+# A placeholder is a WHOLE argv element, never part of one: "{partition}" is
+# replaced by exactly one validated value, while "--part={partition}" is a
+# table bug and is refused when the table is built. That is the whole
+# security argument in one rule — a value can never grow, split or merge an
+# argv element, so what the validator saw is what the tool gets.
+_PLACEHOLDER_RE = re.compile(r"^\{([a-z_]+)\}$")
+_PARAM_KINDS = ("partition", "enum", "int", "text")
+_REJECT_CODE_DEFAULT = "BENCH_PARAM_REJECTED"
+
+
+@dataclass(frozen=True)
+class ParamSpec:
+    """One parameter of an op: name, kind, and the rule a value must pass.
+    `describe()` is the ParamDesc the hub sees in `hello`."""
+
+    name: str
+    kind: str
+    required: bool = True
+    default: Any = None
+    choices: tuple[str, ...] = ()  # enum
+    min: int | None = None  # int
+    max: int | None = None  # int
+    pattern: str = ""  # text: re.fullmatch
+    max_len: int = 0  # text
+    # Agent-side only (not in describe()): the error code a rejection carries
+    # and the noun used in its message. partition / oem.command / getvar.name
+    # keep the codes and the wording the hub already knows.
+    code: str = _REJECT_CODE_DEFAULT
+    label: str = ""
+
+    def __post_init__(self) -> None:
+        if self.kind not in _PARAM_KINDS:
+            raise ValueError(f"param {self.name}: unknown kind {self.kind!r}")
+        if self.kind == "enum" and not self.choices:
+            raise ValueError(f"param {self.name}: enum without choices")
+        if self.kind == "int" and (self.min is None or self.max is None):
+            raise ValueError(f"param {self.name}: int without min/max")
+        if self.kind == "text" and (not self.pattern or self.max_len <= 0):
+            raise ValueError(f"param {self.name}: text without pattern/max_len")
+
+    def describe(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "name": self.name,
+            "kind": self.kind,
+            "required": self.required,
+            "default": self.default,
+        }
+        if self.kind == "enum":
+            d["choices"] = list(self.choices)
+        elif self.kind == "int":
+            d["min"] = self.min
+            d["max"] = self.max
+        elif self.kind == "text":
+            d["pattern"] = self.pattern
+            d["max_len"] = self.max_len
+        return d
+
+    def resolve(self, req: Mapping[str, Any]) -> Any:
+        """The validated value this param takes from a request, or raise
+        _JobRejected. Missing / null / "" means "use the default" for an
+        optional param and is a rejection for a required one."""
+        raw = req.get(self.name)
+        if raw is None or raw == "":
+            if not self.required:
+                return self.default
+            raw = ""
+        what = self.label or self.name
+        if self.kind == "partition":
+            if not isinstance(raw, str) or not _partition_allowed(raw):
+                raise _JobRejected(self.code, f"{what} {raw!r} rejected by this agent")
+            return raw
+        if self.kind == "enum":
+            # Exact: no case folding, no strip. The device would not fold it
+            # either, and a stray space would become a second argv element.
+            if not isinstance(raw, str) or raw not in self.choices:
+                raise _JobRejected(self.code, f"{what} {raw!r} is not on this agent's allowlist")
+            return raw
+        if self.kind == "int":
+            # bool subclasses int in Python; `true` for a line count is a
+            # caller bug to report, not the number 1.
+            lo, hi = int(self.min or 0), int(self.max or 0)
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw < lo or raw > hi:
+                raise _JobRejected(
+                    self.code, f"{what} {raw!r} must be an integer from {lo} to {hi}"
+                )
+            return raw
+        if (
+            not isinstance(raw, str)
+            or len(raw) > self.max_len
+            or not re.fullmatch(self.pattern, raw)
+        ):
+            raise _JobRejected(self.code, f"{what} {raw!r} rejected")
+        return raw
+
+
+# A builtin gets the op's row and the validated values; it returns (stdout,
+# data) for the done frame or raises _JobRejected. A verdict turns a tool's
+# (rc, stdout, stderr) into (ok, code, error) when exit code 0 is not the
+# whole story.
+_Builtin = Callable[["OpSpec", Mapping[str, Any]], Awaitable[tuple[str, dict[str, Any]]]]
+_Verdict = Callable[[int, str, str], tuple[bool, str, str]]
+
+
+@dataclass(frozen=True)
+class OpSpec:
+    """One row of the op table. `describe()` is the OpDesc the hub sees."""
+
+    name: str
+    group: str  # "fastboot" | "host"
+    summary: str
+    params: tuple[ParamSpec, ...] = ()  # in argv order
+    needs: str = ""  # "fastboot-device" | ""
+    image: bool = False  # receives an image stream before running
+    max_image_bytes: int = 0  # image ops: 0 = bounded only by this host's temp space
+    mutates: bool = True  # changes the device: the hub confirms + records
+    exclusive: bool = True  # needs the single job lock (touches the USB device)
+    record: str = "none"  # hub-side recording tier: none | events | uart
+    timeout_s: float = 300.0
+    # Exactly one of the two. argv[0] is the tool path from THIS host's
+    # config; every other element is literal or a whole-element placeholder.
+    argv: tuple[str, ...] = ()
+    builtin: _Builtin | None = None
+    # Agent-side only (not in describe()):
+    verdict: _Verdict | None = None
+    no_device_msg: str = "no device is in fastboot on this host"
+
+    def __post_init__(self) -> None:
+        if self.group not in ("fastboot", "host"):
+            raise ValueError(f"op {self.name}: unknown group {self.group!r}")
+        if self.needs not in ("", "fastboot-device"):
+            raise ValueError(f"op {self.name}: unknown needs {self.needs!r}")
+        if self.record not in ("none", "events", "uart"):
+            raise ValueError(f"op {self.name}: unknown record tier {self.record!r}")
+        if bool(self.argv) == (self.builtin is not None):
+            raise ValueError(f"op {self.name}: exactly one of argv / builtin")
+        names = {p.name for p in self.params}
+        used: set[str] = set()
+        for el in self.argv[1:]:
+            m = _PLACEHOLDER_RE.match(el)
+            if m is None:
+                if "{" in el or "}" in el:
+                    raise ValueError(
+                        f"op {self.name}: a placeholder must be a whole argv element, got {el!r}"
+                    )
+                continue
+            key = m.group(1)
+            if key == "image":
+                if not self.image:
+                    raise ValueError(f"op {self.name}: {{image}} on an op that takes no image")
+            elif key not in names:
+                raise ValueError(f"op {self.name}: placeholder {el} names no param")
+            used.add(key)
+        if self.image and "image" not in used:
+            raise ValueError(f"op {self.name}: image op without an {{image}} element")
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "group": self.group,
+            "summary": self.summary,
+            "params": [p.describe() for p in self.params],
+            "needs": self.needs,
+            "image": self.image,
+            "max_image_bytes": self.max_image_bytes,
+            "mutates": self.mutates,
+            "exclusive": self.exclusive,
+            "record": self.record,
+            "timeout_s": self.timeout_s,
+        }
+
+    def resolve(self, req: Mapping[str, Any]) -> dict[str, Any]:
+        """Every param validated from the request. Keys the table does not
+        name are ignored: they cannot reach argv, so there is nothing to
+        refuse — and `op` / `size` / `sha256` ride the same frame."""
+        return {p.name: p.resolve(req) for p in self.params}
+
+    def assemble(self, values: Mapping[str, Any], image: str = "") -> list[str]:
+        """argv from the template: each placeholder becomes exactly one
+        element holding one validated value. An optional param resolved to
+        "" drops its element (`fastboot reboot` with no target)."""
+        argv: list[str] = [self.argv[0]] if self.argv else []
+        for el in self.argv[1:]:
+            m = _PLACEHOLDER_RE.match(el)
+            if m is None:
+                argv.append(el)
+                continue
+            key = m.group(1)
+            if key == "image":
+                if not image:
+                    raise ValueError(f"op {self.name}: no image path to substitute")
+                argv.append(image)
+                continue
+            value = values[key]
+            if value == "":
+                continue
+            argv.append(str(value))
+        return argv
+
+
+def _devices_verdict(rc: int, out: str, _err: str) -> tuple[bool, str, str]:
+    """An empty listing exits 0 — that is fastboot saying "nothing is here",
+    not "the query worked". Reporting it as success would send the caller
+    on to flash a device that is not in fastboot at all. Say what was
+    observed: the generic fallback ("fastboot failed") is right for a tool
+    that crashed with no output and useless here."""
+    if rc != 0:
+        return False, "FLASH_FAILED", ""
+    if not out.strip():
+        return (
+            False,
+            "FASTBOOT_NO_DEVICE",
+            "fastboot ran but listed no devices — the board is not in fastboot",
+        )
+    return True, "", ""
+
+
+# ── builtin: usb-list ────────────────────────────────────────────────
+# Why it exists (2026-10-14 bench): a board confirmed on the serial console to
+# be in bootloader fastboot, and `fastboot devices` empty four times in a
+# row. From the hub there is no telling "cable not on this machine" from
+# "driver not installed" — and the next step differs completely. This op
+# returns the RAW facts (VID:PID, driver, problem code, interface class
+# triples); the hub decides what mode a board is in. Keeping the vendor
+# tables on the hub means a new vendor never needs a new agent.
+
+# ONE fixed command line. Nothing from the hub is interpolated — the op has no
+# parameters, so there is nothing to interpolate. CompatibleID carries the
+# interface class triple (class ff / subclass 42 / protocol 01 = adb, 03 =
+# fastboot) even when no driver is installed, which is exactly the case
+# worth diagnosing. The output encoding is pinned to UTF-8 so a device name
+# with non-ASCII characters survives the pipe.
+_USB_PS_QUERY = (
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+    "Get-CimInstance Win32_PnPEntity | "
+    "Where-Object { $_.PNPDeviceID -like 'USB\\*' } | "
+    "Select-Object Name,PNPDeviceID,Status,ConfigManagerErrorCode,PNPClass,"
+    "Service,Manufacturer,CompatibleID | "
+    "ConvertTo-Json -Compress"
+)
+_USB_PS_ARGV = ("powershell", "-NoProfile", "-NonInteractive", "-Command", _USB_PS_QUERY)
+_USB_VID_RE = re.compile(r"VID_([0-9A-Fa-f]{4})")
+_USB_PID_RE = re.compile(r"PID_([0-9A-Fa-f]{4})")
+_USB_MI_RE = re.compile(r"&MI_([0-9A-Fa-f]{2})")
+# Non-Windows hosts enumerate sysfs instead, so the op works (and is
+# testable) anywhere. Module-level so a test can point it at a fake tree.
+_SYSFS_USB_ROOT = Path("/sys/bus/usb/devices")
+# Device directories look like `1-3` / `2-1.4`; `usb1` is a root hub and
+# `1-3:1.0` is an interface of 1-3 — both are excluded here on purpose.
+_SYSFS_USB_DEVICE_RE = re.compile(r"^\d+-[\d.]+$")
+
+
+def _str_or_empty(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _compatible_ids(value: Any) -> list[str]:
+    """ConvertTo-Json renders a one-element array as a bare string and an
+    absent value as null; the hub always gets a list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None]
+    return [str(value)]
+
+
+def _usb_dev_from_pnp(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """One Win32_PnPEntity record → UsbDev. Everything is verbatim except
+    the three fields pulled out of the instance id for convenience."""
+    instance_id = _str_or_empty(entry.get("PNPDeviceID"))
+    vid = _USB_VID_RE.search(instance_id)
+    pid = _USB_PID_RE.search(instance_id)
+    mi = _USB_MI_RE.search(instance_id)
+    problem = entry.get("ConfigManagerErrorCode")
+    return {
+        "name": _str_or_empty(entry.get("Name")),
+        "instance_id": instance_id,
+        "vid": vid.group(1).lower() if vid else "",
+        "pid": pid.group(1).lower() if pid else "",
+        # The last backslash segment: a serial for a device that reports one,
+        # a bus-assigned token otherwise. Raw either way.
+        "serial": instance_id.rsplit("\\", 1)[1] if "\\" in instance_id else "",
+        "interface": mi.group(1).lower() if mi else "",
+        "status": _str_or_empty(entry.get("Status")),
+        "problem": problem if isinstance(problem, int) and not isinstance(problem, bool) else None,
+        "class": _str_or_empty(entry.get("PNPClass")),
+        "service": _str_or_empty(entry.get("Service")),
+        "manufacturer": _str_or_empty(entry.get("Manufacturer")),
+        "compatible_ids": _compatible_ids(entry.get("CompatibleID")),
+    }
+
+
+def _parse_usb_json(text: str) -> list[dict[str, Any]]:
+    """PowerShell's ConvertTo-Json output → UsbDev list. One match comes
+    back as a bare object, not a one-element list, and no match prints
+    nothing at all — both are normal, not errors. Garbage raises ValueError."""
+    text = text.strip()
+    if not text:
+        return []
+    doc = json.loads(text)
+    if isinstance(doc, dict):
+        doc = [doc]
+    if not isinstance(doc, list):
+        raise ValueError("expected a JSON object or list")
+    return [_usb_dev_from_pnp(e) for e in doc if isinstance(e, dict)]
+
+
+def _sysfs_read(directory: Path, name: str) -> str:
+    try:
+        return (directory / name).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _sysfs_driver(directory: Path) -> str:
+    """Basename of the `driver` symlink ("usb-storage", "cdc_acm"), or ""."""
+    try:
+        return Path(os.readlink(directory / "driver")).name
+    except OSError:
+        return ""
+
+
+def _sysfs_class_triple(directory: Path, prefix: str) -> str:
+    """`USB\\Class_xx&SubClass_xx&Prot_xx` from sysfs, in the same shape as
+    a Windows CompatibleID so the hub keeps one classification table."""
+    cls = _sysfs_read(directory, f"b{prefix}Class").lower()
+    sub = _sysfs_read(directory, f"b{prefix}SubClass").lower()
+    prot = _sysfs_read(directory, f"b{prefix}Protocol").lower()
+    if not (cls and sub and prot):
+        return ""
+    return f"USB\\Class_{cls}&SubClass_{sub}&Prot_{prot}"
+
+
+def _enumerate_sysfs_usb(root: Path) -> list[dict[str, Any]]:
+    """UsbDev list from a sysfs tree: one entry per device plus one per
+    interface (the Windows listing shows a composite device the same way,
+    as a parent plus `MI_xx` children), so the hub sees one shape."""
+    try:
+        devices = sorted(p for p in root.iterdir() if _SYSFS_USB_DEVICE_RE.match(p.name))
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for dev in devices:
+        try:
+            interfaces = sorted(
+                p for p in dev.iterdir() if p.is_dir() and p.name.startswith(dev.name + ":")
+            )
+        except OSError:
+            interfaces = []
+        triples = [_sysfs_class_triple(dev, "Device")]
+        triples += [_sysfs_class_triple(itf, "Interface") for itf in interfaces]
+        base = {
+            "name": _sysfs_read(dev, "product"),
+            "instance_id": dev.name,
+            "vid": _sysfs_read(dev, "idVendor").lower(),
+            "pid": _sysfs_read(dev, "idProduct").lower(),
+            "serial": _sysfs_read(dev, "serial"),
+            "interface": "",
+            "status": "OK",
+            "problem": None,
+            "class": "",
+            "service": _sysfs_driver(dev),
+            "manufacturer": _sysfs_read(dev, "manufacturer"),
+            "compatible_ids": [t for t in triples if t],
+        }
+        out.append(base)
+        for itf in interfaces:
+            triple = _sysfs_class_triple(itf, "Interface")
+            out.append(
+                {
+                    **base,
+                    "instance_id": itf.name,
+                    "interface": _sysfs_read(itf, "bInterfaceNumber").lower(),
+                    "service": _sysfs_driver(itf),
+                    "compatible_ids": [triple] if triple else [],
+                }
+            )
+    return out
+
+
+async def _reap(proc: Any) -> None:
+    """Kill a child that may still be running, then wait for it.
+
+    Every subprocess path calls this on its way out — on a timeout AND when
+    the job is cancelled (agent stopping, hub dropping the session). An
+    abandoned fastboot keeps writing the partition, holds the USB interface
+    and keeps the temp image open so it cannot be deleted. The wait is
+    shielded so a second cancel cannot leave the child unreaped."""
+    if proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError, OSError):
+            proc.kill()
+    with contextlib.suppress(Exception):
+        await asyncio.shield(proc.wait())
+
+
+async def _usb_list_windows(timeout_s: float) -> list[dict[str, Any]]:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *_USB_PS_ARGV, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+    except (FileNotFoundError, OSError) as e:
+        raise _JobRejected("FLASH_FAILED", f"cannot run powershell on this host: {e}") from e
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout_s)
+    except TimeoutError:
+        await _reap(proc)
+        raise _JobRejected(
+            "FLASH_FAILED", f"powershell did not answer within {timeout_s:.0f}s"
+        ) from None
+    except BaseException:
+        await _reap(proc)
+        raise
+    if proc.returncode != 0:
+        detail = err.decode("utf-8", errors="replace").strip()[-500:]
+        raise _JobRejected("FLASH_FAILED", f"powershell failed (rc {proc.returncode}): {detail}")
+    try:
+        return _parse_usb_json(out.decode("utf-8", errors="replace"))
+    except ValueError as e:
+        raise _JobRejected("FLASH_FAILED", f"unexpected powershell output: {e}") from e
+
+
+async def _op_usb_list(spec: OpSpec, _values: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    if sys.platform == "win32":
+        devices = await _usb_list_windows(spec.timeout_s)
+    else:
+        # An empty listing must mean "nothing plugged in", never "this host
+        # has nowhere to look" (e.g. macOS) — the two lead to opposite fixes.
+        if not await asyncio.to_thread(_SYSFS_USB_ROOT.is_dir):
+            raise _JobRejected(
+                "FLASH_FAILED", f"this host cannot list USB devices: no {_SYSFS_USB_ROOT}"
+            )
+        devices = await asyncio.to_thread(_enumerate_sysfs_usb, _SYSFS_USB_ROOT)
+    return "", {"devices": devices}
+
+
+# ── builtin: log-tail ────────────────────────────────────────────────
+# Sources are NAMES, resolved here from this host's config. The hub never
+# sends a path — a job that read "the file the hub names" would read any
+# file on this machine. Only the tail of a file is read: setupapi.dev.log
+# grows for years and the agent's own log rotates at 5 MB, so 8 MiB covers
+# everything anyone wants to see and bounds the memory a request can take.
+
+_LOG_TAIL_WINDOW = 8 * 1024 * 1024
+# `grep` is a literal substring, not a regex; the only shape rule is "no
+# control characters" so a filter can never smuggle a newline into the
+# echoed error message.
+_GREP_PATTERN = r"[^\x00-\x1f\x7f]*"
+
+
+def _log_sources() -> dict[str, Path]:
+    """Host-side logs `log-tail` may read, by name."""
+    sources: dict[str, Path] = {}
+    if _AGENT_LOG_PATH is not None:
+        sources["agent"] = _AGENT_LOG_PATH
+    if sys.platform == "win32":
+        windir = Path(os.environ.get("WINDIR") or r"C:\Windows")
+        sources["setupapi"] = windir / "INF" / "setupapi.dev.log"
+    return sources
+
+
+def _sniff_bom(head: bytes) -> tuple[str, int]:
+    """(codec, BOM length). Windows logs come in UTF-16 LE with a BOM
+    (setupapi.dev.log), UTF-8 with Notepad's BOM, or plain UTF-8."""
+    if head.startswith(b"\xef\xbb\xbf"):
+        return "utf-8", 3
+    if head.startswith(b"\xff\xfe"):
+        return "utf-16-le", 2
+    if head.startswith(b"\xfe\xff"):
+        return "utf-16-be", 2
+    return "utf-8", 0
+
+
+def _tail_log(
+    path: Path, lines: int, grep: str, window: int = _LOG_TAIL_WINDOW
+) -> tuple[list[str], bool]:
+    """Last `lines` lines of `path` (after the optional case-insensitive
+    substring filter), and whether the read window stopped short of the
+    file's start. Blocking — run it off the loop."""
+    with path.open("rb") as fh:
+        codec, bom = _sniff_bom(fh.read(4))
+        size = fh.seek(0, os.SEEK_END)
+        start = max(bom, size - window)
+        if codec.startswith("utf-16"):
+            # keep the window on a code-unit boundary or every character
+            # after the cut decodes as garbage
+            start = bom + ((start - bom) // 2) * 2
+        fh.seek(start)
+        chunk = fh.read()
+    truncated = start > bom
+    rows = chunk.decode(codec, errors="replace").splitlines()
+    if truncated and rows:
+        rows = rows[1:]  # began mid-line: a fragment, not a line
+    if grep:
+        needle = grep.lower()
+        rows = [r for r in rows if needle in r.lower()]
+    return rows[-lines:], truncated
+
+
+async def _op_log_tail(
+    _spec: OpSpec, values: Mapping[str, Any], *, sources: Mapping[str, Path]
+) -> tuple[str, dict[str, Any]]:
+    source = str(values["source"])
+    path = sources[source]  # the enum rule already pinned it to a configured name
+    try:
+        rows, truncated = await asyncio.to_thread(
+            _tail_log, path, int(values["lines"]), str(values["grep"])
+        )
+    except OSError as e:
+        raise _JobRejected(
+            "BENCH_LOG_UNAVAILABLE", f"log source {source!r} is not readable right now: {e}"
+        ) from e
+    rows, clipped = _fit_rows(rows, _JOB_OUTPUT_CAP)
+    # `truncated` = older lines exist that the caller did not get, whether
+    # the read window or the frame cap left them out.
+    return "\n".join(rows), {
+        "source": source,
+        "lines": len(rows),
+        "truncated": truncated or clipped,
+    }
+
+
+def _fit_rows(rows: list[str], budget: int) -> tuple[list[str], bool]:
+    """The newest rows whose joined text fits `budget` characters.
+
+    `_job_finish` keeps only the last `_JOB_OUTPUT_CAP` characters of stdout;
+    cutting here instead, on line boundaries, means the caller never gets a
+    half line at the top and `lines` counts what actually arrives."""
+    kept: list[str] = []
+    used = 0
+    for row in reversed(rows):
+        cost = len(row) + (1 if kept else 0)
+        if used + cost > budget:
+            if not kept:  # one line longer than the whole budget: keep its end
+                kept.append(row[-budget:])
+            kept.reverse()
+            return kept, True
+        kept.append(row)
+        used += cost
+    kept.reverse()
+    return kept, False
+
+
+# ── the rows ─────────────────────────────────────────────────────────
+# Timeouts: fastboot BLOCKS waiting for a device when none is in fastboot
+# mode ("< waiting for any device >"). Without a ceiling one such command
+# holds the single-job lock until the hub's 30-minute timeout — a bench
+# taken out of service by a command that was never going to succeed. Per
+# row because the right patience differs: a query should answer now, a
+# partition write legitimately takes minutes.
+_DEVICE_QUERY_TIMEOUT_S = 20.0
+
+
+def _fastboot_rows(fastboot: str) -> list[OpSpec]:
+    partition = ParamSpec(
+        "partition", "partition", code="FLASH_PARTITION_REJECTED", label="partition"
+    )
+    return [
+        OpSpec(
+            "devices",
+            "fastboot",
+            "fastboot devices",
+            mutates=False,
+            timeout_s=_DEVICE_QUERY_TIMEOUT_S,
+            argv=(fastboot, "devices"),
+            verdict=_devices_verdict,
+        ),
+        OpSpec(
+            "getvar",
+            "fastboot",
+            "fastboot getvar <name>",
+            # Transport only: the value's MEANING is platform-specific (this
+            # bench answers `partition-size:cfg` with 0 on flashes that
+            # succeed), so nothing on this path interprets it. fastboot
+            # writes getvar's answer to stderr; both streams go back.
+            params=(
+                ParamSpec(
+                    "name",
+                    "text",
+                    required=False,
+                    default="all",
+                    pattern=_GETVAR_RE.pattern,
+                    max_len=64,
+                    code="FLASH_VAR_REJECTED",
+                    label="variable name",
+                ),
+            ),
+            needs="fastboot-device",
+            mutates=False,
+            timeout_s=_DEVICE_QUERY_TIMEOUT_S,
+            argv=(fastboot, "getvar", "{name}"),
+        ),
+        OpSpec(
+            "oem",
+            "fastboot",
+            "fastboot oem <command>",
+            # Transport only, like getvar: whether the lock took is read from
+            # the device afterwards, not inferred from OKAY.
+            params=(
+                ParamSpec(
+                    "command",
+                    "enum",
+                    choices=tuple(sorted(_OEM_COMMANDS)),
+                    code="FLASH_OEM_REJECTED",
+                    label="oem command",
+                ),
+            ),
+            needs="fastboot-device",
+            record="events",
+            timeout_s=30.0,
+            argv=(fastboot, "oem", "{command}"),
+        ),
+        OpSpec(
+            "reboot",
+            "fastboot",
+            "fastboot reboot [target]",
+            params=(
+                ParamSpec(
+                    "target",
+                    "enum",
+                    required=False,
+                    default="",
+                    choices=tuple(sorted(_FASTBOOT_REBOOT_TARGETS)),
+                    label="reboot target",
+                ),
+            ),
+            needs="fastboot-device",
+            record="events",
+            timeout_s=60.0,
+            argv=(fastboot, "reboot", "{target}"),
+            no_device_msg="no device is in fastboot on this host — nothing to reboot",
+        ),
+        OpSpec(
+            "flash",
+            "fastboot",
+            "fastboot flash <partition> <image>",
+            params=(partition,),
+            needs="fastboot-device",
+            image=True,
+            record="uart",
+            timeout_s=900.0,
+            argv=(fastboot, "flash", "{partition}", "{image}"),
+            no_device_msg="no device is in fastboot on this host — nothing was transferred",
+        ),
+        OpSpec(
+            "erase",
+            "fastboot",
+            "fastboot erase <partition>",
+            params=(partition,),
+            needs="fastboot-device",
+            record="events",
+            # Erasing a large partition (userdata) can mean a full-device
+            # discard; a small one (misc) answers at once. Sized for the
+            # large case.
+            timeout_s=300.0,
+            argv=(fastboot, "erase", "{partition}"),
+            no_device_msg="no device is in fastboot on this host — nothing was erased",
+        ),
+        OpSpec(
+            "set-active",
+            "fastboot",
+            "fastboot set_active <slot>",
+            # A bootloader without slots refuses; the refusal goes back verbatim.
+            params=(ParamSpec("slot", "enum", choices=("a", "b"), label="slot"),),
+            needs="fastboot-device",
+            record="events",
+            timeout_s=30.0,
+            argv=(fastboot, "set_active", "{slot}"),
+        ),
+        OpSpec(
+            "boot",
+            "fastboot",
+            "fastboot boot <image>",
+            # Runs the image from RAM without writing a partition — mutates the
+            # RUNNING state, so it is confirmed and recorded like a write.
+            needs="fastboot-device",
+            image=True,
+            record="uart",
+            timeout_s=120.0,
+            argv=(fastboot, "boot", "{image}"),
+            no_device_msg="no device is in fastboot on this host — nothing was transferred",
+        ),
+    ]
+
+
+def _host_rows(log_sources: Mapping[str, Path]) -> list[OpSpec]:
+    rows = [
+        OpSpec(
+            "usb-list",
+            "host",
+            "USB devices attached to this host, as the OS sees them",
+            mutates=False,
+            exclusive=False,
+            timeout_s=30.0,
+            builtin=_op_usb_list,
+        )
+    ]
+    # No sources configured = no row: a dropdown with zero valid choices
+    # is a question nobody can answer.
+    if log_sources:
+        rows.append(
+            OpSpec(
+                "log-tail",
+                "host",
+                "last lines of a host-side log, by source name",
+                params=(
+                    ParamSpec("source", "enum", choices=tuple(log_sources), label="log source"),
+                    ParamSpec("lines", "int", required=False, default=200, min=1, max=2000),
+                    ParamSpec(
+                        "grep",
+                        "text",
+                        required=False,
+                        default="",
+                        pattern=_GREP_PATTERN,
+                        max_len=64,
+                    ),
+                ),
+                mutates=False,
+                exclusive=False,
+                timeout_s=30.0,
+                builtin=functools.partial(_op_log_tail, sources=dict(log_sources)),
+            )
+        )
+    return rows
+
+
+def _build_ops(
+    fastboot: str = "", log_sources: Mapping[str, Path] | None = None
+) -> dict[str, OpSpec]:
+    """The op table for a host with THIS fastboot (none = no fastboot rows,
+    in the table and therefore in hello) and THESE log sources."""
+    rows = [*(_fastboot_rows(fastboot) if fastboot else []), *_host_rows(log_sources or {})]
+    return {row.name: row for row in rows}
+
+
+# Which names are fastboot ops — known even when the table has no fastboot
+# rows, so a hub asking for `flash` on a bench without fastboot is told THAT
+# rather than "unknown op".
+_FASTBOOT_OP_NAMES = frozenset(row.name for row in _fastboot_rows("fastboot"))
+
+# The live table, built by _apply_flash_config once the config is known.
+_OPS: dict[str, OpSpec] = {}
+
+
+# ── dispatch ─────────────────────────────────────────────────────────
 
 
 async def _handle_job_channel(
@@ -831,30 +1610,54 @@ async def _handle_job_channel(
 ) -> None:
     cid = str(frame.get("cid") or "")
     csecret = str(frame.get("csecret") or "")
-    fastboot = _fastboot_path()
-    if not fastboot:
+    params = frame.get("params") or {}
+    # The op hint lets this side refuse BEFORE dialling back — the caller
+    # is holding a device it thinks is about to be written — and decide
+    # whether the job needs the lock at all. No hint = an older hub: treat
+    # the job as an exclusive fastboot job, as before.
+    hint = params.get("op")
+    hint = None if hint is None else str(hint)
+    spec = _OPS.get(hint) if hint is not None else None
+    if hint is None:
+        wants_fastboot, exclusive = True, True
+    elif spec is None:
+        # Not in the table: dial back so the answer is a structured
+        # BENCH_OP_UNKNOWN — unless it is a fastboot op this host lacks the
+        # tool for, which is a different, more useful answer.
+        wants_fastboot, exclusive = hint in _FASTBOOT_OP_NAMES, False
+    else:
+        wants_fastboot, exclusive = spec.group == "fastboot", spec.exclusive
+    if wants_fastboot and not _fastboot_path():
         await _report_channel_error(ws, cid, "no fastboot executable on this agent host")
         return
-    if _job_lock.locked():
-        # Refuse immediately rather than dial back and then block: the caller
-        # is holding a device it thinks is about to be written.
-        await _report_channel_error(ws, cid, "another flash job is already running")
-        return
-
     url = _channel_url(hub_url, cid)
     headers = _channel_headers(token, csecret)
+    if exclusive:
+        # Check and take the lock with no await in between, BEFORE dialling
+        # back: dialling yields, and a second request arriving in that gap
+        # would pass the check and then queue behind the lock — the rule is
+        # "rejected at once", never "queued". An unlocked asyncio.Lock is
+        # acquired without suspending.
+        if _job_lock.locked():
+            await _report_channel_error(ws, cid, "another flash job is already running")
+            return
+        await _job_lock.acquire()
+
     try:
         async with ws_connect(url, max_size=None, additional_headers=headers) as data_ws:
-            _STATUS.channel_opened(cid, "job", "fastboot")
-            async with _job_lock:
-                await _run_job(data_ws, fastboot)
+            _STATUS.channel_opened(cid, "job", hint or "fastboot")
+            await _run_job(data_ws, _OPS, hint=hint)
     except Exception as e:
         _log.warning("job channel %s ended: %s", cid[:8], e)
     finally:
+        if exclusive:
+            _job_lock.release()
         _STATUS.channel_closed(cid)
 
 
-async def _run_job(data_ws: Any, fastboot: str) -> None:
+async def _run_job(data_ws: Any, ops: Mapping[str, OpSpec], *, hint: str | None = None) -> None:
+    """Read the job request and run it through the table: validate every
+    parameter, check the precondition, then run the row's argv or builtin."""
     reader = _JobReader(data_ws)
     try:
         req = await reader.read_control()
@@ -864,20 +1667,72 @@ async def _run_job(data_ws: Any, fastboot: str) -> None:
     if req is None:
         return
     op = str(req.get("op") or "")
-    if op == "flash":
-        await _job_flash(data_ws, reader, fastboot, req)
-    elif op == "reboot":
-        await _job_reboot(data_ws, fastboot, str(req.get("target") or ""))
-    elif op == "devices":
-        await _job_devices(data_ws, fastboot)
-    elif op == "getvar":
-        await _job_getvar(data_ws, fastboot, str(req.get("name") or ""))
-    elif op == "oem":
-        await _job_oem(data_ws, fastboot, str(req.get("command") or ""))
-    elif op == "erase":
-        await _job_erase(data_ws, fastboot, str(req.get("partition") or ""))
-    else:
-        await _job_fail(data_ws, f"unsupported job op {op!r}", code="")
+    if hint is not None and op != hint:
+        # The lock decision was made from the hint; a request that names
+        # another op would run it under the wrong decision.
+        await _job_fail(
+            data_ws,
+            f"job op {op!r} does not match the channel's op hint {hint!r}",
+            code="BENCH_PARAM_REJECTED",
+        )
+        return
+    spec = ops.get(op)
+    if spec is None:
+        await _job_fail(data_ws, f"unsupported job op {op!r}", code="BENCH_OP_UNKNOWN")
+        return
+    try:
+        await _dispatch(data_ws, reader, spec, req)
+    except _JobRejected as e:
+        await _job_fail(data_ws, e.message, code=e.code)
+    except Exception as e:
+        # Whatever escaped (fastboot removed after start-up, a broken temp
+        # dir, …) still ends the job with a `done` frame: without one the
+        # hub can only report a dropped channel, not what went wrong.
+        _log.warning("job %r failed on the agent: %r", op, e)
+        await _job_fail(
+            data_ws,
+            f"agent error while running {op!r}: {type(e).__name__}: {e}",
+            code="FLASH_FAILED",
+        )
+
+
+async def _dispatch(data_ws: Any, reader: _JobReader, spec: OpSpec, req: Mapping[str, Any]) -> None:
+    """Validate, check the precondition, run. Raises _JobRejected for a
+    refusal that `_run_job` turns into a structured `done` frame."""
+    try:
+        values = spec.resolve(req)
+    except _JobRejected as e:
+        await _job_fail(data_ws, e.message, code=e.code)
+        return
+    if spec.image:
+        await _run_image_op(data_ws, reader, spec, values, req)
+        return
+    if spec.needs == "fastboot-device" and not await _device_present(
+        spec.argv[0] if spec.argv else _fastboot_path()
+    ):
+        await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
+        return
+    if spec.builtin is not None:
+        await data_ws.send(_job_control({"ev": "accepted", "detail": spec.name}))
+        try:
+            out, data = await spec.builtin(spec, values)
+        except _JobRejected as e:
+            await _job_fail(data_ws, e.message, code=e.code)
+            return
+        await _job_finish(data_ws, 0, out, "", fail_code="", data=data)
+        return
+    argv = spec.assemble(values)
+    await data_ws.send(_job_control({"ev": "accepted", "detail": " ".join(argv[1:])}))
+    rc, out, err = await _run_fastboot(data_ws, argv, spec.timeout_s)
+    await _finish_tool(data_ws, spec, rc, out, err)
+
+
+async def _finish_tool(data_ws: Any, spec: OpSpec, rc: int, out: str, err: str) -> None:
+    if spec.verdict is None:
+        await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
+        return
+    ok, code, error = spec.verdict(rc, out, err)
+    await _job_finish(data_ws, rc, out, err, fail_code=code, ok_override=ok, fail_error=error)
 
 
 async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1) -> None:
@@ -917,32 +1772,50 @@ async def _device_present(fastboot: str) -> bool:
     operator sees a hang instead of the one-line truth: the board is not in
     fastboot. Costs one ~20 ms query to turn that into an instant answer.
     """
-    proc = await asyncio.create_subprocess_exec(
-        fastboot, "devices", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-    )
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), _FASTBOOT_TIMEOUT_S["devices"])
+        proc = await asyncio.create_subprocess_exec(
+            fastboot, "devices", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+    except OSError as e:
+        raise _JobRejected("FLASH_FAILED", f"cannot run {fastboot!r} on this host: {e}") from e
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), _DEVICE_QUERY_TIMEOUT_S)
     except TimeoutError:
-        with contextlib.suppress(ProcessLookupError, OSError):
-            proc.kill()
-        return False
+        await _reap(proc)
+        # Not FASTBOOT_NO_DEVICE: a hung query is a stuck USB link or
+        # driver, and "no board" would send the operator to the wrong end.
+        raise _JobRejected(
+            "FLASH_FAILED",
+            f"`fastboot devices` did not answer within {_DEVICE_QUERY_TIMEOUT_S:.0f}s — the "
+            "USB link or its driver is stuck; this says nothing about whether a board is there",
+        ) from None
+    except BaseException:
+        await _reap(proc)
+        raise
     return bool(out.decode("utf-8", errors="replace").strip())
 
 
-async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[str, Any]) -> None:
-    partition = str(req.get("partition") or "")
-    size = int(req.get("size") or 0)
+async def _run_image_op(
+    data_ws: Any,
+    reader: _JobReader,
+    spec: OpSpec,
+    values: Mapping[str, Any],
+    req: Mapping[str, Any],
+) -> None:
+    """The ONE receive path for every image op (flash, boot): refuse what can
+    be refused before a byte crosses the tunnel, receive into a temp file
+    this agent chose, verify size and digest, and only then run the tool."""
+    try:
+        size = int(req.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
     want_digest = str(req.get("sha256") or "").lower()
+    fastboot = spec.argv[0]
 
-    if not _partition_allowed(partition):
-        await _job_fail(
-            data_ws,
-            f"partition {partition!r} rejected by this agent",
-            code="FLASH_PARTITION_REJECTED",
-        )
-        return
     if size <= 0:
-        await _job_fail(data_ws, f"image size {size} out of range", code="FLASH_IMAGE_CORRUPT")
+        await _job_fail(
+            data_ws, f"image size {req.get('size')!r} out of range", code="FLASH_IMAGE_CORRUPT"
+        )
         return
     free = await _tmp_free_bytes()
     if free < size + _FLASH_TMP_RESERVE_BYTES:
@@ -960,12 +1833,8 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
 
     # Check BEFORE accepting the image: streaming megabytes to a bench whose
     # board is not even in fastboot wastes the tunnel and then fails anyway.
-    if not await _device_present(fastboot):
-        await _job_fail(
-            data_ws,
-            "no device is in fastboot on this host — nothing was transferred",
-            code="FASTBOOT_NO_DEVICE",
-        )
+    if spec.needs == "fastboot-device" and not await _device_present(fastboot):
+        await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
         return
 
     await data_ws.send(_job_control({"ev": "accepted", "detail": f"receiving {size} bytes"}))
@@ -1023,12 +1892,12 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
             )
             return
 
-        await _job_progress(data_ws, "flash", 0, 0, f"starting fastboot flash {partition}")
         # argv assembled HERE from vetted pieces — see the section header.
-        rc, out, err = await _run_fastboot(
-            data_ws, [fastboot, "flash", partition, str(tmp_img)], "flash"
-        )
-        await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
+        argv = spec.assemble(values, image=str(tmp_img))
+        shown = " ".join(spec.assemble(values, image="<image>")[1:])
+        await _job_progress(data_ws, "flash", 0, 0, f"starting fastboot {shown}")
+        rc, out, err = await _run_fastboot(data_ws, argv, spec.timeout_s)
+        await _finish_tool(data_ws, spec, rc, out, err)
     finally:
         # Also off-loop: deleting a multi-gigabyte file is not instant, and
         # this runs on the path back out of a job that may have just failed.
@@ -1039,141 +1908,14 @@ async def _job_flash(data_ws: Any, reader: _JobReader, fastboot: str, req: dict[
 
 
 async def _tmp_free_bytes() -> int:
-    """Free bytes where `_job_flash` puts the received image."""
+    """Free bytes where `_run_image_op` puts the received image."""
     usage = await asyncio.to_thread(shutil.disk_usage, tempfile.gettempdir())
     return int(usage.free)
 
 
-async def _job_erase(data_ws: Any, fastboot: str, partition: str) -> None:
-    """`fastboot erase <partition>`。
-
-    跟 flash 用**同一份**分区白名单:擦掉一个分区不比写它需要更多权限 ——
-    flash 本来就会把整个分区换掉。单独再立一份 erase 白名单,只是多一份要跟
-    第一份保持同步的清单,保护的东西没有任何不同。
-    """
-    if not _partition_allowed(partition):
-        await _job_fail(
-            data_ws,
-            f"partition {partition!r} rejected by this agent",
-            code="FLASH_PARTITION_REJECTED",
-        )
-        return
-    if not await _device_present(fastboot):
-        # 跟 flash / reboot / getvar / oem 同一条规矩(ADR-056,`e5fbc46` 的教训)
-        await _job_fail(
-            data_ws,
-            "no device is in fastboot on this host — nothing was erased",
-            code="FASTBOOT_NO_DEVICE",
-        )
-        return
-    await data_ws.send(_job_control({"ev": "accepted", "detail": f"erasing {partition}"}))
-    rc, out, err = await _run_fastboot(data_ws, [fastboot, "erase", partition], "erase")
-    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
-
-
-async def _job_reboot(data_ws: Any, fastboot: str, target: str) -> None:
-    """`fastboot reboot [bootloader]` — the way back out of fastboot, which
-    is the state alb itself can push a board into."""
-    if target and target not in _FASTBOOT_REBOOT_TARGETS:
-        await _job_fail(data_ws, f"unsupported reboot target {target!r}", code="")
-        return
-    if not await _device_present(fastboot):
-        await _job_fail(
-            data_ws,
-            "no device is in fastboot on this host — nothing to reboot",
-            code="FASTBOOT_NO_DEVICE",
-        )
-        return
-    await data_ws.send(_job_control({"ev": "accepted", "detail": "rebooting"}))
-    argv = [fastboot, "reboot"] + ([target] if target else [])
-    rc, out, err = await _run_fastboot(data_ws, argv, "reboot")
-    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
-
-
-async def _job_getvar(data_ws: Any, fastboot: str, name: str) -> None:
-    """`fastboot getvar <name>`(name 为空 = `getvar all`),原样回传。
-
-    ★ 这个函数刻意不解读任何值。`getvar` 这个动词是协议级的、换平台不变,
-    但**值的含义会变**:这台板子对 `partition-size:cfg` 答 `0`,而且是在三次
-    **成功**烧录里都答 0。把 `0` 翻成"分区不存在"就是把 2026-08-10 那次误读
-    做进产品。所以 agent 只负责把设备说的话搬回去。
-
-    fastboot 把 getvar 的结果写在 **stderr**,不是 stdout —— 所以两条都回传,
-    由上层决定显示哪个。这不是猜的:同一个二进制烧录时的 `Writing ... OKAY`
-    也走 stderr,今天的 job.json 里 stdout 一直是空的。
-    """
-    if not _getvar_allowed(name):
-        await _job_fail(data_ws, f"variable name {name!r} rejected", code="FLASH_VAR_REJECTED")
-        return
-    if not await _device_present(fastboot):
-        # 跟 flash / reboot 同一条规矩:板子不在 fastboot 里就别去跑一条注定
-        # 「< waiting for any device >」挂死的命令(ADR-056,`e5fbc46` 的教训)。
-        await _job_fail(
-            data_ws,
-            "no device is in fastboot on this host",
-            code="FASTBOOT_NO_DEVICE",
-        )
-        return
-    await data_ws.send(_job_control({"ev": "accepted", "detail": name or "all"}))
-    argv = [fastboot, "getvar"] + ([name] if name else ["all"])
-    rc, out, err = await _run_fastboot(data_ws, argv, "getvar")
-    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
-
-
-async def _job_oem(data_ws: Any, fastboot: str, command: str) -> None:
-    """`fastboot oem <command>`,命令只能是 `_OEM_COMMANDS` 里的。
-
-    跟 getvar 一样只搬话不解读:锁没锁上,要事后从设备读
-    (`getprop ro.boot.vbmeta.device_state`、串口 `Device is: LOCKED`),
-    不从这条命令的返回值推断 —— fastboot 回 OKAY 只说明设备收下了命令。
-    """
-    if not _oem_allowed(command):
-        await _job_fail(
-            data_ws,
-            f"oem command {command!r} is not on this agent's allowlist",
-            code="FLASH_OEM_REJECTED",
-        )
-        return
-    if not await _device_present(fastboot):
-        # 跟 flash / reboot / getvar 同一条规矩(ADR-056,`e5fbc46` 的教训)
-        await _job_fail(
-            data_ws,
-            "no device is in fastboot on this host",
-            code="FASTBOOT_NO_DEVICE",
-        )
-        return
-    await data_ws.send(_job_control({"ev": "accepted", "detail": command}))
-    rc, out, err = await _run_fastboot(data_ws, [fastboot, "oem", command], "oem")
-    await _job_finish(data_ws, rc, out, err, fail_code="FLASH_FAILED")
-
-
-async def _job_devices(data_ws: Any, fastboot: str) -> None:
-    """`fastboot devices` — the only way to see a board that is in fastboot,
-    since it has vanished from adb by then."""
-    await data_ws.send(_job_control({"ev": "accepted", "detail": "listing"}))
-    rc, out, err = await _run_fastboot(data_ws, [fastboot, "devices"], "devices")
-    # An empty listing exits 0 — that is fastboot saying "nothing is here",
-    # not "the query worked". Reporting it as success would send the caller
-    # on to flash a device that is not in fastboot at all.
-    listed = bool(out.strip())
-    await _job_finish(
-        data_ws,
-        rc,
-        out,
-        err,
-        fail_code="FASTBOOT_NO_DEVICE" if rc == 0 else "FLASH_FAILED",
-        ok_override=rc == 0 and listed,
-        # Say what was observed. The generic fallback ("fastboot failed") is
-        # right for a tool that crashed with no output, and useless here —
-        # this path knows exactly what happened: the query worked, the list
-        # was empty.
-        fail_error=(
-            "fastboot ran but listed no devices — the board is not in fastboot" if rc == 0 else ""
-        ),
-    )
-
-
-async def _run_fastboot(data_ws: Any, argv: list[str], op: str = "") -> tuple[int, str, str]:
+async def _run_fastboot(
+    data_ws: Any, argv: list[str], timeout_s: float = 300.0
+) -> tuple[int, str, str]:
     """Run fastboot, relaying its stderr as progress while it works.
 
     fastboot writes its own progress to stderr, so relaying it is what makes
@@ -1183,7 +1925,6 @@ async def _run_fastboot(data_ws: Any, argv: list[str], op: str = "") -> tuple[in
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    timeout = _FASTBOOT_TIMEOUT_S.get(op, 300.0)
     out_chunks: list[bytes] = []
     err_chunks: list[bytes] = []
 
@@ -1205,7 +1946,7 @@ async def _run_fastboot(data_ws: Any, argv: list[str], op: str = "") -> tuple[in
                 pump(proc.stdout, out_chunks, False),
                 pump(proc.stderr, err_chunks, True),
             ),
-            timeout,
+            timeout_s,
         )
         rc = await proc.wait()
     except TimeoutError:
@@ -1213,15 +1954,17 @@ async def _run_fastboot(data_ws: Any, argv: list[str], op: str = "") -> tuple[in
         # Kill, do not just abandon: an orphaned fastboot keeps holding the
         # USB interface and the next job would fail for a reason that has
         # nothing to do with it.
-        with contextlib.suppress(ProcessLookupError, OSError):
-            proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
+        await _reap(proc)
         rc = -1
+    except BaseException:
+        # Cancelled (agent stopping, session dropped): same reasoning, and
+        # here fastboot may be halfway through writing a partition.
+        await _reap(proc)
+        raise
     out = b"".join(out_chunks).decode("utf-8", errors="replace")
     err = b"".join(err_chunks).decode("utf-8", errors="replace")
     if timed_out:
-        err = (err + f"\n[agent] killed after {timeout:.0f}s").strip()
+        err = (err + f"\n[agent] killed after {timeout_s:.0f}s").strip()
     return rc, out, err
 
 
@@ -1234,24 +1977,24 @@ async def _job_finish(
     fail_code: str,
     ok_override: bool | None = None,
     fail_error: str = "",
+    data: dict[str, Any] | None = None,
 ) -> None:
     ok = (rc == 0) if ok_override is None else ok_override
+    msg: dict[str, Any] = {
+        "ev": "done",
+        "ok": ok,
+        "rc": rc,
+        "stdout": out[-_JOB_OUTPUT_CAP:],
+        "stderr": err[-_JOB_OUTPUT_CAP:],
+        "error": "" if ok else (fail_error or err.strip() or out.strip() or "fastboot failed"),
+        "code": "" if ok else fail_code,
+    }
+    # Only builtins have structured results; the frame of every other op
+    # stays byte-for-byte what it was.
+    if data is not None:
+        msg["data"] = data
     with contextlib.suppress(Exception):
-        await data_ws.send(
-            _job_control(
-                {
-                    "ev": "done",
-                    "ok": ok,
-                    "rc": rc,
-                    "stdout": out[-_JOB_OUTPUT_CAP:],
-                    "stderr": err[-_JOB_OUTPUT_CAP:],
-                    "error": ""
-                    if ok
-                    else (fail_error or err.strip() or out.strip() or "fastboot failed"),
-                    "code": "" if ok else fail_code,
-                }
-            )
-        )
+        await data_ws.send(_job_control(msg))
 
 
 # ── signaling connection ─────────────────────────────────────────────
@@ -1722,6 +2465,9 @@ def _setup_file_logging(log_file: str) -> None:
         return
     handler.setFormatter(logging.Formatter(_LOG_FORMAT))
     logging.getLogger().addHandler(handler)
+    # Remember where it went: `log-tail agent` reads exactly this file.
+    global _AGENT_LOG_PATH
+    _AGENT_LOG_PATH = path
     _log.info("logging to %s", path)
 
 
@@ -1760,6 +2506,7 @@ def _log_environment(args: argparse.Namespace) -> None:
             "fastboot: not found — this agent will NOT advertise the fastboot "
             "capability (set fastboot_path in agent.conf to enable flashing)"
         )
+    _log.info("ops: %s", ", ".join(_OPS) if _OPS else "none")
     ports = _enumerate_com()
     _log.info(
         "serial ports here: %s",
@@ -1768,14 +2515,20 @@ def _log_environment(args: argparse.Namespace) -> None:
 
 
 def _apply_flash_config(args: argparse.Namespace) -> None:
-    """Resolve the flash settings once, before anything can use them.
+    """Resolve the flash settings and build the op table once, before
+    anything can use them.
 
     Runs before the first `hello`, because the resolved path is what decides
-    whether this agent claims the `fastboot` capability at all."""
-    global _FASTBOOT_PATH, _FLASH_PARTITIONS
+    whether this agent claims the `fastboot` capability at all — and which
+    rows the hello's op table carries."""
+    global _FASTBOOT_PATH, _FLASH_PARTITIONS, _OPS
     _FASTBOOT_PATH = _resolve_fastboot(getattr(args, "fastboot_path", None) or "")
     raw = (getattr(args, "flash_partitions", None) or "").strip()
     _FLASH_PARTITIONS = frozenset(p.strip() for p in raw.split(",") if p.strip())
+    # The op table follows from the same resolution (ADR-059): fastboot rows
+    # only when the tool resolved, log-tail sources from what is configured.
+    _OPS = _build_ops(_FASTBOOT_PATH, _log_sources())
+    _STATUS.set_ops(list(_OPS))
 
 
 def main() -> None:

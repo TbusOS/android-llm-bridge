@@ -111,9 +111,12 @@ def _run_job(
     path: str,
     payload: dict[str, Any] | None = None,
     render: Any = None,
+    *,
+    base: str = "/api/flash",
 ) -> dict[str, Any]:
-    """POST and consume the NDJSON stream; return the terminal `done` frame."""
-    url = f"{hub_url()}/api/flash/{path}"
+    """POST and consume the NDJSON stream; return the terminal `done` frame.
+    `base` lets `alb bench` reuse this for /api/bench/ops/<op>."""
+    url = f"{hub_url()}{base}/{path}"
     render = render or _render_progress
     state: dict[str, Any] = {}
     final: dict[str, Any] = {}

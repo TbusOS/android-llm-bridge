@@ -29,6 +29,7 @@ from alb.api.diag_route import router as diag_router
 from alb.api.doctor_route import router as doctor_router
 from alb.api.files_route import router as files_router
 from alb.api.board_config_route import router as board_config_router
+from alb.api.bench_route import router as bench_router
 from alb.api.flash_route import router as flash_router
 from alb.api.info_route import router as info_router
 from alb.api.log_search_route import router as log_search_router
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
     app.include_router(files_router)
     app.include_router(board_config_router)
     app.include_router(flash_router)
+    app.include_router(bench_router)
     app.include_router(info_router)
     app.include_router(log_search_router)
     app.include_router(metrics_router)

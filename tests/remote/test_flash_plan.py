@@ -23,6 +23,7 @@ from alb.remote.flash_plan import (
     parse_manifest,
 )
 from alb.remote.protocol import LEGACY_FLASH_MAX_BYTES
+from tests.remote.bench_tables import new_agent_ops
 
 MANIFEST = """\
 tool setvar model model-x
@@ -36,9 +37,8 @@ tool erase misc
 tool reboot
 """
 
-FULL_AGENT = AgentView(
-    caps=["adb", "fastboot", "fastboot-erase", "fastboot-large-image"], partitions=[]
-)
+# A current agent: reports its op table, erase included, no image ceiling.
+FULL_AGENT = AgentView(caps=["adb", "fastboot"], partitions=[], ops=new_agent_ops())
 
 
 def _package(root: Path, text: str = MANIFEST) -> Path:
@@ -183,7 +183,11 @@ def test_no_agent_is_a_problem():
 def test_partitions_off_the_agent_allowlist_are_named_with_their_lines():
     rows = _running(MANIFEST)
     apply_skips(rows, [], ["setvar"])
-    agent = AgentView(caps=FULL_AGENT.caps, partitions=["boot_a", "boot_b", "loader_a", "loader_b"])
+    agent = AgentView(
+        caps=FULL_AGENT.caps,
+        partitions=["boot_a", "boot_b", "loader_a", "loader_b"],
+        ops=FULL_AGENT.ops,
+    )
     problems = check_agent(rows, agent)
     assert len(problems) == 1
     assert "super (line 7)" in problems[0] and "misc (line 8)" in problems[0]
@@ -193,11 +197,14 @@ def test_partitions_off_the_agent_allowlist_are_named_with_their_lines():
 def test_skipped_rows_do_not_need_to_be_allowed():
     rows = _running("tool flash loader_a loader.elf\ntool flash boot_a boot.img\n")
     apply_skips(rows, ["loader_a"], [])
-    assert check_agent(rows, AgentView(caps=FULL_AGENT.caps, partitions=["boot_a"])) == []
+    agent = AgentView(caps=FULL_AGENT.caps, partitions=["boot_a"], ops=FULL_AGENT.ops)
+    assert check_agent(rows, agent) == []
 
 
 def test_an_agent_too_old_to_erase_is_refused_before_the_first_row():
     rows = _running("tool flash boot_a boot.img\ntool erase misc\n")
+    # An agent from before the op table: its table is inferred from caps and
+    # has no erase.
     problems = check_agent(rows, AgentView(caps=["adb", "fastboot"], partitions=[]))
     assert len(problems) == 1 and "too old to erase (line 2)" in problems[0]
 
@@ -205,7 +212,7 @@ def test_an_agent_too_old_to_erase_is_refused_before_the_first_row():
 def test_an_agent_with_the_old_size_ceiling_is_refused_for_a_large_image():
     rows = _running("tool flash super super.img\n")
     rows[0].size = LEGACY_FLASH_MAX_BYTES + 1
-    old = AgentView(caps=["adb", "fastboot", "fastboot-erase"], partitions=[])
+    old = AgentView(caps=["adb", "fastboot"], partitions=[])  # pre-table: 2 GiB ceiling
     assert any("refuses images over" in p for p in check_agent(rows, old))
     assert check_agent(rows, FULL_AGENT) == []
 

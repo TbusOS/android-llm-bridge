@@ -183,6 +183,16 @@ CAPABILITIES: list[CapabilitySpec] = [
         status="beta",
         description="APK management.",
     ),
+    CapabilitySpec(
+        name="bench",
+        impl_path="alb.remote.bench_ops",
+        cli_command="alb bench ops / run / usb / log",
+        mcp_tools=[],
+        supported_transports=[],
+        status="beta",
+        description="Ops the remote bench agent reports in its op table: fastboot, the "
+        "host's USB listing with board modes, host-side logs (ADR-059).",
+    ),
     # M2+ 规划
     CapabilitySpec(
         name="perf",
@@ -196,7 +206,9 @@ CAPABILITIES: list[CapabilitySpec] = [
     CapabilitySpec(
         name="benchmark",
         impl_path="alb.capabilities.benchmark",
-        cli_command="alb bench",
+        # `alb bench` is the bench HOST (the agent machine, ADR-059); a
+        # benchmark command, when it exists, takes the longer name.
+        cli_command="alb benchmark",
         mcp_tools=["alb_bench_run", "alb_bench_report"],
         supported_transports=["adb"],
         status="planned",

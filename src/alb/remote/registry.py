@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from alb.remote import protocol
+from alb.remote.bench_ops import OpSpec, legacy_ops
 from alb.remote.protocol import ChannelRole, ChannelType
 
 
@@ -84,6 +85,7 @@ class AgentConnection:
         send_control: SendControl,
         registry: AgentRegistry,
         flash_partitions: list[str] | None = None,
+        ops: dict[str, OpSpec] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
@@ -94,6 +96,11 @@ class AgentConnection:
         # Callers must not read empty as "nothing allowed" — see the web
         # partition picker, which falls back to a generic list in that case.
         self.flash_partitions: list[str] = list(flash_partitions or [])
+        # The agent's op table (ADR-059). An agent from before the table sends
+        # none; it then gets one inferred from its caps, and `ops_reported`
+        # stays False so status pages can say the table is a guess.
+        self.ops_reported = ops is not None
+        self.op_table: dict[str, OpSpec] = ops if ops is not None else legacy_ops(caps)
         self._send_control = send_control
         self._registry = registry
         self.epoch = 0
@@ -208,6 +215,8 @@ class AgentRegistry:
                 "version": c.version,
                 "caps": c.caps,
                 "flash_partitions": c.flash_partitions,
+                "ops": sorted(c.op_table),
+                "ops_reported": c.ops_reported,
                 "adb_devices": c.adb_devices,
                 "adb_conflicts": c.adb_conflicts,
                 "com_ports": c.com_ports,

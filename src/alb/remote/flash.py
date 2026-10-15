@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from alb.remote.bench_ops import OpSpec, check_params, legacy_ops, ops_of
 from alb.remote.flash_plan import AgentView, Plan, PlanResult, PlanRow
 from alb.remote.jobframe import FrameReader, JobProtocolError, encode_control, encode_data
 from alb.remote.protocol import (
@@ -48,8 +49,7 @@ from alb.remote.protocol import (
     job_devices,
     job_erase,
     job_flash,
-    job_getvar,
-    job_oem,
+    job_op,
     job_reboot,
 )
 from alb.remote.registry import DataChannel
@@ -108,6 +108,8 @@ class FlashResult:
     events: list[FlashEvent] = field(default_factory=list)
     # Where the timeline + raw UART landed. Empty when nothing was recorded.
     artifacts: str = ""
+    # Structured answer from ops whose result is not tool output (usb-list).
+    data: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +121,7 @@ class FlashResult:
             "stderr": self.stderr,
             "duration_s": round(self.duration_s, 3),
             "artifacts": self.artifacts,
+            "data": self.data,
         }
 
 
@@ -140,6 +143,37 @@ def _as_int(value: object, default: int) -> int:
 
 def _fail(code: str, error: str) -> FlashResult:
     return FlashResult(ok=False, code=code, error=error)
+
+
+def _label(name: str, values: dict[str, Any]) -> str:
+    """`erase misc`, `set-active b`, `log-tail agent 200` — the op and its
+    values in order, for the busy message and the timeline directory."""
+    shown = [str(v) for v in values.values() if v not in ("", None)]
+    return " ".join([name, *shown])
+
+
+def _unknown_op(agent: Any, name: str, table: dict[str, OpSpec]) -> FlashResult:
+    """Why an op is not in the table, worded for the fix.
+
+    An agent from before the table gets one inferred from its caps, so a
+    missing op there usually means "update the agent", not "no such op"."""
+    caps = list(getattr(agent, "caps", []) or [])
+    if not getattr(agent, "ops_reported", False):
+        if name in legacy_ops([CAP_FASTBOOT]) and CAP_FASTBOOT not in caps:
+            return _fail(
+                "FASTBOOT_UNAVAILABLE",
+                f"agent {agent.agent_id} does not advertise the fastboot capability",
+            )
+        return _fail(
+            "BENCH_AGENT_TOO_OLD",
+            f"agent {agent.agent_id} predates the op table and cannot run {name!r} — "
+            "update alb_agent.py on the agent host",
+        )
+    offered = ", ".join(sorted(table)) or "nothing"
+    note = "" if CAP_FASTBOOT in caps else " (it has no fastboot executable, so no fastboot ops)"
+    return _fail(
+        "BENCH_OP_UNKNOWN", f"agent {agent.agent_id} has no op {name!r}{note}; it offers: {offered}"
+    )
 
 
 async def digest_file(path: Path) -> tuple[int, str]:
@@ -209,7 +243,25 @@ class FlashService:
         agent = self._get_agent()
         if agent is None:
             return None
-        return AgentView(caps=list(getattr(agent, "caps", []) or []), partitions=self.partitions())
+        return AgentView(
+            caps=list(getattr(agent, "caps", []) or []),
+            partitions=self.partitions(),
+            ops=ops_of(agent),
+        )
+
+    def ops(self) -> dict[str, OpSpec]:
+        """The connected agent's op table (inferred from caps for an agent
+        from before the table). Empty when no agent is connected."""
+        return ops_of(self._get_agent())
+
+    def ops_reported(self) -> bool:
+        return bool(getattr(self._get_agent(), "ops_reported", False))
+
+    def agent_summary(self) -> dict[str, str] | None:
+        agent = self._get_agent()
+        if agent is None:
+            return None
+        return {"id": str(agent.agent_id), "name": str(getattr(agent, "name", "") or "")}
 
     def status(self) -> dict[str, Any]:
         return {
@@ -220,56 +272,118 @@ class FlashService:
         }
 
     # ── operations ───────────────────────────────────────────────────
+    #
+    # Every op goes through run_op (ADR-059 决定 3). The named methods below
+    # are the pre-table vocabulary, kept because the CLI, the web and the
+    # tests speak it; each is one line onto the generic path.
+
+    async def run_op(
+        self,
+        name: str,
+        params: dict[str, Any] | None = None,
+        *,
+        image: Path | None = None,
+        label: str = "",
+        on_event: EventSink | None = None,
+    ) -> FlashResult:
+        """Run one op from the connected agent's table.
+
+        Everything the hub decides is read from the table row: whether the
+        values have the right shape, whether an image goes first, whether the
+        single job lock is needed, what gets recorded. The agent re-checks the
+        values and builds the argv; nothing here names a path or a command.
+        """
+        agent = self._get_agent()
+        if agent is None:
+            return _fail("FASTBOOT_UNAVAILABLE", "no agent connected")
+        table = ops_of(agent)
+        spec = table.get(name)
+        if spec is None:
+            return _unknown_op(agent, name, table)
+        allowlist = list(getattr(agent, "flash_partitions", []) or [])
+        values, code, problem = check_params(spec, dict(params or {}), allowlist)
+        if problem:
+            return _fail(code, problem)
+        if spec.image and image is None:
+            return _fail("BENCH_PARAM_REJECTED", f"{name} needs an image")
+        if not spec.image and image is not None:
+            return _fail("BENCH_PARAM_REJECTED", f"{name} does not take an image")
+
+        size: int | None = None
+        sha = ""
+        after_request: Callable[[DataChannel], Any] | None = None
+        if image is not None:
+            try:
+                size, sha = await digest_file(image)
+            except OSError as e:
+                return _fail("FLASH_IMAGE_CORRUPT", f"cannot read {image}: {e}")
+            if size == 0:
+                return _fail("FLASH_IMAGE_CORRUPT", f"{image} is empty")
+            if spec.max_image_bytes and size > spec.max_image_bytes:
+                code = "FLASH_AGENT_NO_SPACE"
+                if not getattr(agent, "ops_reported", False):
+                    code = "BENCH_AGENT_TOO_OLD"
+                return _fail(
+                    code,
+                    f"the agent refuses images over {spec.max_image_bytes} bytes "
+                    f"({image} is {size}) — update alb_agent.py on the agent host",
+                )
+            src = image
+
+            async def send_image(channel: DataChannel) -> None:
+                await _stream_file(channel, src)
+
+            after_request = send_image
+
+        request = job_op(name, values, size=size, sha256=sha) if image else job_op(name, values)
+        result = await self._run(
+            label=label or _label(name, values),
+            request=request,
+            on_event=on_event,
+            after_request=after_request,
+            record=spec.record != "none",
+            watch_uart=spec.record == "uart",
+            exclusive=spec.exclusive,
+            need_fastboot=spec.group == "fastboot" or spec.needs == "fastboot-device",
+        )
+        if name == "usb-list" and result.ok:
+            from alb.remote.usb_modes import annotate
+
+            result.data = annotate(result.data)
+        return result
 
     async def flash(
         self, partition: str, image: Path, *, on_event: EventSink | None = None
     ) -> FlashResult:
         """Stream `image` to the agent and have it flash `partition`."""
-        try:
-            size, sha = await digest_file(image)
-        except OSError as e:
-            return _fail("FLASH_IMAGE_CORRUPT", f"cannot read {image}: {e}")
-        if size == 0:
-            return _fail("FLASH_IMAGE_CORRUPT", f"{image} is empty")
-
-        async def send_image(channel: DataChannel) -> None:
-            await _stream_file(channel, image)
-
-        return await self._run(
+        return await self.run_op(
+            "flash",
+            {"partition": partition},
+            image=image,
             label=f"flash {partition}",
-            request=job_flash(partition=partition, size=size, sha256=sha),
             on_event=on_event,
-            after_request=send_image,
         )
 
     async def reboot(self, target: str = "", *, on_event: EventSink | None = None) -> FlashResult:
         """`fastboot reboot [target]`. With no target this is the way back to
         the system — the direct remedy for a board alb itself pushed into
-        fastboot and could not previously get out of."""
-        return await self._run(
-            label=f"reboot {target or 'normal'}",
-            request=job_reboot(target=target),
-            on_event=on_event,
-            # No UART: the command returns in ~0.1 s, long before the board
-            # has said anything worth correlating. The boot log people
-            # actually want arrives afterwards and belongs to a capture.
-            watch_uart=False,
+        fastboot and could not previously get out of. Records events but no
+        UART: the command returns in ~0.1 s, long before the board has said
+        anything worth correlating; the boot log belongs to a capture."""
+        return await self.run_op(
+            "reboot", {"target": target}, label=f"reboot {target or 'normal'}", on_event=on_event
         )
 
     async def devices(self, *, on_event: EventSink | None = None) -> FlashResult:
         """`fastboot devices` on the agent host — a board in fastboot has
-        vanished from adb, so this is the only way to see it."""
-        return await self._run(
-            label="devices",
-            request=job_devices(),
-            on_event=on_event,
-            # Records nothing: a ~60 ms query whose whole answer is its return
-            # value, and the op most likely to be POLLED. Recording used to
-            # mean opening the board's PHYSICAL serial port on every single
-            # call — a poll loop of these wedged a live agent (keepalive ping
-            # timeout, 2026-08-10).
-            record=False,
-        )
+        vanished from adb, so this is the only way to see it.
+
+        Records nothing: a ~60 ms query whose whole answer is its return
+        value, and the op most likely to be POLLED. Recording used to mean
+        opening the board's PHYSICAL serial port on every single call — a poll
+        loop of these wedged a live agent (keepalive ping timeout, 2026-08-10).
+        """
+        return await self.run_op("devices", {}, label="devices", on_event=on_event)
 
     async def getvar(self, name: str = "", *, on_event: EventSink | None = None) -> FlashResult:
         """`fastboot getvar <name>` (empty = `getvar all`), answer passed
@@ -280,33 +394,16 @@ class FlashService:
         this bench answers `partition-size:cfg` with `0` on flashes that
         succeed. Turning that into "the partition is missing" would ship the
         misreading that cost a day on 2026-08-10, so nothing here parses the
-        output.
-
-        Same tier as `devices` (ADR-056 / afe8052): a fast query, recorded
-        nowhere and with no UART attached — recording means opening the
-        board's physical serial port, which is far too much for a question.
+        output. Recorded nowhere, no UART — same tier as `devices`.
         """
-        return await self._run(
-            label="getvar",
-            request=job_getvar(name=name),
-            on_event=on_event,
-            record=False,
-        )
+        return await self.run_op("getvar", {"name": name}, label="getvar", on_event=on_event)
 
     async def oem(self, command: str, *, on_event: EventSink | None = None) -> FlashResult:
         """`fastboot oem <command>`; the agent refuses anything off its
-        allowlist (see `job_oem`).
-
-        Recorded like `reboot`, because it changes the device and a later
-        "why is this board locked" deserves a timeline entry. No UART: the
-        command returns in well under a second, and the boot log that shows
-        whether the lock took arrives on the next boot, in a capture.
-        """
-        return await self._run(
-            label=f"oem {command}",
-            request=job_oem(command=command),
-            on_event=on_event,
-            watch_uart=False,
+        allowlist. Recorded like `reboot`, because it changes the device and a
+        later "why is this board locked" deserves a timeline entry."""
+        return await self.run_op(
+            "oem", {"command": command}, label=f"oem {command}", on_event=on_event
         )
 
     # ── plumbing ─────────────────────────────────────────────────────
@@ -462,17 +559,21 @@ class FlashService:
             return False
         return outcome.ok
 
-    def _refusal(self) -> FlashResult | None:
-        """Why a job cannot start right now, or None."""
-        if not self.available():
-            agent = self._get_agent()
-            if agent is None:
-                return _fail("FASTBOOT_UNAVAILABLE", "no agent connected")
+    def _refusal(self, *, need_fastboot: bool = True, exclusive: bool = True) -> FlashResult | None:
+        """Why a job cannot start right now, or None.
+
+        A host-only op (the USB listing, a Windows log) needs an agent but
+        not fastboot, and is not exclusive: it must answer during a
+        30-minute flash — that is often exactly when it is wanted."""
+        agent = self._get_agent()
+        if agent is None:
+            return _fail("FASTBOOT_UNAVAILABLE", "no agent connected")
+        if need_fastboot and not self.available():
             return _fail(
                 "FASTBOOT_UNAVAILABLE",
                 f"agent {agent.agent_id} does not advertise the fastboot capability",
             )
-        if self._lock.locked():
+        if exclusive and self._lock.locked():
             # Refuse NOW rather than await the lock: see the module docstring.
             return _fail("FASTBOOT_BUSY", f"another job is running ({self._current})")
         return None
@@ -486,10 +587,16 @@ class FlashService:
         after_request: Callable[[DataChannel], Any] | None = None,
         record: bool = True,
         watch_uart: bool = True,
+        exclusive: bool = True,
+        need_fastboot: bool = True,
     ) -> FlashResult:
-        refused = self._refusal()
+        refused = self._refusal(need_fastboot=need_fastboot, exclusive=exclusive)
         if refused is not None:
             return refused
+        if not exclusive:
+            return await self._run_unlocked(
+                label, request, on_event, after_request, record, watch_uart
+            )
 
         async with self._lock:
             self._current = label
@@ -504,6 +611,25 @@ class FlashService:
                 if timeline is not None:
                     await timeline.aclose()
                 _log.info("flash job %r finished in %.1fs", label, time.monotonic() - started)
+
+    async def _run_unlocked(
+        self,
+        label: str,
+        request: dict[str, Any],
+        on_event: EventSink | None,
+        after_request: Callable[[DataChannel], Any] | None,
+        record: bool,
+        watch_uart: bool,
+    ) -> FlashResult:
+        """A non-exclusive op: same channel, same recording rules, no lock —
+        and therefore no `current` label, which names the one exclusive job."""
+        timeline = await _open_timeline(label, request, enabled=record, watch_uart=watch_uart)
+        sink = _tee(on_event, timeline)
+        try:
+            return _finish(await self._step(request, sink, after_request, label=label), timeline)
+        finally:
+            if timeline is not None:
+                await timeline.aclose()
 
     async def _step(
         self,
@@ -539,7 +665,10 @@ class FlashService:
         channel = await agent.open_data_channel(
             ctype=ChannelType.JOB,
             role=ChannelRole.JOB,
-            params={},
+            # The op name rides the open request so the agent can refuse a
+            # busy / unsupported job BEFORE dialling back (ADR-059 §5 of the
+            # contract); the request frame that follows is still the authority.
+            params={"op": str(request.get("op") or "")},
             timeout=DIAL_BACK_TIMEOUT_S,
         )
         try:
@@ -611,6 +740,7 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
                 stderr=str(msg.get("stderr") or ""),
                 duration_s=time.monotonic() - started,
                 events=events,
+                data=msg["data"] if isinstance(msg.get("data"), dict) else {},
             )
         # ACCEPTED and anything unknown: ignore. A forward-compatible agent
         # may add events; refusing to proceed on an unrecognised one would

@@ -101,6 +101,37 @@ ALB_AGENT_SERIAL_COM=COM27 ALB_AGENT_SERIAL_BAUD=1500000 alb-api
 For the full end-to-end bring-up + verification + troubleshooting, see
 `docs/dial-home-runbook.md`.
 
+## Bench ops (the op table)
+
+On connect (`hello`) the agent reports an **op table**: every operation this
+host can run, with its parameter rules, whether it needs the device to be in
+fastboot, whether it changes the device, whether it needs the single job
+lock, and its timeout. The hub's CLI and web page drive the rows as given,
+so a new op on the agent needs no hub code.
+
+| op | what | needs a device in fastboot |
+|---|---|---|
+| `devices` / `getvar` / `oem` / `reboot` / `flash` | the existing fastboot ops, unchanged | yes |
+| `erase` | `fastboot erase <partition>`; same allowlist as `flash` (`flash_partitions`) | yes |
+| `set-active` | `fastboot set_active a` or `b` | yes |
+| `boot` | `fastboot boot <image>`: runs from RAM, writes no partition | yes |
+| `usb-list` | USB devices as Windows sees them: name, VID:PID, serial, driver, problem code, interface class ids — tells "cable not on this machine" from "driver missing" when `fastboot devices` is empty | no |
+| `log-tail` | last N lines of a host log, optional substring filter. Sources are names only: `agent` (this agent's own log, when `log_file` is set) and `setupapi` (Windows' driver-install log) | no |
+
+Two rules do not change:
+
+- The hub sends structured fields only — never a command line, never a
+  path. argv is assembled here from a fixed template after every parameter
+  is validated (partition shape + allowlist, enum values matched exactly,
+  integers bounded).
+- `usb-list` and `log-tail` read this host only and never take the job
+  lock, so they answer during a running flash. fastboot ops run one at a
+  time; a second one is refused at once, not queued.
+
+Without a fastboot executable the table holds only `usb-list` / `log-tail`,
+and the hub tells callers this bench cannot flash. The status page lists the
+table on its `ops` row.
+
 ## Security
 
 - The agent only ever proxies an **allowlisted** local target

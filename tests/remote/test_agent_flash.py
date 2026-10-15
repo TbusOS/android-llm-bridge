@@ -3,6 +3,11 @@
 Focus is the security boundary and the refuse-before-writing rule — the two
 places where a mistake is expensive rather than annoying: the agent assembles
 its own argv, and it never invokes fastboot on an image it has not verified.
+
+Since ADR-059 every op is a row in one table and runs through one dispatcher
+(`_run_job`); requests here are built the way the hub sends them. The table
+itself (kinds, placeholders, builtins, the lock rule) is pinned in
+test_agent_ops.py.
 """
 
 from __future__ import annotations
@@ -65,6 +70,16 @@ class _FakeWs:
         msgs = self.events("done")
         assert msgs, f"no done frame; got {self.sent}"
         return msgs[-1]
+
+
+def _req(**fields) -> bytes:
+    """A job request as the hub sends it: one control frame, flat fields."""
+    return _frame(b"C", json.dumps(fields).encode())
+
+
+def _ops(fastboot: str = "/opt/fastboot"):
+    """The op table for a bench whose fastboot lives at `fastboot` (ADR-059)."""
+    return agent._build_ops(fastboot)
 
 
 # ── partition names are argv elements, so the shape check is a control ──
@@ -143,9 +158,7 @@ async def _run_flash(ws, monkeypatch, *, fastboot="/nonexistent/fastboot", prese
     # Default to "a device is there" so each test exercises the path it names;
     # the no-device path has its own tests below.
     monkeypatch.setattr(agent, "_device_present", fake_present)
-    reader = agent._JobReader(ws)
-    req = await reader.read_control()
-    await agent._job_flash(ws, reader, fastboot, req)
+    await agent._run_job(ws, _ops(fastboot))
     return ran
 
 
@@ -230,13 +243,13 @@ async def test_reboot_target_allowlist(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", yes)
-    ws = _FakeWs(b"")
-    await agent._job_reboot(ws, "/opt/fastboot", "definitely-not-a-mode")
+    ws = _FakeWs(_req(op="reboot", target="definitely-not-a-mode"))
+    await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["ok"] is False
 
-    ws2 = _FakeWs(b"")
-    await agent._job_reboot(ws2, "/opt/fastboot", "")
+    ws2 = _FakeWs(_req(op="reboot", target=""))
+    await agent._run_job(ws2, _ops())
     assert ran == [["/opt/fastboot", "reboot"]]  # plain reboot = back to system
     assert ws2.done()["ok"] is True
 
@@ -249,8 +262,8 @@ async def test_devices_with_no_output_reports_no_device(monkeypatch):
         return 0, "   \n", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
-    ws = _FakeWs(b"")
-    await agent._job_devices(ws, "/opt/fastboot")
+    ws = _FakeWs(_req(op="devices"))
+    await agent._run_job(ws, _ops())
     assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
 
 
@@ -259,8 +272,8 @@ async def test_devices_with_a_listing_is_success(monkeypatch):
         return 0, "2870000540\tfastboot\n", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
-    ws = _FakeWs(b"")
-    await agent._job_devices(ws, "/opt/fastboot")
+    ws = _FakeWs(_req(op="devices"))
+    await agent._run_job(ws, _ops())
     done = ws.done()
     assert done["ok"] is True
     assert done["code"] == ""
@@ -288,8 +301,8 @@ async def test_reboot_refuses_when_no_device_is_in_fastboot(monkeypatch):
         return False
 
     monkeypatch.setattr(agent, "_device_present", no_device)
-    ws = _FakeWs(b"")
-    await agent._job_reboot(ws, "/opt/fastboot", "")
+    ws = _FakeWs(_req(op="reboot", target=""))
+    await agent._run_job(ws, _ops())
     assert ran == [], "must not invoke a command that would block"
     done = ws.done()
     assert done["code"] == "FASTBOOT_NO_DEVICE"
@@ -340,22 +353,18 @@ async def test_flash_proceeds_when_a_device_is_present(monkeypatch):
 
 
 def test_every_op_has_a_timeout():
-    """A missing entry silently falls back to 300 s — long enough for a
-    'waiting for device' hang to look like a working command."""
-    assert set(agent._FASTBOOT_TIMEOUT_S) == {
-        "devices",
-        "getvar",
-        "reboot",
-        "flash",
-        "oem",
-        "erase",
-    }
+    """A row without a ceiling would let a 'waiting for device' hang look
+    like a working command until the hub's 30-minute timeout."""
+    ops = _ops()
+    assert {"devices", "getvar", "reboot", "flash", "oem", "erase"} <= set(ops)
+    for spec in ops.values():
+        assert spec.timeout_s > 0, spec.name
     # a query must answer promptly; a partition write may legitimately take minutes
-    assert agent._FASTBOOT_TIMEOUT_S["devices"] < agent._FASTBOOT_TIMEOUT_S["flash"]
+    assert ops["devices"].timeout_s < ops["flash"].timeout_s
     # getvar is a query like devices, not a write — same tier
-    assert agent._FASTBOOT_TIMEOUT_S["getvar"] == agent._FASTBOOT_TIMEOUT_S["devices"]
+    assert ops["getvar"].timeout_s == ops["devices"].timeout_s
     # oem writes one small state item, not a partition: short, like reboot
-    assert agent._FASTBOOT_TIMEOUT_S["oem"] <= agent._FASTBOOT_TIMEOUT_S["reboot"]
+    assert ops["oem"].timeout_s <= ops["reboot"].timeout_s
 
 
 # ── getvar: transport only, and the same refuse-early rules ─────────────
@@ -406,8 +415,8 @@ async def test_getvar_refuses_when_no_device_is_in_fastboot(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", no_device)
-    ws = _FakeWs(b"")
-    await agent._job_getvar(ws, "/opt/fastboot", "all")
+    ws = _FakeWs(_req(op="getvar", name="all"))
+    await agent._run_job(ws, _ops())
     assert ran == [], "must not run a command that would block on 'waiting for any device'"
     assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
 
@@ -427,8 +436,8 @@ async def test_getvar_argv_and_passthrough(monkeypatch):
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", yes)
 
-    ws = _FakeWs(b"")
-    await agent._job_getvar(ws, "/opt/fastboot", "partition-size:cfg")
+    ws = _FakeWs(_req(op="getvar", name="partition-size:cfg"))
+    await agent._run_job(ws, _ops())
     assert ran == [["/opt/fastboot", "getvar", "partition-size:cfg"]]
     done = ws.done()
     assert done["ok"] is True
@@ -436,8 +445,8 @@ async def test_getvar_argv_and_passthrough(monkeypatch):
     # a day on 2026-08-10 — this bench answers 0 on flashes that SUCCEED.
     assert "0x0" in done["stderr"]
 
-    ws2 = _FakeWs(b"")
-    await agent._job_getvar(ws2, "/opt/fastboot", "")
+    ws2 = _FakeWs(_req(op="getvar", name=""))
+    await agent._run_job(ws2, _ops())
     assert ran[-1] == ["/opt/fastboot", "getvar", "all"], "empty name means `getvar all`"
 
 
@@ -449,8 +458,8 @@ async def test_getvar_rejects_a_malformed_name_without_running_anything(monkeypa
         return 0, "", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
-    ws = _FakeWs(b"")
-    await agent._job_getvar(ws, "/opt/fastboot", "-w")
+    ws = _FakeWs(_req(op="getvar", name="-w"))
+    await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["code"] == "FLASH_VAR_REJECTED"
 
@@ -504,8 +513,8 @@ async def test_oem_rejects_an_unlisted_command_without_running_anything(monkeypa
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", yes)
-    ws = _FakeWs(b"")
-    await agent._job_oem(ws, "/opt/fastboot", "at-disable-unlock-vboot")
+    ws = _FakeWs(_req(op="oem", command="at-disable-unlock-vboot"))
+    await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["code"] == "FLASH_OEM_REJECTED"
     assert not ws.events("accepted"), "a rejected job must not be accepted first"
@@ -523,8 +532,8 @@ async def test_oem_refuses_when_no_device_is_in_fastboot(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", no_device)
-    ws = _FakeWs(b"")
-    await agent._job_oem(ws, "/opt/fastboot", "at-lock-vboot")
+    ws = _FakeWs(_req(op="oem", command="at-lock-vboot"))
+    await agent._run_job(ws, _ops())
     assert ran == [], "must not run a command that would block on 'waiting for any device'"
     assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
 
@@ -543,8 +552,8 @@ async def test_oem_argv_and_passthrough(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", yes)
-    ws = _FakeWs(b"")
-    await agent._job_oem(ws, "/opt/fastboot", "at-unlock-vboot")
+    ws = _FakeWs(_req(op="oem", command="at-unlock-vboot"))
+    await agent._run_job(ws, _ops())
     assert ran == [["/opt/fastboot", "oem", "at-unlock-vboot"]]
     done = ws.done()
     assert done["ok"] is True
@@ -552,18 +561,22 @@ async def test_oem_argv_and_passthrough(monkeypatch):
 
 
 async def test_oem_is_dispatched_by_run_job(monkeypatch):
-    """The op has to be wired into the dispatcher, or the hub gets
-    'unsupported job op' from an agent that has the handler."""
-    seen: list[str] = []
+    """The op has to be a row in the table, or the hub gets BENCH_OP_UNKNOWN
+    from an agent that could have run it."""
+    ran: list[list[str]] = []
 
-    async def fake_oem(_ws, _fastboot, command):
-        seen.append(command)
+    async def fake_run(_ws, argv, timeout_s=0.0):
+        ran.append(argv)
+        return 0, "", ""
 
-    monkeypatch.setattr(agent, "_job_oem", fake_oem)
-    payload = json.dumps({"op": "oem", "command": "at-lock-vboot"}).encode()
-    ws = _FakeWs(_frame(b"C", payload))
-    await agent._run_job(ws, "/opt/fastboot")
-    assert seen == ["at-lock-vboot"]
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    ws = _FakeWs(_req(op="oem", command="at-lock-vboot"))
+    await agent._run_job(ws, _ops())
+    assert ran == [["/opt/fastboot", "oem", "at-lock-vboot"]]
 
 
 # ── erase: same allowlist as flash, same refuse-early rules ─────────────
@@ -572,8 +585,8 @@ async def test_oem_is_dispatched_by_run_job(monkeypatch):
 async def test_erase_argv_is_built_by_the_agent(monkeypatch):
     ran: list[list[str]] = []
 
-    async def fake_run(_ws, argv, op=""):
-        ran.append([*argv, f"op={op}"])
+    async def fake_run(_ws, argv, timeout_s=0.0):
+        ran.append([*argv, f"timeout={timeout_s}"])
         return 0, "", "Erasing 'misc' OKAY [  0.010s]\n"
 
     async def yes(_fastboot):
@@ -581,9 +594,10 @@ async def test_erase_argv_is_built_by_the_agent(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", yes)
-    ws = _FakeWs(b"")
-    await agent._job_erase(ws, "/opt/fastboot", "misc")
-    assert ran == [["/opt/fastboot", "erase", "misc", "op=erase"]]
+    ws = _FakeWs(_req(op="erase", partition="misc"))
+    await agent._run_job(ws, _ops())
+    # argv from the agent's own row, run with that row's own ceiling
+    assert ran == [["/opt/fastboot", "erase", "misc", f"timeout={_ops()['erase'].timeout_s}"]]
     assert ws.done()["ok"] is True
 
 
@@ -596,8 +610,8 @@ async def test_erase_rejects_malformed_names_without_running_anything(monkeypatc
         return 0, "", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
-    ws = _FakeWs(b"")
-    await agent._job_erase(ws, "/opt/fastboot", name)
+    ws = _FakeWs(_req(op="erase", partition=name))
+    await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["code"] == "FLASH_PARTITION_REJECTED"
 
@@ -613,8 +627,8 @@ async def test_erase_obeys_the_flash_allowlist(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"boot_a"}))
-    ws = _FakeWs(b"")
-    await agent._job_erase(ws, "/opt/fastboot", "misc")
+    ws = _FakeWs(_req(op="erase", partition="misc"))
+    await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["code"] == "FLASH_PARTITION_REJECTED"
 
@@ -631,23 +645,27 @@ async def test_erase_refuses_when_no_device_is_in_fastboot(monkeypatch):
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", no)
-    ws = _FakeWs(b"")
-    await agent._job_erase(ws, "/opt/fastboot", "misc")
+    ws = _FakeWs(_req(op="erase", partition="misc"))
+    await agent._run_job(ws, _ops())
     assert ran == [], "must not run a command that would block on 'waiting for any device'"
     assert ws.done()["code"] == "FASTBOOT_NO_DEVICE"
 
 
 async def test_erase_is_dispatched_by_run_job(monkeypatch):
-    seen: list[str] = []
+    ran: list[list[str]] = []
 
-    async def fake_erase(_ws, _fastboot, partition):
-        seen.append(partition)
+    async def fake_run(_ws, argv, timeout_s=0.0):
+        ran.append(argv)
+        return 0, "", ""
 
-    monkeypatch.setattr(agent, "_job_erase", fake_erase)
-    payload = json.dumps({"op": "erase", "partition": "misc"}).encode()
-    ws = _FakeWs(_frame(b"C", payload))
-    await agent._run_job(ws, "/opt/fastboot")
-    assert seen == ["misc"]
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    ws = _FakeWs(_req(op="erase", partition="misc"))
+    await agent._run_job(ws, _ops())
+    assert ran == [["/opt/fastboot", "erase", "misc"]]
 
 
 # ── image size: the agent's free temp space, not a fixed ceiling ───────
@@ -691,10 +709,8 @@ async def test_too_little_temp_space_refuses_before_any_transfer(monkeypatch):
 
     monkeypatch.setattr(agent, "_tmp_free_bytes", little)
     ws = _FakeWs(_flash_request(size))
-    reader = agent._JobReader(ws)
-    req = await reader.read_control()
     monkeypatch.setattr(agent, "_device_present", fake_present)
-    await agent._job_flash(ws, reader, "/opt/fastboot", req)
+    await agent._run_job(ws, _ops())
     done = ws.done()
     assert done["code"] == "FLASH_AGENT_NO_SPACE"
     assert "nothing was transferred" in done["error"]
@@ -702,12 +718,20 @@ async def test_too_little_temp_space_refuses_before_any_transfer(monkeypatch):
     assert checked == [], "refused on space before asking the device anything"
 
 
-def test_hello_advertises_erase_and_large_images_with_fastboot(monkeypatch):
-    """A flash plan checks these before its first row; an agent that has the
-    ops but does not say so would be refused for nothing."""
+def test_hello_reports_the_op_table_instead_of_ability_strings(monkeypatch):
+    """ADR-059: a flash plan asks the table ("is there an `erase` row? what
+    image ceiling does `flash` report?") — the two ability strings that used
+    to say so are gone from caps, and the fastboot rows come and go with the
+    tool."""
     monkeypatch.setattr(agent, "_FASTBOOT_PATH", "/usr/bin/fastboot")
-    caps = json.loads(agent._hello("a", "n", None))["caps"]
-    assert {"fastboot", "fastboot-erase", "fastboot-large-image"} <= set(caps)
+    monkeypatch.setattr(agent, "_OPS", _ops("/usr/bin/fastboot"))
+    hello = json.loads(agent._hello("a", "n", None))
+    assert hello["caps"] == ["adb", "fastboot"]
+    names = [op["name"] for op in hello["ops"]]
+    assert {"flash", "erase", "set-active", "boot", "usb-list"} <= set(names)
+    assert hello["ops"][names.index("flash")]["max_image_bytes"] == 0  # temp space is the limit
     monkeypatch.setattr(agent, "_FASTBOOT_PATH", "")
-    caps = json.loads(agent._hello("a", "n", None))["caps"]
-    assert "fastboot-erase" not in caps and "fastboot-large-image" not in caps
+    monkeypatch.setattr(agent, "_OPS", _ops(""))
+    hello = json.loads(agent._hello("a", "n", None))
+    assert hello["caps"] == ["adb"]
+    assert [op["name"] for op in hello["ops"]] == ["usb-list"]

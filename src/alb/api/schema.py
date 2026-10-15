@@ -369,6 +369,21 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "under one hold of the job lock, stopping at the first failure (NDJSON stream; "
         "the terminal frame lists each row's outcome)",
     },
+    {
+        "method": "GET",
+        "path": "/api/bench/ops",
+        "description": "The bench agent's op table (ADR-059): each op with its parameters "
+        "(kind, choices, range) and whether it needs a board in fastboot, changes the "
+        "device, takes an image, needs the job lock. `reported` is false for an agent "
+        "from before the table — its rows are inferred from caps",
+    },
+    {
+        "method": "POST",
+        "path": "/api/bench/ops/{op}",
+        "description": "Run one op from the table; body {params, image}. NDJSON stream like "
+        "/api/flash/*; the done line's `data` carries structured answers (usb-list: each "
+        "device with the mode the hub read from it, plus a `boards` summary)",
+    },
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

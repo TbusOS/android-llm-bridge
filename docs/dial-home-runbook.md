@@ -145,6 +145,9 @@ Walk down the chain; each hop has an unambiguous "good" signal.
 | `SERIAL_PORT_BUSY`, or the agent logs `cannot open COM…: Access is denied` | Windows host | some **other** program on the agent host holds the port (terminal emulator, vendor flashing tool) — close it. Concurrent alb clients are not the cause: they share one channel, and `/agent/status` → `forwarders.serial.readers` shows how many are attached |
 | `serial shell` fails while a capture runs | — | fixed (issue #4). If it still happens, the hub is running a build older than the shared-channel fan-out — check `forwarders.serial.readers` exists in `/agent/status` |
 | agent connects then drops in a loop | hub | older builds tore the session down on a forwarder bind failure — current builds keep it up and warn; if looping, it's the handshake (token/version) |
+| the board is in fastboot (UART shows the bootloader processing commands) but `alb flash devices` lists nothing | agent host USB | `alb bench usb` lists what the agent host itself sees on USB and the mode each board is in: a board shown with `driver: missing` needs the Android bootloader (WinUSB) driver on that host; no board at all means the cable is not on that host or the board is not enumerating. Needs an agent from the op-table era (`alb bench ops` says so if it is older) |
+| `alb power reboot fastboot` then flashing fails with `Download is not allowed on locked devices` | — | that command lands in **fastbootd** (userspace, dynamic partitions only). Use `alb power reboot bootloader --allow-dangerous --no-wait-boot` for the bootloader's fastboot |
+| need the agent host's own log, or the driver-install log | agent host | `alb bench log agent` / `alb bench log setupapi` (by source name; `-n` lines, `-g` text). `alb bench ops` lists the sources this agent offers |
 
 ## Security
 

@@ -181,7 +181,7 @@ def test_oem_command_is_required(monkeypatch):
 # ── /api/flash/plan and /plan/run ───────────────────────────────────────
 
 _PLAN_MANIFEST = "tool flash boot_a boot.img\ntool erase misc\ntool reboot\n"
-_PLAN_CAPS = ["adb", "fastboot", "fastboot-erase", "fastboot-large-image"]
+_PLAN_CAPS = ["adb", "fastboot"]
 
 
 class _PlanService:
@@ -191,8 +191,9 @@ class _PlanService:
 
     def agent_view(self):
         from alb.remote.flash_plan import AgentView
+        from tests.remote.bench_tables import new_agent_ops
 
-        return AgentView(caps=_PLAN_CAPS, partitions=self.partitions)
+        return AgentView(caps=_PLAN_CAPS, partitions=self.partitions, ops=new_agent_ops())
 
     async def run_plan(self, plan, *, reboot_wait_s, on_event=None):
         from alb.remote.flash_plan import PlanResult

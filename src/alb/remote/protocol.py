@@ -82,16 +82,10 @@ _DEFAULT_ROLE: dict[ChannelType, ChannelRole] = {
 # (ADR-056 §决定 7).
 CAP_ADB = "adb"
 CAP_FASTBOOT = "fastboot"
-# Finer-grained fastboot abilities, advertised alongside CAP_FASTBOOT by
-# agents new enough to have them. They exist for one reason: a flash PLAN
-# (alb.remote.flash_plan) must refuse up front when the agent cannot run one
-# of its rows. Without them, an older agent would accept the first twenty
-# writes and then answer "unsupported job op" at the `erase` near the end —
-# the board left half-written, which is the outcome a plan exists to prevent.
-CAP_FASTBOOT_ERASE = "fastboot-erase"
-# The agent sizes an image against its temp disk's free space instead of the
-# fixed 2 GiB ceiling older agents apply (LEGACY_FLASH_MAX_BYTES).
-CAP_FASTBOOT_LARGE_IMAGE = "fastboot-large-image"
+# What exactly an agent can do beyond "it has fastboot" is no longer a cap
+# string per ability: agents report an op table in their hello (ADR-059,
+# alb.remote.bench_ops). Agents from before the table get a synthesised
+# one, whose `flash` row carries the fixed image ceiling they applied.
 LEGACY_FLASH_MAX_BYTES = 2 * 1024 * 1024 * 1024
 
 
@@ -364,6 +358,22 @@ def job_erase(*, partition: str) -> dict[str, Any]:
     return {"op": JobOp.ERASE.value, "partition": partition}
 
 
+def job_op(
+    name: str, params: dict[str, Any], *, size: int | None = None, sha256: str = ""
+) -> dict[str, Any]:
+    """Opening frame for any op in the agent's table (ADR-059).
+
+    Flat, `{op, <param>: value, ...}` — the same shape the per-op builders
+    above produce, so an agent from before the table still understands the
+    five ops it has. Image ops add `size` / `sha256` up front, as `flash`
+    always has (ADR-056 §决定 6). Still no path and no command line."""
+    msg: dict[str, Any] = {"op": name, **params}
+    if size is not None:
+        msg["size"] = size
+        msg["sha256"] = sha256
+    return msg
+
+
 def job_accepted(*, detail: str = "") -> dict[str, Any]:
     return {"ev": JobEvent.ACCEPTED.value, "detail": detail}
 
@@ -389,12 +399,14 @@ def job_done(
     stderr: str = "",
     error: str = "",
     code: str = "",
+    data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Terminal frame. `code` is an alb error code (infra.errors) when the
     agent can name the failure precisely; `error` is the human sentence.
     Both are present on failure so the caller can branch on the code without
-    parsing prose."""
-    return {
+    parsing prose. `data` carries a structured answer (the USB listing) for
+    ops whose result is not tool output."""
+    msg = {
         "ev": JobEvent.DONE.value,
         "ok": ok,
         "rc": rc,
@@ -403,3 +415,6 @@ def job_done(
         "error": error,
         "code": code,
     }
+    if data is not None:
+        msg["data"] = data
+    return msg

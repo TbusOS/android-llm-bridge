@@ -2339,7 +2339,7 @@ alb 悄悄绕过它,会造成同一个终端里 `alb devices` 有设备、`adb d
 
 ## ADR-058 · 整包烧录按清单跑:整份先查完再动手,确认的是哪份就跑哪份
 
-**日期**: 2026-10-13 · **状态**: 已落地(测试桩 + 内网仓测试;真机未跑)· ADR-056 分期表 P3 的「整目录烧录」
+**日期**: 2026-10-13 · **状态**: 已落地(测试桩 + 内网仓测试;2026-10-14 台架上用真实清单建过计划,拒绝和 dry-run 都对,真烧未跑)· ADR-056 分期表 P3 的「整目录烧录」· 决定 5 的两个 cap 由 ADR-059 收掉
 
 ### 这是什么
 
@@ -2410,3 +2410,150 @@ AOSP fastboot 命令行没有 `setvar`(命令分派里没有,未知命令走
 - 清单路径是 **hub 那台机器的 workspace 相对路径**,不是命令行所在机器的。
 
 **关联**: ADR-056(作业通道 · 锁 · 时间轴 · 先核对再烧)
+
+---
+
+## ADR-059 · Windows 侧的操作收成一张操作表:加一个操作只登记一行
+
+**日期**: 2026-10-15 · **状态**: 设计待确认 · 改 ADR-058 决定 5 里的两个 cap
+
+### 这是什么
+
+台架 agent(Windows 上的 `alb_agent.py`)里的一张表。每行是一个能在那台 Windows 机器上
+做的操作。一行写明名字、参数的校验规则、怎么执行(写死的 argv 模板,或 agent 里的一个函数)。
+还写明执行前提、会不会改设备、要不要收镜像、要不要独占、超时(字段见决定 1)。
+agent 在 hello 里把这张表报给 hub;hub、命令行、网页、flash plan 都按表走同一条路。
+
+### 没有它会怎样
+
+现在每个操作在两边各写一遍。加 `alb flash oem`(`c7a1a83`)改了 11 个文件:
+agent 1 个(白名单、处理函数、分派、hello 四处),hub 6 个源文件(协议、作业服务、路由、
+命令行、错误码、schema),测试 4 个。hub 也不知道 agent 能做什么,只能看 caps 里的固定
+字符串:ADR-058 为整包烧录又加了 `fastboot-erase` / `fastboot-large-image` 两个。
+每多一种能力,就多一个两边要对上的约定。
+
+最贵的是 Windows 那边:每加一个操作就要换一次 agent,得有人在 Windows 上配合。
+操作表省不掉换 agent 这一步,但能把它攒成一批做;hub 这边加操作则基本不用改代码。
+
+### 关系图
+
+```
+  Windows 台架 agent                      Linux hub
+ +--------------------------+  hello:表  +--------------------------+
+ | 操作表(代码里)          | ---------> | 按 agent 缓存这张表      |
+ |  erase      partition    |            | GET  /api/bench/ops      |
+ |  set-active slot a|b     |  {op,参数} | POST /api/bench/ops/{op} |
+ |  usb-list   (无参数)     | <--------- | alb bench ... / 网页     |
+ | 校验参数 -> 拼 argv      |  进度+结果 | alb flash ... 改走这里   |
+ | -> 起进程(不经 shell)  | ---------> | (不拼 argv,不给路径)    |
+ +--------------------------+            +--------------------------+
+```
+
+### 决定 1 · 表写在 agent 代码里,一行一个操作
+
+| 字段 | 含义 |
+|---|---|
+| `name` | 唯一。已有的沿用原名(flash / erase / reboot / devices / getvar / oem),新的用短横线(set-active / boot / usb-list / log-tail) |
+| `params` | 每个参数一个校验规则,见决定 2 |
+| `run` | argv 模板(列表,占位符只能整格替换),或 agent 内置函数名 |
+| `needs` | 执行前提:`fastboot-device`(先确认 fastboot 能看到设备)或无 |
+| `image` | 先收一个镜像再执行(flash / boot) |
+| `mutates` | 会不会改设备。会:命令行要确认,hub 记时间轴 |
+| `exclusive` | 要不要独占。碰 USB 设备的要;只读 Windows 本机信息的不要 |
+| `record` | hub 记什么:不记 / 只记事件 / 事件加 UART |
+| `timeout_s` | 超时 |
+
+请求格式不变:`{op, <参数>...}`,收镜像的再加 `size` / `sha256`。已有操作的名字和字段名都不改,
+所以新 hub 发给旧 agent 的老操作照样能跑。
+
+**为什么不放进 agent.conf 让 Windows 上的人自己加**:校验规则还是要写在代码里(决定 2),
+conf 只能放 argv 模板。为此要多一套模板语法、多一处要审的东西,省下的只是换一个文件;
+而两种做法都要有人在 Windows 上动手。第三批(下载模式工具,各厂家命令行不同)时再评估。
+
+### 决定 2 · 参数只有四种类型,值由 agent 逐个校验
+
+| 类型 | 规则 | 用在 |
+|---|---|---|
+| `partition` | 形状(`_PARTITION_RE`)加 agent.conf 的 `flash_partitions` 白名单 | flash / erase |
+| `enum` | 必须一字不差地等于表里列的某个选项 | oem 命令 · 槽位 · reboot 目标 · 日志来源 |
+| `int` | 整数,有上下限 | 日志行数 |
+| `text` | 正则形状加长度上限 | getvar 变量名 · 日志关键字 |
+
+表里带着类型和选项报给 hub,命令行能提前报错,网页能画下拉框;agent 照样再查一遍,
+它是权威(同 ADR-058 决定 1)。
+
+安全线跟 ADR-056 决定 5 一样,只是从 6 个处理函数里收到一处:
+
+- argv 只在 agent 拼。用参数列表直接起进程,不经 shell
+- 占位符整格替换,一个值永远只是一个 argv 元素
+- 表里没有的名字一律拒绝(现在由 `alb_agent.py:880` 的分派拒绝未知操作)
+- 日志按来源名字取,hub 不给路径(同 `alb_agent.py:973-975`「hub 从不给路径」)
+
+### 决定 3 · hub 一条通用路径,老命令保留成包装
+
+- `GET /api/bench/ops`:当前 agent 的操作表
+- `POST /api/bench/ops/{op}`:跑一个操作,NDJSON 进度流,格式同 `/api/flash/*`
+- `alb bench ops` 列表;`alb bench run <操作> 参数=值 ... [--image 路径] [--yes]`;
+  常用的给短命令:`alb bench usb`、`alb bench log <来源>`
+- `alb flash write / getvar / oem / reboot / devices / plan` 和网页烧录页照旧可用,内部改走通用路径
+
+hub 只做四件事:按表查参数类型、决定要不要确认、拿不拿锁、记不记时间轴。四样都读表,
+所以加一个只用现有参数类型的操作,hub 不改代码。
+
+### 决定 4 · 旧 agent 没报表,就按 caps 推一份保守的
+
+旧 agent 不报表(台架上现在跑的就是旧的,2026-10-14 实测 caps 为 `adb` / `fastboot`)。hub 按 caps 推:
+有 `fastboot` 就给 flash / reboot / devices / getvar / oem,镜像上限 2 GiB(旧 agent 写死的),
+其余一概没有。推出来的每一行都按会改设备算,要确认、记时间轴:宁可多问一次。
+
+### 决定 5 · 收掉 ADR-058 加的两个 cap
+
+flash plan 改成查表:有没有 `erase` 这一行;`flash` 这一行报的镜像上限是多少
+(新 agent 报 0,意思是只受临时目录剩余空间限制)。这两个 cap 从没部署过,Windows 上
+还是旧 agent,所以现在收掉不影响任何在跑的东西。
+
+### 第一批操作(Windows 换一次 agent)
+
+| 操作 | 做什么 | 改设备 | 为什么要 |
+|---|---|---|---|
+| erase | 已有,收进表 | 是 | — |
+| set-active | `fastboot set_active <a\|b>` | 是 | 切启动槽。有的 bootloader 不支持,设备拒绝时原样转回 |
+| boot | `fastboot boot <镜像>`,只进内存,不写分区 | 是(运行状态) | 试一个 boot 镜像而不动分区 |
+| usb-list | 列 Windows 上的 USB 设备:名称、VID:PID、序列号、驱动状态和问题码 | 否 | 见下 |
+| log-tail | 按来源名读 Windows 侧日志最后 N 行,可按关键字筛 | 否 | 来源先收两个:`agent`(agent 自己的日志)、`setupapi`(Windows 驱动安装日志) |
+
+**usb-list 的由来**(2026-10-14 台架实测):一块板子经串口确认已进 bootloader 级 fastboot,
+但 agent 的 `fastboot devices` 连续 4 次为空。Linux 这边分不出是 USB 线没插在这台机器上、
+还是驱动没装 —— 两种情况下一步完全不同。
+
+usb-list 只回原始信息,**板子在什么模式由 hub 判**(按 VID:PID 和驱动名分成 adb / fastboot /
+高通 9008 等)。分类表放 hub,加一家厂商不用换 Windows 的 agent。跟 getvar 同一个做法:
+agent 只搬话,不解读。
+
+同批顺手修:
+- `FASTBOOT_NO_DEVICE` 的建议写的是 `alb power reboot fastboot`,那条进的是 fastbootd(只能写动态分区)。
+  改成 `alb power reboot bootloader --allow-dangerous --no-wait-boot`
+- agent 会报的 `FLASH_VAR_REJECTED` 不在 `errors.py` 的目录里,补上
+
+### 不做
+
+- **在 Windows 上执行任意命令的通道**:2026-10-13 定的不做,本表就是替代。
+- **hub 推送新 agent、让它自己更新**:能推代码就等于能在那台机器上执行任意代码,跟上一条是同一件事。
+- `fastboot flashing unlock / lock`:unlock 清用户数据,lock 时镜像不对会起不来。
+- 断电重启(power cycle):台架没有可控电源。
+
+### 留给以后的三个入口(现在不写空壳代码)
+
+1. **本表**:第三批的下载模式烧录(高通 9008 等,按厂家)也是一行行加进来;需要的新参数类型
+   (整包目录、COM 口)到时候再加。
+2. **设备端口通道**:adb 协议的 `tcp:<port>` 服务(AOSP `packages/modules/adb/SERVICES.TXT`)
+   能经现有 adb 隧道直连设备上的端口,第二批做,只改 Linux。设备端 agent、gdbserver 都走这条。
+3. **LLM 后端注册表**:openai-compat 后端已能指定地址;设备端模型以后作为一个后端接进来。
+
+### 代价
+
+- agent 改动不小:6 个处理函数收进一个分派器。现有 agent 测试必须全部照过。
+- hub 信任 agent 报的 `mutates`。agent 是本项目自己的;旧 agent 推出来的表一律按会改设备算。
+- hello 多十几行。
+
+**关联**: ADR-056(作业通道 · 决定 5 argv 只在 agent 拼 · 决定 7 能力协商)· ADR-058(整包烧录 · 决定 5)

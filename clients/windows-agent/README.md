@@ -145,3 +145,29 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
 在 `agent.conf` 里写 `fastboot_path=`），几分钟的事。
 
 不配也不影响 adb 和串口，只是 hub 会直接告诉调用方"这台不能烧"。
+
+## 这台 agent 能替 hub 做什么：操作表（usb-list / log-tail / set-active / boot / erase）
+
+agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报上去：每个操作带名字、
+参数规则、要不要板子在 fastboot 里、会不会改设备、要不要独占、超时。hub 的命令行
+和网页按这张表来做，所以 agent 多会一种操作，Linux 那边不用改代码就能用。
+
+| 操作 | 做什么 | 要板子在 fastboot 里 |
+|---|---|---|
+| `devices` / `getvar` / `oem` / `reboot` / `flash` | 原有的 fastboot 操作，没变 | 是 |
+| `erase` | `fastboot erase <分区>`，分区白名单跟 `flash` 共用（`flash_partitions`） | 是 |
+| `set-active` | `fastboot set_active a` 或 `b`，切启动槽 | 是 |
+| `boot` | `fastboot boot <镜像>`，镜像只进内存、不写分区 | 是 |
+| `usb-list` | 列这台 Windows 上的 USB 设备：名称、VID:PID、序列号、驱动、问题码、接口类型。`fastboot devices` 为空时，用它分清是线没插在这台机器还是驱动没装 | 否 |
+| `log-tail` | 读本机日志的最后 N 行，可按关键字筛。来源只有名字：`agent`（本 agent 自己的日志，`log_file` 配了才有）、`setupapi`（Windows 的驱动安装日志） | 否 |
+
+两条规矩不变：
+
+- hub 只发结构化字段（操作名 + 参数），**从不发命令行、从不发路径**。argv 在这台
+  机器上按写死的模板拼出来，参数先逐个校验（分区形状 + 白名单、枚举必须一字不差、
+  整数有上下限）。
+- `usb-list` 和 `log-tail` 只读本机信息、不碰板子，所以**不占烧录锁** —— 正在烧录
+  时也能查。fastboot 类操作一次只跑一个，第二个会被立刻拒绝，不排队。
+
+fastboot 没配（见上一节）时，表里只有 `usb-list` / `log-tail`，hub 会直接告诉调用方
+这台不能烧。状态页（http://127.0.0.1:8731）的 `ops` 一行列的就是这张表。

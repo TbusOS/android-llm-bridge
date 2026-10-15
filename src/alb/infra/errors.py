@@ -249,8 +249,13 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "FASTBOOT_NO_DEVICE",
         "transport",
         "No device is visible to fastboot on the agent host",
-        "Put the board in fastboot (`alb power reboot fastboot`) and check the "
-        "USB cable / driver on the agent host",
+        # bootloader, not fastboot: `reboot fastboot` lands in fastbootd, the
+        # userspace one, which only writes dynamic partitions and refuses the
+        # rest with a message that sends people off to unlock the board.
+        "Put the board in bootloader fastboot (`alb power reboot bootloader "
+        "--allow-dangerous --no-wait-boot`); if it is there and still not "
+        "listed, run `alb bench usb` to tell a missing driver from a cable "
+        "that is not on the agent host",
     ),
     "FLASH_IMAGE_CORRUPT": ErrorSpec(
         "FLASH_IMAGE_CORRUPT",
@@ -273,6 +278,13 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Only commands checked to be reversible are allowed (see _OEM_COMMANDS in "
         "alb_agent.py); some vendor oem commands are one-way, so widen that list "
         "only after confirming the command can be undone",
+    ),
+    "FLASH_VAR_REJECTED": ErrorSpec(
+        "FLASH_VAR_REJECTED",
+        "transport",
+        "The agent refused the getvar variable name (it is not a well-formed name)",
+        "Use a plain variable name such as `partition-size:boot_a`, or none "
+        "for `getvar all`",
     ),
     "FLASH_FAILED": ErrorSpec(
         "FLASH_FAILED",
@@ -304,6 +316,36 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "The plan differs from the one that was confirmed (an image, the "
         "manifest or the skips changed); no row was executed",
         "Run the command again and confirm the plan as it is now",
+    ),
+    # ─── bench op table (ADR-059) ────────────────────────────────────
+    # Four codes, four different fixes: pick an op the agent has, fix a
+    # value, update the agent, or look at the bench host's disk.
+    "BENCH_OP_UNKNOWN": ErrorSpec(
+        "BENCH_OP_UNKNOWN",
+        "transport",
+        "The agent on the bench host has no such op",
+        "Run `alb bench ops` to see what this agent offers",
+    ),
+    "BENCH_PARAM_REJECTED": ErrorSpec(
+        "BENCH_PARAM_REJECTED",
+        "transport",
+        "A parameter value was refused (wrong type, out of range, or not one "
+        "of the allowed choices)",
+        "Run `alb bench ops` — each op lists its parameters with their kinds "
+        "and allowed values",
+    ),
+    "BENCH_AGENT_TOO_OLD": ErrorSpec(
+        "BENCH_AGENT_TOO_OLD",
+        "transport",
+        "The agent on the bench host predates this op",
+        "Copy the current alb_agent.py to the bench host and restart the agent",
+    ),
+    "BENCH_LOG_UNAVAILABLE": ErrorSpec(
+        "BENCH_LOG_UNAVAILABLE",
+        "transport",
+        "The log source is configured on the agent but cannot be read right now",
+        "Check that the file exists on the bench host and the agent's account "
+        "may read it; `alb bench ops` lists the sources this agent offers",
     ),
 }
 

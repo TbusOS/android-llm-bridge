@@ -39,12 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from alb.remote.protocol import (
-    CAP_FASTBOOT,
-    CAP_FASTBOOT_ERASE,
-    CAP_FASTBOOT_LARGE_IMAGE,
-    LEGACY_FLASH_MAX_BYTES,
-)
+from alb.remote.bench_ops import PARTITION_RE, OpSpec, legacy_ops
 
 # action -> number of arguments after it.
 ACTIONS: dict[str, int] = {
@@ -71,8 +66,8 @@ UNRUNNABLE = {
 # Same shapes the agent enforces (alb_agent._PARTITION_RE / _GETVAR_RE).
 # Checked here too so a bad name refuses the whole plan up front instead of
 # being refused by the agent halfway through it.
-PARTITION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
-VAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+# PARTITION_RE is imported from bench_ops — one copy for the hub side.
+VAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
 
 # Sanity ceilings: a manifest is a few dozen short lines. Anything far
 # larger is the wrong file, and reading it whole would be the first mistake.
@@ -145,6 +140,12 @@ class AgentView:
 
     caps: list[str]
     partitions: list[str]  # empty = no allowlist = any well-formed name
+    # The op table it reported (ADR-059). None = an agent from before the
+    # table; its ops are then inferred from caps (bench_ops.legacy_ops).
+    ops: dict[str, OpSpec] | None = None
+
+    def table(self) -> dict[str, OpSpec]:
+        return self.ops if self.ops is not None else legacy_ops(self.caps)
 
 
 @dataclass
@@ -320,20 +321,27 @@ def check_agent(rows: list[PlanRow], agent: AgentView | None) -> list[str]:
     running = [r for r in rows if r.runs]
     if agent is None:
         return ["no agent is connected — nothing can run, and its allowlist cannot be checked"]
-    if CAP_FASTBOOT not in agent.caps:
+    ops = agent.table()
+    if "flash" not in ops:
         return ["the connected agent does not advertise the fastboot capability"]
     problems: list[str] = []
-    erases = [r.line for r in running if r.action == "erase"]
-    if erases and CAP_FASTBOOT_ERASE not in agent.caps:
-        problems.append(
-            f"the agent is too old to erase (line {', '.join(map(str, erases))}) — "
-            "update alb_agent.py on the agent host"
-        )
-    large = [r for r in running if r.action == "flash" and r.size > LEGACY_FLASH_MAX_BYTES]
-    if large and CAP_FASTBOOT_LARGE_IMAGE not in agent.caps:
+    # Every action a row needs must be in the agent's op table. Reported per
+    # action with its lines, because "update the agent" is the fix and the
+    # caller needs to know which rows forced it.
+    needed = {"flash": "flash", "erase": "erase", "reboot": "reboot", "reboot-bootloader": "reboot"}
+    for action, op in needed.items():
+        lines = [r.line for r in running if r.action == action]
+        if lines and op not in ops:
+            problems.append(
+                f"the agent is too old to {action} (line {', '.join(map(str, lines))}) — "
+                "update alb_agent.py on the agent host"
+            )
+    ceiling = ops["flash"].max_image_bytes
+    large = [r for r in running if r.action == "flash" and ceiling and r.size > ceiling]
+    if large:
         shown = ", ".join(f"line {r.line} {r.file} ({r.size} bytes)" for r in large)
         problems.append(
-            f"the agent refuses images over {LEGACY_FLASH_MAX_BYTES} bytes ({shown}) — "
+            f"the agent refuses images over {ceiling} bytes ({shown}) — "
             "update alb_agent.py on the agent host"
         )
     if agent.partitions:
