@@ -384,6 +384,14 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "/api/flash/*; the done line's `data` carries structured answers (usb-list: each "
         "device with the mode the hub read from it, plus a `boards` summary)",
     },
+    {
+        "method": "POST",
+        "path": "/api/bench/agent-update",
+        "description": "Send this hub's clients/windows-agent files (and, with "
+        "{config_text}, a new agent.conf) to the bench agent, which restarts on them "
+        "(ADR-060). NDJSON stream; waits for the agent to reconnect. done.data.outcome "
+        "`updated`, or code AGENT_UPDATE_ROLLED_BACK / AGENT_UPDATE_NO_RETURN",
+    },
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

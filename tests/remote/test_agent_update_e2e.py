@@ -32,7 +32,9 @@ from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process handling")
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="reads /proc to clean up its processes"
+)
 
 websockets = pytest.importorskip("websockets")
 from websockets.asyncio.server import serve  # noqa: E402
@@ -191,6 +193,29 @@ def _repo_files() -> dict[str, bytes]:
     }
 
 
+def _reap_all_under(folder: Path) -> None:
+    """Kill every process started from `folder`: agents AND the update
+    helper. A helper left alive takes the killed agent for "never reached
+    the hub", rolls back and starts another one after the test is gone."""
+    needle = str(folder).encode()
+    for _ in range(5):
+        found = False
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == os.getpid():
+                continue
+            try:
+                cmdline = (entry / "cmdline").read_bytes()
+            except OSError:
+                continue
+            if needle in cmdline:
+                found = True
+                with contextlib.suppress(OSError):
+                    os.kill(int(entry.name), signal.SIGKILL)
+        if not found:
+            return
+        time.sleep(0.5)
+
+
 @pytest.fixture
 def bench(tmp_path):
     """A temp agent folder wired to a stand-in hub; every agent process the
@@ -218,10 +243,7 @@ def bench(tmp_path):
         return p
 
     yield hub, install, start
-    state = install / ".alb-agent"
-    for rec in state.glob("instance-*.json"):
-        with contextlib.suppress(Exception):
-            os.kill(int(json.loads(rec.read_text())["pid"]), signal.SIGKILL)
+    _reap_all_under(tmp_path)
     for p in procs:
         with contextlib.suppress(Exception):
             p.kill()
@@ -351,3 +373,33 @@ def test_another_agent_with_its_own_folder_is_left_alone(bench, tmp_path):
     finally:
         neighbour.kill()
         neighbour.wait(timeout=5)
+
+
+def test_a_pushed_config_that_changes_the_agent_id_is_refused(bench):
+    """The hub waits for THIS agent_id to come back."""
+    hub, install, start = bench
+    old = _agent_text(marker="old")
+    proc = start(old)
+    hub.wait_hello(lambda h: h.get("build") == _build(old))
+    conf = (install / "agent.conf").read_bytes().replace(b"bench-e2e", b"someone-else")
+
+    done = _update(hub, {**_repo_files(), "alb_agent.py": old, "agent.conf": conf})
+    assert not done["ok"] and done["code"] == "AGENT_UPDATE_REJECTED", done
+    assert "keep agent_id the same" in done["error"]
+    time.sleep(1.5)
+    assert proc.poll() is None
+
+
+def test_a_pushed_config_is_installed_and_read_on_restart(bench):
+    hub, install, start = bench
+    old = _agent_text(marker="old")
+    start(old)
+    hub.wait_hello(lambda h: h.get("build") == _build(old))
+    seen = len(hub.hellos)
+    conf = (install / "agent.conf").read_bytes().replace(b"name=e2e", b"name=renamed")
+
+    done = _update(hub, {**_repo_files(), "alb_agent.py": old, "agent.conf": conf})
+    assert done["ok"] and done["data"]["changed"] == ["agent.conf"], done
+    hello = hub.wait_hello(lambda h: h.get("name") == "renamed", timeout=40, after=seen)
+    assert hello["agent_id"] == "bench-e2e"
+    assert (install / "agent.conf").read_bytes() == conf

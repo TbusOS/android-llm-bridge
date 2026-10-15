@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import subprocess
 import sys
 import time
@@ -321,3 +322,91 @@ def test_a_param_may_not_take_the_reserved_image_name():
             params=(agent.ParamSpec("image", "int", min=0, max=1),),
             builtin=agent._op_agent_update,
         )
+
+
+# ── forced stop and unplanned failures (review of b883a6e) ────────────
+
+
+def test_a_forced_stop_spares_the_caller_and_everything_it_started():
+    """The update helper is a child of the agent it stops; `taskkill /T`
+    would have killed it mid-update. pid -> (parent, exe)."""
+    table = {
+        10: (1, "cmd.exe"),  # the agent's window
+        11: (10, "python.exe"),  # the agent
+        12: (11, "fastboot.exe"),  # a job the agent runs
+        13: (11, "python.exe"),  # the update helper (the caller)
+        14: (13, "cmd.exe"),  # a new agent the helper started
+        20: (1, "explorer.exe"),  # unrelated
+    }
+    assert agent._tree_to_kill(table, 11, spare=13) == [12, 11]
+    assert agent._tree_to_kill(table, 10, spare=13) == [12, 11, 10]
+    assert agent._tree_to_kill({5: (5, "x")}, 5, spare=0) == [5], "a self-parent loop ends"
+
+
+def _plan(tmp_path: Path) -> Path:
+    install = tmp_path / "install"
+    (install / ".alb-agent").mkdir(parents=True)
+    plan = {
+        "id": "u1",
+        "install_dir": str(install),
+        "staged_dir": str(install / ".alb-agent" / "staged"),
+        "files": ["alb_agent.py"],
+        "changed": ["alb_agent.py"],
+        "config_target": "",
+        "instance_file": str(install / ".alb-agent" / "instance-x.json"),
+        "old": {"pid": 1, "created": 0},
+        "from_build": "old",
+        "to_build": "new",
+        "relaunch": {"mode": "python", "python": sys.executable, "argv": []},
+        "health_timeout_s": 1,
+        "settle_s": 0,
+    }
+    path = install / ".alb-agent" / "update-plan.json"
+    path.write_text(json.dumps(plan))
+    return path
+
+
+def test_an_unplanned_failure_after_the_stop_still_restarts_the_old_build(tmp_path, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(agent, "_stop_instance", lambda *a, **k: True)
+    monkeypatch.setattr(agent.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(agent, "_backup_files", lambda *a: {"files": {}, "config": None})
+
+    def boom(*_a):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(agent, "_install_files", boom)
+    monkeypatch.setattr(agent, "_restore_files", lambda *a: calls.append("restore"))
+    monkeypatch.setattr(
+        agent, "_launch_and_wait", lambda _p, build, _say, **_k: calls.append(f"start {build}")
+    )
+    plan = _plan(tmp_path)
+    assert agent._apply_update_main(str(plan)) == 3
+    assert calls == ["restore", "start old"]
+    result = agent._read_json(plan.parent / "update-result.json")
+    assert result["outcome"] == "rolled_back"
+    assert "update helper crashed" in (plan.parent / "update.log").read_text()
+
+
+def test_a_malformed_plan_fails_before_the_running_agent_is_stopped(tmp_path, monkeypatch):
+    stopped: list[object] = []
+    monkeypatch.setattr(agent, "_stop_instance", lambda *a, **k: stopped.append(a) or True)
+    plan = _plan(tmp_path)
+    data = agent._read_json(plan)
+    del data["relaunch"]
+    plan.write_text(json.dumps(data))
+    assert agent._apply_update_main(str(plan)) == 3
+    assert stopped == [], "the old agent must still be running"
+
+
+def test_no_start_time_means_no_record(tmp_path, monkeypatch):
+    """A record without a creation time never matches: the next start would
+    not stop this instance and an update could never see it come back."""
+    import argparse
+
+    monkeypatch.setattr(agent, "_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(agent, "_own_created", lambda: 0.0)
+    monkeypatch.setattr(agent, "_INSTANCE_PATH", None)
+    agent._claim_instance(argparse.Namespace(config_used="", agent_id="a"))
+    assert agent._INSTANCE_PATH is None
+    assert list((tmp_path / ".alb-agent").glob("instance-*.json")) == []

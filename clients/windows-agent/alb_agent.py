@@ -2122,10 +2122,11 @@ _INSTANCE: dict[str, Any] = {}
 _LAUNCH_ARGV: list[str] = []
 _CONFIG_USED = ""
 _CONFIG_EXPLICIT = False
-# False when nothing pins this agent's identity (no config file, no
-# --agent-id): a restarted copy would get a new random id and a new record,
-# and the helper could never tell that it came back.
+# False without a fixed agent_id (agent.conf or --agent-id): the restarted
+# copy would get a new random id, and the hub — which waits for THIS id to
+# come back — could never tell that it did.
 _IDENTITY_STABLE = False
+_AGENT_ID = ""
 # What the last update did, read at start-up and sent in hello: how the hub
 # tells "came back on the new build" from "came back rolled back" when the
 # two builds have the same agent file.
@@ -2223,9 +2224,9 @@ def _process_created(pid: int) -> float | None:
         k32.CloseHandle(handle)
 
 
-def _win_console_ancestor(pid: int) -> int:
-    """Windows: the cmd.exe running run-agent.bat for agent `pid` (through
-    the py launcher when the bat used it), or 0."""
+def _win_process_table() -> dict[int, tuple[int, str]]:
+    """Windows: every process as pid -> (parent pid, lower-case exe name);
+    empty when the snapshot cannot be taken."""
     import ctypes
     from ctypes import wintypes
 
@@ -2247,9 +2248,9 @@ def _win_console_ancestor(pid: int) -> int:
     k32.Process32FirstW.argtypes = (wintypes.HANDLE, ctypes.POINTER(_Entry))
     k32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.POINTER(_Entry))
     snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
-    if not snap or snap == ctypes.c_void_p(-1).value:
-        return 0
     table: dict[int, tuple[int, str]] = {}
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return table
     try:
         entry = _Entry()
         entry.dwSize = ctypes.sizeof(_Entry)
@@ -2262,6 +2263,13 @@ def _win_console_ancestor(pid: int) -> int:
             ok = k32.Process32NextW(snap, ctypes.byref(entry))
     finally:
         k32.CloseHandle(snap)
+    return table
+
+
+def _win_console_ancestor(pid: int) -> int:
+    """Windows: the cmd.exe running run-agent.bat for agent `pid` (through
+    the py launcher when the bat used it), or 0."""
+    table = _win_process_table()
     cur = table.get(pid, (0, ""))[0]
     for _ in range(4):
         parent, exe = table.get(cur, (0, ""))
@@ -2335,15 +2343,58 @@ def _same_process(rec: Mapping[str, Any]) -> bool:
     return _posix_alive(pid) and _BUNDLE_MAIN in _posix_cmdline(pid)
 
 
+def _tree_to_kill(table: Mapping[int, tuple[int, str]], root: int, spare: int) -> list[int]:
+    """`root` and its descendants, children before parents — minus `spare`
+    and everything under it.
+
+    The update helper is a CHILD of the agent it stops (the agent started
+    it). `taskkill /T` follows exactly that link, so a forced stop would kill
+    the helper in the middle of an update and leave no agent running."""
+    children: dict[int, list[int]] = {}
+    for child, (parent, _exe) in table.items():
+        if child != parent:
+            children.setdefault(parent, []).append(child)
+    order: list[int] = []
+    seen: set[int] = set()
+
+    def walk(pid: int) -> None:
+        if pid == spare or pid in seen:
+            return
+        seen.add(pid)
+        for child in children.get(pid, []):
+            walk(child)
+        order.append(pid)
+
+    walk(root)
+    return order
+
+
+def _win_terminate(pid: int) -> None:
+    from ctypes import wintypes
+
+    k32 = _win_kernel32()
+    k32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    handle = k32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+    if not handle:
+        return
+    try:
+        k32.TerminateProcess(handle, 1)
+    finally:
+        k32.CloseHandle(handle)
+
+
 def _kill_tree(pid: int) -> None:
     if sys.platform == "win32":
-        with contextlib.suppress(OSError, subprocess.SubprocessError):
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True,
-                timeout=15,
-                check=False,
-            )
+        # No taskkill: its /T would take this process too (see
+        # _tree_to_kill), and from a window-less helper every call would
+        # flash a console window.
+        try:
+            targets = _tree_to_kill(_win_process_table(), pid, os.getpid())
+        except Exception:
+            targets = [pid]
+        for target in targets or [pid]:
+            with contextlib.suppress(Exception):
+                _win_terminate(target)
         return
     with contextlib.suppress(OSError):
         os.kill(pid, signal.SIGTERM)
@@ -2488,10 +2539,20 @@ def _claim_instance(args: argparse.Namespace) -> None:
                 f"could not stop the previous instance (pid {old.get('pid')}) — "
                 "stop it by hand, then start this one again"
             )
+    created = _own_created()
+    if not created:
+        # A record with no creation time never matches _same_process: the
+        # next start would not stop this instance, and an update helper
+        # could never see it come back. Better no record at all.
+        _log.warning(
+            "cannot read this process's start time — previous-instance stop and "
+            "remote update are unavailable"
+        )
+        return
     launcher = os.environ.get(_LAUNCHER_ENV, "")
     rec: dict[str, Any] = {
         "pid": os.getpid(),
-        "created": _own_created(),
+        "created": created,
         "build": _BUILD,
         "config": args.config_used,
         "launcher": launcher,
@@ -2730,14 +2791,18 @@ async def _op_agent_update(_spec: OpSpec, values: Mapping[str, Any]) -> tuple[st
     if not _IDENTITY_STABLE:
         raise _JobRejected(
             "AGENT_UPDATE_REJECTED",
-            "this agent has no fixed identity (no agent.conf, no --agent-id), so its "
-            "restarted copy could not be recognised — nothing was changed",
+            "this agent has no fixed identity (no agent_id in agent.conf, no --agent-id), "
+            "so its restarted copy could not be recognised — set agent_id; nothing was changed",
         )
     install = _install_dir()
     state = _state_dir(install)
     staged = state / "staged"
     names = await asyncio.to_thread(_unpack_bundle, Path(values["image"]), staged)
     has_config = _BUNDLE_CONFIG in names
+    if has_config and not _CONFIG_USED:
+        # Running on flags alone: a new agent.conf would be read on restart
+        # (the default path) and could change who this agent is.
+        raise _reject_bundle("this agent runs without a config file, so it takes no agent.conf")
     code_files = [n for n in names if n != _BUNDLE_CONFIG]
     config_target = Path(_CONFIG_USED) if _CONFIG_USED else install / _BUNDLE_CONFIG
     changed = await asyncio.to_thread(
@@ -2759,7 +2824,14 @@ async def _op_agent_update(_spec: OpSpec, values: Mapping[str, Any]) -> tuple[st
     check_config = (
         staged / _BUNDLE_CONFIG if has_config else (Path(_CONFIG_USED) if _CONFIG_USED else None)
     )
-    await _self_check(staged / _BUNDLE_MAIN, check_config, _LAUNCH_ARGV)
+    check = await _self_check(staged / _BUNDLE_MAIN, check_config, _LAUNCH_ARGV)
+    if has_config and (check.get("agent_id") != _AGENT_ID or not check.get("agent_id_fixed")):
+        # The hub waits for THIS agent_id to come back; under another one
+        # (or a random one) a good update would read as "never returned".
+        raise _reject_bundle(
+            f"the pushed agent.conf would make this agent {check.get('agent_id')!r} "
+            f"instead of {_AGENT_ID!r} — keep agent_id the same"
+        )
 
     update_id = uuid.uuid4().hex[:12]
     plan = {
@@ -2943,12 +3015,17 @@ def _launch_and_wait(
     return False
 
 
-def _apply_update(plan_path: Path) -> int:
+def _apply_update(plan_path: Path, progress: dict[str, Any]) -> int:
     """Swap the files and confirm the new build reaches the hub; otherwise
-    put the old files back and start the old build again."""
+    put the old files back and start the old build again.
+
+    `progress` tells _apply_update_main how far this got, so an unplanned
+    failure after the old agent is gone still ends with an agent running."""
     plan = _read_json(plan_path)
     if not plan:
         return 2
+    # Read every field BEFORE the old agent is stopped: a malformed plan must
+    # fail while that agent is still running and connected.
     install = Path(plan["install_dir"])
     state = _state_dir(install)
     say = _update_logger(state / "update.log")
@@ -2957,6 +3034,15 @@ def _apply_update(plan_path: Path) -> int:
     files = [str(n) for n in plan["files"]]
     config_target = Path(plan["config_target"]) if plan.get("config_target") else None
     from_build, to_build = str(plan["from_build"]), str(plan["to_build"])
+    old = dict(plan["old"])
+    settle = float(plan.get("settle_s", _UPDATE_SETTLE_S))
+    # Not used here — read now only so a bad value fails before the stop.
+    _checked = (
+        float(plan.get("health_timeout_s") or _UPDATE_HEALTH_TIMEOUT_S),
+        str(plan["instance_file"]),
+        dict(plan["relaunch"]),
+    )
+    del _checked
 
     def result(outcome: str) -> None:
         with contextlib.suppress(OSError):
@@ -2971,15 +3057,17 @@ def _apply_update(plan_path: Path) -> int:
                 },
             )
 
+    backup = state / "backup"
+    progress.update(plan=plan, say=say, result=result, backup=backup, config_target=config_target)
     say(f"update {plan.get('id')}: build {from_build} -> {to_build}, changed {plan.get('changed')}")
-    time.sleep(float(plan.get("settle_s", _UPDATE_SETTLE_S)))
-    if not _stop_instance(state, plan["old"], say):
+    time.sleep(settle)
+    if not _stop_instance(state, old, say):
         say("the running agent could not be stopped — update abandoned, nothing was changed")
         return 1
+    progress["stopped"] = True
     # run-agent.bat reads itself line by line while it runs: let the stopped
     # agent's window finish its last lines before that file is replaced.
     time.sleep(2.0)
-    backup = state / "backup"
     try:
         manifest = _backup_files(install, files, config_target, backup)
     except OSError as e:
@@ -2987,6 +3075,7 @@ def _apply_update(plan_path: Path) -> int:
         result("aborted")
         _launch_and_wait(plan, from_build, say, stop_on_timeout=False)
         return 1
+    progress["manifest"] = manifest
     result("pending")
     try:
         _install_files(staged, install, files, config_target)
@@ -3017,12 +3106,37 @@ def _apply_update(plan_path: Path) -> int:
     return 1
 
 
+def _recover_after_crash(progress: Mapping[str, Any], say: Callable[[str], None]) -> None:
+    """The old agent is gone and something unplanned went wrong: put back
+    whatever was replaced and start the old build, each step best effort.
+    If a new build is already running, the old one's start-up stops it."""
+    plan = progress["plan"]
+    if progress.get("manifest") is not None:
+        with contextlib.suppress(Exception):
+            _restore_files(
+                Path(plan["install_dir"]),
+                progress["backup"],
+                progress["manifest"],
+                progress.get("config_target"),
+                say,
+            )
+    with contextlib.suppress(Exception):
+        progress["result"]("rolled_back")
+    with contextlib.suppress(Exception):
+        say(f"starting build {plan['from_build']} again")
+        _launch_and_wait(plan, str(plan["from_build"]), say, stop_on_timeout=False)
+
+
 def _apply_update_main(plan_arg: str) -> int:
     plan_path = Path(plan_arg)
+    progress: dict[str, Any] = {}
     try:
-        return _apply_update(plan_path)
+        return _apply_update(plan_path, progress)
     except Exception as e:  # last resort: never die silently mid-swap
-        _update_logger(plan_path.parent / "update.log")(f"update helper crashed: {e!r}")
+        say = progress.get("say") or _update_logger(plan_path.parent / "update.log")
+        say(f"update helper crashed: {e!r}")
+        if progress.get("stopped"):
+            _recover_after_crash(progress, say)
         return 3
 
 
@@ -3037,7 +3151,17 @@ def _self_check_main(args: argparse.Namespace) -> int:
         pyserial = True
     except ImportError:
         pyserial = False
-    print(json.dumps({"build": _BUILD, "ops": list(_OPS), "pyserial": pyserial}))
+    print(
+        json.dumps(
+            {
+                "build": _BUILD,
+                "ops": list(_OPS),
+                "pyserial": pyserial,
+                "agent_id": args.agent_id,
+                "agent_id_fixed": args.agent_id_explicit,
+            }
+        )
+    )
     return 0
 
 
@@ -3618,11 +3742,12 @@ def main() -> None:
     )
     if args.log_file:
         _setup_file_logging(args.log_file)
-    global _LAUNCH_ARGV, _CONFIG_USED, _CONFIG_EXPLICIT, _IDENTITY_STABLE
+    global _LAUNCH_ARGV, _CONFIG_USED, _CONFIG_EXPLICIT, _IDENTITY_STABLE, _AGENT_ID
     _LAUNCH_ARGV = sys.argv[1:]
     _CONFIG_USED = args.config_used
     _CONFIG_EXPLICIT = args.config_explicit
-    _IDENTITY_STABLE = bool(args.config_used) or args.agent_id_explicit
+    _IDENTITY_STABLE = args.agent_id_explicit
+    _AGENT_ID = args.agent_id
     # Before anything opens a COM port or the status page: the previous
     # instance of this agent holds both until it is gone.
     _claim_instance(args)
