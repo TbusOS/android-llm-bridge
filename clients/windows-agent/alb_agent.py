@@ -2137,6 +2137,21 @@ async def _reply_com_list(ws: Any) -> None:
         await ws.send(_frame("com_list", ports=ports))
 
 
+async def _close_on_shutdown(ws: Any) -> None:
+    """End the session when a shutdown is requested.
+
+    On POSIX the SIGINT / SIGTERM handlers only set `_shutdown` (see
+    _install_signal_handlers); nothing raises. The reader loop in
+    _run_session sits in `async for raw in ws` and never looks at the
+    event, so a stop request to a CONNECTED agent did nothing until the hub
+    happened to drop the session. Closing the socket is what ends that loop.
+    (Windows takes the KeyboardInterrupt path and never depended on this.)
+    """
+    await _shutdown.wait()
+    with contextlib.suppress(Exception):
+        await ws.close()
+
+
 async def _run_session(args: argparse.Namespace) -> None:
     async with ws_connect(args.hub_url) as ws:
         await ws.send(_hello(args.agent_id, args.name, args.token))
@@ -2156,6 +2171,7 @@ async def _run_session(args: argparse.Namespace) -> None:
         _STATUS.on_connected()
 
         hb = asyncio.create_task(_heartbeat(ws))
+        stopper = asyncio.create_task(_close_on_shutdown(ws))
         channels: set[asyncio.Task[None]] = set()
 
         def _forget(task: asyncio.Task[None]) -> None:
@@ -2209,8 +2225,11 @@ async def _run_session(args: argparse.Namespace) -> None:
         finally:
             _STATUS.on_disconnected()
             hb.cancel()
+            stopper.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await hb
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await stopper
             for t in list(channels):
                 t.cancel()
             for t in list(channels):
