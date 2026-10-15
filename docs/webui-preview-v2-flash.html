@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Flash tab — webui preview v2 (extension)</title>
-    <meta name="description" content="Mockup baseline for the Inspect Flash tab: fastboot state, image import, one-click partition write, and the job/UART timeline.">
+    <meta name="description" content="Mockup baseline for the Inspect Flash tab: fastboot state, partition write, bench USB modes, package flash plan, job/UART timeline.">
     <meta property="og:title" content="Flash tab — webui preview v2">
     <meta property="og:description" content="Mockup baseline for the Inspect Flash tab: fastboot state, image import, partition write, job/UART timeline.">
     <link rel="stylesheet" href="assets/fonts.css">
@@ -430,8 +430,143 @@
         cursor: pointer;
       }
 
+      /* ---- bench USB (ADR-059) ----
+         回答「板子明明进了 fastboot,台架却看不到」。USB 线没插在这台机器上,
+         和插着但没装驱动,在 fastboot 那边是同一个空列表;在这里是两种不同的行。
+         模式由 hub 按接口类号 / VID:PID 判,agent 只回原始信息。 */
+      .bench-usb, .plan-card {
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 10px;
+        padding: 18px 20px;
+        background: #fff;
+        min-width: 0;  /* a grid item's default min-width is its content: a long row would widen the whole column */
+      }
+      .bench-usb__head, .plan-card__head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 12px;
+        margin-bottom: 6px;
+      }
+      .bench-usb__title, .plan-card__title {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+      }
+      .bench-usb__meta, .plan-card__meta {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        margin-left: auto;
+      }
+      .bench-usb__hint, .plan-card__hint {
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--anth-text-secondary);
+        margin: 0 0 14px;
+      }
+      .bench-usb__list { display: grid; gap: 8px; margin-bottom: 12px; }
+      .bench-usb__row {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr) auto;
+        gap: 4px 12px;
+        align-items: baseline;
+        padding: 10px 12px;
+        border: 1px solid var(--anth-light-gray);
+        border-left-width: 4px;
+        border-radius: 6px;
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 12.5px;
+      }
+      .bench-usb__row[data-driver="missing"],
+      .bench-usb__row[data-driver="problem"] { border-left-color: #b54b3d; }
+      .bench-usb__row[data-driver="ok"] { border-left-color: var(--anth-green); }
+      .bench-usb__mode { font-weight: 600; color: var(--anth-text); }
+      .bench-usb__id { color: var(--anth-text-secondary); word-break: break-all; }
+      .bench-usb__driver { white-space: nowrap; color: var(--anth-text-secondary); }
+      .bench-usb__row[data-driver="missing"] .bench-usb__driver,
+      .bench-usb__row[data-driver="problem"] .bench-usb__driver { color: #b54b3d; font-weight: 600; }
+      .bench-usb__advice {
+        grid-column: 1 / -1;
+        font-family: var(--font-sans, system-ui, sans-serif);
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: #7d3629;
+      }
+      .bench-usb__others {
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+        margin: 0;
+      }
+
+      /* ---- package flash (ADR-058) ----
+         整份先查完再动手:先「检查」出计划(每行跑还是跳、镜像大小、md5、所有问题),
+         确认的是哪份就跑哪份(指纹)。跳过项必须显式写,写错名字整份拒绝。 */
+      .plan-card__form {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .7fr) auto;
+        gap: 10px;
+        align-items: end;
+        margin-bottom: 14px;
+      }
+      .plan-field { display: grid; gap: 4px; min-width: 0; }
+      .plan-field label {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 12px;
+        color: var(--anth-text-secondary);
+      }
+      .plan-field input {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 12.5px;
+        padding: 6px 8px;
+        border: 1px solid var(--anth-light-gray);
+        border-radius: 4px;
+        background: #fff;
+        color: var(--anth-text);
+        min-width: 0;
+      }
+      .plan-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 18px;
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 12.5px;
+        margin: 0 0 10px;
+      }
+      .plan-summary b { font-weight: 600; }
+      .plan-problems {
+        margin: 0 0 12px;
+        padding: 10px 12px 10px 28px;
+        border: 1px solid #b54b3d;
+        border-radius: 6px;
+        background: #fdf5f3;
+        color: #7d3629;
+        font-size: 12.5px;
+        line-height: 1.55;
+      }
+      .plan-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; margin-bottom: 12px; }
+      .plan-table th {
+        text-align: left;
+        font-weight: 500;
+        color: var(--anth-text-secondary);
+        border-bottom: 1px solid var(--anth-light-gray);
+        padding: 5px 8px 5px 0;
+      }
+      .plan-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid #f0eeea; vertical-align: top; overflow-wrap: anywhere; }
+      .plan-table td.plan-table__num { color: var(--anth-text-secondary); text-align: right; width: 3em; }
+      .plan-table td.plan-table__md5 { color: var(--anth-text-secondary); }
+      .plan-table tr[data-decision="skip"] td { color: var(--anth-text-secondary); }
+      .plan-table tr[data-status="ok"] .plan-table__status { color: #4f6b3a; }
+      .plan-table tr[data-status="failed"] .plan-table__status { color: #b54b3d; font-weight: 600; }
+      .plan-table tr[data-status="running"] .plan-table__status { color: #a85a26; }
+      .plan-table__fold td { color: var(--anth-text-secondary); font-style: italic; }
+      .plan-card__actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
       @media (max-width: 860px) {
         .flash-tab { grid-template-columns: 1fr; }
+        .plan-card__form { grid-template-columns: 1fr; }
+        .plan-table td.plan-table__md5, .plan-table th.plan-table__md5 { display: none; }
       }
     </style>
   </head>
@@ -550,6 +685,100 @@
           </section>
         </div>
 
+        <!-- ---- bench USB ---- -->
+        <section class="bench-usb flash-tab__wide">
+          <header class="bench-usb__head">
+            <h2 class="bench-usb__title">bench USB</h2>
+            <span class="bench-usb__meta">bench-01 &middot; 7 devices</span>
+            <button type="button" class="flash-state-card__refresh">
+              <span class="lang-en">list again</span><span class="lang-zh">重新列</span>
+            </button>
+          </header>
+          <p class="bench-usb__hint">
+            <span class="lang-en">What the bench host itself sees on USB, and which mode each board is in. When fastboot lists nothing, this tells a missing driver from a cable that is not on this host.</span>
+            <span class="lang-zh">台架那台机器自己在 USB 上看到了什么，以及每块板子处在什么模式。fastboot 列表为空时，靠这里分清是没装驱动，还是线根本没插在这台机器上。</span>
+          </p>
+          <div class="bench-usb__list">
+            <div class="bench-usb__row" data-driver="missing">
+              <span class="bench-usb__mode">fastboot</span>
+              <span class="bench-usb__id">18d1:d00d &middot; serial 0123456789 &middot; Android</span>
+              <span class="bench-usb__driver">
+                <span class="lang-en">no driver</span><span class="lang-zh">没装驱动</span>
+              </span>
+              <span class="bench-usb__advice">
+                <span class="lang-en">A board is in fastboot but no driver is bound on the bench host — install the Android bootloader (WinUSB) driver there; fastboot cannot see it until then.</span>
+                <span class="lang-zh">有块板子在 fastboot，但台架机器上没有绑定驱动 —— 在那台机器上装 Android bootloader（WinUSB）驱动，装好之前 fastboot 看不到它。</span>
+              </span>
+            </div>
+          </div>
+          <p class="bench-usb__others">
+            <span class="lang-en">6 other devices (hub, keyboard, serial adapter …) — <a href="#">show all</a></span>
+            <span class="lang-zh">另有 6 个设备（集线器、键盘、串口转接器……）—— <a href="#">全部显示</a></span>
+          </p>
+        </section>
+
+        <!-- ---- package flash ---- -->
+        <section class="plan-card flash-tab__wide">
+          <header class="plan-card__head">
+            <h2 class="plan-card__title">package</h2>
+            <span class="plan-card__meta">flash plan</span>
+          </header>
+          <p class="plan-card__hint">
+            <span class="lang-en">Flash a whole package by its manifest. The plan is checked as a whole first — any problem and not a single row runs — and what runs is exactly the plan you confirmed: an image changed since is refused before it is written.</span>
+            <span class="lang-zh">按烧录清单烧整包。先整份检查——有任何问题就一行都不跑；跑的就是你确认的那份计划：确认之后镜像被换掉，会在写入之前被拦下。</span>
+          </p>
+          <div class="plan-card__form">
+            <div class="plan-field">
+              <label for="plan-manifest">manifest</label>
+              <input id="plan-manifest" value="flash-images/board-x/scatter.txt">
+            </div>
+            <div class="plan-field">
+              <label for="plan-skip">skip partitions</label>
+              <input id="plan-skip" value="abl_a, abl_b">
+            </div>
+            <div class="plan-field">
+              <label for="plan-skip-action">skip actions</label>
+              <input id="plan-skip-action" value="setvar">
+            </div>
+            <button type="button" class="flash-btn flash-btn--ghost">
+              <span class="lang-en">check</span><span class="lang-zh">检查</span>
+            </button>
+          </div>
+          <p class="plan-summary">
+            <span>31 <span class="lang-en">rows</span><span class="lang-zh">行</span></span>
+            <span><b>28</b> <span class="lang-en">run</span><span class="lang-zh">执行</span></span>
+            <span>3 <span class="lang-en">skipped</span><span class="lang-zh">跳过</span></span>
+            <span>2.36 GB</span>
+            <span><span class="lang-en">fingerprint</span><span class="lang-zh">指纹</span> 0361bb78&hellip;</span>
+          </p>
+          <table class="plan-table">
+            <thead>
+              <tr>
+                <th>#</th><th>row</th><th><span class="lang-en">decision</span><span class="lang-zh">决定</span></th>
+                <th>bytes</th><th class="plan-table__md5">md5</th><th><span class="lang-en">status</span><span class="lang-zh">状态</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-decision="skip" data-status="skipped"><td class="plan-table__num">1</td><td>setvar model board-x</td><td>skip (setvar)</td><td></td><td class="plan-table__md5"></td><td class="plan-table__status">&mdash;</td></tr>
+              <tr data-decision="skip" data-status="skipped"><td class="plan-table__num">2</td><td>flash abl_a &larr; abl.elf</td><td>skip (abl_a)</td><td></td><td class="plan-table__md5"></td><td class="plan-table__status">&mdash;</td></tr>
+              <tr data-decision="run" data-status="ok"><td class="plan-table__num">4</td><td>reboot-bootloader</td><td>run</td><td></td><td class="plan-table__md5"></td><td class="plan-table__status">ok &middot; 9.8s</td></tr>
+              <tr data-decision="run" data-status="ok"><td class="plan-table__num">13</td><td>flash boot_a &larr; boot.img</td><td>run</td><td>100663296</td><td class="plan-table__md5">314f71f4&hellip;</td><td class="plan-table__status">ok &middot; 3.1s</td></tr>
+              <tr data-decision="run" data-status="running"><td class="plan-table__num">23</td><td>flash super &larr; super.img</td><td>run</td><td>2236021448</td><td class="plan-table__md5">9c02e1aa&hellip;</td><td class="plan-table__status">1.2 / 2.2 GB</td></tr>
+              <tr data-decision="run" data-status="pending"><td class="plan-table__num">30</td><td>erase misc</td><td>run</td><td></td><td class="plan-table__md5"></td><td class="plan-table__status">&hellip;</td></tr>
+              <tr class="plan-table__fold"><td></td><td colspan="5"><span class="lang-en">+ 25 more rows</span><span class="lang-zh">另外 25 行</span></td></tr>
+            </tbody>
+          </table>
+          <div class="plan-card__actions">
+            <button type="button" class="flash-btn flash-btn--danger">
+              <span class="lang-en">flash package</span><span class="lang-zh">烧整包</span>
+            </button>
+          </div>
+          <div class="flash-arm">
+            <span class="lang-en">This runs <b>28 rows</b> on the board, userdata included. It cannot be undone from here. Click "flash package" again to confirm.</span>
+            <span class="lang-zh">这会在板子上执行 <b>28 行</b>，包括 userdata。在这里撤不回来。再点一次「烧整包」确认。</span>
+          </div>
+        </section>
+
         <!-- ---- timeline ---- -->
         <section class="cfg-card flash-tab__wide">
           <header class="cfg-card__head">
@@ -567,7 +796,7 @@
               <tr><td class="cfg-table__key">PORT_BOARD</td><td class="cfg-table__val">V03</td></tr>
               <tr><td class="cfg-table__key">BASEBAND</td><td class="cfg-table__val">81</td></tr>
               <tr><td class="cfg-table__key">DUAL_SIM</td><td class="cfg-table__val">TRUE</td></tr>
-              <tr><td class="cfg-table__key">PN</td><td class="cfg-table__val">M9200-0AW-RF0-11AU</td></tr>
+              <tr><td class="cfg-table__key">PN</td><td class="cfg-table__val">BOARD-X-0AW-RF0-11AU</td></tr>
             </tbody>
           </table>
         </section>
