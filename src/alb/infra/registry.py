@@ -193,6 +193,16 @@ CAPABILITIES: list[CapabilitySpec] = [
         description="adbd state, verified by reading the uid back after the restart.",
     ),
     CapabilitySpec(
+        name="breakin",
+        impl_path="alb.capabilities.breakin",
+        cli_command="alb serial break-in",
+        mcp_tools=[],
+        supported_transports=["serial"],
+        status="beta",
+        description="Stop a bootloader at its countdown over UART: reader first, then the "
+        "optional reboot, then keys until a console prompt.",
+    ),
+    CapabilitySpec(
         name="timeline",
         impl_path="alb.capabilities.timeline",
         cli_command="alb timeline capture / show",

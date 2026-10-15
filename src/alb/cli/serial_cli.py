@@ -6,6 +6,16 @@ from pathlib import Path
 
 import typer
 
+from alb.capabilities.breakin import (
+    DEFAULT_EXPECT,
+    DEFAULT_PROMPT,
+    DEFAULT_PROMPT_WAIT_S,
+    DEFAULT_REPEAT_MS,
+    DEFAULT_TIMEOUT_S,
+    REBOOT_MODES,
+    break_in,
+    parse_send_keys,
+)
 from alb.capabilities.logging import capture_uart
 from alb.capabilities.shell import execute as shell_execute
 from alb.cli.common import get_transport, print_result, print_shell_result, run_async
@@ -67,6 +77,161 @@ def cmd_send(
     else:
         typer.echo(f"[fail] {result.error_code}: {result.stderr}", err=True)
         raise typer.Exit(code=1)
+
+
+@app.command("break-in")
+def cmd_break_in(
+    ctx: typer.Context,
+    reboot: str | None = typer.Option(
+        None,
+        "--reboot",
+        help=(
+            "How to restart the board once the watch is up: adb | serial. "
+            "Omit it and reset / power-cycle the board by hand when told to."
+        ),
+    ),
+    expect: str = typer.Option(
+        DEFAULT_EXPECT,
+        "--expect",
+        help="Regex announcing the key-press window (matched on the raw UART bytes).",
+    ),
+    send: str = typer.Option(
+        " ",
+        "--send",
+        help=(
+            "Keys to type once the window opens, repeated until a prompt appears. "
+            "Escapes accepted: \\r \\n \\t \\e \\xHH (e.g. '\\x03' for Ctrl-C)."
+        ),
+    ),
+    prompt: str | None = typer.Option(
+        None,
+        "--prompt",
+        help=f"Regex for the console prompt at the end of the stream. Default: {DEFAULT_PROMPT}",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_TIMEOUT_S, "--timeout", help="Seconds to wait for the window to appear."
+    ),
+    repeat_ms: int = typer.Option(
+        DEFAULT_REPEAT_MS, "--repeat-ms", help="Interval between repeated keypresses."
+    ),
+    prompt_wait: float = typer.Option(
+        DEFAULT_PROMPT_WAIT_S,
+        "--prompt-wait",
+        help="Seconds after the match to keep typing and wait for the prompt.",
+    ),
+    device: str | None = typer.Option(None, "--device"),
+    adb_device: str | None = typer.Option(
+        None, "--adb-device", help="adb serial for --reboot adb (default: the profile's device)."
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Where the full UART log goes (dir or file). Default: workspace/logs/.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation --reboot asks for"),
+) -> None:
+    """Stop the board in its bootloader: catch the autoboot countdown and type a key.
+
+    The reader is opened BEFORE the reboot is triggered, so the countdown
+    (a 1-3 s window after reset) is never missed. Other alb readers keep
+    working meanwhile — the link is shared, not taken over.
+
+    Ends in one of: stopped at a prompt (exit 0, the prompt line is shown),
+    matched but no prompt followed, pattern never seen (exit 1 with the last
+    lines received — some bootloaders simply do not offer a key-press stop),
+    or a link error. The full UART log of the attempt is saved either way.
+    """
+    try:
+        keys = parse_send_keys(send)
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--send") from None
+    if reboot is not None and reboot not in REBOOT_MODES:
+        raise typer.BadParameter(f"must be one of {', '.join(REBOOT_MODES)}", param_hint="--reboot")
+
+    # Confirm before anything is built or opened: --reboot restarts the board.
+    if reboot is not None and not yes:
+        how = "`adb reboot`" if reboot == "adb" else "`reboot` typed on the UART"
+        typer.echo(f"about to reboot the board via {how} and stop it in the bootloader")
+        typer.confirm("proceed?", abort=True)
+
+    t = _force_serial(ctx, device)
+    adb_t = (
+        get_transport(ctx, override="adb", device_serial=adb_device) if reboot == "adb" else None
+    )
+    json_mode = bool((ctx.obj or {}).get("json"))
+
+    def _ready() -> None:
+        if json_mode:
+            return
+        if reboot is None:
+            typer.echo(
+                f"[..] UART reader is up — reset or power-cycle the board now "
+                f"(waiting up to {timeout:g}s for {expect!r})",
+                err=True,
+            )
+        else:
+            typer.echo(f"[..] UART reader is up — rebooting via {reboot}", err=True)
+
+    result = run_async(
+        break_in(
+            t,
+            expect=expect,
+            send=keys,
+            reboot=reboot,
+            reboot_transport=adb_t,
+            timeout_s=timeout,
+            prompt=prompt,
+            repeat_ms=repeat_ms,
+            prompt_wait_s=prompt_wait,
+            device=device,
+            output=output,
+            on_ready=_ready,
+        )
+    )
+    if json_mode:
+        print_result(ctx, result)
+        return
+
+    from rich.markup import escape
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from alb.cli.common import console, err_console
+
+    log_path = result.artifacts[0] if result.artifacts else None
+
+    if result.ok and result.data is not None:
+        d = result.data
+        typer.echo(
+            f"[ok] stopped at the bootloader prompt after {d.sends} keypress(es), "
+            f"{d.duration_ms} ms"
+        )
+        typer.echo(f"  matched: {d.matched!r}")
+        typer.echo(f"  prompt:  {d.prompt_line!r}")
+        if log_path is not None:
+            typer.echo(f"  uart log: {log_path}")
+        typer.echo(
+            "next: alb serial shell 'printenv'   # run a command at the prompt and read "
+            "its output\n"
+            "      alb serial send 'help'        # type a line, no waiting"
+        )
+        return
+
+    err = result.error
+    if err is not None:
+        err_console.print(f"[red]✗ {escape(err.code)}[/] — {escape(err.message)}", soft_wrap=True)
+        if err.suggestion:
+            err_console.print(f"[yellow]suggestion:[/] {escape(err.suggestion)}", soft_wrap=True)
+        tail = str(err.details.get("tail") or "")
+        if tail.strip():
+            # Device text, not markup: a Text() body is shown verbatim.
+            console.print(Panel(Text(tail), title="last lines received", border_style="red"))
+        else:
+            console.print("[dim](nothing was received on the UART)[/]")
+    if log_path is not None:
+        typer.echo(f"  uart log: {log_path}")
+    raise typer.Exit(code=1)
 
 
 @app.command("shell")

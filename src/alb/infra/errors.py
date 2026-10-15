@@ -330,6 +330,36 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "manifest or the skips changed); no row was executed",
         "Run the command again and confirm the plan as it is now",
     ),
+    # ─── serial break-in (alb serial break-in) ───────────────────────
+    # Stopping a bootloader at its countdown over UART. Only "stopped at a
+    # prompt" is success; the two timeouts differ in what to try next.
+    "BREAKIN_PATTERN_NOT_SEEN": ErrorSpec(
+        "BREAKIN_PATTERN_NOT_SEEN",
+        "timeout",
+        "The bootloader countdown text never appeared on the UART within the timeout",
+        "Read the tail: if the board went straight into the kernel, this bootloader does not "
+        "offer a key-press stop or prints other text (pass --expect); if nothing arrived, "
+        "check that the board actually reset and the UART / baud (alb serial status)",
+    ),
+    "BREAKIN_NO_PROMPT": ErrorSpec(
+        "BREAKIN_NO_PROMPT",
+        "timeout",
+        "The countdown appeared and keys were sent, but no console prompt followed",
+        "Run `alb serial status` to see where the board is; at an unrecognised prompt pass "
+        "--prompt; if it kept booting try --send '\\r' or '\\x03' and a smaller --repeat-ms",
+    ),
+    "SERIAL_LINK_LOST": ErrorSpec(
+        "SERIAL_LINK_LOST",
+        "transport",
+        "The serial link dropped during the attempt and could not be reopened",
+        "Check the bridge / agent (alb serial health); nothing about the board is implied",
+    ),
+    "BREAKIN_BAD_ARGUMENT": ErrorSpec(
+        "BREAKIN_BAD_ARGUMENT",
+        "input",
+        "A break-in option is not usable (unknown reboot mode, nothing to send)",
+        "See `alb serial break-in --help`",
+    ),
     # ─── adbd (alb adb root / unroot / remount) · pstore ─────────────
     # The adbd replies matched here are AOSP's own (adb daemon
     # restart_service.cpp); the verdict is still the uid read back after the
