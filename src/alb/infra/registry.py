@@ -141,7 +141,7 @@ CAPABILITIES: list[CapabilitySpec] = [
     CapabilitySpec(
         name="diagnose",
         impl_path="alb.capabilities.diagnose",
-        cli_command="alb bugreport / anr pull / tombstone",
+        cli_command="alb bugreport / anr pull / tombstone / diag pstore",
         mcp_tools=[
             "alb_bugreport",
             "alb_anr_pull",
@@ -182,6 +182,15 @@ CAPABILITIES: list[CapabilitySpec] = [
         supported_transports=["adb", "ssh"],
         status="beta",
         description="APK management.",
+    ),
+    CapabilitySpec(
+        name="adbd",
+        impl_path="alb.capabilities.adbd",
+        cli_command="alb adb root / unroot / remount",
+        mcp_tools=[],
+        supported_transports=["adb"],
+        status="beta",
+        description="adbd state, verified by reading the uid back after the restart.",
     ),
     CapabilitySpec(
         name="bench",

@@ -317,6 +317,44 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "manifest or the skips changed); no row was executed",
         "Run the command again and confirm the plan as it is now",
     ),
+    # ─── adbd (alb adb root / unroot / remount) · pstore ─────────────
+    # The adbd replies matched here are AOSP's own (adb daemon
+    # restart_service.cpp); the verdict is still the uid read back after the
+    # restart, never the wording.
+    "ADB_ROOT_REFUSED": ErrorSpec(
+        "ADB_ROOT_REFUSED",
+        "device",
+        "adbd refused to run as root (production build), or kept its uid after `adb root`",
+        "For single commands prefix `su 0 <cmd>` (toybox su takes the uid first, not "
+        "`su -c`); for a root adbd flash a userdebug / eng build",
+    ),
+    "ADBD_RESTART_TIMEOUT": ErrorSpec(
+        "ADBD_RESTART_TIMEOUT",
+        "timeout",
+        "adbd did not come back with the requested uid within the wait",
+        "Run `alb devices`; over a tunnel the reconnect can take longer — retry with a "
+        "larger --timeout",
+    ),
+    "ADB_REMOUNT_FAILED": ErrorSpec(
+        "ADB_REMOUNT_FAILED",
+        "device",
+        "adb remount reported a failure (output passed through verbatim)",
+        "Run `alb adb root` first; if the output mentions verity, disable it yourself with "
+        "`adb disable-verity` and reboot — alb never runs that automatically",
+    ),
+    "ROOT_REQUIRED": ErrorSpec(
+        "ROOT_REQUIRED",
+        "permission",
+        "The device path cannot be read by the shell user",
+        "Run `alb adb root`, then retry",
+    ),
+    "PSTORE_PULL_FAILED": ErrorSpec(
+        "PSTORE_PULL_FAILED",
+        "transport",
+        "Crash records were listed on the device but none could be pulled",
+        "Read each file's error in the result; run `alb adb root` if they say permission "
+        "denied, otherwise check `alb devices`",
+    ),
     # ─── bench op table (ADR-059) ────────────────────────────────────
     # Four codes, four different fixes: pick an op the agent has, fix a
     # value, update the agent, or look at the bench host's disk.

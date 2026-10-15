@@ -37,6 +37,7 @@ from alb.cli.common import (
 from alb.cli.diagnose_cli import app as diagnose_cli
 from alb.cli.doctor_cli import run_doctor
 from alb.cli.filesync_cli import app as filesync_cli
+from alb.cli.adb_cli import app as adb_cli
 from alb.cli.bench_cli import app as bench_cli
 from alb.cli.flash_cli import app as flash_cli
 from alb.cli.info_cli import app as info_cli
@@ -299,6 +300,7 @@ app.add_typer(filesync_cli, name="fs", help="File transfer commands (push/pull).
 app.add_typer(diagnose_cli, name="diag", help="Diagnostic data (bugreport/anr/...)")
 app.add_typer(power_cli, name="power", help="Power state (reboot/battery/wait-boot).")
 app.add_typer(flash_cli, name="flash", help="Flash / fastboot via the device agent.")
+app.add_typer(adb_cli, name="adb", help="adbd state (root / unroot / remount).")
 app.add_typer(bench_cli, name="bench", help="Ops on the bench host (USB list, logs, fastboot).")
 app.add_typer(app_cli, name="app", help="APK management.")
 app.add_typer(serial_cli, name="serial", help="UART / serial (method G).")

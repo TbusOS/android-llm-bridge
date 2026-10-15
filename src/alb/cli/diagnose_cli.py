@@ -1,13 +1,60 @@
-"""CLI: bugreport / anr / tombstone / devinfo."""
+"""CLI: bugreport / anr / tombstone / devinfo / pstore."""
 
 from __future__ import annotations
 
-import typer
+from typing import Any
 
-from alb.capabilities.diagnose import anr_pull, bugreport, devinfo, tombstone_pull
-from alb.cli.common import get_transport, print_result, run_async
+import typer
+from rich.markup import escape
+
+from alb.capabilities.diagnose import anr_pull, bugreport, devinfo, pstore_pull, tombstone_pull
+from alb.cli.common import console, get_transport, print_result, run_async
+from alb.infra.result import Result
 
 app = typer.Typer(help="Diagnostic data collection.")
+
+
+@app.command("pstore")
+def cmd_pstore(
+    ctx: typer.Context,
+    device: str | None = typer.Option(None, "--device"),
+) -> None:
+    """Previous boot's crash record: /sys/fs/pstore/* (ramoops), else /proc/last_kmsg.
+
+    Needs root (alb adb root). Files are pulled into workspace/.../pstore/<ts>/
+    and never deleted from the device.
+    """
+    t = get_transport(ctx, device_serial=device)
+    result = run_async(pstore_pull(t, device=device))
+    _print_pstore(ctx, result)
+
+
+def _print_pstore(ctx: typer.Context, result: Result[Any]) -> None:
+    """One line per record: name · size · first crash marker.
+
+    The generic printer would render `files` as a Python list of dicts;
+    the reader wants to see at a glance which file names the panic.
+    """
+    if (ctx.obj or {}).get("json") or not result.ok or result.data is None:
+        print_result(ctx, result)
+        return
+    d = result.data
+    present = (
+        f"pstore: {'present' if d.pstore_present else 'absent'}, "
+        f"last_kmsg: {'present' if d.last_kmsg_present else 'absent'}"
+    )
+    console.print(f"[bold]source:[/] {escape(d.source)}  ({present})")
+    for f in d.files:
+        if not f.local_path:
+            detail = f"[red]pull failed: {escape(f.error)}[/]"
+        elif f.first_panic_line:
+            detail = f"[red]{escape(f.first_panic_line)}[/]"
+        else:
+            detail = "[dim](no panic marker)[/]"
+        console.print(f"  • {escape(f.name)}  {f.size} B  {detail}", soft_wrap=True)
+    console.print(escape(d.note), soft_wrap=True)
+    if d.saved_dir:
+        console.print(f"[dim]saved:[/] {escape(d.saved_dir)}", soft_wrap=True)
 
 
 @app.command("bugreport")

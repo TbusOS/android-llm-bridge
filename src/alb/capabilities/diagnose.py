@@ -5,6 +5,7 @@ See docs/capabilities/diagnose.md.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -736,3 +737,263 @@ def _parse_wm_density(stdout: str) -> str:
         if s.startswith("Physical density:"):
             return s.split(":", 1)[1].strip()
     return ""
+
+
+# ─── pstore (previous boot's crash record) ─────────────────────────
+#
+# After a kernel panic / watchdog reset the last console lines and the panic
+# itself survive in RAM and are exposed as files under /sys/fs/pstore
+# (ramoops: console-ramoops-0, dmesg-ramoops-N, pmsg-ramoops-0, ...). Kernels
+# that predate pstore expose the same thing as /proc/last_kmsg. Reading it is
+# the first step of every "why did it reboot" question.
+#
+# Nothing here deletes: some setups clear pstore on read (`rm` after `cat`)
+# so the next crash has room — alb must leave that decision to the operator,
+# otherwise one `alb diag pstore` could erase the only copy of a crash.
+
+PSTORE_DIR = "/sys/fs/pstore"
+LAST_KMSG = "/proc/last_kmsg"
+
+# First line that names the crash. The three kernel strings are literal
+# (printk never changes their case); "watchdog" appears both as the kernel's
+# `watchdog:` and as vendor "Watchdog bark/bite" lines, so that one is
+# case-insensitive.
+# Two tiers. A previous boot's console log routinely carries benign
+# `watchdog:` init lines long before anything goes wrong, so a watchdog line
+# is reported only when none of the unambiguous markers is present.
+_PANIC_RE = re.compile(r"Kernel panic|Internal error: Oops|Unable to handle kernel")
+_WATCHDOG_RE = re.compile(r"watchdog", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class PstoreFile:
+    name: str
+    size: int
+    local_path: str  # "" when the pull failed
+    first_panic_line: str | None
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "size": self.size,
+            "local_path": self.local_path,
+            "first_panic_line": self.first_panic_line,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
+class PstoreResult:
+    """Where the previous boot's record came from and what it says.
+
+    source: "pstore" | "last_kmsg" | "none". The two *_present flags say
+    which locations existed, so "none" is a statement about the device, not
+    about alb failing to look.
+    """
+
+    source: str
+    pstore_present: bool
+    last_kmsg_present: bool
+    files: list[PstoreFile]
+    saved_dir: str | None
+    note: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "pstore_present": self.pstore_present,
+            "last_kmsg_present": self.last_kmsg_present,
+            "files": [f.to_dict() for f in self.files],
+            "saved_dir": self.saved_dir,
+            "note": self.note,
+        }
+
+
+async def pstore_pull(
+    transport: Transport,
+    *,
+    device: str | None = None,
+) -> Result[PstoreResult]:
+    """Pull /sys/fs/pstore/* (else /proc/last_kmsg) into workspace/.../pstore/<ts>/.
+
+    Needs root to list pstore on most builds; a denied listing comes back as
+    ROOT_REQUIRED rather than "empty", because those two look the same to a
+    reader and mean opposite things.
+    """
+    ls = await transport.shell(f"ls -l {PSTORE_DIR}", timeout=10)
+    ls_text = (ls.stdout + ls.stderr).lower()
+
+    if not ls.ok and "permission denied" in ls_text:
+        return fail(
+            code="ROOT_REQUIRED",
+            message=f"listing {PSTORE_DIR} denied: {(ls.stderr or ls.stdout).strip()}",
+            suggestion="needs root — run `alb adb root`, then retry",
+            category="permission",
+            timing_ms=ls.duration_ms,
+        )
+    if not ls.ok and "no such file" not in ls_text and "not a directory" not in ls_text:
+        return fail(
+            code=ls.error_code or "ADB_COMMAND_FAILED",
+            message=(ls.stderr or ls.stdout).strip() or f"listing {PSTORE_DIR} failed",
+            suggestion="Device may be offline",
+            category="transport",
+            timing_ms=ls.duration_ms,
+        )
+
+    pstore_present = ls.ok
+    entries = _parse_ls_l(ls.stdout) if ls.ok else []
+
+    if entries:
+        dst_dir = workspace_path("pstore", iso_timestamp(), device=device)
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        files = [
+            await _fetch_record(transport, f"{PSTORE_DIR}/{name}", dst_dir / name, size)
+            for name, size in entries
+        ]
+        if not any(f.local_path for f in files):
+            return _nothing_pulled(files, f"{len(files)} record(s) listed in {PSTORE_DIR}")
+        return ok(
+            data=PstoreResult(
+                source="pstore",
+                pstore_present=True,
+                last_kmsg_present=False,
+                files=files,
+                saved_dir=str(dst_dir),
+                note=f"{len(files)} pstore file(s) in {PSTORE_DIR}",
+            ),
+            artifacts=[Path(f.local_path) for f in files if f.local_path],
+        )
+
+    # Older kernels (and some that reset pstore on boot) expose the previous
+    # kernel log as a single proc file instead.
+    pstore_state = "empty" if pstore_present else "absent"
+    probe = await transport.shell(f"ls {LAST_KMSG}", timeout=10)
+    if not probe.ok:
+        return ok(
+            data=PstoreResult(
+                source="none",
+                pstore_present=pstore_present,
+                last_kmsg_present=False,
+                files=[],
+                saved_dir=None,
+                note=(
+                    f"{PSTORE_DIR} {pstore_state}; {LAST_KMSG} absent — the previous "
+                    "boot left no crash record (clean reboot, or ramoops not configured)"
+                ),
+            ),
+            artifacts=[],
+        )
+
+    dst_dir = workspace_path("pstore", iso_timestamp(), device=device)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    rec = await _fetch_record(transport, LAST_KMSG, dst_dir / "last_kmsg", -1)
+    if not rec.local_path:
+        return _nothing_pulled([rec], f"{PSTORE_DIR} {pstore_state}; {LAST_KMSG} present")
+    return ok(
+        data=PstoreResult(
+            source="last_kmsg",
+            pstore_present=pstore_present,
+            last_kmsg_present=True,
+            files=[rec],
+            saved_dir=str(dst_dir),
+            note=f"{PSTORE_DIR} {pstore_state}; {LAST_KMSG} present",
+        ),
+        artifacts=[Path(rec.local_path)] if rec.local_path else [],
+    )
+
+
+def _nothing_pulled(files: list[PstoreFile], where: str) -> Result[PstoreResult]:
+    """Records exist on the device but not one reached the host.
+
+    Reported as a failure, not as an ok with zero artifacts: a caller that
+    reads only ``ok`` would otherwise take "could not read the crash record"
+    for "there was no crash".
+    """
+    errors = "; ".join(f"{f.name}: {f.error}" for f in files)
+    if any("permission denied" in f.error.lower() for f in files):
+        return fail(
+            code="ROOT_REQUIRED",
+            message=f"{where}, but reading them was denied: {errors}",
+            suggestion="needs root — run `alb adb root`, then retry",
+            category="permission",
+        )
+    return fail(
+        code="PSTORE_PULL_FAILED",
+        message=f"{where}, but none could be pulled: {errors}",
+        suggestion="Check `alb devices`; read each file's error above",
+        category="transport",
+    )
+
+
+async def _fetch_record(transport: Transport, remote: str, local: Path, size: int) -> PstoreFile:
+    """Pull one record and scan it for the first crash marker.
+
+    size < 0 means "unknown until pulled" (proc files report 0 in `ls -l`).
+    """
+    r = await transport.pull(remote, local)
+    if not r.ok:
+        return PstoreFile(
+            name=local.name,
+            size=max(size, 0),
+            local_path="",
+            first_panic_line=None,
+            error=(r.stderr or r.stdout).strip() or "pull failed",
+        )
+    return _scan_record(local, size)
+
+
+def _scan_record(local: Path, size: int) -> PstoreFile:
+    """Size + first crash marker of a pulled record.
+
+    Sync on purpose: ramoops records are at most a few hundred KB, and the
+    scan is the whole point of the pull — nothing else is waiting on the loop.
+    """
+    if not local.exists():
+        return PstoreFile(
+            name=local.name,
+            size=max(size, 0),
+            local_path="",
+            first_panic_line=None,
+            error="pull reported ok but wrote nothing",
+        )
+    # ramoops buffers carry ECC / stale bytes; decode leniently, never raise.
+    text = local.read_bytes().decode("utf-8", errors="replace")
+    return PstoreFile(
+        name=local.name,
+        size=local.stat().st_size if size < 0 else size,
+        local_path=str(local),
+        first_panic_line=_first_panic_line(text),
+    )
+
+
+def _first_panic_line(text: str) -> str | None:
+    lines = text.splitlines()
+    for pattern in (_PANIC_RE, _WATCHDOG_RE):
+        for line in lines:
+            if pattern.search(line):
+                return line.strip()[:200]
+    return None
+
+
+def _parse_ls_l(stdout: str) -> list[tuple[str, int]]:
+    """`ls -l` (toybox / busybox) → [(basename, size)], sorted by name.
+
+    -r--r--r-- 1 root root 131072 2026-01-01 00:00 console-ramoops-0
+    Names come from the device, so they are basenamed (round11 SEC-3) before
+    they ever become a local path.
+    """
+    out: list[tuple[str, int]] = []
+    for raw in stdout.splitlines():
+        parts = raw.split()
+        if len(parts) < 6 or raw.startswith("total"):
+            continue
+        safe = Path(parts[-1]).name
+        if not safe or safe in {".", ".."}:
+            continue
+        try:
+            size = int(parts[4])
+        except ValueError:
+            size = 0
+        out.append((safe, size))
+    return sorted(out)
