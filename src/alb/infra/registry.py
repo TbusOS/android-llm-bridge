@@ -193,6 +193,15 @@ CAPABILITIES: list[CapabilitySpec] = [
         description="adbd state, verified by reading the uid back after the restart.",
     ),
     CapabilitySpec(
+        name="timeline",
+        impl_path="alb.capabilities.timeline",
+        cli_command="alb timeline capture / show",
+        mcp_tools=[],
+        supported_transports=["adb", "ssh", "serial"],
+        status="beta",
+        description="logcat + dmesg + UART captured together, every line stamped on one clock.",
+    ),
+    CapabilitySpec(
         name="port",
         impl_path="alb.remote.port_channel",
         cli_command="alb port open / check",

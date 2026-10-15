@@ -139,6 +139,19 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "duration out of range",
         "Use a value between 1 and 3600 seconds",
     ),
+    "INVALID_SOURCE": ErrorSpec(
+        "INVALID_SOURCE",
+        "input",
+        "unknown or empty log source list",
+        "Choose at least one of: logcat, dmesg, uart",
+    ),
+    "TIMELINE_NO_SOURCE": ErrorSpec(
+        "TIMELINE_NO_SOURCE",
+        "transport",
+        "None of the requested timeline sources could be read; nothing was captured",
+        "Read the notes: dmesg usually needs `alb adb root`, uart needs `alb setup serial`, "
+        "logcat needs an adb device",
+    ),
     "INVALID_FILTER": ErrorSpec(
         "INVALID_FILTER",
         "input",
