@@ -161,6 +161,11 @@ runs and says when the hub has a newer one. The agent window prints the same
 build number at start-up (`starting: build ...`) and on every connect
 (`connected to ... as ... (build ...)`).
 
+Selecting text in the agent window (to copy log lines, say) pauses the
+window only: the agent keeps forwarding adb and serial and keeps running
+jobs; press Esc and the lines held back are printed. Build 7f98af4a52b5
+and earlier stopped entirely while a selection was held.
+
 ### One instance per agent
 
 Starting an agent that is already running stops the running one first (it

@@ -197,6 +197,60 @@ async def test_no_agent_no_update(tmp_path):
     assert r.code == "FASTBOOT_UNAVAILABLE"
 
 
+# ── the agent's answer lost on the way ───────────────────────────────
+#
+# 2026-10-16 on the bench: the old agent froze (a text selection in its
+# console window) right after starting the update helper. Its answer never
+# left, the helper killed it after 15 s and the update went through — but
+# the CLI reported FLASH_FAILED with "re-flash before rebooting".
+
+
+def _lost() -> FlashResult:
+    return FlashResult(
+        ok=False,
+        code="FLASH_FAILED",
+        error="agent closed the job channel without reporting a result",
+        data={"result_lost": True},
+    )
+
+
+async def _run_lost(tmp_path, make_registry, **kw) -> FlashResult:
+    src = _folder(tmp_path)
+    expect, _ = au.make_bundle(src, None, tmp_path / "probe.zip")
+    return await au.update_agent(_Svc(_lost()), make_registry(expect), src=src, **kw)
+
+
+async def test_a_lost_answer_then_the_new_build_is_an_update(tmp_path):
+    r = await _run_lost(
+        tmp_path,
+        lambda new: _Registry(_Conn("old"), _Conn(new, {"outcome": "updated", "to_build": new})),
+    )
+    assert r.ok and r.data["outcome"] == "updated" and r.data["result_lost"] is True
+
+
+async def test_a_lost_answer_then_a_rollback_is_reported_as_such(tmp_path):
+    r = await _run_lost(
+        tmp_path,
+        lambda new: _Registry(
+            _Conn("old"),
+            _Conn("old", {"outcome": "rolled_back", "from_build": "old", "to_build": new}),
+        ),
+    )
+    assert r.code == "AGENT_UPDATE_ROLLED_BACK"
+
+
+async def test_a_lost_answer_and_no_restart_says_so(tmp_path):
+    r = await _run_lost(tmp_path, lambda _new: _Registry(_Conn("old")), reconnect_timeout_s=0.1)
+    assert r.code == "AGENT_UPDATE_NO_RETURN"
+    assert "without an answer" in r.error and "alb bench log update" in r.error
+
+
+async def test_a_job_failure_that_is_not_a_lost_answer_passes_through(tmp_path):
+    failed = FlashResult(ok=False, code="FLASH_FAILED", error="channel open failed")
+    r = await _run(tmp_path, _Registry(_Conn("old")), _Svc(failed), reconnect_timeout_s=5.0)
+    assert r.code == "FLASH_FAILED" and r.error == "channel open failed"
+
+
 # ── hello carries build and the last update ──────────────────────────
 
 

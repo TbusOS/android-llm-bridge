@@ -214,6 +214,8 @@ async def test_channel_closing_without_a_verdict_says_state_unknown():
     r = await _service(_Agent(ch)).devices()
     assert r.ok is False
     assert "unknown" in r.error
+    # marked, so the agent update can wait for the reconnect instead
+    assert r.data == {"result_lost": True}
 
 
 async def test_agent_failure_code_is_passed_through():

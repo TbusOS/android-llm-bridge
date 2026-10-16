@@ -10,7 +10,11 @@ set_defaults type pitfall — status_port must arrive as an int).
 from __future__ import annotations
 
 import importlib.util
+import logging
+import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -206,7 +210,7 @@ def test_setup_file_logging_creates_rotating_handler(tmp_path):
     try:
         assert len(added) == 1  # parent dir auto-created, handler attached
         # warning: INFO would be gated by the root logger's default WARNING
-        # level in the test env (production sets basicConfig(level=INFO)).
+        # level in the test env (production main() sets the root to INFO).
         logging.getLogger("alb-agent").warning("post-mortem line")
         added[0].flush()
         text = (tmp_path / "logs" / "a.log").read_text(encoding="utf-8")
@@ -238,6 +242,100 @@ def test_setup_file_logging_none_disables():
     before = list(root.handlers)
     agent._setup_file_logging("none")
     assert root.handlers == before
+
+
+# ── console window output must never hold the agent up ──────────────────
+#
+# Hit for real 2026-10-16: a text selection in the agent's console window
+# blocks every write to it. Logging went straight to the window from the
+# event loop, so the whole agent stopped — an update's answer never left
+# and the helper had to kill it.
+
+
+class _SelectedConsole:
+    """A console window with text selected: writes wait for the selection
+    to be cleared."""
+
+    def __init__(self) -> None:
+        self.cleared = threading.Event()
+        self.text: list[str] = []
+
+    def write(self, s: str) -> None:
+        self.cleared.wait()
+        self.text.append(s)
+
+    def flush(self) -> None:
+        pass
+
+
+def _console_log(stream: _SelectedConsole) -> logging.Handler:
+    h = agent._ConsoleLog(stream)
+    h.setFormatter(logging.Formatter("%(message)s"))
+    return h
+
+
+def _record(msg: str) -> logging.LogRecord:
+    return logging.LogRecord("alb-agent", logging.INFO, __file__, 0, msg, None, None)
+
+
+def _wait_for(cond, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+def test_a_selected_console_window_does_not_block_logging():
+    console = _SelectedConsole()
+    h = _console_log(console)
+    try:
+        # In a thread so a regression fails here instead of hanging the run.
+        caller = threading.Thread(
+            target=lambda: [h.handle(_record(f"line {i}")) for i in range(50)], daemon=True
+        )
+        caller.start()
+        caller.join(timeout=2.0)
+        assert not caller.is_alive(), "logging waited on the console window"
+        assert console.text == []
+
+        console.cleared.set()
+        _wait_for(lambda: "".join(console.text).count("\n") >= 50)
+        assert "".join(console.text).splitlines() == [f"line {i}" for i in range(50)]
+    finally:
+        console.cleared.set()
+        h.close()
+
+
+def test_lines_past_the_backlog_are_counted_and_reported(monkeypatch):
+    monkeypatch.setattr(agent._ConsoleLog, "_BACKLOG", 3)
+    console = _SelectedConsole()
+    h = _console_log(console)
+    try:
+        for i in range(10):
+            h.handle(_record(f"line {i}"))
+        console.cleared.set()
+
+        def accounted() -> int:
+            out = "".join(console.text)
+            skipped = sum(int(n) for n in re.findall(r"\((\d+) log lines were skipped", out))
+            return len(re.findall(r"^line \d+$", out, re.M)) + skipped
+
+        _wait_for(lambda: accounted() >= 10)
+        out = "".join(console.text)
+        assert "log lines were skipped" in out, out
+        assert accounted() == 10, out  # every line either shown or counted
+    finally:
+        console.cleared.set()
+        h.close()
+
+
+def test_exit_does_not_wait_for_a_window_that_stays_selected():
+    console = _SelectedConsole()
+    h = _console_log(console)
+    h.handle(_record("last words"))
+    started = time.monotonic()
+    h.close()
+    assert time.monotonic() - started < 4.0
+    console.cleared.set()
 
 
 # ── config keys vs command-line flags must stay in lockstep ─────────────

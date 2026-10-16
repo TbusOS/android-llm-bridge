@@ -42,6 +42,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import signal
@@ -3646,6 +3647,60 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
+class _ConsoleLog(logging.Handler):
+    """Log lines to the console window from a thread of its own.
+
+    A text selection in a Windows console window blocks every write to it
+    until the selection is cleared. Written from the event loop, one stray
+    selection froze the whole agent: adb and serial forwarding, jobs, stop
+    requests (2026-10-16 on the bench: an update stalled until the helper
+    killed it). Now only this thread waits. The log file keeps up; lines
+    past the backlog limit are counted and reported when the window moves."""
+
+    _BACKLOG = 5000
+
+    def __init__(self, stream: Any) -> None:
+        super().__init__()
+        self._stream = stream
+        self._lines: queue.Queue[str | None] = queue.Queue(maxsize=self._BACKLOG)
+        self._dropped = 0
+        self._dropped_lock = threading.Lock()
+        self._thread = threading.Thread(target=self._pump, name="console-log", daemon=True)
+        self._thread.start()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+        except Exception:
+            self.handleError(record)
+            return
+        try:
+            self._lines.put_nowait(line)
+        except queue.Full:
+            with self._dropped_lock:
+                self._dropped += 1
+
+    def _pump(self) -> None:
+        while (line := self._lines.get()) is not None:
+            with self._dropped_lock:
+                dropped, self._dropped = self._dropped, 0
+            if dropped:
+                line = (
+                    f"({dropped} log lines were skipped here while this window was "
+                    "blocked; the log file, if one is set, has them)\n" + line
+                )
+            with contextlib.suppress(Exception):  # console closed, encoding
+                self._stream.write(line + "\n")
+                self._stream.flush()
+
+    def close(self) -> None:
+        # Bounded: a window still blocked at exit must not hold the exit up.
+        with contextlib.suppress(queue.Full):
+            self._lines.put_nowait(None)
+        self._thread.join(timeout=2.0)
+        super().close()
+
+
 def _setup_file_logging(log_file: str) -> None:
     """Mirror all log output into a rotating file (~5 MB, 3 backups, UTF-8)
     so problems can be analyzed after the console window is gone. Relative
@@ -3740,10 +3795,11 @@ def main() -> None:
     if args.self_check:
         sys.exit(_self_check_main(args))
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format=_LOG_FORMAT,
-    )
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+    console = _ConsoleLog(sys.stderr)
+    console.setFormatter(logging.Formatter(_LOG_FORMAT))
+    root.addHandler(console)
     if args.log_file:
         _setup_file_logging(args.log_file)
     global _LAUNCH_ARGV, _CONFIG_USED, _CONFIG_EXPLICIT, _IDENTITY_STABLE, _AGENT_ID

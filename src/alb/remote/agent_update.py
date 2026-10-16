@@ -15,6 +15,9 @@ build came back:
     new build in hello                  -> updated
     hello.update says rolled_back       -> AGENT_UPDATE_ROLLED_BACK
     nobody came back in time            -> AGENT_UPDATE_NO_RETURN
+
+The same wait runs when the job channel closed before the agent answered:
+the update may have gone ahead regardless, so the reconnect decides.
 """
 
 from __future__ import annotations
@@ -147,24 +150,40 @@ async def update_agent(
         result = await svc.run_op(
             OP, {}, image=zpath, label=f"{OP} {from_build} -> {to_build}", on_event=on_event
         )
-    if not result.ok:
+    lost = not result.ok and bool((result.data or {}).get("result_lost"))
+    if not result.ok and not lost:
         return result
-    data = dict(result.data or {})
-    if not data.get("restarting"):
-        return result  # the bench already has exactly these files
+    if lost:
+        # The agent may have started the update and then stopped before its
+        # answer got out (2026-10-16 on the bench: a text selection in its
+        # console window froze it until the helper killed it). Which build
+        # comes back tells; the update id was lost with the answer.
+        data: dict[str, Any] = {"to_build": to_build, "result_lost": True}
+        _say(on_event, "restart", "the agent's answer was lost; waiting to see which build returns")
+    else:
+        data = dict(result.data or {})
+        if not data.get("restarting"):
+            return result  # the bench already has exactly these files
+        _say(
+            on_event,
+            "restart",
+            "the agent is restarting on the new files; waiting for it to reconnect",
+        )
 
     update_id = str(data.get("update_id") or "")
     expect = str(data.get("to_build") or to_build)
-    _say(
-        on_event, "restart", "the agent is restarting on the new files; waiting for it to reconnect"
-    )
     loop = asyncio.get_running_loop()
     deadline = loop.time() + reconnect_timeout_s
     while loop.time() < deadline:
         conn = registry.get(old.agent_id)
         if conn is not None and conn is not old:
             last = dict(getattr(conn, "last_update", {}) or {})
-            same_update = bool(update_id) and last.get("id") == update_id
+            if update_id:
+                same_update = last.get("id") == update_id
+            else:
+                same_update = last.get("from_build") == from_build and (
+                    last.get("to_build") == expect
+                )
             if same_update and last.get("outcome") in ("rolled_back", "aborted"):
                 return _fail(
                     "AGENT_UPDATE_ROLLED_BACK",
@@ -183,6 +202,14 @@ async def update_agent(
                     data={**data, "build": conn.build, "outcome": "updated"},
                 )
         await asyncio.sleep(_POLL_S)
+    if lost and registry.get(old.agent_id) is old:
+        return _fail(
+            "AGENT_UPDATE_NO_RETURN",
+            f"the agent ended the update job without an answer and is still on build "
+            f"{from_build} after {reconnect_timeout_s:.0f}s — `alb bench log update` shows "
+            "whether the update helper ran",
+            data,
+        )
     return _fail(
         "AGENT_UPDATE_NO_RETURN",
         f"the agent restarted for build {expect} and has not reconnected within "

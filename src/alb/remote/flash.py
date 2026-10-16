@@ -722,6 +722,9 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
                 "the device state is unknown",
                 duration_s=time.monotonic() - started,
                 events=events,
+                # Lets a caller that can learn the outcome another way (the
+                # agent update: from the next hello) tell this apart.
+                data={"result_lost": True},
             )
         ev = msg.get("ev")
         if ev == JobEvent.PROGRESS.value:
