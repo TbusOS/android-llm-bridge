@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import struct
@@ -47,11 +48,14 @@ def _build(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-def _agent_text(*, marker: str, fast: bool = True, broken_hello: bool = False) -> bytes:
+def _agent_text(
+    *, marker: str, fast: bool = True, broken_hello: bool = False, exits_at_start: bool = False
+) -> bytes:
     """The repo's agent, made distinct (a marker comment changes the build).
     `fast` shortens the helper's waits — the helper is the OLD build's code,
     so this is where its timing comes from. `broken_hello` makes a build that
-    passes its self-check but can never get past the handshake."""
+    passes its self-check but can never get past the handshake;
+    `exits_at_start` one that passes its self-check and then exits at once."""
     text = (_SRC / "alb_agent.py").read_text(encoding="utf-8")
     if fast:
         for old, new in (
@@ -64,6 +68,10 @@ def _agent_text(*, marker: str, fast: bool = True, broken_hello: bool = False) -
         old = '    return _frame(\n        "hello",\n'
         assert old in text
         text = text.replace(old, '    return _frame(\n        "hullo",\n')
+    if exits_at_start:
+        old = "        sys.exit(_self_check_main(args))\n"
+        assert text.count(old) == 1
+        text = text.replace(old, old + "    sys.exit(3)\n")
     return (text + f"\n# build marker: {marker}\n").encode("utf-8")
 
 
@@ -289,6 +297,16 @@ def test_update_swaps_the_files_and_the_new_build_reconnects(bench):
     assert result["outcome"] == "updated", _log(install)
     assert hello["update"]["id"] == done["data"]["update_id"]
     assert "updated: build" in _log(install)
+    # the agent window shows which build it runs, at start-up and on connect
+    wanted = (f"starting: build {_build(new)} ", f"(build {_build(new)})")
+    agent_log = ""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        agent_log = (install / "agent.log").read_text(encoding="utf-8")
+        if all(w in agent_log for w in wanted):
+            break
+        time.sleep(0.2)
+    assert all(w in agent_log for w in wanted), agent_log[-2000:]
 
 
 def test_a_build_that_never_reaches_the_hub_is_rolled_back(bench):
@@ -306,6 +324,26 @@ def test_a_build_that_never_reaches_the_hub_is_rolled_back(bench):
     assert hello["update"]["outcome"] == "rolled_back", _log(install)
     assert (install / "alb_agent.py").read_bytes() == old
     assert "rolling back" in _log(install)
+
+
+def test_a_build_that_exits_at_once_is_rolled_back_without_waiting_out_the_timeout(bench):
+    hub, install, start = bench
+    old = _agent_text(marker="old")
+    dead = _agent_text(marker="dead", exits_at_start=True)
+    start(old)
+    hub.wait_hello(lambda h: h.get("build") == _build(old))
+    seen = len(hub.hellos)
+
+    done = _update(hub, {**_repo_files(), "alb_agent.py": dead})
+    assert done["ok"] and done["data"]["restarting"], done
+
+    hello = hub.wait_hello(lambda h: h.get("build") == _build(old), timeout=60, after=seen)
+    assert hello["update"]["outcome"] == "rolled_back", _log(install)
+    log = _log(install)
+    assert "exited with code 3 before reaching the hub" in log, log
+    # the log says how long it really waited — not the 8 s timeout
+    waited = re.search(r"gave up after (\d+)s", log)
+    assert waited and int(waited.group(1)) < 8, log
 
 
 def test_a_bundle_that_fails_its_self_check_changes_nothing(bench):

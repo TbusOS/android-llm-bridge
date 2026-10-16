@@ -157,7 +157,9 @@ The hub sends its own `clients/windows-agent/` folder. On this host:
    `AGENT_UPDATE_ROLLED_BACK` and `alb bench log update` shows why.
 
 Identical files restart nothing. `alb bench ops` shows the build this host
-runs and says when the hub has a newer one.
+runs and says when the hub has a newer one. The agent window prints the same
+build number at start-up (`starting: build ...`) and on every connect
+(`connected to ... as ... (build ...)`).
 
 ### One instance per agent
 

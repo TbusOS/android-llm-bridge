@@ -20,8 +20,9 @@ Windows 上（USB 线 + 串口线），跑起这个 agent 之后，Linux 那边�
    那边要）。
 3. **双击 `run-agent.bat`**。完事。
 
-窗口里看到 `connected to ws://... as win-xxxx` 就是连上了。把窗口最小化挂着
-即可（关掉窗口 = 断开远程调试）。
+窗口里看到 `connected to ws://... as win-xxxx (build xxxxxxxxxxxx)` 就是连上了。把窗口最小化挂着
+即可（关掉窗口 = 断开远程调试）。括号里的 build 号是这台机器跑的版本，启动时第一行
+`starting: build ...` 也会打出来，跟 `alb bench ops` 第二行对得上就是同一版。
 
 ## 每次启动都会自动检查什么
 

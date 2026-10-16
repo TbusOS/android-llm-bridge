@@ -3085,14 +3085,17 @@ def _apply_update(plan_path: Path, progress: dict[str, Any]) -> int:
         result("rolled_back")
         _launch_and_wait(plan, from_build, say, stop_on_timeout=False)
         return 1
+    started = time.monotonic()
     if _launch_and_wait(plan, to_build, say, stop_on_timeout=True):
         say(f"updated: build {to_build} is connected to the hub")
         result("updated")
         shutil.rmtree(staged, ignore_errors=True)
         return 0
+    # The time actually waited, not the timeout: a build that exits at once
+    # is given up on after a second or two.
     say(
-        f"build {to_build} did not reach the hub within "
-        f"{float(plan.get('health_timeout_s') or 0):.0f}s — rolling back to {from_build}"
+        f"build {to_build} did not reach the hub (gave up after "
+        f"{time.monotonic() - started:.0f}s) — rolling back to {from_build}"
     )
     _restore_files(install, backup, manifest, config_target, say)
     result("rolled_back")
@@ -3335,7 +3338,7 @@ async def _run_session(args: argparse.Namespace) -> None:
         msg = json.loads(reply) if isinstance(reply, str) else {}
         if msg.get("verb") != "hello_ok":
             raise _HandshakeRejected(f"unexpected handshake reply: {msg!r}")
-        _log.info("connected to %s as %s", args.hub_url, args.agent_id)
+        _log.info("connected to %s as %s (build %s)", args.hub_url, args.agent_id, _BUILD)
         _STATUS.on_connected()
         await asyncio.to_thread(_mark_connected)
 
@@ -3676,7 +3679,8 @@ def _log_environment(args: argparse.Namespace) -> None:
     except ImportError:
         pyserial_ver = "not installed"
     _log.info(
-        "starting: python %s · websockets %s · pyserial %s · %s · config %s",
+        "starting: build %s · python %s · websockets %s · pyserial %s · %s · config %s",
+        _BUILD,
         sys.version.split()[0],
         getattr(websockets, "__version__", "?"),
         pyserial_ver,
