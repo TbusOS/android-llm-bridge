@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -149,7 +150,7 @@ class SshTransport(Transport):
         """Stream output from a long-running command.
 
         source mapping:
-            logcat   -> logcat -v threadtime [filter]
+            logcat   -> logcat -v threadtime [-T since] [filter]
             dmesg    -> dmesg -w  (or cat /proc/kmsg)
             kmsg     -> cat /proc/kmsg
         """
@@ -157,6 +158,11 @@ class SshTransport(Transport):
             cmd = "logcat -v threadtime"
             if kwargs.get("clear"):
                 cmd = "logcat -c && " + cmd
+            if since := kwargs.get("since"):
+                # Goes into a shell command line: only "sssss.mmm" passes.
+                if not re.fullmatch(r"\d{1,12}(?:\.\d{1,9})?", str(since)):
+                    raise ValueError(f"since must be 'sssss.mmm', got {since!r}")
+                cmd += f" -T {since}"
             if filt := kwargs.get("filter"):
                 cmd += " " + filt
         elif source == "dmesg":

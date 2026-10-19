@@ -19,6 +19,7 @@ import pytest
 from alb.capabilities import timeline as tl
 from alb.capabilities.timeline import capture_timeline, format_line, iter_timeline
 from alb.infra.permissions import PermissionResult
+from alb.transport.base import ShellResult
 
 
 # ─── helpers ───────────────────────────────────────────────────────
@@ -304,11 +305,31 @@ async def test_jsonl_starts_and_ends_with_meta_records(tmp_path: Path) -> None:
 
 
 # ─── transports (mocked) ───────────────────────────────────────────
-def _adb_mock(lines_by_source: dict[str, list[bytes]]) -> AsyncMock:
+# What the device answers to the two probes taken before the streams start.
+CLOCK = "1760000000.123\n"
+
+
+def _adb_mock(
+    lines_by_source: dict[str, list[bytes]],
+    *,
+    clock: str | None = CLOCK,
+    dmesg_count: str | None = "0\n",
+) -> AsyncMock:
+    """`clock` / `dmesg_count`: stdout for `date +%s.%3N` / `dmesg | wc -l`;
+    None = the command fails."""
     t = AsyncMock()
     t.name = "adb"
     t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
     calls: list[tuple[str, dict]] = []
+    answers = {"date +%s.%3N": clock, "dmesg | wc -l": dmesg_count}
+
+    async def shell(cmd: str, **kw) -> ShellResult:
+        out = answers.get(cmd)
+        if out is None:
+            return ShellResult(ok=False, exit_code=1, stderr="not here")
+        return ShellResult(ok=True, exit_code=0, stdout=out)
+
+    t.shell = shell
 
     def stream_read(source: str, **kw) -> AsyncIterator[bytes]:
         calls.append((source, kw))
@@ -333,10 +354,84 @@ async def test_logcat_and_dmesg_come_from_transport_stream_read(tmp_path: Path) 
     )
     assert r.ok
     assert sorted(x["line"] for x in _records(tmp_path)) == ["L", "[ 0.1] D"]
-    assert ("logcat", {"filter": "*:E"}) in t.calls
+    assert ("logcat", {"filter": "*:E", "since": "1760000000.123"}) in t.calls
     assert ("dmesg", {}) in t.calls
     assert (tmp_path / "logcat.txt").read_bytes() == b"L\n"
     assert (tmp_path / "dmesg.txt").read_bytes() == b"[ 0.1] D\n"
+
+
+async def test_logcat_starts_at_the_device_clock(tmp_path: Path) -> None:
+    """logcat would first dump its whole buffer; arriving at once, every line
+    of it would be stamped at the capture start. Told the device's current
+    time, the device sends only what is logged from then on."""
+    t = _adb_mock({"logcat": [b"L\n"]})
+    r = await capture_timeline(0.2, sources={"logcat"}, transport=t, output=tmp_path)
+    assert r.ok
+    assert t.calls == [("logcat", {"filter": None, "since": "1760000000.123"})]
+    assert [x["line"] for x in _records(tmp_path)] == ["L"], "no note when it worked"
+
+
+@pytest.mark.parametrize(
+    "clock, since",
+    [
+        ("1760000000\n", "1760000000.000"),  # a date without %N: whole seconds
+        ("1760000000.%3N\n", "1760000000.000"),  # one that echoes the escape back
+    ],
+)
+async def test_a_device_clock_without_milliseconds_still_starts_logcat(
+    tmp_path: Path, clock: str, since: str
+) -> None:
+    t = _adb_mock({"logcat": [b"L\n"]}, clock=clock)
+    await capture_timeline(0.2, sources={"logcat"}, transport=t, output=tmp_path)
+    assert t.calls == [("logcat", {"filter": None, "since": since})]
+
+
+@pytest.mark.parametrize("clock", [None, "date: bad format\n", ""])
+async def test_an_unreadable_device_clock_takes_everything_and_says_so(
+    tmp_path: Path, clock: str | None
+) -> None:
+    t = _adb_mock({"logcat": [b"L\n"]}, clock=clock)
+    r = await capture_timeline(0.2, sources={"logcat"}, transport=t, output=tmp_path)
+    assert r.ok
+    assert t.calls == [("logcat", {"filter": None})]
+    assert any("device clock could not be read" in n for n in r.data.notes)
+
+
+async def test_dmesg_lines_already_in_the_buffer_stay_out_of_the_timeline(tmp_path: Path) -> None:
+    """The 10-16 capture: 24345 old lines all at +0.1 s, ahead of the UART.
+    The lines counted before the stream started go to dmesg.txt only; a note
+    marks where the live ones begin."""
+    old = [b"[    1.000000] old one\n", b"[    2.000000] old two\n", b"\n"]
+    new = [b"[  900.000000] new one\n", b"[  901.000000] new two\n"]
+    t = _adb_mock({"dmesg": old + new}, dmesg_count="3\n")
+    r = await capture_timeline(0.4, sources={"dmesg"}, transport=t, output=tmp_path)
+    assert r.ok
+    lines = [x["line"] for x in _records(tmp_path)]
+    assert lines[0].startswith("[alb] dmesg: 3 line(s) already in the buffer")
+    assert "still in dmesg.txt" in lines[0]
+    assert lines[1:] == ["[  900.000000] new one", "[  901.000000] new two"]
+    assert r.data.lines == {"dmesg": 2}
+    assert (tmp_path / "dmesg.txt").read_bytes() == b"".join(old + new), "raw keeps every line"
+
+
+async def test_a_capture_that_ends_inside_the_dmesg_backlog_says_so(tmp_path: Path) -> None:
+    t = _adb_mock({"dmesg": [b"[ 1.0] a\n", b"[ 2.0] b\n"]}, dmesg_count="5\n")
+    r = await capture_timeline(0.3, sources={"dmesg"}, transport=t, output=tmp_path)
+    notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
+    assert any(
+        "2 line(s) already in the buffer" in n and "ended before the rest" in n for n in notes
+    )
+    assert r.data.lines == {"dmesg": 0}
+
+
+@pytest.mark.parametrize("count", [None, "wc: not found\n", ""])
+async def test_an_uncountable_dmesg_buffer_takes_everything_and_says_so(
+    tmp_path: Path, count: str | None
+) -> None:
+    t = _adb_mock({"dmesg": [b"[ 1.0] a\n"]}, dmesg_count=count)
+    r = await capture_timeline(0.3, sources={"dmesg"}, transport=t, output=tmp_path)
+    assert r.data.lines == {"dmesg": 1}
+    assert any("could not be counted" in n for n in r.data.notes)
 
 
 async def test_logcat_permission_deny_is_a_note(tmp_path: Path) -> None:

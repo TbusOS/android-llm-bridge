@@ -166,12 +166,16 @@ class AdbTransport(Transport):
         Optional kwargs:
             filter: str — logcat filter spec (e.g. "*:E")
             clear: bool — run logcat -c first (logcat only)
+            since: str — `logcat -T` start time ("sssss.mmm" on the device
+                clock); lines logged before it are not sent (logcat only)
         """
         if source == "logcat":
             args = ["logcat", "-v", "threadtime"]
             if kwargs.get("clear"):
                 # logcat -c doesn't stream; run as a pre-step
                 await self._run(["logcat", "-c"], timeout=5)
+            if since := kwargs.get("since"):
+                args += ["-T", str(since)]
             if filt := kwargs.get("filter"):
                 args += _parse_logcat_filter(filt)
         elif source == "dmesg":

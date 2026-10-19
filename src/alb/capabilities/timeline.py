@@ -26,6 +26,16 @@ leaves a usable file. Records are stamped at ARRIVAL, and a partial line
 flushed on idle is written up to `IDLE_FLUSH_S` after its stamp, so the file
 is "nearly sorted": `iter_timeline` re-sorts with a bounded window rather
 than loading the file.
+
+Lines logged BEFORE the capture are kept off the timeline. `logcat` and
+`dmesg -w` both start by dumping their whole buffer — tens of thousands of
+lines arriving in the first moment, which an arrival stamp would place all
+at +0.1 s, ahead of everything the UART says. They happened before the
+capture, at times the arrival stamp cannot know. So logcat is started at
+the device's own clock (`logcat -T <now>`: the device never sends them),
+and the dmesg lines already in the buffer are counted first and then
+written to dmesg.txt only. Either step failing falls back to taking
+everything, with a note saying so.
 """
 
 from __future__ import annotations
@@ -35,6 +45,7 @@ import contextlib
 import heapq
 import inspect
 import json
+import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator, Mapping
@@ -211,6 +222,7 @@ class _LineAssembler:
         raw: BinaryIO | None,
         *,
         idle_flush_s: float,
+        skip_lines: int = 0,
     ) -> None:
         self.src = src
         self._writer = writer
@@ -221,6 +233,10 @@ class _LineAssembler:
         self._seq = 0
         self._timer: asyncio.TimerHandle | None = None
         self.lines = 0
+        # Lines that were already in the device's buffer when the capture
+        # started: raw file only, never the timeline (see module doc).
+        self._skip = skip_lines
+        self.skipped = 0
 
     def feed(self, chunk: bytes) -> None:
         at_ns = self._writer.now_ns()
@@ -242,6 +258,13 @@ class _LineAssembler:
                 break
             line = bytes(self._buf[:idx])
             del self._buf[: idx + 1]
+            if self._skip:
+                self._skip -= 1
+                self.skipped += 1
+                if not self._skip:
+                    # Stamped here, so the timeline shows where live lines begin.
+                    self._note_skipped("")
+                continue
             self._emit(line, at_ns)
         self._writer.flush()  # per chunk, not per line: one batch, one flush
         self._arm_idle_timer()
@@ -279,7 +302,16 @@ class _LineAssembler:
         self._writer.line(self.src, text, at_ns=at_ns, partial=partial, truncated=truncated)
         self.lines += 1
 
+    def _note_skipped(self, tail: str) -> None:
+        self._writer.note(
+            self.src,
+            f"[alb] {self.src}: {self.skipped} line(s) already in the buffer when the capture "
+            f"started are left out of the timeline (still in {_RAW_FILE[self.src]}){tail}",
+        )
+
     def close(self) -> None:
+        if self._skip and self.skipped:
+            self._note_skipped(" — the capture ended before the rest of them arrived")
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
@@ -422,7 +454,7 @@ async def capture_timeline(
     writer = _TimelineWriter(directory / "timeline.jsonl")
     writer.meta("start", sources=wanted, device=device, duration_s=duration_s)
 
-    factories = await _pick_factories(
+    factories, backlog = await _pick_factories(
         wanted,
         writer,
         transport=transport,
@@ -437,7 +469,9 @@ async def capture_timeline(
     try:
         for src, factory in factories.items():
             raw: BinaryIO = (directory / _RAW_FILE[src]).open("wb")
-            assembler = _LineAssembler(src, writer, raw, idle_flush_s=idle_flush_s)
+            assembler = _LineAssembler(
+                src, writer, raw, idle_flush_s=idle_flush_s, skip_lines=backlog.get(src, 0)
+            )
             assemblers[src] = assembler
             tasks.append(
                 asyncio.create_task(
@@ -496,11 +530,16 @@ async def _pick_factories(
     streams: Mapping[str, StreamFactory] | None,
     logcat_filter: str | None,
     deadline_perf: float,
-) -> dict[str, StreamFactory]:
+) -> tuple[dict[str, StreamFactory], dict[str, int]]:
     """Decide where each requested source's bytes come from, noting the
     ones that have nowhere to come from. Only sources with a factory get a
-    raw file and a task."""
+    raw file and a task.
+
+    Also returns, per source, how many leading lines are from before the
+    capture (dmesg's buffer). logcat needs no count: it is told to start
+    at the device's current time instead."""
     factories: dict[str, StreamFactory] = {}
+    backlog: dict[str, int] = {}
     for src in wanted:
         if streams is not None and src in streams:
             factories[src] = streams[src]
@@ -524,10 +563,66 @@ async def _pick_factories(
             if perm.behavior == "deny":
                 writer.unavailable(src, perm.reason or "blocked")
                 continue
-            factories[src] = _stream_factory(transport, "logcat", filter=logcat_filter)
+            since = await _device_clock(transport)
+            if since is None:
+                writer.note(
+                    src,
+                    "[alb] logcat: the device clock could not be read, so lines logged before "
+                    "the capture are taken too — all stamped at its start",
+                )
+                factories[src] = _stream_factory(transport, "logcat", filter=logcat_filter)
+            else:
+                factories[src] = _stream_factory(
+                    transport, "logcat", filter=logcat_filter, since=since
+                )
         else:
+            count = await _dmesg_backlog(transport)
+            if count is None:
+                writer.note(
+                    src,
+                    "[alb] dmesg: the lines already in the buffer could not be counted, so they "
+                    "are taken too — all stamped at the capture start",
+                )
+            elif count:
+                backlog[src] = count
             factories[src] = _stream_factory(transport, "dmesg")
-    return factories
+    return factories, backlog
+
+
+# `date +%s.%3N`: seconds since the epoch, then milliseconds where the date
+# command supports %N. Only the leading digits are trusted — a date without
+# %N prints the escape back, and whole seconds are still a usable start.
+_CLOCK_RE: Final = re.compile(r"(\d{9,12})(?:\.(\d{3}))?")
+
+
+async def _device_clock(transport: Transport) -> str | None:
+    """Now on the device's clock, as `logcat -T` takes it ("sssss.mmm").
+
+    The device's clock, not the host's: logcat filters by the time it
+    stamped each line with, and the two clocks are not the same."""
+    try:
+        r = await transport.shell("date +%s.%3N", timeout=5)
+    except Exception:  # a probe must never cost the capture
+        return None
+    out = r.stdout if r.ok and isinstance(r.stdout, str) else ""
+    m = _CLOCK_RE.match(out.strip())
+    if m is None:
+        return None
+    return f"{m.group(1)}.{m.group(2) or '000'}"
+
+
+async def _dmesg_backlog(transport: Transport) -> int | None:
+    """How many lines `dmesg -w` will print before its first new one.
+
+    Counted with the same `dmesg`, so the lines line up one for one. Lines
+    logged between this count and the stream starting are taken as new —
+    they are, give or take the few milliseconds in between."""
+    try:
+        r = await transport.shell("dmesg | wc -l", timeout=10)
+    except Exception:  # a probe must never cost the capture
+        return None
+    out = r.stdout.strip() if r.ok and isinstance(r.stdout, str) else ""
+    return int(out) if out.isdigit() else None
 
 
 def _capture_dir(output: Path | str | None, device: str | None) -> Path:
