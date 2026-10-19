@@ -90,6 +90,31 @@ def test_usb_names_the_board_and_the_missing_driver(hub):
     assert "no driver is bound" in r.output
 
 
+def test_usb_shows_a_windows_made_id_apart_from_the_serial(hub):
+    hub["final"] = {
+        "ev": "done",
+        "ok": True,
+        "data": {
+            "devices": [{}],
+            "boards": [
+                {
+                    "mode": "adb",
+                    "vid": "2207",
+                    "pid": "0006",
+                    "serial": "",
+                    "windows_id": "6&1A2B3C4D&0&3",
+                    "driver": "ok",
+                    "name": "ADB Interface",
+                    "hint": "",
+                }
+            ],
+        },
+    }
+    r = runner.invoke(app, ["bench", "usb"])
+    assert r.exit_code == 0, r.output
+    assert "serial - (windows id 6&1A2B3C4D&0&3)" in r.output
+
+
 def test_usb_with_no_board_points_at_the_cable(hub):
     hub["final"] = {"ev": "done", "ok": True, "data": {"devices": [{}, {}], "boards": []}}
     r = runner.invoke(app, ["bench", "usb"])

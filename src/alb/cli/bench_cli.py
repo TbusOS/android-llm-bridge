@@ -199,9 +199,13 @@ def cmd_usb(
     if boards:
         typer.echo(f"[ok] {len(boards)} board(s) on the bench host:")
         for b in boards:
+            # A Windows-made id is not the board's serial; shown apart so it is
+            # not matched against `adb devices`, but kept to tell boards apart.
+            windows_id = f" (windows id {b['windows_id']})" if b.get("windows_id") else ""
             typer.echo(
                 f"  {b.get('mode'):<20} {b.get('vid')}:{b.get('pid')}  "
-                f"serial {b.get('serial') or '-'}  driver: {b.get('driver')}  {b.get('name')}"
+                f"serial {b.get('serial') or '-'}{windows_id}  driver: {b.get('driver')}  "
+                f"{b.get('name')}"
             )
             if b.get("hint"):
                 typer.echo(f"    {b['hint']}")

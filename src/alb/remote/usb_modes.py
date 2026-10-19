@@ -125,10 +125,13 @@ def annotate(data: dict[str, Any]) -> dict[str, Any]:
         dev.update(info)
         if info["mode"] == "other":
             continue
+        # Keyed on the suffix as given, real serial or not: two boards whose
+        # serials Windows did not use must still be two rows.
         key = (str(dev.get("vid") or ""), str(dev.get("pid") or ""), _parent_serial(devices, dev))
         current = boards.get(key)
         # Prefer the entry that shows a driver problem — that is the news.
         if current is None or (current["driver"] == "ok" and info["driver"] != "ok"):
+            made_up = _windows_made(key[2])
             boards[key] = {
                 "mode": info["mode"],
                 "what": info["what"],
@@ -136,10 +139,22 @@ def annotate(data: dict[str, Any]) -> dict[str, Any]:
                 "hint": info["hint"],
                 "vid": key[0],
                 "pid": key[1],
-                "serial": key[2],
+                "serial": "" if made_up else key[2],
+                "windows_id": key[2] if made_up else "",
                 "name": str(dev.get("name") or ""),
             }
     return {**data, "devices": devices, "boards": list(boards.values())}
+
+
+def _windows_made(suffix: str) -> bool:
+    """True for an instance-id suffix Windows made up itself rather than the
+    device's serial — `6&1A2B3C4D&0&3`: it does that when it does not use
+    the device's serial for the id. Shown as a serial, it reads like the
+    board's identity and matches nothing `adb devices` prints (a board on
+    the bench was listed as exactly this, 2026-10-16). Told by the `&`:
+    Windows joins the parts of a made-up id with it. Wrong the other way —
+    a real serial with an `&` in it — the serial is merely not shown."""
+    return "&" in suffix
 
 
 def _parent_serial(devices: list[dict[str, Any]], dev: dict[str, Any]) -> str:

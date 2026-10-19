@@ -103,6 +103,48 @@ def test_boards_summary_uses_the_parent_serial_for_a_composite_device():
     assert out["boards"][0]["mode"] == "adb"
 
 
+def test_a_windows_made_id_is_not_reported_as_the_serial():
+    """The 2026-10-16 bench: a board whose adb serial is a 16-hex string was
+    listed with serial `6&1A2B3C4D&0&3` — Windows made that id up itself.
+    Shown as the serial it reads like the board's identity and matches
+    nothing `adb devices` prints."""
+    data = {
+        "devices": [
+            _dev(vid="2207", pid="0006", serial="6&1A2B3C4D&0&3", name="Composite"),
+            _dev(
+                vid="2207",
+                pid="0006",
+                serial="7&1C2B3A4D&0&0001",
+                interface="01",
+                compatible_ids=ADB_IDS,
+                name="ADB Interface",
+            ),
+        ]
+    }
+    board = annotate(data)["boards"][0]
+    assert (board["serial"], board["windows_id"]) == ("", "6&1A2B3C4D&0&3")
+
+
+def test_a_real_serial_stays_the_serial():
+    data = {"devices": [_dev(vid="18d1", pid="4ee7", serial="BOARD123", compatible_ids=ADB_IDS)]}
+    board = annotate(data)["boards"][0]
+    assert (board["serial"], board["windows_id"]) == ("BOARD123", "")
+
+
+def test_two_boards_without_usable_serials_stay_two_rows():
+    """Same VID:PID, both ids made up by Windows: the made-up ids still tell
+    them apart, so they must not collapse into one row."""
+    data = {
+        "devices": [
+            _dev(vid="2207", pid="0006", serial="6&1A2B3C4D&0&3", compatible_ids=ADB_IDS),
+            _dev(vid="2207", pid="0006", serial="6&1A2B3C4D&0&4", compatible_ids=ADB_IDS),
+        ]
+    }
+    boards = annotate(data)["boards"]
+    assert [b["windows_id"] for b in boards] == ["6&1A2B3C4D&0&3", "6&1A2B3C4D&0&4"]
+    assert all(b["serial"] == "" for b in boards)
+
+
 def test_no_board_means_an_empty_summary():
     out = annotate({"devices": [_dev(vid="046d", pid="c52b")]})
     assert out["boards"] == []
