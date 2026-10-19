@@ -330,6 +330,18 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "manifest or the skips changed); no row was executed",
         "Run the command again and confirm the plan as it is now",
     ),
+    # A row may also be a check the vendor put before the flashes (getvar).
+    # fastboot exits 0 when that check fails, so the plan reads the FAILED
+    # line itself; this code is that line, whoever printed it.
+    "FLASH_PLAN_CHECK_FAILED": ErrorSpec(
+        "FLASH_PLAN_CHECK_FAILED",
+        "device",
+        "A getvar check in the plan reported FAILED; the rows after it were not run",
+        "Read the quoted line. `remote: '...'` is the device's answer — a firmware / board "
+        "check failing usually means this package is for another board; skip the check "
+        "(--skip-action getvar) only if you are sure. Anything else is a local error on the "
+        "way (USB) — fix the link and run the plan again",
+    ),
     # ─── serial break-in (alb serial break-in) ───────────────────────
     # Stopping a bootloader at its countdown over UART. Only "stopped at a
     # prompt" is success; the two timeouts differ in what to try next.

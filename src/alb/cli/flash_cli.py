@@ -305,6 +305,10 @@ def _row_text(row: dict[str, Any]) -> str:
         return f"erase {row.get('partition')}"
     if action == "setvar":
         return f"setvar {row.get('key')} {row.get('value')}"
+    if action == "getvar":
+        return f"getvar {row.get('key')}"
+    if action == "oem":
+        return f"oem {row.get('command')}"
     return action
 
 
@@ -398,7 +402,7 @@ def cmd_plan(
     ),
     skip_action: list[str] = typer.Option(
         None, "--skip-action", help="rows without a partition to leave out: setvar, "
-        "reboot-bootloader, reboot (comma-separated or repeated)"
+        "getvar, oem, reboot-bootloader, reboot (comma-separated or repeated)"
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="print the plan and stop"),
     reboot_wait: float = typer.Option(

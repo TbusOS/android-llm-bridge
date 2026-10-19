@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -49,6 +50,8 @@ from alb.remote.protocol import (
     job_devices,
     job_erase,
     job_flash,
+    job_getvar,
+    job_oem,
     job_op,
     job_reboot,
 )
@@ -83,6 +86,17 @@ JOB_TIMEOUT_S = 30 * 60.0
 REBOOT_WAIT_S = 120.0
 REBOOT_POLL_S = 1.0
 REBOOT_SETTLE_S = 5.0
+
+# `fastboot getvar` exits 0 even when the device answers FAIL: it prints
+# `getvar:<name>   FAILED (remote: '...')` to stderr and carries on (AOSP
+# fastboot.cpp, DisplayVarOrError — unlike oem / flash, whose failure ends
+# the tool with a non-zero code). A plan's getvar row is the check a vendor
+# puts before its flashes, so that line is what decides the row. It is the
+# FAIL status fastboot prints; the variable's value is still not read.
+# Matched loosely on purpose — any line with the word FAILED — because a
+# missed FAIL lets a package meant for another board through, while an
+# OKAY answer prints `<name>: <value>` and has no reason to contain it.
+_GETVAR_FAILED_RE = re.compile(r"^.*\bFAILED\b.*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -510,6 +524,21 @@ class FlashService:
             return await self._step(request, sink, send_image, label=label)
         if row.action == "erase":
             return await self._step(job_erase(partition=row.partition), sink, None, label=label)
+        if row.action == "getvar":
+            outcome = await self._step(job_getvar(name=row.key), sink, None, label=label)
+            failed = _GETVAR_FAILED_RE.search(f"{outcome.stderr}\n{outcome.stdout}")
+            if outcome.ok and failed is not None:
+                # Either the device's FAIL (`remote: '...'`) or a local
+                # error on the way; the line itself says which.
+                outcome.ok = False
+                outcome.code = "FLASH_PLAN_CHECK_FAILED"
+                outcome.error = (
+                    f"line {row.line}: {label} reported {failed.group(0).strip()!r} — "
+                    "the rows after it were not run"
+                )
+            return outcome
+        if row.action == "oem":
+            return await self._step(job_oem(command=row.command), sink, None, label=label)
         if row.action == "reboot":
             return await self._step(job_reboot(target=""), sink, None, label=label)
         if row.action == "reboot-bootloader":

@@ -2,9 +2,12 @@
 
 A manifest is the per-build list a vendor flashing tool walks line by line:
 
+    # comment
     <tool> <action> <args...>
+    tool getvar check-firmware-board-x
     tool flash boot_a boot.img
     tool erase misc
+    tool oem at-lock-vboot
     tool reboot-bootloader
 
 The first column names the vendor's own tool and is ignored. Running the
@@ -39,13 +42,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from alb.remote.bench_ops import PARTITION_RE, OpSpec, legacy_ops
+from alb.remote.bench_ops import PARTITION_RE, OpSpec, check_params, legacy_ops
 
 # action -> number of arguments after it.
 ACTIONS: dict[str, int] = {
     "flash": 2,  # flash <partition> <file>
     "erase": 1,  # erase <partition>
     "setvar": 2,  # setvar <key> <value>
+    "getvar": 1,  # getvar <name> — a check: the device answering FAIL stops the plan
+    "oem": 1,  # oem <command> — the agent runs only the commands on its own list
     "reboot-bootloader": 0,
     "reboot": 0,
 }
@@ -53,7 +58,7 @@ ACTIONS: dict[str, int] = {
 # Actions that carry no partition, so `--skip <partition>` cannot reach them.
 # flash / erase are deliberately NOT here: skipping "every flash row" by
 # action is never what anyone means, and a partition skip says exactly which.
-SKIPPABLE_ACTIONS = ("setvar", "reboot-bootloader", "reboot")
+SKIPPABLE_ACTIONS = ("setvar", "getvar", "oem", "reboot-bootloader", "reboot")
 
 # Actions no agent can execute. AOSP fastboot has no `setvar` command (its
 # command dispatch rejects it as unknown), so a row asking for one can only be
@@ -68,6 +73,7 @@ UNRUNNABLE = {
 # being refused by the agent halfway through it.
 # PARTITION_RE is imported from bench_ops — one copy for the hub side.
 VAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
+OEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 # Sanity ceilings: a manifest is a few dozen short lines. Anything far
 # larger is the wrong file, and reading it whole would be the first mistake.
@@ -89,8 +95,9 @@ class PlanRow:
     action: str
     partition: str = ""
     file: str = ""  # as written in the manifest
-    key: str = ""
+    key: str = ""  # setvar / getvar variable name
     value: str = ""
+    command: str = ""  # oem
     path: Path | None = None  # resolved image, flash rows that run
     size: int = 0
     md5: str = ""
@@ -113,6 +120,10 @@ class PlanRow:
             return f"erase {self.partition}"
         if self.action == "setvar":
             return f"setvar {self.key} {self.value}"
+        if self.action == "getvar":
+            return f"getvar {self.key}"
+        if self.action == "oem":
+            return f"oem {self.command}"
         return self.action
 
     def as_dict(self) -> dict[str, Any]:
@@ -123,6 +134,7 @@ class PlanRow:
             "file": self.file,
             "key": self.key,
             "value": self.value,
+            "command": self.command,
             "size": self.size,
             "md5": self.md5,
             "sha256": self.sha256,
@@ -219,13 +231,14 @@ def parse_manifest(text: str) -> tuple[list[PlanRow], list[str]]:
     one dry run is enough to fix a manifest.
 
     Whitespace between fields may be any run of spaces or tabs (generated
-    manifests pad columns); blank lines are ignored; CRLF and a leading BOM
-    are tolerated. Anything else that does not parse is a problem."""
+    manifests pad columns); blank lines and lines starting with ``#`` are
+    ignored; CRLF and a leading BOM are tolerated. Anything else that does
+    not parse is a problem."""
     rows: list[PlanRow] = []
     problems: list[str] = []
     for no, raw in enumerate(text.lstrip("﻿").splitlines(), start=1):
         tokens = raw.split()
-        if not tokens:
+        if not tokens or tokens[0].startswith("#"):
             continue
         if len(rows) >= MAX_ROWS:
             problems.append(f"more than {MAX_ROWS} rows — this does not look like a manifest")
@@ -255,6 +268,14 @@ def parse_manifest(text: str) -> tuple[list[PlanRow], list[str]]:
             for what, value in (("key", row.key), ("value", row.value)):
                 if not VAR_RE.match(value):
                     problems.append(f"line {no}: setvar {what} {_show(value)} is malformed")
+        if action == "getvar":
+            row.key = args[0]
+            if not VAR_RE.match(row.key):
+                problems.append(f"line {no}: getvar name {_show(row.key)} is malformed")
+        if action == "oem":
+            row.command = args[0]
+            if not OEM_RE.match(row.command):
+                problems.append(f"line {no}: oem command {_show(row.command)} is malformed")
         rows.append(row)
     if not rows and not problems:
         problems.append("the manifest has no rows")
@@ -328,7 +349,14 @@ def check_agent(rows: list[PlanRow], agent: AgentView | None) -> list[str]:
     # Every action a row needs must be in the agent's op table. Reported per
     # action with its lines, because "update the agent" is the fix and the
     # caller needs to know which rows forced it.
-    needed = {"flash": "flash", "erase": "erase", "reboot": "reboot", "reboot-bootloader": "reboot"}
+    needed = {
+        "flash": "flash",
+        "erase": "erase",
+        "getvar": "getvar",
+        "oem": "oem",
+        "reboot": "reboot",
+        "reboot-bootloader": "reboot",
+    }
     for action, op in needed.items():
         lines = [r.line for r in running if r.action == action]
         if lines and op not in ops:
@@ -336,6 +364,15 @@ def check_agent(rows: list[PlanRow], agent: AgentView | None) -> list[str]:
                 f"the agent is too old to {action} (line {', '.join(map(str, lines))}) — "
                 "update alb_agent.py on the agent host"
             )
+    # The agent's own list of oem commands (and getvar's name shape), read
+    # from its table: a row it would refuse is refused here, before row 1.
+    for r in running:
+        if r.action not in ("getvar", "oem") or r.action not in ops:
+            continue
+        params = {"name": r.key} if r.action == "getvar" else {"command": r.command}
+        _, _, problem = check_params(ops[r.action], params, [])
+        if problem:
+            problems.append(f"line {r.line}: the agent would refuse {r.describe()}: {problem}")
     ceiling = ops["flash"].max_image_bytes
     large = [r for r in running if r.action == "flash" and ceiling and r.size > ceiling]
     if large:
@@ -361,7 +398,7 @@ def fingerprint(manifest: str, rows: list[PlanRow]) -> str:
     """Digest of everything a confirmation is a confirmation OF: each row,
     its decision, and the bytes of each image that runs."""
     body = [
-        [r.line, r.action, r.partition, r.file, r.key, r.value, r.size, r.sha256, r.skip]
+        [r.line, r.action, r.partition, r.file, r.key, r.value, r.command, r.size, r.sha256, r.skip]
         for r in rows
     ]
     blob = json.dumps({"manifest": manifest, "rows": body}, sort_keys=True).encode()

@@ -120,6 +120,38 @@ def test_an_empty_manifest_is_a_problem():
     assert parse_manifest("\n \n")[1] == ["the manifest has no rows"]
 
 
+def test_comment_lines_are_ignored():
+    """Vendor manifests open with a `#` title line; it used to be read as
+    tool `#` + action `<first word>` and refuse the whole package. A
+    commented-out row is not run either — that is what commenting it out
+    means."""
+    text = "# board-x flashing commands\ntool flash boot_a boot.img\n  # note\n#tool erase misc\n"
+    rows, problems = parse_manifest(text)
+    assert problems == []
+    assert [(r.line, r.action) for r in rows] == [(2, "flash")]
+
+
+def test_getvar_and_oem_rows_parse():
+    rows, problems = parse_manifest("tool getvar check-firmware-board-x\ntool oem at-lock-vboot\n")
+    assert problems == []
+    assert [(r.action, r.key, r.command) for r in rows] == [
+        ("getvar", "check-firmware-board-x", ""),
+        ("oem", "", "at-lock-vboot"),
+    ]
+    assert [r.describe() for r in rows] == ["getvar check-firmware-board-x", "oem at-lock-vboot"]
+    assert rows[1].as_dict()["command"] == "at-lock-vboot"
+
+
+def test_malformed_getvar_and_oem_rows_are_problems():
+    text = "tool getvar -x\ntool oem a;b\ntool oem at-lock-vboot now\ntool getvar\n"
+    _, problems = parse_manifest(text)
+    joined = "\n".join(problems)
+    assert "line 1: getvar name" in joined
+    assert "line 2: oem command" in joined
+    assert "line 3: oem takes 1 argument(s), got 2" in joined
+    assert "line 4: getvar takes 1 argument(s), got 0" in joined
+
+
 # ── skips ───────────────────────────────────────────────────────────────
 
 
@@ -167,6 +199,21 @@ def test_a_skip_action_that_matches_nothing_refuses_the_plan():
     assert apply_skips(rows, [], ["reboot"]) == ["--skip-action reboot matches no row"]
 
 
+def test_getvar_and_oem_run_unless_skipped_by_action():
+    """Both run by default — the vendor listed them — and either can be left
+    out by name, like any row without a partition."""
+    text = "tool getvar check-firmware-board-x\ntool oem at-lock-vboot\ntool reboot\n"
+    rows, _ = parse_manifest(text)
+    assert apply_skips(rows, [], []) == []
+    assert all(r.runs for r in rows)
+    rows, _ = parse_manifest(text)
+    assert apply_skips(rows, [], ["getvar,oem"]) == []
+    assert {r.line: r.skip for r in rows if not r.runs} == {
+        1: "--skip-action getvar",
+        2: "--skip-action oem",
+    }
+
+
 # ── what the agent would refuse halfway, refused up front ──────────────
 
 
@@ -199,6 +246,26 @@ def test_skipped_rows_do_not_need_to_be_allowed():
     apply_skips(rows, ["loader_a"], [])
     agent = AgentView(caps=FULL_AGENT.caps, partitions=["boot_a"], ops=FULL_AGENT.ops)
     assert check_agent(rows, agent) == []
+
+
+def test_an_oem_command_off_the_agent_list_is_refused_with_its_line():
+    """The agent runs only the oem commands on its own list and reports that
+    list in its table. A row it would refuse after the flashes is refused
+    before row 1."""
+    rows = _running("tool flash boot_a boot.img\ntool oem at-disable-unlock-vboot\n")
+    problems = check_agent(rows, FULL_AGENT)
+    assert len(problems) == 1
+    assert problems[0].startswith("line 2: the agent would refuse oem at-disable-unlock-vboot")
+    assert check_agent(_running("tool oem at-lock-vboot\n"), FULL_AGENT) == []
+
+
+def test_an_agent_without_getvar_or_oem_is_refused_before_the_first_row():
+    ops = {k: v for k, v in (FULL_AGENT.ops or {}).items() if k not in ("getvar", "oem")}
+    agent = AgentView(caps=FULL_AGENT.caps, partitions=[], ops=ops)
+    rows = _running("tool getvar check-firmware-board-x\ntool oem at-lock-vboot\n")
+    joined = "\n".join(check_agent(rows, agent))
+    assert "too old to getvar (line 1)" in joined
+    assert "too old to oem (line 2)" in joined
 
 
 def test_an_agent_too_old_to_erase_is_refused_before_the_first_row():
@@ -314,6 +381,44 @@ async def test_fingerprint_changes_when_the_skips_change(tmp_path):
     a = await _plan(tmp_path, manifest)
     b = await _plan(tmp_path, manifest, skip=["loader_a"])
     assert a.fingerprint != b.fingerprint
+
+
+def test_fingerprint_covers_the_oem_command():
+    a, _ = parse_manifest("tool oem at-lock-vboot\n")
+    b, _ = parse_manifest("tool oem at-unlock-vboot\n")
+    assert fingerprint("m", a) != fingerprint("m", b)
+
+
+# A vendor package's manifest in the shape real ones have: a title comment,
+# a board check first, an oem lock and an erase after the flashes.
+VENDOR_MANIFEST = """\
+# board-x flashing commands
+vtool getvar check-firmware-board-x
+vtool flash boot_a        boot.img
+vtool flash boot_b        boot.img
+vtool reboot-bootloader
+vtool flash super         super.img
+vtool oem at-lock-vboot
+vtool erase frp
+vtool reboot
+"""
+
+
+async def test_a_vendor_manifest_with_comment_check_and_oem_plans_whole(tmp_path):
+    manifest = _package(tmp_path, VENDOR_MANIFEST)
+    plan = await _plan(tmp_path, manifest, skip_actions=())
+    assert plan.problems == []
+    assert [r.describe() for r in plan.rows] == [
+        "getvar check-firmware-board-x",
+        "flash boot_a <- boot.img",
+        "flash boot_b <- boot.img",
+        "reboot-bootloader",
+        "flash super <- super.img",
+        "oem at-lock-vboot",
+        "erase frp",
+        "reboot",
+    ]
+    assert [r.line for r in plan.rows] == [2, 3, 4, 5, 6, 7, 8, 9], "lines as in the file"
 
 
 def test_fingerprint_covers_the_decision_not_just_the_rows():

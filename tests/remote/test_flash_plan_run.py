@@ -65,6 +65,9 @@ class _Bench:
         self.images: dict[str, bytes] = {}
         self.fail_partition = ""
         self.devices_answers: list[bool] = []  # empty = always listed
+        # What fastboot printed for a getvar. It exits 0 whatever the device
+        # answered, so a FAIL arrives as text in an otherwise ok result.
+        self.getvar_stderr = ""
         self.on_flash = None  # async hook, run while a flash row is in flight
 
     async def open_data_channel(self, *, ctype, role, params, timeout):  # noqa: ASYNC109
@@ -125,6 +128,8 @@ class _Chan:
                     )
                 ]
             bench.images[req["partition"]] = data
+        if req["op"] == "getvar":
+            return [_ctl({"ev": "done", "ok": True, "rc": 0, "stderr": bench.getvar_stderr})]
         progress = {"ev": "progress", "phase": "flash", "done": 0, "total": 0, "text": "OKAY"}
         return [_ctl(progress), _ctl({"ev": "done", "ok": True, "rc": 0})]
 
@@ -135,13 +140,13 @@ def _fast_reboot_wait(monkeypatch):
     monkeypatch.setattr(flash_mod, "REBOOT_SETTLE_S", 0.05)
 
 
-def _package(root: Path) -> Path:
+def _package(root: Path, text: str = MANIFEST) -> Path:
     pkg = root / "images" / "board-x"
     pkg.mkdir(parents=True)
     (pkg / "loader.elf").write_bytes(b"L" * 100)
     (pkg / "boot.img").write_bytes(b"B" * 300)
     (pkg / "super.img").write_bytes(b"S" * 70_000)  # more than one 64 KiB chunk
-    (pkg / "flash.txt").write_text(MANIFEST, encoding="utf-8")
+    (pkg / "flash.txt").write_text(text, encoding="utf-8")
     return pkg / "flash.txt"
 
 
@@ -149,20 +154,30 @@ def _resolved(path: Path) -> Path:
     return path.resolve()
 
 
-async def _plan(tmp_path: Path, bench: _Bench, *, skip_actions=("setvar", "reboot-bootloader")):
-    manifest = _package(tmp_path)
+async def _plan(
+    tmp_path: Path,
+    bench: _Bench,
+    *,
+    skip_actions=("setvar", "reboot-bootloader"),
+    text: str = MANIFEST,
+    skip=("loader_a", "loader_b"),
+):
+    manifest = _package(tmp_path, text)
     return await build_plan(
         manifest,
         name="images/board-x/flash.txt",
         root=_resolved(tmp_path),
-        skip=["loader_a", "loader_b"],
+        skip=list(skip),
         skip_actions=list(skip_actions),
         agent=AgentView(caps=bench.caps, partitions=bench.flash_partitions, ops=bench.op_table),
     )
 
 
 def _asked(bench: _Bench) -> list[tuple[str, str]]:
-    return [(r["op"], r.get("partition") or r.get("target") or "") for r in bench.requests]
+    return [
+        (r["op"], r.get("partition") or r.get("target") or r.get("name") or r.get("command") or "")
+        for r in bench.requests
+    ]
 
 
 async def test_runs_every_row_in_order_and_never_touches_skipped_ones(tmp_path):
@@ -319,3 +334,71 @@ async def test_the_whole_plan_lands_on_one_timeline(tmp_path):
     assert [x["text"] for x in lines if x.get("phase") == "step"][-1] == "line 9: reboot"
     job = json.loads((Path(result.artifacts) / "job.json").read_text())
     assert job["ok"] is True and len(job["rows"]) == 9
+
+
+# A board check first, an oem lock after the flashes (the shape of a vendor
+# package's manifest).
+CHECKED = """\
+# board-x flashing commands
+tool getvar check-firmware-board-x
+tool flash boot_a boot.img
+tool oem at-lock-vboot
+tool reboot
+"""
+FAIL_ANSWER = (
+    "getvar:check-firmware-board-x                      "
+    "FAILED (remote: 'firmware check failed')\r\n"
+    "Finished. Total time: 0.004s\r\n"
+)
+
+
+@pytest.mark.parametrize(
+    "answer, quoted",
+    [
+        (FAIL_ANSWER, "firmware check failed"),  # as AOSP fastboot prints it, CRLF on Windows
+        ("FAILED (remote: 'firmware check failed')\n", "firmware check failed"),  # no prefix
+        ("  getvar:check-firmware-board-x FAILED\n", "FAILED"),  # indented, no reason
+        (  # a local error on the way prints the same shape
+            "getvar:check-firmware-board-x   FAILED (Status read failed (Protocol error))\n",
+            "Status read failed",
+        ),
+    ],
+)
+async def test_a_getvar_check_that_fails_stops_the_plan_before_any_flash(tmp_path, answer, quoted):
+    """fastboot exits 0 when a getvar fails. The plan must read the FAILED
+    line itself: the check is there to stop a package meant for another
+    board before its first flash, and a missed FAIL lets it through."""
+    bench = _Bench()
+    bench.getvar_stderr = answer
+    plan = await _plan(tmp_path, bench, text=CHECKED, skip=(), skip_actions=())
+    assert plan.ok, plan.problems
+    result = await FlashService(lambda: bench).run_plan(plan)
+    assert not result.ok
+    assert (result.code, result.failed_line) == ("FLASH_PLAN_CHECK_FAILED", 2)
+    assert quoted in result.error, "the error quotes the line that failed"
+    assert quoted in result.stderr, "fastboot's own output is the evidence"
+    assert _asked(bench) == [("getvar", "check-firmware-board-x")]
+    assert [r.status for r in result.rows] == ["failed", "not-run", "not-run", "not-run"]
+
+
+async def test_a_passing_getvar_check_lets_the_plan_run_and_oem_goes_out_in_order(tmp_path):
+    bench = _Bench()
+    bench.getvar_stderr = "check-firmware-board-x: firmware check success\r\n"
+    plan = await _plan(tmp_path, bench, text=CHECKED, skip=(), skip_actions=())
+    result = await FlashService(lambda: bench).run_plan(plan)
+    assert result.ok, result.error
+    assert _asked(bench) == [
+        ("getvar", "check-firmware-board-x"),
+        ("flash", "boot_a"),
+        ("oem", "at-lock-vboot"),
+        ("reboot", ""),
+    ]
+
+
+async def test_a_skipped_check_and_lock_are_never_sent(tmp_path):
+    bench = _Bench()
+    bench.getvar_stderr = FAIL_ANSWER  # would stop the plan if it were asked
+    plan = await _plan(tmp_path, bench, text=CHECKED, skip=(), skip_actions=("getvar", "oem"))
+    result = await FlashService(lambda: bench).run_plan(plan)
+    assert result.ok, result.error
+    assert _asked(bench) == [("flash", "boot_a"), ("reboot", "")]
