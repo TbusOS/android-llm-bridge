@@ -336,6 +336,47 @@ async def test_an_image_outside_the_workspace_is_refused(tmp_path, name, reason)
     assert len(plan.problems) == 1 and reason in plan.problems[0], plan.problems
 
 
+async def test_an_image_symlinked_in_from_outside_the_workspace_is_used(tmp_path):
+    """Multi-GB images live in a firmware archive; a package directory of
+    links to them must plan without a copy. The link's own place decides
+    "inside", and the digest is the target's bytes."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    (archive / "boot.img").write_bytes(b"A" * 64)
+    manifest = _package(workspace, "tool flash boot_a linked.img\n")
+    (manifest.parent / "linked.img").symlink_to(archive / "boot.img")
+    plan = await _plan(workspace, manifest, skip_actions=())
+    assert plan.ok, plan.problems
+    row = plan.rows[0]
+    assert row.path == manifest.parent / "linked.img", "the link, as written"
+    assert (row.size, row.sha256) == (64, hashlib.sha256(b"A" * 64).hexdigest())
+
+
+async def test_a_dotdot_through_a_symlinked_directory_cannot_climb_out(tmp_path):
+    """`lnk/../x` is folded on the written path: it names x next to the
+    manifest, never x beside the link's target — and that folded path is
+    the one opened, so the OS cannot walk out through the link either."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (tmp_path / "archive" / "deep").mkdir(parents=True)
+    (tmp_path / "archive" / "secret.img").write_bytes(b"s")
+    manifest = _package(workspace, "tool flash boot_a lnk/../secret.img\n")
+    (manifest.parent / "lnk").symlink_to(tmp_path / "archive" / "deep")
+    plan = await _plan(workspace, manifest, skip_actions=())
+    assert plan.rows[0].path is None
+    assert len(plan.problems) == 1 and "not found next to the manifest" in plan.problems[0]
+
+
+async def test_a_symlink_with_a_missing_target_says_so(tmp_path):
+    manifest = _package(tmp_path, "tool flash boot_a gone.img\n")
+    (manifest.parent / "gone.img").symlink_to(tmp_path / "nowhere.img")
+    plan = await _plan(tmp_path, manifest, skip_actions=())
+    assert len(plan.problems) == 1
+    assert "a symlink whose target is missing" in plan.problems[0]
+
+
 async def test_backslash_paths_from_a_windows_manifest_resolve(tmp_path):
     manifest = _package(tmp_path, "tool flash boot_a sub\\boot.img\n")
     (manifest.parent / "sub").mkdir()

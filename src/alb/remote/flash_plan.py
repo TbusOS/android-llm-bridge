@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -424,17 +425,32 @@ def _digests(path: Path) -> tuple[int, str, str]:
 
 def _locate(row: PlanRow, base: Path, root: Path) -> tuple[Path | None, str]:
     """Image path for a flash row, or a problem. Names are relative to the
-    manifest's directory and must stay inside the workspace."""
+    manifest's directory and must stay inside the workspace.
+
+    "Inside" is judged on the path as written, with `..` folded away but
+    symlinks NOT followed: a symlink in the workspace may point anywhere, and
+    the image is read through it. Multi-GB images live in a firmware archive,
+    and a package directory of links to them is how they get flashed without
+    a copy per run. Only someone with a shell on the hub host can make one —
+    an upload writes regular files, and refuses a target that resolves out of
+    the workspace — so the confinement still holds against what the manifest
+    says (`../../etc`, an absolute path)."""
     name = row.file.replace("\\", "/")  # a Windows-generated manifest
     if name.startswith("/") or re.match(r"^[A-Za-z]:", name):
         return None, f"line {row.line}: file {_show(row.file)} must be relative to the manifest"
-    candidate = (base / name).resolve()
+    # normpath, not resolve(): `..` is folded on the written path. The
+    # folded path is also what gets opened, so `link/../x` cannot climb out
+    # through the link's target.
+    candidate = Path(os.path.normpath(base / name))
     try:
         candidate.relative_to(root)
     except ValueError:
         return None, f"line {row.line}: file {_show(row.file)} is outside the workspace"
     if not candidate.is_file():
-        return None, f"line {row.line}: file {_show(row.file)} not found next to the manifest"
+        how = " (a symlink whose target is missing)" if candidate.is_symlink() else ""
+        return None, (
+            f"line {row.line}: file {_show(row.file)} not found next to the manifest{how}"
+        )
     return candidate, ""
 
 

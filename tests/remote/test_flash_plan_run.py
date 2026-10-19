@@ -402,3 +402,26 @@ async def test_a_skipped_check_and_lock_are_never_sent(tmp_path):
     result = await FlashService(lambda: bench).run_plan(plan)
     assert result.ok, result.error
     assert _asked(bench) == [("flash", "boot_a"), ("reboot", "")]
+
+
+async def test_a_symlinked_image_is_streamed_from_its_target(tmp_path):
+    """What reaches the board is the bytes behind the link — and the agent's
+    digest check passes on them, since the plan hashed the same bytes."""
+    bench = _Bench()
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    (archive / "boot.img").write_bytes(b"T" * 1000)
+    manifest = _package(tmp_path / "ws", "tool flash boot_a linked.img\n")
+    (manifest.parent / "linked.img").symlink_to(archive / "boot.img")
+    plan = await build_plan(
+        manifest,
+        name="images/board-x/flash.txt",
+        root=_resolved(tmp_path / "ws"),
+        skip=[],
+        skip_actions=[],
+        agent=AgentView(caps=bench.caps, partitions=[], ops=bench.op_table),
+    )
+    assert plan.ok, plan.problems
+    result = await FlashService(lambda: bench).run_plan(plan)
+    assert result.ok, result.error
+    assert bench.images["boot_a"] == b"T" * 1000
