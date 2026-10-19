@@ -1,8 +1,8 @@
-"""`stream_read("logcat", since=...)` — the start time reaches logcat as `-T`.
+"""`stream_read("logcat", tail=n)` — reaches logcat as `-T <n>`.
 
-timeline starts logcat at the device's current time so the buffer logcat
-would otherwise dump first never arrives (capabilities/timeline.py). These
-lock how that time is handed to the device on both shell transports.
+timeline starts logcat with `-T 1` so the buffer logcat would otherwise
+dump first never arrives (capabilities/timeline.py). These lock how that
+count is handed to the device on both shell transports.
 """
 
 from __future__ import annotations
@@ -45,17 +45,25 @@ async def _adb_argv(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> list[str]
     return seen
 
 
-async def test_adb_logcat_since_comes_before_the_filter(monkeypatch) -> None:
+async def test_adb_logcat_tail_comes_before_the_filter(monkeypatch) -> None:
     """logcat reads its options before the filterspecs; a `-T` after them
     would be taken as a filter."""
-    argv = await _adb_argv(monkeypatch, since="1760000000.123", filter="*:E")
+    argv = await _adb_argv(monkeypatch, tail=1, filter="*:E")
     i = argv.index("logcat")
-    assert argv[i:] == ["logcat", "-v", "threadtime", "-T", "1760000000.123", "*:E"]
+    assert argv[i:] == ["logcat", "-v", "threadtime", "-T", "1", "*:E"]
 
 
-async def test_adb_logcat_without_since_is_unchanged(monkeypatch) -> None:
+async def test_adb_logcat_without_tail_is_unchanged(monkeypatch) -> None:
     argv = await _adb_argv(monkeypatch)
     assert argv[argv.index("logcat") :] == ["logcat", "-v", "threadtime"]
+
+
+@pytest.mark.parametrize("bad", [0, -1, "1", 1.0, True])
+async def test_adb_refuses_a_tail_that_is_not_a_positive_int(monkeypatch, bad: object) -> None:
+    """logcat itself turns a bad count into 1 with only a warning on stderr;
+    refuse here so a wrong caller is seen, not silently given one line."""
+    with pytest.raises(ValueError, match="tail"):
+        await _adb_argv(monkeypatch, tail=bad)
 
 
 class _SshProc:
@@ -100,14 +108,12 @@ async def _ssh_cmd(**kwargs: Any) -> list[str]:
     return conn.cmds
 
 
-async def test_ssh_logcat_since_goes_into_the_command_line() -> None:
-    assert await _ssh_cmd(since="1760000000.123", filter="*:E") == [
-        "logcat -v threadtime -T 1760000000.123 *:E"
-    ]
+async def test_ssh_logcat_tail_goes_into_the_command_line() -> None:
+    assert await _ssh_cmd(tail=1, filter="*:E") == ["logcat -v threadtime -T 1 *:E"]
 
 
-@pytest.mark.parametrize("bad", ["1760000000; reboot", "$(id)", "1.2.3", "-1"])
-async def test_ssh_refuses_a_since_that_is_not_a_time(bad: str) -> None:
-    """It is pasted into a remote shell command: only digits and one dot."""
-    with pytest.raises(ValueError, match="since"):
-        await _ssh_cmd(since=bad)
+@pytest.mark.parametrize("bad", ["1; reboot", "$(id)", "1", 0, True])
+async def test_ssh_refuses_a_tail_that_is_not_a_positive_int(bad: object) -> None:
+    """It is pasted into a remote shell command: only a real int passes."""
+    with pytest.raises(ValueError, match="tail"):
+        await _ssh_cmd(tail=bad)

@@ -305,23 +305,25 @@ async def test_jsonl_starts_and_ends_with_meta_records(tmp_path: Path) -> None:
 
 
 # ─── transports (mocked) ───────────────────────────────────────────
-# What the device answers to the two probes taken before the streams start.
-CLOCK = "1760000000.123\n"
+# What the device answers to the two probes taken before the streams start:
+# its clock, in the shape logcat stamps its threadtime lines with.
+CLOCK = "10-19 16:50:00.123\n"
+STAMP_CMD = "date '+%m-%d %H:%M:%S.%3N'"
 
 
 def _adb_mock(
-    lines_by_source: dict[str, list[bytes]],
+    lines_by_source: dict[str, list[bytes | float]],
     *,
     clock: str | None = CLOCK,
     dmesg_count: str | None = "0\n",
 ) -> AsyncMock:
-    """`clock` / `dmesg_count`: stdout for `date +%s.%3N` / `dmesg | wc -l`;
-    None = the command fails."""
+    """`clock` / `dmesg_count`: stdout for the date probe / `dmesg | wc -l`;
+    None = the command fails. A float among the lines is a pause, in seconds."""
     t = AsyncMock()
     t.name = "adb"
     t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
     calls: list[tuple[str, dict]] = []
-    answers = {"date +%s.%3N": clock, "dmesg | wc -l": dmesg_count}
+    answers = {STAMP_CMD: clock, "dmesg | wc -l": dmesg_count}
 
     async def shell(cmd: str, **kw) -> ShellResult:
         out = answers.get(cmd)
@@ -336,6 +338,9 @@ def _adb_mock(
 
         async def gen() -> AsyncIterator[bytes]:
             for line in lines_by_source.get(source, []):
+                if isinstance(line, float):
+                    await asyncio.sleep(line)
+                    continue
                 await asyncio.sleep(0.01)
                 yield line
             await asyncio.sleep(3600)
@@ -354,47 +359,108 @@ async def test_logcat_and_dmesg_come_from_transport_stream_read(tmp_path: Path) 
     )
     assert r.ok
     assert sorted(x["line"] for x in _records(tmp_path)) == ["L", "[ 0.1] D"]
-    assert ("logcat", {"filter": "*:E", "since": "1760000000.123"}) in t.calls
+    assert ("logcat", {"filter": "*:E", "tail": 1}) in t.calls
     assert ("dmesg", {}) in t.calls
     assert (tmp_path / "logcat.txt").read_bytes() == b"L\n"
     assert (tmp_path / "dmesg.txt").read_bytes() == b"[ 0.1] D\n"
 
 
-async def test_logcat_starts_at_the_device_clock(tmp_path: Path) -> None:
-    """logcat would first dump its whole buffer; arriving at once, every line
-    of it would be stamped at the capture start. Told the device's current
-    time, the device sends only what is logged from then on."""
-    t = _adb_mock({"logcat": [b"L\n"]})
-    r = await capture_timeline(0.2, sources={"logcat"}, transport=t, output=tmp_path)
+# What `logcat -v threadtime -T 1` sends at the start: its divider, the one
+# line it repeats from the buffer, then what is logged from then on.
+_DIVIDER = b"--------- beginning of main\n"
+_OLD = b"10-19 16:49:59.900  1203  1203 I Old: logged before the capture\n"
+_LIVE = b"10-19 16:50:00.500  1203  1203 I Live: logged during the capture\n"
+
+
+async def test_logcat_starts_from_its_last_line_and_leaves_it_off_the_timeline(
+    tmp_path: Path,
+) -> None:
+    """Without -T logcat dumps its whole buffer, all of it stamped at the start.
+    `-T 1` repeats one old line; it is older than the device's clock at the
+    start, so it goes to logcat.txt only."""
+    t = _adb_mock({"logcat": [_DIVIDER, _OLD, _LIVE]})
+    r = await capture_timeline(0.3, sources={"logcat"}, transport=t, output=tmp_path)
     assert r.ok
-    assert t.calls == [("logcat", {"filter": None, "since": "1760000000.123"})]
-    assert [x["line"] for x in _records(tmp_path)] == ["L"], "no note when it worked"
+    assert t.calls == [("logcat", {"filter": None, "tail": 1})]
+    lines = [x["line"] for x in _records(tmp_path)]
+    assert lines[0] == _DIVIDER.decode().rstrip("\n"), "logcat's own divider is not a log line"
+    assert lines[1].startswith("[alb] logcat: 1 line(s) from before the capture started")
+    assert "still in logcat.txt" in lines[1]
+    assert lines[2:] == [_LIVE.decode().rstrip("\n")]
+    assert r.data.lines == {"logcat": 2}
+    assert (tmp_path / "logcat.txt").read_bytes() == _DIVIDER + _OLD + _LIVE
+
+
+async def test_a_logcat_line_from_the_start_moment_on_is_live(tmp_path: Path) -> None:
+    """Equal to the clock is not older: the backlog ends there, and a later
+    line that looks old again is not held back any more."""
+    at_start = b"10-19 16:50:00.123  1 1 I At: the start\n"
+    t = _adb_mock({"logcat": [_OLD, at_start, _OLD]})
+    await capture_timeline(0.3, sources={"logcat"}, transport=t, output=tmp_path)
+    lines = [x["line"] for x in _records(tmp_path) if not x.get("note")]
+    assert lines == [at_start.decode().rstrip("\n"), _OLD.decode().rstrip("\n")]
 
 
 @pytest.mark.parametrize(
-    "clock, since",
+    "clock",
     [
-        ("1760000000\n", "1760000000.000"),  # a date without %N: whole seconds
-        ("1760000000.%3N\n", "1760000000.000"),  # one that echoes the escape back
+        "10-19 16:50:00\n",  # a date without %N: whole seconds
+        "10-19 16:50:00.%3N\n",  # one that echoes the escape back
     ],
 )
-async def test_a_device_clock_without_milliseconds_still_starts_logcat(
-    tmp_path: Path, clock: str, since: str
-) -> None:
-    t = _adb_mock({"logcat": [b"L\n"]}, clock=clock)
-    await capture_timeline(0.2, sources={"logcat"}, transport=t, output=tmp_path)
-    assert t.calls == [("logcat", {"filter": None, "since": since})]
+async def test_a_device_clock_without_milliseconds_still_works(tmp_path: Path, clock: str) -> None:
+    """Whole seconds count as .000: a line at 16:49:59.999 is old, one at
+    16:50:00.000 is not."""
+    old = b"10-19 16:49:59.999  1 1 I Old: x\n"
+    live = b"10-19 16:50:00.000  1 1 I Live: x\n"
+    t = _adb_mock({"logcat": [old, live]}, clock=clock)
+    await capture_timeline(0.3, sources={"logcat"}, transport=t, output=tmp_path)
+    lines = [x["line"] for x in _records(tmp_path) if not x.get("note")]
+    assert lines == [live.decode().rstrip("\n")]
 
 
 @pytest.mark.parametrize("clock", [None, "date: bad format\n", ""])
-async def test_an_unreadable_device_clock_takes_everything_and_says_so(
+async def test_an_unreadable_device_clock_keeps_the_old_line_and_says_so(
     tmp_path: Path, clock: str | None
 ) -> None:
-    t = _adb_mock({"logcat": [b"L\n"]}, clock=clock)
-    r = await capture_timeline(0.2, sources={"logcat"}, transport=t, output=tmp_path)
+    t = _adb_mock({"logcat": [_OLD, _LIVE]}, clock=clock)
+    r = await capture_timeline(0.3, sources={"logcat"}, transport=t, output=tmp_path)
     assert r.ok
-    assert t.calls == [("logcat", {"filter": None})]
+    assert t.calls == [("logcat", {"filter": None, "tail": 1})], "still not the whole buffer"
     assert any("device clock could not be read" in n for n in r.data.notes)
+    assert r.data.lines == {"logcat": 2}
+
+
+async def test_lines_that_keep_looking_old_stop_being_held_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A capture started on Dec 31: every line of the new year sorts before
+    the start as text. The backlog stops a fixed time after its first line,
+    whatever the stamps say."""
+    monkeypatch.setattr(tl, "_BACKLOG_WINDOW_S", 0.1)
+    old = b"12-31 23:59:59.800  1 1 I Old: x\n"
+    early = b"01-01 00:00:00.100  1 1 I NewYear: inside the window\n"
+    later = b"01-01 00:00:00.400  1 1 I NewYear: after the window\n"
+    t = _adb_mock({"logcat": [old, early, 0.3, later]}, clock="12-31 23:59:59.900\n")
+    r = await capture_timeline(0.6, sources={"logcat"}, transport=t, output=tmp_path)
+    lines = [x["line"] for x in _records(tmp_path)]
+    assert lines[-1] == later.decode().rstrip("\n")
+    assert any("2 line(s) from before the capture started" in n for n in r.data.notes)
+    assert (tmp_path / "logcat.txt").read_bytes() == old + early + later
+
+
+async def test_a_capture_that_ends_with_only_old_logcat_lines_still_notes_them(
+    tmp_path: Path,
+) -> None:
+    """The note is what tells a reader logcat.txt has a line the timeline does
+    not; a quiet device must not lose it. Nothing is missing, so no "ended
+    before the rest" — unlike dmesg, logcat never said how many there are."""
+    t = _adb_mock({"logcat": [_OLD]})
+    r = await capture_timeline(0.3, sources={"logcat"}, transport=t, output=tmp_path)
+    notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
+    assert len(notes) == 1 and "1 line(s) from before the capture started" in notes[0]
+    assert "ended before the rest" not in notes[0]
+    assert r.data.lines == {"logcat": 0}
 
 
 async def test_dmesg_lines_already_in_the_buffer_stay_out_of_the_timeline(tmp_path: Path) -> None:
@@ -407,7 +473,7 @@ async def test_dmesg_lines_already_in_the_buffer_stay_out_of_the_timeline(tmp_pa
     r = await capture_timeline(0.4, sources={"dmesg"}, transport=t, output=tmp_path)
     assert r.ok
     lines = [x["line"] for x in _records(tmp_path)]
-    assert lines[0].startswith("[alb] dmesg: 3 line(s) already in the buffer")
+    assert lines[0].startswith("[alb] dmesg: 3 line(s) from before the capture started")
     assert "still in dmesg.txt" in lines[0]
     assert lines[1:] == ["[  900.000000] new one", "[  901.000000] new two"]
     assert r.data.lines == {"dmesg": 2}
@@ -419,7 +485,7 @@ async def test_a_capture_that_ends_inside_the_dmesg_backlog_says_so(tmp_path: Pa
     r = await capture_timeline(0.3, sources={"dmesg"}, transport=t, output=tmp_path)
     notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
     assert any(
-        "2 line(s) already in the buffer" in n and "ended before the rest" in n for n in notes
+        "2 line(s) from before the capture" in n and "ended before the rest" in n for n in notes
     )
     assert r.data.lines == {"dmesg": 0}
 
@@ -443,7 +509,7 @@ async def test_logcat_permission_deny_is_a_note(tmp_path: Path) -> None:
     assert r.ok
     note = next(x for x in _records(tmp_path) if x.get("note"))
     assert note["src"] == "logcat" and "logcat blocked by rule" in note["line"]
-    assert ("logcat", {"filter": None}) not in t.calls  # denied → never opened
+    assert [src for src, _ in t.calls] == ["dmesg"]  # denied → logcat never opened
 
 
 async def test_uart_uses_reconnecting_stream_and_holds_the_duration(tmp_path: Path) -> None:
