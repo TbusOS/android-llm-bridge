@@ -306,6 +306,42 @@ def test_first_panic_line_prefers_a_real_panic_over_an_earlier_watchdog_line() -
     assert _first_panic_line(text) == "[   13.500] Kernel panic - not syncing: Fatal exception"
 
 
+# pmsg as a real board left it: binary logger entries (header bytes, a tag,
+# a NUL, the message). The second one reads like a crash marker to a text scan.
+PMSG_ENTRIES = (
+    b"\x00l\xef\x00\xa1\x03j\x01\x03\x9c\x04\x15\x04keystore2\x00"
+    b"system/security/keystore2/src/watchdog.rs:319 - Watchdog thread idle -> terminating.\x00"
+    b"\x00l\xef\x00\xa2\x03\x04init\x00Kernel panic test string in a log message\x00"
+)
+
+
+def _bytes(path: str) -> bytes:
+    return Path(path).read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_a_pmsg_record_is_not_scanned_for_kernel_crash_lines(monkeypatch, tmp_path) -> None:
+    """pmsg holds the previous boot's logcat, not kernel text. On a real
+    board the scan found keystore's "Watchdog thread idle" and showed it,
+    entry-header bytes and all, as the crash."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    t = _pstore_fake()
+    t.remote_files["/sys/fs/pstore/pmsg-ramoops-0"] = PMSG_ENTRIES
+    r = await pstore_pull(t, device="abc")
+    assert r.ok and r.data is not None
+    pmsg = next(f for f in r.data.files if f.name == "pmsg-ramoops-0")
+    assert (pmsg.kind, pmsg.first_panic_line) == ("logcat", None)
+    assert pmsg.to_dict()["kind"] == "logcat"
+    assert _bytes(pmsg.local_path) == PMSG_ENTRIES, "pulled as is, only not scanned"
+    console = next(f for f in r.data.files if f.name == "console-ramoops-0")
+    assert console.kind == "kernel" and console.first_panic_line is not None
+
+
+def test_control_and_undecodable_bytes_are_dropped_from_the_marker_line() -> None:
+    text = "[  1.0] ok\n\x1b[2J\x00\ufffd[ 13.5] Kernel panic - not syncing\x07\ufffd\n"
+    assert _first_panic_line(text) == "[2J[ 13.5] Kernel panic - not syncing"
+
+
 # ─── parsers ───────────────────────────────────────────────────────
 def test_parse_ls_l_toybox_and_busybox_and_hostile_names() -> None:
     out = (
@@ -359,6 +395,7 @@ def test_cli_pstore_summary_names_the_panic(monkeypatch, tmp_path) -> None:
     assert "console-ramoops-0" in r.output and "131072 B" in r.output
     assert "Kernel panic - not syncing" in r.output
     assert "(no panic marker)" in r.output
+    assert "binary logcat of the previous boot" in r.output and "logcat -L" in r.output
     assert "saved:" in r.output
 
 

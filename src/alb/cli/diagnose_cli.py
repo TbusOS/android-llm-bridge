@@ -7,7 +7,14 @@ from typing import Any
 import typer
 from rich.markup import escape
 
-from alb.capabilities.diagnose import anr_pull, bugreport, devinfo, pstore_pull, tombstone_pull
+from alb.capabilities.diagnose import (
+    LOGCAT_RECORD_HINT,
+    anr_pull,
+    bugreport,
+    devinfo,
+    pstore_pull,
+    tombstone_pull,
+)
 from alb.cli.common import console, get_transport, print_result, run_async
 from alb.infra.result import Result
 
@@ -47,6 +54,8 @@ def _print_pstore(ctx: typer.Context, result: Result[Any]) -> None:
     for f in d.files:
         if not f.local_path:
             detail = f"[red]pull failed: {escape(f.error)}[/]"
+        elif f.kind == "logcat":
+            detail = f"[dim]({escape(LOGCAT_RECORD_HINT)})[/]"
         elif f.first_panic_line:
             detail = f"[red]{escape(f.first_panic_line)}[/]"
         else:

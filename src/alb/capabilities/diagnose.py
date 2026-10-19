@@ -764,6 +764,14 @@ LAST_KMSG = "/proc/last_kmsg"
 _PANIC_RE = re.compile(r"Kernel panic|Internal error: Oops|Unable to handle kernel")
 _WATCHDOG_RE = re.compile(r"watchdog", re.IGNORECASE)
 
+# pmsg is not kernel text: it is Android's logger writing the previous
+# boot's logcat as binary log entries (header, priority, tag, message). The
+# kernel's crash lines never go there, so scanning it for them only finds
+# noise — on a real board, keystore's "Watchdog thread idle" log line,
+# reported as the crash with the entry header's bytes in front of it.
+_LOGCAT_RECORD_PREFIX = "pmsg-"
+LOGCAT_RECORD_HINT = "binary logcat of the previous boot — read it on the device: logcat -L"
+
 
 @dataclass(frozen=True)
 class PstoreFile:
@@ -772,6 +780,9 @@ class PstoreFile:
     local_path: str  # "" when the pull failed
     first_panic_line: str | None
     error: str = ""
+    # "kernel": console / dmesg text, scanned for crash markers.
+    # "logcat": a pmsg record, binary, not scanned (LOGCAT_RECORD_HINT).
+    kind: str = "kernel"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -780,6 +791,7 @@ class PstoreFile:
             "local_path": self.local_path,
             "first_panic_line": self.first_panic_line,
             "error": self.error,
+            "kind": self.kind,
         }
 
 
@@ -957,11 +969,20 @@ def _scan_record(local: Path, size: int) -> PstoreFile:
             first_panic_line=None,
             error="pull reported ok but wrote nothing",
         )
+    real_size = local.stat().st_size if size < 0 else size
+    if local.name.startswith(_LOGCAT_RECORD_PREFIX):
+        return PstoreFile(
+            name=local.name,
+            size=real_size,
+            local_path=str(local),
+            first_panic_line=None,
+            kind="logcat",
+        )
     # ramoops buffers carry ECC / stale bytes; decode leniently, never raise.
     text = local.read_bytes().decode("utf-8", errors="replace")
     return PstoreFile(
         name=local.name,
-        size=local.stat().st_size if size < 0 else size,
+        size=real_size,
         local_path=str(local),
         first_panic_line=_first_panic_line(text),
     )
@@ -972,8 +993,16 @@ def _first_panic_line(text: str) -> str | None:
     for pattern in (_PANIC_RE, _WATCHDOG_RE):
         for line in lines:
             if pattern.search(line):
-                return line.strip()[:200]
+                return _printable(line)[:200]
     return None
+
+
+def _printable(line: str) -> str:
+    """The line as a terminal can show it: control bytes and undecodable
+    ones (U+FFFD from the lenient decode) dropped. A ramoops record can carry
+    stale bytes on the same line as the marker; printed raw they garble the
+    summary, or move the cursor."""
+    return "".join(c for c in line if c.isprintable() and c != "�").strip()
 
 
 def _parse_ls_l(stdout: str) -> list[tuple[str, int]]:
