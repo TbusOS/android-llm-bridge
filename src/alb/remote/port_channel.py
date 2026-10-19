@@ -19,11 +19,27 @@ framing both ends agree on, and neither does.
 
 TCP lets one side say "I have nothing more to send" while still reading; a
 client that shuts its write side still expects the server's remaining bytes
-(gdb does this on detach, ``curl`` after sending a request body). So when one
-direction sees EOF, this side shuts *only the write side* of the other
-socket and keeps pumping the opposite direction until it ends too. Closing
-both at the first EOF would cut off exactly the bytes the client is waiting
-for.
+(``nc`` once its input ends, a client that sends a request body and then
+shuts down). adb cannot carry that: its protocol has no half-close, and the
+adb server closes the WHOLE stream as soon as its socket reads EOF
+(packages/modules/adb/sockets.cpp, the `is_eof` branch of the local socket's
+read handler). Passing the client's EOF on — what this module did first —
+cut off exactly the reply the client was waiting for (bench, 2026-10-16).
+
+So the two directions are not treated alike:
+
+* device → client: the device's EOF is passed on as a half-close. TCP
+  clients understand it, and nothing more can come from the device.
+* client → device: the client's EOF is NOT passed on. The device direction
+  stays open, and the connection ends when the device closes — or once the
+  device has been silent for ``HALF_CLOSE_GRACE_S`` after the client's EOF.
+
+The grace exists because a FIN cannot tell "shut my write side" from "I am
+gone": both send the same packet. A client that is really gone would
+otherwise keep its device stream (and, for a one-client server such as
+gdbserver, the device server itself) open until the device happens to close.
+A reply that starts within the grace and keeps flowing gets through; a write
+to a client that is gone fails at once and ends the connection.
 
 ## Exposure
 
@@ -39,6 +55,7 @@ import asyncio
 import contextlib
 import ipaddress
 import itertools
+import time
 from collections.abc import Callable
 
 from alb.transport.adb_socket import (
@@ -68,6 +85,12 @@ __all__ = [
 # in few syscalls, small enough that a chatty peer does not sit behind a
 # half-filled buffer. Same figure the hub's forwarder uses.
 CHUNK = 64 * 1024
+
+# How long the device may stay silent after the client's EOF before the
+# connection is closed (see "Half-close" above). Replies to a half-closed
+# request start within milliseconds; two seconds is generous for those and
+# short enough that a gone client frees a one-client device server quickly.
+HALF_CLOSE_GRACE_S = 2.0
 
 EventSink = Callable[[str], None]
 
@@ -112,24 +135,40 @@ def _half_close(writer: asyncio.StreamWriter) -> None:
         writer.write_eof()
 
 
-async def _one_way(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> int:
-    """Copy until ``src`` ends, then half-close ``dst``. Returns bytes moved."""
-    moved = 0
+class _Flow:
+    """Bytes moved one way, and since when it has been waiting for more.
+
+    ``waiting_since`` is set only while the copy is blocked reading its
+    source; while it is writing — a client slow to read can hold that for
+    seconds — it is None. Silence is what the grace counts, and a reply
+    stuck behind a slow reader is not silence."""
+
+    def __init__(self) -> None:
+        self.moved = 0
+        self.waiting_since: float | None = time.monotonic()
+
+
+async def _one_way(
+    src: asyncio.StreamReader, dst: asyncio.StreamWriter, flow: _Flow, *, pass_eof: bool
+) -> None:
+    """Copy until ``src`` ends; then half-close ``dst`` if ``pass_eof``."""
     try:
         while True:
+            flow.waiting_since = time.monotonic()
             data = await src.read(CHUNK)
+            flow.waiting_since = None
             if not data:
                 break
             dst.write(data)
             await dst.drain()
-            moved += len(data)
+            flow.moved += len(data)
     except (OSError, asyncio.IncompleteReadError):
         # A reset peer is an abrupt EOF: nothing more will come from src,
         # and the other direction finds out on its own socket.
         pass
     finally:
-        _half_close(dst)
-    return moved
+        if pass_eof:
+            _half_close(dst)
 
 
 async def pump(
@@ -137,16 +176,51 @@ async def pump(
     client_writer: asyncio.StreamWriter,
     device_reader: asyncio.StreamReader,
     device_writer: asyncio.StreamWriter,
+    *,
+    grace_s: float = HALF_CLOSE_GRACE_S,
 ) -> tuple[int, int]:
-    """Pump both directions until both have ended.
+    """Pump both directions; see "Half-close" in the module doc.
 
-    Returns ``(bytes to device, bytes from device)``. Neither direction is
-    cut short by the other finishing — that is the half-close contract.
+    Returns ``(bytes to device, bytes from device)``. Ends when the device
+    side has ended, or when it has been silent for ``grace_s`` after the
+    client's EOF. The client's EOF is never written to the adb stream.
     """
-    return await asyncio.gather(
-        _one_way(client_reader, device_writer),
-        _one_way(device_reader, client_writer),
-    )
+    up, down = _Flow(), _Flow()
+    from_device = asyncio.create_task(_one_way(device_reader, client_writer, down, pass_eof=True))
+    to_device = asyncio.create_task(_one_way(client_reader, device_writer, up, pass_eof=False))
+    try:
+        await asyncio.wait({to_device, from_device}, return_when=asyncio.FIRST_COMPLETED)
+        if not to_device.done():
+            # The device ended first: nothing can come back any more, and
+            # the client has seen the half-close. Its own EOF ends the rest.
+            await to_device
+        else:
+            # The client ended first. Keep the device direction while it is
+            # still talking; silence is counted from the client's EOF at the
+            # earliest, and not at all while a reply is being written out.
+            eof_at = time.monotonic()
+            while not from_device.done():
+                since = down.waiting_since
+                if since is None:
+                    await asyncio.wait({from_device}, timeout=grace_s)
+                    continue
+                remaining = max(since, eof_at) + grace_s - time.monotonic()
+                if remaining <= 0:
+                    break
+                await asyncio.wait({from_device}, timeout=remaining)
+        # A copy that died of anything but a closed socket is a bug; say so
+        # rather than report a normal close.
+        for task in (to_device, from_device):
+            if task.done() and not task.cancelled():
+                task.result()
+    finally:
+        # Also the way out when the connection itself is being dropped.
+        for task in (from_device, to_device):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+    return up.moved, down.moved
 
 
 def _peer_text(writer: asyncio.StreamWriter) -> str:
@@ -177,6 +251,7 @@ class PortChannel:
         allow_remote: bool = False,
         on_event: EventSink | None = None,
         timeout_s: float = CONNECT_TIMEOUT_S,
+        half_close_grace_s: float | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.device_port = device_port
@@ -186,6 +261,9 @@ class PortChannel:
         self.allow_remote = allow_remote
         self._emit: EventSink = on_event or (lambda _line: None)
         self._timeout = timeout_s
+        # Read at construction, not bound as a default, so the module value
+        # is the one setting for every caller that does not pass its own.
+        self._grace = HALF_CLOSE_GRACE_S if half_close_grace_s is None else half_close_grace_s
 
         self.target: DeviceTarget | None = None
         self._server: asyncio.Server | None = None
@@ -301,7 +379,9 @@ class PortChannel:
                 self.refused += 1
                 self._emit(f"[{conn_id}] adb error: {e}")
                 return
-            to_device, from_device = await pump(reader, writer, device.reader, device.writer)
+            to_device, from_device = await pump(
+                reader, writer, device.reader, device.writer, grace_s=self._grace
+            )
             self.bytes_to_device += to_device
             self.bytes_from_device += from_device
             self._emit(

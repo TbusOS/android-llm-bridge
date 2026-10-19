@@ -40,7 +40,8 @@ from alb.transport.adb_socket import (
 
 # ── the fake ─────────────────────────────────────────────────────────────
 
-PortMode = str | bytes  # "echo" | "echo-after-eof" | bytes to send then close
+PortMode = str | bytes  # "echo" | "echo-late" | "drip" | "flood" | bytes to send then close
+FLOOD_BYTES = 24 * 1024 * 1024
 
 
 def _fail(message: str) -> bytes:
@@ -187,19 +188,51 @@ class FakeAdbServer:
                     return
                 writer.write(data)
                 await writer.drain()
-        if mode == "echo-after-eof":
-            # Says nothing until the client's write side is shut, then returns
-            # everything: a client that could not receive after half-closing
-            # would see nothing at all.
-            got = bytearray()
+        if mode == "echo-late":
+            # The device answers 100 ms after the request. The stream is the
+            # adb server's, so an EOF on it tears the whole stream down at
+            # once, whatever the device still had to say (adb has no
+            # half-close: packages/modules/adb/sockets.cpp closes the socket
+            # on EOF). A client EOF passed on to adb loses the answer, as it
+            # did on the bench.
+            data = await reader.read(65536)
+            if not data:
+                return
+            try:
+                more = await asyncio.wait_for(reader.read(65536), timeout=0.1)
+            except TimeoutError:
+                more = None
+            if more == b"":
+                return
+            writer.write(data + (more or b""))
+            await writer.drain()
             while True:
                 data = await reader.read(65536)
                 if not data:
-                    break
-                got += data
-            await asyncio.sleep(0.05)
-            writer.write(bytes(got))
+                    return
+                writer.write(data)
+                await writer.drain()
+        if mode == "drip":
+            # After the request, five bytes 0.2 s apart — longer in total than
+            # a short grace, never silent for as long as one.
+            if not await reader.read(65536):
+                return
+            for _ in range(5):
+                await asyncio.sleep(0.2)
+                writer.write(b".")
+                await writer.drain()
+            while await reader.read(65536):
+                pass
+            return
+        if mode == "flood":
+            # After the request, FLOOD_BYTES at once — more than loopback
+            # buffers hold, so a client that does not read stalls the writer.
+            if not await reader.read(65536):
+                return
+            writer.write(b"f" * FLOOD_BYTES)
             await writer.drain()
+            while await reader.read(65536):
+                pass
             return
         raise AssertionError(f"unknown port mode {mode!r}")
 

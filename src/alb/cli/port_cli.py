@@ -161,6 +161,12 @@ def cmd_open(
     Each accepted connection gets its own stream through the adb server, so
     gdb, curl and friends see exactly one device-side socket per connection.
     Runs until Ctrl-C; prints one line per connection open / close.
+
+    adb has no half-close: a client that shuts its write side still gets the
+    device's reply, but the device never sees that EOF. After it, the
+    connection ends when the device closes or has been silent for 2 s — so a
+    reply that starts later than that is cut, and a closed client's line
+    appears up to 2 s late.
     """
     _check_port(device_port, "device_port")
     if local is not None:

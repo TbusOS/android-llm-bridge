@@ -6,7 +6,9 @@ tests/transport/test_adb_socket.py; nothing real is contacted.
 What these lock:
 - a full round trip through the listener (client bytes echoed by the "device")
 - a device refusal closes that client and the listener serves the next one
-- half-close: a client that shuts its write side still gets the reply
+- half-close: a client that shuts its write side still gets the reply —
+  its EOF is never passed to adb (adb would tear the stream down), and the
+  device side is closed after a grace of silence instead
 - non-loopback bind refused without the flag, before any adb contact
 - local port choice: the device's port number if free, else ephemeral;
   an explicit busy port is an error, not a silent move
@@ -29,7 +31,7 @@ from alb.remote.port_channel import (
     is_loopback,
 )
 from alb.transport.adb_socket import AdbServerUnreachable, AmbiguousDevice, TcpEndpoint
-from tests.transport.test_adb_socket import FakeAdbServer, free_port
+from tests.transport.test_adb_socket import FLOOD_BYTES, FakeAdbServer, free_port
 
 DEVICE_PORT = 5039
 
@@ -50,6 +52,7 @@ class _Channel:
         self._changed = asyncio.Event()
         kw.setdefault("device_port", DEVICE_PORT)
         kw.setdefault("local_port", 0)  # ephemeral unless a test says otherwise
+        kw.setdefault("half_close_grace_s", 0.3)  # keep the tests quick
         self.channel = PortChannel(
             endpoint=fake.endpoint,
             on_event=self._record,
@@ -132,7 +135,8 @@ async def test_large_transfer_moves_in_both_directions(fake):
             await writer.drain()
             writer.write_eof()
 
-        got, _ = await asyncio.gather(reader.read(-1), send())
+        async with asyncio.timeout(5):  # a device side never closed must fail, not hang
+            got, _ = await asyncio.gather(reader.read(-1), send())
         assert got == blob
         await _close(writer)
         events = await c.wait_events(2)
@@ -184,19 +188,55 @@ async def test_adb_server_gone_mid_run_closes_the_client_and_the_listener_lives_
 
 
 async def test_client_half_close_still_receives_the_reply(fake):
-    """The fake answers only after it sees EOF from the client: the bytes
-    arrive only if (a) the client's shutdown was forwarded to the device
-    side as EOF and (b) the device -> client direction stayed open."""
-    fake.ports[DEVICE_PORT] = "echo-after-eof"
+    """The bench case (2026-10-16, `nc` to an echo server on the board):
+    the device answers a moment after the request, and the client has shut
+    its write side by then. adb has no half-close — an EOF on its stream
+    tears the stream down — so the client's EOF must not be passed on, and
+    the reply must still arrive."""
+    fake.ports[DEVICE_PORT] = "echo-late"
     async with _Channel(fake) as c:
         reader, writer = await c.connect()
         writer.write(b"request body")
         await writer.drain()
         writer.write_eof()
-        assert await reader.read() == b"request body"
+        async with asyncio.timeout(5):
+            assert await reader.read() == b"request body"
         await _close(writer)
         events = await c.wait_events(2)
     assert events[1] == "[1] closed · 12 B to device · 12 B from device"
+
+
+async def test_a_client_that_is_gone_frees_the_device_stream_after_the_grace(fake):
+    """A FIN cannot say "half-closed" from "gone". The device side of a
+    gone client must not stay open until the device happens to close — a
+    one-client server such as gdbserver would stay taken."""
+    async with _Channel(fake, half_close_grace_s=0.3) as c:  # echo: never closes itself
+        reader, writer = await c.connect()
+        writer.write(b"x")
+        await writer.drain()
+        assert await reader.readexactly(1) == b"x"
+        started = asyncio.get_running_loop().time()
+        await _close(writer)
+        events = await c.wait_events(2, timeout_s=2.0)
+        waited = asyncio.get_running_loop().time() - started
+    assert events[1] == "[1] closed · 1 B to device · 1 B from device"
+    assert waited < 1.5, f"closed after {waited:.2f}s, grace is 0.3s"
+
+
+async def test_a_device_still_talking_is_not_cut_at_the_grace(fake):
+    """The grace counts silence, not time since the client's EOF: a reply
+    that keeps flowing gets through even when it outlasts the grace."""
+    fake.ports[DEVICE_PORT] = "drip"  # 5 bytes, 0.2 s apart: 1.0 s in all
+    async with _Channel(fake, half_close_grace_s=0.5) as c:
+        reader, writer = await c.connect()
+        writer.write(b"go")
+        await writer.drain()
+        writer.write_eof()
+        async with asyncio.timeout(5):
+            assert await reader.read() == b"....."
+        await _close(writer)
+        events = await c.wait_events(2)
+    assert events[1] == "[1] closed · 2 B to device · 5 B from device"
 
 
 async def test_device_close_reaches_a_client_that_never_wrote(fake):
@@ -207,6 +247,25 @@ async def test_device_close_reaches_a_client_that_never_wrote(fake):
         await _close(writer)
         events = await c.wait_events(2)
     assert events[1] == "[1] closed · 0 B to device · 19 B from device"
+
+
+async def test_a_client_slow_to_read_after_its_eof_still_gets_the_whole_reply(fake):
+    """After its EOF the client waits longer than the grace before reading.
+    The device's reply is then stuck in a full socket buffer — being
+    written, not silent — and must not be cut at the grace."""
+    fake.ports[DEVICE_PORT] = "flood"
+    async with _Channel(fake, half_close_grace_s=0.3) as c:
+        reader, writer = await c.connect()
+        writer.write(b"go")
+        await writer.drain()
+        writer.write_eof()
+        await asyncio.sleep(1.0)  # well past the grace, buffers full meanwhile
+        async with asyncio.timeout(10):
+            got = await reader.read(-1)
+        await _close(writer)
+        events = await c.wait_events(2)
+    assert len(got) == FLOOD_BYTES
+    assert events[1] == f"[1] closed · 2 B to device · {FLOOD_BYTES} B from device"
 
 
 # ── bind policy ──────────────────────────────────────────────────────────

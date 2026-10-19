@@ -25,6 +25,13 @@ from tests.transport.test_adb_socket import FakeAdbServer, FakeAdbThread, free_p
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _short_half_close_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A closed client keeps its device stream for the grace (port_channel,
+    "Half-close"); these tests are not about that wait."""
+    monkeypatch.setattr("alb.remote.port_channel.HALF_CLOSE_GRACE_S", 0.05)
+
+
 @pytest.fixture
 def fake() -> Iterator[FakeAdbServer]:
     thread = FakeAdbThread(ports={5039: "echo"})
