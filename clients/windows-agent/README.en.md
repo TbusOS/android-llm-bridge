@@ -71,6 +71,21 @@ environment so an exit never waits for a keypress (interactively the script
 pauses on exit to keep the window readable). A background service wrapper
 can come later.
 
+### Starting it from the hub (remote start)
+
+The agent dials out, so when it is not running the hub cannot reach it. A
+one-time setup on the agent host leaves one way in: run
+`setup-remote-start.bat` and paste the hub's public key line when asked. It
+authorizes that key for this account (for Administrators members in
+`C:\ProgramData\ssh\administrators_authorized_keys`, the only file Windows
+OpenSSH reads for them, locked to Administrators + SYSTEM) and registers a
+scheduled task `alb-agent` that runs `run-agent.bat` in the user's desktop
+session (also at logon, no 3-day run limit). From the hub:
+`ssh <user>@<host> schtasks /Run /TN alb-agent`. The task, not ssh, starts
+the agent: a process started by an ssh session has no visible window and
+ends with the session. Needs OpenSSH Server running and the user logged on;
+`setup-remote-start.bat --remove` undoes both changes.
+
 ### Status page
 
 The agent serves a localhost-only status page on `http://127.0.0.1:8731`. It

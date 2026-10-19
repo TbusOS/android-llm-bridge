@@ -116,6 +116,43 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
 环境变量里加 `ALB_AGENT_NO_PAUSE=1`（不加的话出错时脚本会等按键，后台任务会
 卡住）。
 
+**问：能从 Linux 那边远程启动 agent 吗？**
+能，要先在这台 Windows 上配一次。agent 是往外拨的，它没在跑的时候，hub 那边
+没有任何办法叫它起来；下面这一步给 hub 留一条安全的路：
+
+1. 在 hub 上生成一把专用密钥（私钥只留在 hub）：
+   `ssh-keygen -t ed25519 -N "" -C alb-hub-to-bench -f ~/.ssh/id_ed25519_albbench`，
+   把 `~/.ssh/id_ed25519_albbench.pub` 那一行（公钥，不是秘密）拿到 Windows 这边。
+2. 在本文件夹双击 **`setup-remote-start.bat`**，按提示粘贴那一行公钥。它做两件事：
+   - 把公钥加进本账号的 SSH 授权文件。管理员账号用的是
+     `C:\ProgramData\ssh\administrators_authorized_keys`（Windows 的 OpenSSH 只认这个，
+     放在个人目录不起作用），并把它的权限收紧成只有管理员和 SYSTEM 能改；脚本
+     会弹 UAC 要管理员权限。普通账号用 `%USERPROFILE%\.ssh\authorized_keys`。
+   - 建计划任务 `alb-agent`：在你的桌面会话里运行 `run-agent.bat`（窗口照常可见），
+     登录时也自动启动，不受默认的「运行 3 天后停止」限制。
+   最后它打印两行：Windows 用户名和本文件夹路径，交给管 hub 的人。
+3. hub 上加一条 `~/.ssh/config`：
+
+   ```
+   Host alb-bench
+       HostName <这台 Windows 的地址>
+       User <上面打印的用户名>
+       IdentityFile ~/.ssh/id_ed25519_albbench
+       IdentitiesOnly yes
+   ```
+
+   之后在 hub 上执行 `ssh alb-bench schtasks /Run /TN alb-agent`，就能启动 agent。
+   如果它已经在跑，`run-agent.bat` 会先让旧的退出，所以这条也能用来重启。
+
+为什么经过计划任务，而不是用 ssh 直接启动：ssh 会话里启动的进程，桌面上看不到
+窗口，ssh 一断它也跟着退出；计划任务里的进程就像在这台机器上双击启动的一样。
+
+前提和边界：
+- Windows 上要装好并启动 **OpenSSH Server**（`sshd`），脚本会检查并给出装法；
+- 用户没登录时计划任务起不来，因为它要在桌面会话里跑；
+- 没改防火墙，也没改 `sshd_config`；如果 `sshd_config` 指定了别的授权文件，以那里为准；
+- 撤销：`setup-remote-start.bat --remove`，按提示粘贴同一行公钥，删掉公钥和计划任务。
+
 **问：Ctrl+C 退不出去？**
 - 第一次 Ctrl+C = 优雅退出（窗口会打一行 `stopping...`）；
 - 万一进程卡住没反应，**再按一次 Ctrl+C 直接强杀**，窗口一定能退出来；
