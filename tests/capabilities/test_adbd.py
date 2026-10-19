@@ -25,8 +25,9 @@ def _err(stderr: str, code: str = "ADB_COMMAND_FAILED", exit_code: int = 1) -> S
 
 
 class FakeAdb:
-    """`_run(["root"])` answers from `replies`; `id -u` walks `uid_seq`
-    (last entry repeats, so a poll can run past the script's end)."""
+    """`_run(["root"])` answers from `replies`; `id -u` walks `uid_seq` and
+    `pidof adbd` walks `pid_seq` (last entry repeats, so a poll can run past
+    the script's end). No `pid_seq` = `pidof` unavailable."""
 
     name = "adb"
 
@@ -35,10 +36,12 @@ class FakeAdb:
         *,
         replies: dict[str, ShellResult] | None = None,
         uid_seq: list[ShellResult] | None = None,
+        pid_seq: list[ShellResult] | None = None,
         behavior: Behavior = "allow",
     ) -> None:
         self.replies = replies or {}
         self.uid_seq = list(uid_seq or [_ok("0\n")])
+        self.pid_seq = list(pid_seq or [_err("/system/bin/sh: pidof: inaccessible or not found")])
         self.behavior = behavior
         self.calls: list[list[str]] = []
 
@@ -55,12 +58,18 @@ class FakeAdb:
 
     async def shell(self, cmd: str, **kw: Any) -> ShellResult:
         self.calls.append(["shell", cmd])
+        if cmd == "pidof adbd":
+            return self.pid_seq.pop(0) if len(self.pid_seq) > 1 else self.pid_seq[0]
         if cmd != "id -u":
             return _err("unhandled in test")
         return self.uid_seq.pop(0) if len(self.uid_seq) > 1 else self.uid_seq[0]
 
     def uid_polls(self) -> int:
         return sum(1 for c in self.calls if c == ["shell", "id -u"])
+
+    def subcommands(self) -> list[list[str]]:
+        """adb subcommands (root / unroot / remount), shell calls left out."""
+        return [c for c in self.calls if c[0] != "shell"]
 
 
 RESTARTING = _ok("restarting adbd as root\n")
@@ -79,7 +88,7 @@ async def test_root_becomes_root() -> None:
     assert r.data.uid == 0
     assert r.data.polls == 1
     assert r.data.adbd_output == "restarting adbd as root"
-    assert t.calls[0] == ["root"]
+    assert t.subcommands() == [["root"]]
 
 
 @pytest.mark.asyncio
@@ -222,7 +231,7 @@ async def test_root_through_hybrid_uses_the_adb_member() -> None:
 
     r = await root(Hybrid(), poll_sec=0)  # type: ignore[arg-type]
     assert r.ok
-    assert adb.calls[0] == ["root"]
+    assert adb.subcommands() == [["root"]]
 
 
 # ─── unroot ────────────────────────────────────────────────────────
@@ -238,7 +247,7 @@ async def test_unroot_becomes_non_root_after_reconnect() -> None:
     assert r.data.outcome == "became_non_root"
     assert r.data.uid == 2000
     assert r.data.polls == 2
-    assert t.calls[0] == ["unroot"]
+    assert t.subcommands() == [["unroot"]]
 
 
 @pytest.mark.asyncio
@@ -257,6 +266,103 @@ async def test_unroot_still_root_after_budget_fails() -> None:
     assert not r.ok
     assert r.error is not None
     assert r.error.code == "ADBD_RESTART_TIMEOUT"
+
+
+UNROOTING = _ok("restarting adbd as non root\n")
+
+
+@pytest.mark.asyncio
+async def test_unroot_on_a_build_that_keeps_adbd_root_says_so_at_once() -> None:
+    """adbd restarted (new pid) and came back as root: some builds decide
+    adbd's uid themselves. That answer is final — no waiting out the budget,
+    and no "reboot and retry", which changes nothing there."""
+    t = FakeAdb(
+        replies={"unroot": UNROOTING},
+        uid_seq=[_ok("0\n")],
+        pid_seq=[_ok("1200\n"), _ok("1388\n")],
+    )
+    r = await unroot(t, timeout=5, poll_sec=0.2)
+    assert not r.ok and r.error is not None
+    assert r.error.code == "ADB_UNROOT_NO_EFFECT"
+    assert r.error.category == "device"
+    assert "1200 → 1388" in r.error.message
+    assert "Nothing to retry" in r.error.suggestion and "su 2000" in r.error.suggestion
+    assert "Reboot" not in r.error.suggestion
+    assert (r.error.details["adbd_pid_before"], r.error.details["adbd_pid_after"]) == (1200, 1388)
+    # one answer, then the new adbd's own: its uid is final, polling on is wasted time
+    assert t.uid_polls() == 2
+
+
+@pytest.mark.asyncio
+async def test_unroot_with_adbd_never_restarted_is_a_restart_timeout() -> None:
+    t = FakeAdb(replies={"unroot": UNROOTING}, uid_seq=[_ok("0\n")], pid_seq=[_ok("1200\n")])
+    r = await unroot(t, timeout=0, poll_sec=0)
+    assert not r.ok and r.error is not None
+    assert r.error.code == "ADBD_RESTART_TIMEOUT"
+    assert "did not restart (pid 1200 unchanged" in r.error.message
+    assert "Reboot" in r.error.suggestion
+
+
+@pytest.mark.asyncio
+async def test_root_waits_through_the_old_adbd_by_its_pid() -> None:
+    """The old adbd (same pid) still answers 2000 for a moment: not final,
+    the poll goes on until the new one answers 0."""
+    t = FakeAdb(
+        replies={"root": RESTARTING},
+        uid_seq=[_ok("2000\n"), _ok("0\n")],
+        pid_seq=[_ok("1200\n"), _ok("1200\n")],
+    )
+    r = await root(t, poll_sec=0)
+    assert r.ok, r.error
+    assert r.data is not None and r.data.outcome == "became_root" and r.data.polls == 2
+
+
+@pytest.mark.asyncio
+async def test_root_refused_by_a_restarted_adbd_ends_the_poll_at_once() -> None:
+    t = FakeAdb(
+        replies={"root": RESTARTING},
+        uid_seq=[_ok("2000\n")],
+        pid_seq=[_ok("1200\n"), _ok("1388\n")],
+    )
+    r = await root(t, timeout=5, poll_sec=0.2)
+    assert not r.ok and r.error is not None
+    assert r.error.code == "ADB_ROOT_REFUSED"
+    assert "adbd restarted, pid 1200 → 1388" in r.error.message
+    assert t.uid_polls() == 2
+
+
+@pytest.mark.parametrize(
+    "verb, stale, fresh, outcome",
+    [(root, "2000", "0", "became_root"), (unroot, "0", "2000", "became_non_root")],
+)
+@pytest.mark.asyncio
+async def test_a_restart_between_the_uid_and_pid_reads_is_not_misread(
+    verb: Any, stale: str, fresh: str, outcome: str
+) -> None:
+    """The old adbd answers `id -u`, then restarts before `pidof` runs: the
+    pid is new but that uid was the old daemon's. The new daemon is asked
+    again and its answer stands — reporting a refusal here would be false."""
+    reply = RESTARTING if verb is root else UNROOTING
+    t = FakeAdb(
+        replies={verb.__name__: reply},
+        uid_seq=[_ok(stale + "\n"), _ok(fresh + "\n")],
+        pid_seq=[_ok("1200\n"), _ok("1388\n")],
+    )
+    r = await verb(t, timeout=5, poll_sec=0.2)
+    assert r.ok, r.error
+    assert r.data is not None and r.data.outcome == outcome
+
+
+@pytest.mark.parametrize("pidof", [_ok("1200 1201\n"), _ok(""), _err("error: closed")])
+@pytest.mark.asyncio
+async def test_an_unreadable_adbd_pid_falls_back_to_the_plain_report(pidof: ShellResult) -> None:
+    """Two pids, nothing, or an error: whether adbd restarted is unknown, so
+    neither "no effect" nor "never restarted" may be claimed."""
+    t = FakeAdb(replies={"unroot": UNROOTING}, uid_seq=[_ok("0\n")], pid_seq=[pidof])
+    r = await unroot(t, timeout=0, poll_sec=0)
+    assert not r.ok and r.error is not None
+    assert r.error.code == "ADBD_RESTART_TIMEOUT"
+    assert "could not be read" in r.error.message
 
 
 # ─── remount ───────────────────────────────────────────────────────

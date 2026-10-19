@@ -399,6 +399,14 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Run `alb devices`; over a tunnel the reconnect can take longer — retry with a "
         "larger --timeout",
     ),
+    # Told apart from the timeout by adbd's pid: it DID restart (new pid) and
+    # still came back as root. Waiting or rebooting changes nothing.
+    "ADB_UNROOT_NO_EFFECT": ErrorSpec(
+        "ADB_UNROOT_NO_EFFECT",
+        "device",
+        "adb unroot restarted adbd but it came back as root; this build keeps adbd root",
+        "Nothing to retry. To run one command as the shell user, prefix `su 2000 <cmd>`",
+    ),
     "ADB_REMOUNT_FAILED": ErrorSpec(
         "ADB_REMOUNT_FAILED",
         "device",

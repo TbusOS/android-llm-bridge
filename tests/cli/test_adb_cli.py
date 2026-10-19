@@ -26,9 +26,12 @@ def _ok(stdout: str = "", exit_code: int = 0) -> ShellResult:
 class FakeAdb:
     name = "adb"
 
-    def __init__(self, replies: dict[str, ShellResult], uid: str) -> None:
+    def __init__(
+        self, replies: dict[str, ShellResult], uid: str, pids: list[str] | None = None
+    ) -> None:
         self.replies = replies
         self.uid = uid
+        self.pids = list(pids or [])  # `pidof adbd` answers; empty = pidof unavailable
         self.calls: list[list[str]] = []
 
     async def check_permissions(self, action: str, input_data: dict[str, Any]) -> PermissionResult:
@@ -40,7 +43,14 @@ class FakeAdb:
 
     async def shell(self, cmd: str, **kw: Any) -> ShellResult:
         self.calls.append(["shell", cmd])
+        if cmd == "pidof adbd":
+            if not self.pids:
+                return ShellResult(ok=False, exit_code=127, stderr="pidof: not found")
+            return _ok((self.pids.pop(0) if len(self.pids) > 1 else self.pids[0]) + "\n")
         return _ok(self.uid + "\n")
+
+    def subcommands(self) -> list[list[str]]:
+        return [c for c in self.calls if c[0] != "shell"]
 
 
 def _use(monkeypatch: pytest.MonkeyPatch, fake: FakeAdb) -> None:
@@ -54,7 +64,7 @@ def test_root_prints_outcome(monkeypatch) -> None:
     assert r.exit_code == 0, r.output
     assert "became_root" in r.output
     assert "restarting adbd as root" in r.output
-    assert fake.calls[0] == ["root"]
+    assert fake.subcommands() == [["root"]]
 
 
 def test_root_already_root(monkeypatch) -> None:
@@ -92,7 +102,17 @@ def test_unroot_prints_outcome(monkeypatch) -> None:
     r = runner.invoke(adb_cli.app, ["unroot"])
     assert r.exit_code == 0, r.output
     assert "became_non_root" in r.output
-    assert fake.calls[0] == ["unroot"]
+    assert fake.subcommands() == [["unroot"]]
+
+
+def test_unroot_on_a_build_that_keeps_adbd_root(monkeypatch) -> None:
+    fake = FakeAdb({"unroot": _ok("restarting adbd as non root\n")}, uid="0", pids=["1200", "1388"])
+    _use(monkeypatch, fake)
+    r = runner.invoke(adb_cli.app, ["unroot"])
+    assert r.exit_code == 1
+    assert "ADB_UNROOT_NO_EFFECT" in r.output
+    assert "1200 → 1388" in r.output
+    assert "su 2000" in r.output
 
 
 def test_remount_success_verbatim(monkeypatch) -> None:

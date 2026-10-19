@@ -13,6 +13,13 @@ waits for the device inside `adb root`; old builds return at once and the
 next `adb shell` may still hit the dying daemon or get "device offline". A
 fixed sleep is either too short on a slow link or wastes time on a fast one,
 so `id -u` is polled until it reports the wanted uid or the budget runs out.
+
+Why adbd's pid is read too: a wrong uid alone cannot tell "the restart has
+not happened yet / never happened" from "adbd restarted and came back with
+the same uid". Some builds decide adbd's uid themselves and ignore
+`adb unroot`: it restarts the daemon, which comes back as root every time.
+Waiting longer, or rebooting, changes nothing there — so a new pid with the
+wrong uid ends the poll at once and is reported as what it is.
 """
 
 from __future__ import annotations
@@ -53,6 +60,11 @@ RemountOutcome = Literal["remounted", "needs_reboot"]
 SU_HINT = (
     "For single commands prefix `su 0 <cmd>` (toybox su takes the uid first — "
     "`su 0 cat /proc/cmdline`, not `su -c`); for a root adbd flash a userdebug / eng build"
+)
+
+UNROOT_NO_EFFECT_HINT = (
+    "Nothing to retry: rebooting or waiting will not change it, and commands already run "
+    "as root. To run one command as the shell user, prefix `su 2000 <cmd>`"
 )
 
 REMOUNT_HINT = (
@@ -188,6 +200,7 @@ async def _switch_uid(
             category="permission",
         )
 
+    pid_before = await _adbd_pid(adb_t)
     # Modern adb blocks inside `adb root` until the device reconnects, so the
     # subcommand itself needs more than the poll budget.
     r: ShellResult = await run([verb], timeout=int(timeout) + 30)
@@ -229,8 +242,8 @@ async def _switch_uid(
     already_phrases = _ALREADY_ROOT_PHRASES if want_root else _ALREADY_NON_ROOT_PHRASES
     already = any(p in low for p in already_phrases)
 
-    uid, polls, wait_ms = await _poll_uid(
-        adb_t, want_root=want_root, timeout=timeout, poll_sec=poll_sec
+    uid, pid_after, polls, wait_ms = await _poll_uid(
+        adb_t, want_root=want_root, timeout=timeout, poll_sec=poll_sec, pid_before=pid_before
     )
     total_ms = r.duration_ms + wait_ms
 
@@ -251,17 +264,67 @@ async def _switch_uid(
         )
 
     if (uid == 0) != want_root:
-        # Reachable, but adbd kept its old uid: the restart never took effect.
-        code = "ADB_ROOT_REFUSED" if want_root else "ADBD_RESTART_TIMEOUT"
+        # Reachable, but still the old uid. Which of three things happened is
+        # told by adbd's pid, and each needs a different next step.
+        details = {
+            "adbd_output": reply,
+            "uid": uid,
+            "polls": polls,
+            "adbd_pid_before": pid_before,
+            "adbd_pid_after": pid_after,
+        }
+        restarted = pid_before is not None and pid_after is not None and pid_after != pid_before
+        if want_root:
+            how = f" (adbd restarted, pid {pid_before} → {pid_after})" if restarted else ""
+            return fail(
+                code="ADB_ROOT_REFUSED",
+                message=(
+                    f"adb root said {reply!r} but the shell uid is still {uid}{how} "
+                    f"after {polls} attempt(s)"
+                ),
+                suggestion=SU_HINT,
+                category="device",
+                details=details,
+                timing_ms=total_ms,
+            )
+        if restarted:
+            return fail(
+                code="ADB_UNROOT_NO_EFFECT",
+                message=(
+                    f"adb unroot restarted adbd (pid {pid_before} → {pid_after}) but it came "
+                    f"back as uid {uid}: this build keeps adbd root whatever `adb unroot` asks"
+                ),
+                suggestion=UNROOT_NO_EFFECT_HINT,
+                category="device",
+                details=details,
+                timing_ms=total_ms,
+            )
+        if pid_before is not None and pid_after == pid_before:
+            return fail(
+                code="ADBD_RESTART_TIMEOUT",
+                message=(
+                    f"adb unroot said {reply!r} but adbd did not restart (pid {pid_before} "
+                    f"unchanged after {timeout:g}s); the shell uid is still {uid}"
+                ),
+                suggestion="Reboot the device and retry `alb adb unroot`",
+                category="timeout",
+                details=details,
+                timing_ms=total_ms,
+            )
         return fail(
-            code=code,
+            code="ADBD_RESTART_TIMEOUT",
             message=(
-                f"adb {verb} said {reply!r} but the shell uid is still {uid} "
-                f"after {timeout:g}s ({polls} attempts)"
+                f"adb unroot said {reply!r} but the shell uid is still {uid} after "
+                f"{timeout:g}s ({polls} attempts); adbd's pid could not be read, so whether "
+                "it restarted is unknown"
             ),
-            suggestion=SU_HINT if want_root else "Reboot the device and retry `alb adb unroot`",
-            category="device" if want_root else "timeout",
-            details={"adbd_output": reply, "uid": uid, "polls": polls},
+            suggestion=(
+                "Compare `alb shell pidof adbd` before and after `alb adb unroot`: a new pid "
+                "that is still root means this build keeps adbd root (rebooting will not "
+                "change that); the same pid means the restart did not happen — reboot and retry"
+            ),
+            category="timeout",
+            details=details,
             timing_ms=total_ms,
         )
 
@@ -282,15 +345,23 @@ async def _poll_uid(
     want_root: bool,
     timeout: float,  # noqa: ASYNC109
     poll_sec: float,
-) -> tuple[int | None, int, int]:
+    pid_before: int | None = None,
+) -> tuple[int | None, int | None, int, int]:
     """Poll `id -u` until it reports the wanted side of root, or the budget ends.
 
-    Returns (uid, attempts, elapsed_ms). uid is the last value the device
-    reported — None when it never answered — so the caller can tell "never
-    came back" from "came back with the wrong uid".
+    Returns (uid, adbd_pid, attempts, elapsed_ms). uid is the last value the
+    device reported — None when it never answered — so the caller can tell
+    "never came back" from "came back with the wrong uid". adbd_pid is the
+    pid read on the last wrong-uid answer (None if never read).
+
+    Once adbd's pid differs from ``pid_before``, the new daemon's own
+    `id -u` ends the poll at once: adbd settles its uid before it serves
+    anything, so that answer is final. A wrong uid from the old pid is the
+    old daemon still answering, and the poll goes on.
     """
     start = perf_counter()
     last_uid: int | None = None
+    last_pid: int | None = None
     polls = 0
     while True:
         polls += 1
@@ -301,10 +372,38 @@ async def _poll_uid(
                 last_uid = uid
                 if (uid == 0) == want_root:
                     break
+                if pid_before is not None:
+                    pid = await _adbd_pid(adb_t)
+                    if pid is not None:
+                        last_pid = pid
+                        if pid != pid_before:
+                            # The `id -u` above may be the old adbd's last
+                            # answer: the restart can fall between the two
+                            # calls. Only the new adbd is alive now, so its
+                            # own answer decides; none yet → keep polling.
+                            polls += 1
+                            r = await adb_t.shell("id -u", timeout=5)
+                            fresh = _parse_uid(r.stdout) if r.ok else None
+                            if fresh is not None:
+                                last_uid = fresh
+                                break
         if perf_counter() - start >= timeout:
             break
         await asyncio.sleep(poll_sec)
-    return last_uid, polls, int((perf_counter() - start) * 1000)
+    return last_uid, last_pid, polls, int((perf_counter() - start) * 1000)
+
+
+async def _adbd_pid(adb_t: Transport) -> int | None:
+    """adbd's pid, or None when it cannot be told. The shell runs under
+    adbd's own uid, so the pid is visible whether adbd is root or not; a
+    missing `pidof`, an offline device or more than one match is None."""
+    r = await adb_t.shell("pidof adbd", timeout=5)
+    if not r.ok:
+        return None
+    tokens = r.stdout.split()
+    if len(tokens) != 1 or not tokens[0].isdigit():
+        return None
+    return int(tokens[0])
 
 
 def _parse_uid(stdout: str) -> int | None:
