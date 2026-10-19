@@ -41,7 +41,7 @@ dependencies = [
     "pyserial-asyncio>=0.6",        # async 版
 
     # MCP
-    "mcp>=0.9.0",                   # Model Context Protocol server
+    "mcp>=0.9.0,<2",                # Model Context Protocol server(2.x 改了接口,见 mcp/server.py)
 
     # Web API (M2 才真正实现，但骨架一起装)
     "fastapi>=0.110.0",

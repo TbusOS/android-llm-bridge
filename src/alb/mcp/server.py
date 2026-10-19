@@ -8,7 +8,25 @@ if the server never runs.
 
 from __future__ import annotations
 
+import importlib.metadata
 import sys
+
+
+def _import_failure(e: ImportError) -> str:
+    """Why alb-mcp cannot start. "Not installed" and "the wrong major
+    version" need different fixes; mcp 2.x moved FastMCP, so with 2.x
+    installed the import fails exactly as if mcp were missing."""
+    try:
+        have = importlib.metadata.version("mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return (
+            f"[alb-mcp] The `mcp` package is not installed: {e}\n"
+            "Run: uv sync   (or: pip install 'mcp<2')"
+        )
+    return (
+        f"[alb-mcp] mcp {have} is installed, but alb needs mcp 1.x: {e}\n"
+        "Run: uv sync   (an install made with `uv tool install`: run it again with --force)"
+    )
 
 
 def create_server():  # type: ignore[no-untyped-def]
@@ -20,10 +38,7 @@ def create_server():  # type: ignore[no-untyped-def]
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as e:
-        raise SystemExit(
-            f"[alb-mcp] The `mcp` package is not installed: {e}\n"
-            "Run: uv sync   (or: pip install mcp)"
-        ) from None
+        raise SystemExit(_import_failure(e)) from None
 
     mcp = FastMCP(
         "alb",
