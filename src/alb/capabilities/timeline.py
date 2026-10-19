@@ -194,10 +194,11 @@ class _TimelineWriter:
         self._write(rec)
         self.lines[src] += 1
 
-    def note(self, src: str, text: str) -> None:
+    def note(self, src: str, text: str, *, at_ns: int | None = None) -> None:
         """alb's own commentary about `src`, in the same stream so a reader
-        sees WHEN a source went missing relative to the others."""
-        t, wall = self._stamp(self.now_ns())
+        sees WHEN a source went missing relative to the others. ``at_ns``
+        stamps it with a line's arrival, so it sorts before that line."""
+        t, wall = self._stamp(self.now_ns() if at_ns is None else at_ns)
         self._write({"t": t, "wall": wall, "src": src, "line": text, "note": True})
         self.notes.append(text)
         self.flush()
@@ -318,8 +319,9 @@ class _LineAssembler:
             if backlog is not None and not backlog.done:
                 old = backlog.take(line, at_ns)
                 if backlog.done and backlog.skipped:
-                    # Stamped here, so the timeline shows where live lines begin.
-                    self._note_skipped(backlog.skipped, "")
+                    # Stamped with this chunk, so it sorts just before the
+                    # live lines it introduces.
+                    self._note_skipped(backlog.skipped, "", at_ns=at_ns)
                 if old:
                     continue
             self._emit(line, at_ns)
@@ -359,11 +361,12 @@ class _LineAssembler:
         self._writer.line(self.src, text, at_ns=at_ns, partial=partial, truncated=truncated)
         self.lines += 1
 
-    def _note_skipped(self, n: int, tail: str) -> None:
+    def _note_skipped(self, n: int, tail: str, *, at_ns: int | None = None) -> None:
         self._writer.note(
             self.src,
             f"[alb] {self.src}: {n} line(s) from before the capture started are left out "
             f"of the timeline (still in {_RAW_FILE[self.src]}){tail}",
+            at_ns=at_ns,
         )
 
     def close(self) -> None:

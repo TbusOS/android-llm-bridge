@@ -391,6 +391,27 @@ async def test_logcat_starts_from_its_last_line_and_leaves_it_off_the_timeline(
     assert (tmp_path / "logcat.txt").read_bytes() == _DIVIDER + _OLD + _LIVE
 
 
+@pytest.mark.parametrize(
+    "src, lines, count",
+    [
+        ("logcat", [_OLD, _LIVE], None),
+        ("dmesg", [b"[ 1.0] old\n" + b"[ 900.0] live\n"], "1\n"),  # one chunk
+    ],
+)
+async def test_the_left_out_note_reads_before_the_first_live_line(
+    tmp_path: Path, src: str, lines: list[bytes | float], count: str | None
+) -> None:
+    """The note marks where live lines begin. Stamped when it is written, it
+    is a few microseconds later than the line that arrived in the same
+    chunk, and `alb timeline show` (which sorts by time) put it after that
+    line — seen on the 10-19 bench."""
+    t = _adb_mock({src: lines}, dmesg_count=count or "0\n")
+    await capture_timeline(0.3, sources={src}, transport=t, output=tmp_path)
+    shown = [r for r in iter_timeline(tmp_path / "timeline.jsonl") if r["src"] == src]
+    assert shown[0].get("note") and "1 line(s) from before" in shown[0]["line"]
+    assert shown[0]["t"] == shown[1]["t"], "stamped with the chunk it came in"
+
+
 async def test_a_logcat_line_from_the_start_moment_on_is_live(tmp_path: Path) -> None:
     """Equal to the clock is not older: the backlog ends there, and a later
     line that looks old again is not held back any more."""
