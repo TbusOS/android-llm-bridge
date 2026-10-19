@@ -14,8 +14,10 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from alb.infra.errors import lookup
 from alb.infra.events import bus
-from alb.infra.result import Result, fail, ok
+from alb.infra.hub_serial import hub_serial_open_failure
+from alb.infra.result import ErrorInfo, Result, fail, ok
 from alb.infra.workspace import (
     InvalidDeviceSerial,
     is_safe_device,
@@ -24,6 +26,7 @@ from alb.infra.workspace import (
     workspace_root,
 )
 from alb.transport.base import Transport
+from alb.transport.serial import classify_open_failure
 from alb.transport.serial_state import DEFAULT_PATTERNS
 
 
@@ -253,6 +256,16 @@ async def capture_uart(
         pass
 
     duration_ms = int((perf_counter() - start) * 1000)
+    if stats.lines == 0:
+        # Nothing at all arrived: every byte counts toward a line, a trailing
+        # fragment included (see _drain_stream). On the hub path that can be a
+        # port the bench agent never opened — the forwarder hangs up and the
+        # reconnect loop quietly tries again until the clock runs out — and a
+        # capture that ends "ok, 0 lines" then reads as a silent board
+        # (bench, 2026-10-19).
+        refused = await _hub_refusal(transport, artifact, within_s=duration + 10)
+        if refused is not None:
+            return refused.with_timing(duration_ms)
     return ok(
         data=DmesgSummary(
             lines=stats.lines,
@@ -262,6 +275,45 @@ async def capture_uart(
         artifacts=[artifact],
         timing_ms=duration_ms,
     )
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    code: str
+    reason: str
+    artifact: Path
+
+    def with_timing(self, duration_ms: int) -> Result[Any]:
+        spec = lookup(self.code)
+        return Result(
+            ok=False,
+            error=ErrorInfo(
+                code=self.code,
+                message=(
+                    "nothing was captured: the bench agent could not open the serial port "
+                    f"({self.reason})"
+                ),
+                suggestion=spec.default_suggestion if spec else "",
+                category="transport",
+                details={"agent_reason": self.reason},
+            ),
+            artifacts=[self.artifact],
+            timing_ms=duration_ms,
+        )
+
+
+async def _hub_refusal(transport: Transport, artifact: Path, *, within_s: float) -> _Refusal | None:
+    """The bench agent's reason for not opening the port during this capture,
+    if the endpoint is the local hub's forwarder."""
+    reason = await asyncio.to_thread(
+        hub_serial_open_failure,
+        getattr(transport, "tcp_host", None),
+        getattr(transport, "tcp_port", None),
+        within_s=within_s,
+    )
+    if reason is None:
+        return None
+    return _Refusal(classify_open_failure(reason), reason, artifact)
 
 
 async def send_uart(

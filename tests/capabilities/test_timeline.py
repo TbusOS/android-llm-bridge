@@ -573,3 +573,38 @@ def test_format_line_is_plain_and_aligned() -> None:
     assert format_line({"t": 1, "src": "uart", "line": "=> ", "partial": True}).endswith(
         "| =>  [partial]"
     )
+
+
+async def test_an_empty_uart_from_a_port_never_opened_is_noted(monkeypatch, tmp_path: Path) -> None:
+    """Same gap as capture: the hub hangs up on a COM the agent could not
+    open, and an empty uart source would read as a silent board."""
+    reason = "could not open port 'COM27': PermissionError(13, '拒绝访问。', None, 5)"
+    monkeypatch.setattr("alb.capabilities.timeline.hub_serial_open_failure", lambda *a, **k: reason)
+    serial = AsyncMock()
+    serial.name = "serial"
+    serial.tcp_host, serial.tcp_port = "127.0.0.1", 9001
+    r = await capture_timeline(
+        0.2, sources={"uart"}, serial=serial, streams={"uart": _ending()}, output=tmp_path
+    )
+    assert not r.ok and r.error is not None, "the only source could not be read"
+    assert r.error.code == "TIMELINE_NO_SOURCE"
+    notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
+    assert any("could not open the serial port" in n and "拒绝访问" in n for n in notes)
+
+
+async def test_a_uart_that_spoke_is_not_second_guessed(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "alb.capabilities.timeline.hub_serial_open_failure", lambda *a, **k: "anything"
+    )
+    serial = AsyncMock()
+    serial.name = "serial"
+    r = await capture_timeline(
+        0.2,
+        sources={"uart"},
+        serial=serial,
+        streams={"uart": _ending(b"U-Boot\n")},
+        output=tmp_path,
+    )
+    assert r.ok
+    notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
+    assert not any("could not open the serial port" in n for n in notes), notes

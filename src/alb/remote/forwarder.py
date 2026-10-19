@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -423,6 +424,24 @@ class SerialForwarder(ChannelForwarder):
         )
         self._session: _SerialSession | None = None
         self._session_lock = asyncio.Lock()
+        # (monotonic time, reason) of the last failed open; None once an open
+        # has succeeded since. See last_open_error.
+        self._open_error: tuple[float, str] | None = None
+
+    @property
+    def last_open_error(self) -> dict[str, Any] | None:
+        """Why the last attempt to open the agent's COM port failed — while no
+        open has succeeded since — and how long ago, for /agent/status.
+
+        A local client on this path gets only a hang-up: the forwarder has
+        nothing else to put on a raw byte stream. The agent's own reason (its
+        channel_error text, e.g. Windows' access-denied for a port another
+        program holds) is the evidence that says which half of the chain to
+        look at, and without this it lived in the hub's log alone."""
+        if self._open_error is None:
+            return None
+        at, reason = self._open_error
+        return {"reason": reason, "age_s": round(time.monotonic() - at, 1)}
 
     @property
     def session_refs(self) -> int:
@@ -434,7 +453,11 @@ class SerialForwarder(ChannelForwarder):
         try:
             session = await self._acquire()
         except Exception as e:
-            _log.warning("serial channel open failed (no retry): %s", _err_text(e))
+            reason = _err_text(e)
+            _log.warning("serial channel open failed (no retry): %s", reason)
+            # Agent text: bounded and printable before it is served onward.
+            reason = "".join(c for c in reason if c.isprintable())[:300]
+            self._open_error = (time.monotonic(), reason)
             return
         try:
             await session.serve(reader, writer)
@@ -457,6 +480,7 @@ class SerialForwarder(ChannelForwarder):
             if agent is None:
                 raise ConnectionError("no agent connected")
             channel = await self._open_channel_with_retry(agent)
+            self._open_error = None
             session = _SerialSession(channel)
             session.refs = 1
             self._session = session
@@ -589,6 +613,9 @@ def forwarder_status() -> dict[str, Any]:
             # how many alb readers/writers currently share the one COM channel
             # (capture + shell + web console can now coexist — issue #4)
             "readers": getattr(_SERIAL_FORWARDER, "session_refs", 0),
+            # why the agent could not open the COM port last time, if it
+            # could not and has not since (SerialForwarder.last_open_error)
+            "last_open_error": getattr(_SERIAL_FORWARDER, "last_open_error", None),
         },
         # Not a forwarder (ADR-056 — there is no port to bind), but it belongs
         # in the same snapshot: an operator asking "why won't my flash start"

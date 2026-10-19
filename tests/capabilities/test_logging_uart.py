@@ -391,3 +391,72 @@ async def test_watch_uart_panic_refuses_non_serial() -> None:
     assert not r.ok
     assert r.error is not None
     assert r.error.code == "TRANSPORT_NOT_SUPPORTED"
+
+
+# ─── a port the bench agent never opened (2026-10-19) ──────────────
+REFUSED = (
+    "cannot open COM27 @ 1500000: could not open port 'COM27': "
+    "PermissionError(13, '拒绝访问。', None, 5)"
+)
+
+
+def _refusing_serial() -> AsyncMock:
+    """The hub path when the agent cannot open the COM port: every connect
+    is hung up at once, and the reconnect loop just tries again."""
+
+    def _empty(*_a, **_kw):
+        async def _gen():
+            if False:
+                yield b""
+
+        return _gen()
+
+    t = AsyncMock()
+    t.name = "serial"
+    t.tcp_host, t.tcp_port = "127.0.0.1", 9001
+    t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
+    t.stream_read = _empty
+    return t
+
+
+@pytest.mark.asyncio
+async def test_a_capture_of_a_port_never_opened_fails_with_the_agents_reason(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """It used to end "ok, 0 lines" — read as a board with nothing to say."""
+    asked: list[tuple[object, object, float]] = []
+
+    def hub(host, port, *, within_s):  # type: ignore[no-untyped-def]
+        asked.append((host, port, within_s))
+        return REFUSED
+
+    monkeypatch.setattr("alb.capabilities.logging.hub_serial_open_failure", hub)
+    r = await capture_uart(_refusing_serial(), duration=1, output=tmp_path / "u.log")
+    assert not r.ok and r.error is not None
+    assert r.error.code == "SERIAL_PORT_BUSY"
+    assert "nothing was captured" in r.error.message and "拒绝访问" in r.error.message
+    assert r.error.details["agent_reason"] == REFUSED
+    assert r.error.suggestion, "the catalog's advice for the code"
+    assert r.artifacts == [tmp_path / "u.log"], "the (empty) log is still reported"
+    assert asked and asked[0][:2] == ("127.0.0.1", 9001) and asked[0][2] >= 1
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_capture_without_a_hub_reason_stays_ok(monkeypatch, tmp_path: Path) -> None:
+    """A direct bridge, or a hub whose port opened fine: 0 lines is a quiet
+    board, as before."""
+    monkeypatch.setattr("alb.capabilities.logging.hub_serial_open_failure", lambda *a, **k: None)
+    r = await capture_uart(_refusing_serial(), duration=1, output=tmp_path / "u.log")
+    assert r.ok and r.data is not None and r.data.lines == 0
+
+
+@pytest.mark.asyncio
+async def test_bytes_that_arrived_win_over_any_hub_reason(monkeypatch, tmp_path: Path) -> None:
+    """A prompt without a newline is 0 lines but real output: the board spoke."""
+    monkeypatch.setattr(
+        "alb.capabilities.logging.hub_serial_open_failure", lambda *a, **k: REFUSED
+    )
+    t = _mk_serial_mock([b"=> "])
+    t.tcp_host, t.tcp_port = "127.0.0.1", 9001
+    r = await capture_uart(t, duration=1, output=tmp_path / "u.log")
+    assert r.ok, r.error

@@ -57,6 +57,7 @@ from typing import Any, BinaryIO, Final, TextIO
 
 from alb.capabilities.logging import _reconnecting_serial_stream
 from alb.infra.events import bus
+from alb.infra.hub_serial import hub_serial_open_failure
 from alb.infra.result import ErrorInfo, Result, fail, ok
 from alb.infra.workspace import InvalidDeviceSerial, iso_timestamp, workspace_path
 from alb.transport.base import Transport
@@ -486,6 +487,18 @@ async def capture_timeline(
             for t in pending:
                 t.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+        if "uart" in factories and serial is not None:
+            # An empty uart.log on the hub path can be a COM port the bench
+            # agent never opened: the forwarder hangs up, the reconnecting
+            # reader tries again, and without this the timeline would read as
+            # a silent board (infra/hub_serial.py).
+            reason = await asyncio.to_thread(
+                _uart_refusal, serial, directory / _RAW_FILE["uart"], duration_s + 10
+            )
+            if reason is not None:
+                writer.unavailable(
+                    "uart", f"the bench agent could not open the serial port: {reason}"
+                )
     finally:
         for assembler in assemblers.values():
             assembler.close()
@@ -623,6 +636,14 @@ async def _dmesg_backlog(transport: Transport) -> int | None:
         return None
     out = r.stdout.strip() if r.ok and isinstance(r.stdout, str) else ""
     return int(out) if out.isdigit() else None
+
+
+def _uart_refusal(serial: Transport, raw: Path, within_s: float) -> str | None:
+    if raw.exists() and raw.stat().st_size:
+        return None
+    return hub_serial_open_failure(
+        getattr(serial, "tcp_host", None), getattr(serial, "tcp_port", None), within_s=within_s
+    )
 
 
 def _capture_dir(output: Path | str | None, device: str | None) -> Path:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any
+from typing import Any, ClassVar
 
 from alb.remote.forwarder import AdbForwarder, SerialForwarder
 from alb.remote.protocol import ChannelRole, ChannelType
@@ -490,3 +490,71 @@ async def test_serial_open_gives_up_when_another_program_owns_the_port():
             await writer.wait_closed()
     finally:
         await fwd.detach()
+
+
+async def test_the_agents_reason_for_a_failed_open_is_kept_until_an_open_works():
+    """A local client gets only a hang-up; the agent's reason is what says
+    why. It is served in /agent/status until an open succeeds again — a
+    stale reason must not be blamed for a later, different hang-up."""
+    server, dev_port = await _start_echo_server()
+    agent = _ExclusiveSerialAgent("127.0.0.1", dev_port)
+    real_open = agent.open_data_channel
+    refusing = {"on": True}
+    reason = (
+        "cannot open COM_X: could not open port 'COM_X': "
+        "PermissionError(13, '拒绝访问。', None, 5)\x1b[2J"
+    )
+
+    async def maybe_refuse(**kw):
+        if refusing["on"]:
+            raise ChannelOpenError(reason + "x" * 500)
+        return await real_open(**kw)
+
+    agent.open_data_channel = maybe_refuse  # type: ignore[method-assign]
+    fwd = SerialForwarder(lambda: agent, com="COM_X", baud=115200, port=0)
+    await fwd.attach()
+    try:
+        assert fwd.last_open_error is None
+        reader, writer = await asyncio.open_connection("127.0.0.1", fwd.port)
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b""
+        writer.close()
+        err = fwd.last_open_error
+        assert err is not None
+        assert "拒绝访问" in err["reason"]
+        assert "\x1b" not in err["reason"], "agent text is served printable only"
+        assert len(err["reason"]) <= 300
+        assert 0 <= err["age_s"] < 5
+
+        refusing["on"] = False
+        reader, writer = await asyncio.open_connection("127.0.0.1", fwd.port)
+        writer.write(b"ok")
+        await writer.drain()
+        assert await asyncio.wait_for(reader.readexactly(2), timeout=5) == b"ok"
+        assert fwd.last_open_error is None, "a working open clears it"
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+    finally:
+        await fwd.detach()
+        server.close()
+        with contextlib.suppress(Exception):
+            await server.wait_closed()
+
+
+def test_agent_status_serves_the_serial_open_error(monkeypatch):
+    from alb.remote import forwarder
+
+    class _Fwd:
+        _server = None  # read by reset_forwarders() on teardown
+        is_bound = True
+        port = 9001
+        session_refs = 0
+        last_open_error: ClassVar[dict[str, Any]] = {"reason": "no agent connected", "age_s": 0.3}
+
+    monkeypatch.setattr(forwarder, "_SERIAL_FORWARDER", _Fwd())
+    assert forwarder.forwarder_status()["serial"]["last_open_error"] == {
+        "reason": "no agent connected",
+        "age_s": 0.3,
+    }
+    monkeypatch.setattr(forwarder, "_SERIAL_FORWARDER", None)
+    assert forwarder.forwarder_status()["serial"]["last_open_error"] is None

@@ -22,6 +22,7 @@ convenience but for heavy work you should use stream_read + alb_log_*.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import re
 import uuid
@@ -31,6 +32,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from alb.infra.hub_serial import hub_serial_open_failure
 from alb.transport.base import ShellResult, Transport
 from alb.transport.serial_state import (
     PatternSet,
@@ -303,7 +305,10 @@ class SerialTransport(Transport):
 
             # ── Step 2: reject early if state can't run a command ─
             if initial_state not in _SHELL_CAPABLE:
-                return self._reject_for_state(initial_state, sm, start)
+                rejected = self._reject_for_state(initial_state, sm, start)
+                if initial_state is SerialState.LINK_REFUSED:
+                    rejected = await self._with_hub_reason(rejected)
+                return rejected
 
             # ── Step 3: dispatch on state ──────────────────────────
             # POSIX shells → marker-based wrapper, real exit codes,
@@ -576,6 +581,25 @@ class SerialTransport(Transport):
 
         return self._empty_buffer_state(sm, hung_up=hung_up)
 
+    async def _with_hub_reason(self, result: ShellResult) -> ShellResult:
+        """A hang-up without a byte, told apart by the bench agent's own reason
+        when the local hub has one (infra/hub_serial.py): another program
+        holding the port and a COM that does not exist need different fixes,
+        and the hang-up alone looks the same for both."""
+        reason = await asyncio.to_thread(
+            hub_serial_open_failure,
+            self.tcp_host,
+            self.tcp_port,
+            within_s=self.handshake_timeout + _HUB_REASON_SLACK_S,
+        )
+        if reason is None:
+            return result
+        return dataclasses.replace(
+            result,
+            error_code=classify_open_failure(reason),
+            stderr=f"the bench agent could not open the serial port: {reason}",
+        )
+
     @staticmethod
     def _empty_buffer_state(sm: SerialStateMachine, *, hung_up: bool) -> SerialState:
         """Classify a handshake that produced no classifiable bytes.
@@ -842,15 +866,17 @@ class SerialTransport(Transport):
             link.writer.write(data)
             await link.writer.drain()
             if await self._link_died_after_write(link):
-                return ShellResult(
-                    ok=False,
-                    exit_code=-1,
-                    stderr=(
-                        "the serial endpoint closed the connection right after the "
-                        "write — the bytes never reached the UART"
-                    ),
-                    error_code="SERIAL_SEND_UNCONFIRMED",
-                    duration_ms=int((perf_counter() - start) * 1000),
+                return await self._with_hub_reason(
+                    ShellResult(
+                        ok=False,
+                        exit_code=-1,
+                        stderr=(
+                            "the serial endpoint closed the connection right after the "
+                            "write — the bytes never reached the UART"
+                        ),
+                        error_code="SERIAL_SEND_UNCONFIRMED",
+                        duration_ms=int((perf_counter() - start) * 1000),
+                    )
                 )
             return ShellResult(
                 ok=True, exit_code=0, stdout="",
@@ -1098,13 +1124,44 @@ _BUSY_HINTS = (
     "device or resource busy",
     "resource temporarily unavailable",
 )
+# pyserial on Windows words an open failure as
+#   could not open port 'COM27': PermissionError(13, '<text>', None, 5)
+# with <text> in the system language ('拒绝访问。' on a Chinese system), so the
+# English hint above misses it. The Win32 error number in the last slot does
+# not change with the language: 5 is ERROR_ACCESS_DENIED — for a COM port,
+# another program holds it — and 2 is ERROR_FILE_NOT_FOUND, no such port.
+# Linux's "[Errno 13] Permission denied" (no dialout group) has neither shape.
+# How much older than the handshake the hub's recorded failure may be and
+# still be this one: the hub records it just before it hangs up on us.
+_HUB_REASON_SLACK_S = 10.0
+_WIN_ACCESS_DENIED_RE = re.compile(r"PermissionError\(13, .*, None, 5\)")
+_WIN_NOT_FOUND_RE = re.compile(r"FileNotFoundError\(2, .*, None, 2\)")
+
+
+def _busy_text(text: str) -> bool:
+    return any(h in text.lower() for h in _BUSY_HINTS) or bool(_WIN_ACCESS_DENIED_RE.search(text))
+
+
+def classify_open_failure(reason: str) -> str:
+    """Error code for the text an agent / bridge gave for not opening a port.
+
+    The agent's text is all the hub path has (see infra/hub_serial.py); the
+    code says which fix applies. Anything unrecognised stays a link refusal —
+    "the bridge never reached the UART" is still true."""
+    if _busy_text(reason):
+        return "SERIAL_PORT_BUSY"
+    if _WIN_NOT_FOUND_RE.search(reason) or "no such file or directory" in reason.lower():
+        return "SERIAL_PORT_NOT_FOUND"
+    if "permission denied" in reason.lower():
+        return "SERIAL_PERMISSION_DENIED"
+    return "SERIAL_LINK_REFUSED"
 
 
 def _classify_connect_error(exc: Exception) -> str:
     # Busy beats every type-based rule below: the exception class is generic,
     # the message is the only discriminator, and "someone else has the port"
     # needs a different fix from "no such port" / "you lack permission".
-    if any(h in str(exc).lower() for h in _BUSY_HINTS):
+    if _busy_text(str(exc)):
         return "SERIAL_PORT_BUSY"
     if isinstance(exc, FileNotFoundError):
         return "SERIAL_PORT_NOT_FOUND"

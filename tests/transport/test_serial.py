@@ -1045,3 +1045,110 @@ def test_classified_bytes_beat_a_hang_up() -> None:
     empty = SerialStateMachine()
     assert SerialTransport._empty_buffer_state(empty, hung_up=True) is SerialState.LINK_REFUSED
     assert SerialTransport._empty_buffer_state(empty, hung_up=False) is SerialState.IDLE
+
+
+# ─── the bench agent's reason for a hang-up (2026-10-19) ───────────
+# On the hub path a port the agent cannot open reaches us only as a hang-up;
+# the agent's own text, kept by the hub, is what tells the causes apart.
+WIN_ZH_BUSY = (
+    "cannot open COM27 @ 1500000: could not open port 'COM27': "
+    "PermissionError(13, '拒绝访问。', None, 5)"
+)
+
+
+@pytest.mark.parametrize(
+    "reason, code",
+    [
+        (WIN_ZH_BUSY, "SERIAL_PORT_BUSY"),  # a Chinese Windows, the bench case
+        (
+            "could not open port 'COM4': PermissionError(13, 'Access is denied.', None, 5)",
+            "SERIAL_PORT_BUSY",
+        ),
+        ("Could not exclusively lock port /dev/ttyUSB0: [Errno 11]", "SERIAL_PORT_BUSY"),
+        (
+            "could not open port 'COM99': FileNotFoundError(2, '系统找不到指定的文件。', None, 2)",
+            "SERIAL_PORT_NOT_FOUND",
+        ),
+        (
+            "[Errno 2] could not open port /dev/ttyUSB9: [Errno 2] No such file or directory",
+            "SERIAL_PORT_NOT_FOUND",
+        ),
+        (
+            "[Errno 13] could not open port /dev/ttyUSB0: [Errno 13] Permission denied",
+            "SERIAL_PERMISSION_DENIED",
+        ),
+        ("no agent connected", "SERIAL_LINK_REFUSED"),
+        ("agent reported channel open failure", "SERIAL_LINK_REFUSED"),
+    ],
+)
+def test_the_agents_reason_is_sorted_by_what_fixes_it(reason: str, code: str) -> None:
+    """Windows words it in the system language; the Win32 error number in the
+    last slot (5 access denied, 2 not found) is what does not change. Linux's
+    "[Errno 13] Permission denied" is a missing group, not a busy port."""
+    from alb.transport.serial import classify_open_failure
+
+    assert classify_open_failure(reason) == code
+
+
+def test_a_local_open_on_a_chinese_windows_is_busy_too() -> None:
+    from serial import SerialException  # type: ignore[import-not-found]
+
+    from alb.transport.serial import _classify_connect_error
+
+    exc = SerialException("could not open port 'COM27': PermissionError(13, '拒绝访问。', None, 5)")
+    assert _classify_connect_error(exc) == "SERIAL_PORT_BUSY"
+
+
+@pytest.mark.asyncio
+async def test_a_hang_up_carries_the_bench_agents_reason(monkeypatch) -> None:
+    """The bench, 2026-10-19: COM27 held by another program. Before, every
+    command said only SERIAL_LINK_REFUSED."""
+    asked: list[tuple[object, object]] = []
+
+    def hub(host, port, *, within_s):  # type: ignore[no-untyped-def]
+        asked.append((host, port))
+        return WIN_ZH_BUSY
+
+    monkeypatch.setattr("alb.transport.serial.hub_serial_open_failure", hub)
+
+    async def handler(reader, writer) -> None:
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=0.5)
+        r = await t.shell("echo ping", timeout=2)
+
+    assert asked == [(host, port)], "the endpoint actually used is the one asked about"
+    assert (r.ok, r.error_code) == (False, "SERIAL_PORT_BUSY")
+    assert "could not open the serial port" in r.stderr and "拒绝访问" in r.stderr
+
+
+@pytest.mark.asyncio
+async def test_a_hang_up_without_a_hub_reason_stays_a_link_refusal(monkeypatch) -> None:
+    monkeypatch.setattr("alb.transport.serial.hub_serial_open_failure", lambda *a, **k: None)
+
+    async def handler(reader, writer) -> None:
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=0.5)
+        r = await t.shell("echo ping", timeout=2)
+    assert r.error_code == "SERIAL_LINK_REFUSED"
+    assert "says nothing about the board" in r.stderr
+
+
+@pytest.mark.asyncio
+async def test_a_send_that_was_dropped_carries_the_bench_agents_reason(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "alb.transport.serial.hub_serial_open_failure", lambda *a, **k: WIN_ZH_BUSY
+    )
+
+    async def handler(reader, writer) -> None:
+        await reader.read(4096)
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port)
+        r = await t.send_raw(b"reboot\n")
+    assert (r.ok, r.error_code) == (False, "SERIAL_PORT_BUSY")
+    assert "拒绝访问" in r.stderr
