@@ -315,15 +315,17 @@ def _adb_mock(
     lines_by_source: dict[str, list[bytes | float]],
     *,
     clock: str | None = CLOCK,
+    dmesg_last: str | None = None,
     dmesg_count: str | None = "0\n",
 ) -> AsyncMock:
-    """`clock` / `dmesg_count`: stdout for the date probe / `dmesg | wc -l`;
-    None = the command fails. A float among the lines is a pause, in seconds."""
+    """`clock` / `dmesg_last` / `dmesg_count`: stdout for the date probe /
+    `dmesg | tail -n 8` / `dmesg | wc -l`; None = the command fails. A float
+    among the lines is a pause, in seconds."""
     t = AsyncMock()
     t.name = "adb"
     t.check_permissions = AsyncMock(return_value=PermissionResult(behavior="allow"))
     calls: list[tuple[str, dict]] = []
-    answers = {STAMP_CMD: clock, "dmesg | wc -l": dmesg_count}
+    answers = {STAMP_CMD: clock, "dmesg | tail -n 8": dmesg_last, "dmesg | wc -l": dmesg_count}
 
     async def shell(cmd: str, **kw) -> ShellResult:
         out = answers.get(cmd)
@@ -484,13 +486,48 @@ async def test_a_capture_that_ends_with_only_old_logcat_lines_still_notes_them(
     assert r.data.lines == {"logcat": 0}
 
 
-async def test_dmesg_lines_already_in_the_buffer_stay_out_of_the_timeline(tmp_path: Path) -> None:
+async def test_dmesg_old_lines_are_told_by_their_printk_time(tmp_path: Path) -> None:
+    """The 10-19 bench: a full ring buffer drops its oldest line for each new
+    one. The probe counted 3 lines (old one, old two, its continuation);
+    "new one" came in before the stream started and pushed "old one" out,
+    so the stream opens with 2 old lines and "new one" — a count of 3 took
+    "new one" as old. The printk time on the last line does not move."""
+    dump = [b"[    2.000000] old two\n", b"  continued\n"]
+    new = [b"[  900.000000] new one\n", b"[  901.000000] new two\n"]
+    t = _adb_mock(
+        {"dmesg": dump + new}, dmesg_last="[    2.000000] old two\n  continued\n", dmesg_count="3\n"
+    )
+    r = await capture_timeline(0.4, sources={"dmesg"}, transport=t, output=tmp_path)
+    assert r.ok
+    lines = [x["line"] for x in _records(tmp_path)]
+    assert lines[0].startswith("[alb] dmesg: 2 line(s) from before the capture started")
+    assert lines[1:] == ["[  900.000000] new one", "[  901.000000] new two"]
+    assert (tmp_path / "dmesg.txt").read_bytes() == b"".join(dump + new)
+
+
+async def test_a_capture_that_ends_inside_a_stamped_dmesg_backlog_says_only_how_many(
+    tmp_path: Path,
+) -> None:
+    """Unlike a count, a printk time never said how many old lines there are:
+    nothing is known to be missing."""
+    t = _adb_mock({"dmesg": [b"[ 1.0] a\n", b"[ 2.0] b\n"]}, dmesg_last="[ 5.0] e\n")
+    r = await capture_timeline(0.3, sources={"dmesg"}, transport=t, output=tmp_path)
+    notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
+    assert len(notes) == 1 and "2 line(s) from before the capture" in notes[0]
+    assert "ended before the rest" not in notes[0]
+    assert r.data.lines == {"dmesg": 0}
+
+
+@pytest.mark.parametrize("last", [None, "no printk time here\n", ""])
+async def test_dmesg_lines_already_in_the_buffer_stay_out_of_the_timeline(
+    tmp_path: Path, last: str | None
+) -> None:
     """The 10-16 capture: 24345 old lines all at +0.1 s, ahead of the UART.
-    The lines counted before the stream started go to dmesg.txt only; a note
-    marks where the live ones begin."""
+    A kernel without printk times falls back to the count taken before the
+    stream started: that many lines go to dmesg.txt only."""
     old = [b"[    1.000000] old one\n", b"[    2.000000] old two\n", b"\n"]
     new = [b"[  900.000000] new one\n", b"[  901.000000] new two\n"]
-    t = _adb_mock({"dmesg": old + new}, dmesg_count="3\n")
+    t = _adb_mock({"dmesg": old + new}, dmesg_last=last, dmesg_count="3\n")
     r = await capture_timeline(0.4, sources={"dmesg"}, transport=t, output=tmp_path)
     assert r.ok
     lines = [x["line"] for x in _records(tmp_path)]

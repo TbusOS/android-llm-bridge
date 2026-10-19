@@ -34,8 +34,13 @@ at +0.1 s, ahead of everything the UART says. They happened before the
 capture, at times the arrival stamp cannot know. Whatever of them arrives
 goes to the raw file; only the timeline leaves it out:
 
-* dmesg: the lines already in the buffer are counted first (`dmesg | wc
-  -l`) and that many leading lines are left out.
+* dmesg: the timestamp on the last line already in the buffer is read
+  first (`dmesg | tail -n 8`), and leading lines stamped no later than it
+  are left out. Not a line count: a full ring buffer — the normal state of
+  a board that has been up for days — drops its oldest line for each new
+  one, so the first N lines of the stream are not the N that were counted,
+  and the newest would be taken as old (seen 2026-10-19). The count is the
+  fallback for a kernel that prints no timestamps.
 * logcat: started with `-T 1`, so the device sends its last line instead
   of its whole buffer (the rest of the buffer is in neither file). Leading
   lines stamped before the device's clock at the start are left out. Not
@@ -224,27 +229,39 @@ _THREADTIME_RE: Final = re.compile(rb"^(\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})")
 # that jumped back, or a capture that starts at a new year, where "older
 # than the start" would otherwise never stop being true.
 _BACKLOG_WINDOW_S: Final[float] = 2.0
+# The `[ 1234.567890]` printk time `dmesg` puts in front of each line.
+_PRINTK_TS_RE: Final = re.compile(rb"^\[\s*(\d+\.\d+)\]")
 
 
 class _Backlog:
     """The leading lines of one source that are from before the capture.
 
-    Two ways to know them: a count taken just before the stream started
-    (dmesg), or a device timestamp older than the device's clock at the start
-    (logcat). Either way the backlog ends at the first line that is not old,
-    and nothing after that is ever held back.
+    Three ways to know them: a printk time no later than the last line's
+    just before the stream started (dmesg, ``upto``); a line count (dmesg
+    without printk times); a device timestamp older than the device's clock
+    at the start (logcat, ``before``). Each way the backlog ends at the
+    first line that is not old, and nothing after that is ever held back.
     """
 
-    def __init__(self, *, count: int = 0, before: bytes = b"") -> None:
+    def __init__(self, *, count: int = 0, before: bytes = b"", upto: float | None = None) -> None:
         self.counted = count > 0
         self._left = count
         self._before = before
+        self._upto = upto
         self._first_ns: int | None = None
         self.skipped = 0
-        self.done = not (count > 0 or before)
+        self.done = not (count > 0 or before or upto is not None)
 
     def take(self, line: bytes, at_ns: int) -> bool:
         """True if ``line`` is old: raw file only."""
+        if self._upto is not None:
+            m = _PRINTK_TS_RE.match(line)
+            # No printk time: the rest of an old record, still in the dump.
+            if m is None or float(m.group(1)) <= self._upto:
+                self.skipped += 1
+                return True
+            self.done = True
+            return False
         if self.counted:
             self._left -= 1
             self.skipped += 1
@@ -647,8 +664,11 @@ async def _pick_factories(
                 backlog[src] = _Backlog(before=stamp)
             factories[src] = _stream_factory(transport, "logcat", filter=logcat_filter, tail=1)
         else:
-            count = await _dmesg_backlog(transport)
-            if count is None:
+            upto = await _dmesg_last_stamp(transport)
+            count = None if upto is not None else await _dmesg_backlog(transport)
+            if upto is not None:
+                backlog[src] = _Backlog(upto=upto)
+            elif count is None:
                 writer.note(
                     src,
                     "[alb] dmesg: the lines already in the buffer could not be counted, so they "
@@ -683,12 +703,34 @@ async def _device_stamp(transport: Transport) -> bytes | None:
     return f"{m.group(1)}.{m.group(2) or '000'}".encode()
 
 
-async def _dmesg_backlog(transport: Transport) -> int | None:
-    """How many lines `dmesg -w` will print before its first new one.
+_DMESG_LAST_CMD: Final = "dmesg | tail -n 8"
 
-    Counted with the same `dmesg`, so the lines line up one for one. Lines
-    logged between this count and the stream starting are taken as new —
-    they are, give or take the few milliseconds in between."""
+
+async def _dmesg_last_stamp(transport: Transport) -> float | None:
+    """The printk time on the newest stamped line in the kernel buffer, or
+    None when there is none (empty buffer, a kernel built without printk
+    times, the command failing). A few lines, not one: the last line can be
+    the unstamped rest of a record."""
+    try:
+        r = await transport.shell(_DMESG_LAST_CMD, timeout=10)
+    except Exception:  # a probe must never cost the capture
+        return None
+    out = r.stdout if r.ok and isinstance(r.stdout, str) else ""
+    for line in reversed(out.splitlines()):
+        m = _PRINTK_TS_RE.match(line.encode())
+        if m:
+            return float(m.group(1))
+    return None
+
+
+async def _dmesg_backlog(transport: Transport) -> int | None:
+    """How many lines `dmesg -w` will print before its first new one — the
+    fallback for a kernel without printk times.
+
+    Counted with the same `dmesg`, so the lines line up one for one while
+    the buffer is not full. Once it is, each line logged between the count
+    and the stream starting pushes out an old one, and as many new lines are
+    then taken as old (still in dmesg.txt)."""
     try:
         r = await transport.shell("dmesg | wc -l", timeout=10)
     except Exception:  # a probe must never cost the capture
