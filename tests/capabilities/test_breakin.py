@@ -231,18 +231,138 @@ async def test_keys_are_sent_repeatedly_until_the_prompt_appears(tmp_path: Path)
 
 
 async def test_prompt_never_appears_reports_matched_but_no_prompt(tmp_path: Path) -> None:
-    t = FakeSerial([[("data", COUNTDOWN), ("data", b"\r\nStarting kernel ...\r\n")]])
+    t = FakeSerial([[("data", COUNTDOWN), ("data", b"\r\nLoading Environment from MMC... OK\r\n")]])
     r = await _run(t, prompt_wait_s=0.2, output=tmp_path / "x.log")
     assert not r.ok
     assert r.error is not None
     assert r.error.code == "BREAKIN_NO_PROMPT"
     assert r.error.details["outcome"] == "matched_no_prompt"
     assert r.error.details["matched"] == "Hit any key to stop autoboot"
+    assert r.error.details["handoff"] is None
     assert r.error.details["sends"] >= 1
-    assert "Starting kernel" in r.error.details["tail"]
+    assert "Loading Environment" in r.error.details["tail"]
     assert r.artifacts and (tmp_path / "x.log").read_bytes() == (
-        COUNTDOWN + b"\r\nStarting kernel ...\r\n"
+        COUNTDOWN + b"\r\nLoading Environment from MMC... OK\r\n"
     )
+
+
+# ─── the board went on into its kernel ─────────────────────────────
+
+# What a board whose bootloader could not be stopped prints after the
+# countdown: the kernel start, then the Linux console, which answers every
+# key typed into it with a fresh prompt.
+KERNEL_START = (
+    b"\r\nStarting kernel ...\r\n\r\n[    0.000000] Booting Linux on physical CPU 0x0\r\n"
+)
+CONSOLE_ECHO = b"^C\r\n$ "
+
+
+async def test_kernel_start_after_the_countdown_ends_the_attempt(tmp_path: Path) -> None:
+    """The window is over once the kernel starts. The attempt ends there —
+    not after prompt_wait — and no key is typed into the kernel."""
+    t = FakeSerial([[("data", COUNTDOWN), ("await_writes", 2), ("data", KERNEL_START)]])
+    started = perf_counter()
+    r = await _run(t, prompt_wait_s=5.0, output=tmp_path / "x.log")
+    assert perf_counter() - started < 2.0, "waited out prompt_wait after the kernel started"
+    assert not r.ok and r.error is not None
+    assert r.error.code == "BREAKIN_BOOTED_PAST"
+    assert r.error.details["outcome"] == "booted_past"
+    assert r.error.details["handoff"] == "Starting kernel"
+    assert r.error.details["matched"] == "Hit any key to stop autoboot"
+    assert len(t.writes) == r.error.details["sends"] == 2
+    assert "Booting Linux" in r.error.details["tail"]
+
+
+async def test_linux_console_prompt_after_the_kernel_start_never_counts(tmp_path: Path) -> None:
+    """The 10-16 false success: keys kept going into the Linux console, each
+    answered with ``$ ``, and the first pause in the kernel log confirmed it
+    as a bootloader prompt. Even a --prompt that accepts ``$`` must not turn
+    a board that booted on into "stopped at prompt"."""
+    t = FakeSerial(
+        [
+            [
+                ("data", COUNTDOWN),
+                ("await_writes", 1),
+                ("data", KERNEL_START),
+                ("data", CONSOLE_ECHO),
+            ]
+        ]
+    )
+    r = await _run(t, prompt=r"\$\s*$", output=tmp_path / "x.log")
+    assert not r.ok and r.error is not None
+    assert r.error.code == "BREAKIN_BOOTED_PAST"
+
+
+async def test_kernel_start_voids_a_pending_prompt_candidate(tmp_path: Path) -> None:
+    """A prompt-shaped tail is waiting out its quiet period when the kernel
+    start arrives, in a chunk that itself ends in a prompt. The kernel start
+    is looked at first; otherwise that last ``$ `` would become a fresh
+    candidate and the next pause would confirm it."""
+    t = FakeSerial(
+        [
+            [
+                ("data", COUNTDOWN),
+                ("await_writes", 1),
+                ("data", b"\r\n$ "),
+                ("sleep", 0.05),
+                ("data", KERNEL_START + CONSOLE_ECHO),
+            ]
+        ]
+    )
+    r = await _run(t, prompt=r"\$\s*$", output=tmp_path / "x.log")
+    assert not r.ok and r.error is not None
+    assert r.error.code == "BREAKIN_BOOTED_PAST"
+
+
+async def test_kernel_start_in_the_same_chunk_as_the_countdown(tmp_path: Path) -> None:
+    """A countdown of 0 is followed at once by the kernel start; one UART
+    chunk can hold both. Nothing is typed: the window had already closed."""
+    t = FakeSerial([[("data", COUNTDOWN + b" 0 " + KERNEL_START + CONSOLE_ECHO)]])
+    r = await _run(t, prompt=r"\$\s*$", output=tmp_path / "x.log")
+    assert not r.ok and r.error is not None
+    assert r.error.code == "BREAKIN_BOOTED_PAST"
+    assert r.error.details["sends"] == 0
+    assert t.writes == []
+
+
+async def test_kernel_start_split_across_full_chunks_is_still_seen(tmp_path: Path) -> None:
+    """The marker straddles two reads and the second is a full read buffer.
+    Looked for only after the per-chunk trim, its first half would already be
+    gone; the board would then wait out prompt_wait and report no prompt."""
+    t = FakeSerial(
+        [
+            [
+                ("data", COUNTDOWN),
+                ("await_writes", 1),
+                ("data", b"\r\n" + b"." * 3000 + b"Starting ker"),
+                ("data", b"nel ...\r\n" + b"." * 4087),
+            ]
+        ]
+    )
+    r = await _run(t, prompt_wait_s=0.5, output=tmp_path / "x.log")
+    assert not r.ok and r.error is not None
+    assert r.error.code == "BREAKIN_BOOTED_PAST"
+
+
+async def test_kernel_start_before_the_countdown_does_not_end_the_attempt(
+    tmp_path: Path,
+) -> None:
+    """The reader may come up while the board is still finishing a previous
+    boot; the reset that matters is yet to come. Only a kernel start AFTER
+    the countdown ends the attempt."""
+    t = FakeSerial(
+        [
+            [
+                ("data", b"Starting kernel ...\r\n[    0.000000] Booting Linux\r\n"),
+                ("data", COUNTDOWN),
+                ("await_writes", 1),
+                ("data", b"\r\n=> "),
+            ]
+        ]
+    )
+    r = await _run(t, output=tmp_path / "x.log")
+    assert r.ok, r.error
+    assert r.data is not None and r.data.prompt_line == "=>"
 
 
 async def test_pattern_never_appears_returns_tail_and_fails(tmp_path: Path) -> None:
@@ -300,7 +420,6 @@ async def test_prompt_already_in_the_same_chunk_counts_without_typing(tmp_path: 
         (b"\r\nU-Boot> ", "U-Boot>"),
         (b"\r\nCFE> ", "CFE>"),
         (b"\r\nMarvell>> ", "Marvell>>"),
-        (b"\r\n# ", "#"),
     ],
 )
 async def test_default_prompt_covers_common_consoles(
@@ -312,11 +431,26 @@ async def test_default_prompt_covers_common_consoles(
     assert r.data is not None and r.data.prompt_line == expected_line
 
 
+@pytest.mark.parametrize("prompt_bytes", [b"\r\n# ", b"\r\n$ ", b"\r\nconsole:/ $ "])
+async def test_default_prompt_does_not_take_a_bare_shell_prompt(
+    tmp_path: Path, prompt_bytes: bytes
+) -> None:
+    """``#`` / ``$`` is what a Linux console prints. A board that slipped past
+    its bootloader without a kernel-start line on the UART (a silenced
+    console) must still not read as stopped; such bootloaders need --prompt."""
+    t = FakeSerial([[("data", COUNTDOWN), ("await_writes", 1), ("data", prompt_bytes)]])
+    r = await _run(t, prompt_wait_s=0.5, output=tmp_path / "x.log")
+    assert not r.ok and r.error is not None
+    assert r.error.code == "BREAKIN_NO_PROMPT"
+    assert "--prompt" in r.error.suggestion
+
+
 async def test_a_chunk_that_merely_ends_in_a_prompt_char_mid_boot_is_not_a_prompt(
     tmp_path: Path,
 ) -> None:
-    """A UART chunk can end anywhere. `## Booting kernel` cut right after the
-    first `#` looks like a `#` prompt for a moment; the bytes that follow
+    """A UART chunk can end anywhere. With a ``#`` --prompt (a bootloader
+    whose prompt really is ``#``), `## Booting kernel` cut right after the
+    first `#` looks like that prompt for a moment; the bytes that follow
     within milliseconds show a board that is still booting. Reporting
     "stopped at prompt" here is the one failure this command must not have."""
     t = FakeSerial(
@@ -328,11 +462,11 @@ async def test_a_chunk_that_merely_ends_in_a_prompt_char_mid_boot_is_not_a_promp
                 ("sleep", 0.03),
                 ("data", b"# Booting kernel from Legacy Image at 82000000 ...\r\n"),
                 ("sleep", 0.03),
-                ("data", b"Starting kernel ...\r\n"),
+                ("data", b"Loading Ramdisk to 8f000000 ...\r\n"),
             ]
         ]
     )
-    r = await _run(t, prompt_wait_s=0.5, output=tmp_path / "x.log")
+    r = await _run(t, prompt=r"(?<!\S)#\s*$", prompt_wait_s=0.5, output=tmp_path / "x.log")
     assert not r.ok and r.error is not None
     assert r.error.code == "BREAKIN_NO_PROMPT"
 

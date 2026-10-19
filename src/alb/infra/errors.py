@@ -345,8 +345,17 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "BREAKIN_NO_PROMPT",
         "timeout",
         "The countdown appeared and keys were sent, but no console prompt followed",
-        "Run `alb serial status` to see where the board is; at an unrecognised prompt pass "
-        "--prompt; if it kept booting try --send '\\r' or '\\x03' and a smaller --repeat-ms",
+        "Run `alb serial status` to see where the board is; at an unrecognised prompt (a bare "
+        "'#' or '$' is not accepted by default) pass --prompt; if it kept booting try "
+        "--send '\\r' or '\\x03' and a smaller --repeat-ms",
+    ),
+    "BREAKIN_BOOTED_PAST": ErrorSpec(
+        "BREAKIN_BOOTED_PAST",
+        "device",
+        "The countdown appeared and keys were sent, but the board went on to start its kernel",
+        "The key came too late (earlier --expect, lower --repeat-ms) or was the wrong one "
+        "(--send '\\x03' / '\\r'); if this build has the bootloader command line turned off, "
+        "no key stops it",
     ),
     "SERIAL_LINK_LOST": ErrorSpec(
         "SERIAL_LINK_LOST",

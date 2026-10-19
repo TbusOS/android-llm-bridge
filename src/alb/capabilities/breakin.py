@@ -24,7 +24,9 @@ working while this command types.
 Some bootloaders never offer a key-press stop (they decide from a hardware
 key combination instead). The command then ends with "pattern never seen"
 and the last lines received, so the reader can see where boot went instead.
-It never claims success without having seen a prompt.
+It never claims success without having seen a prompt, and never once the
+board has started its kernel: the keys typed from then on land in the Linux
+console, whose own ``$`` / ``#`` prompt answers each one.
 """
 
 from __future__ import annotations
@@ -43,21 +45,32 @@ from alb.infra.result import ErrorCategory, ErrorInfo, Result, fail, ok
 from alb.infra.workspace import iso_timestamp, resolve_capture_path
 from alb.transport.base import Transport
 from alb.transport.serial import _classify_connect_error
+from alb.transport.serial_state import DEFAULT_PATTERNS
 
 # ─── Defaults (shared with the CLI so help text and behaviour agree) ────
 DEFAULT_EXPECT = r"Hit any key to stop autoboot|Press any key|autoboot in"
 DEFAULT_SEND = b" "
 # A console prompt at the very end of what was received: ``=> ``,
-# ``U-Boot> ``, ``CFE> ``, ``RedBoot> ``, ``# ``, ``$ ``. Anchored to the end
-# of the buffer, not to a line end, because the prompt is by definition the
-# last thing the board printed; a ``#`` inside an earlier line must not count.
-# ``#`` / ``$`` count only after whitespace or at the start: a chunk that ends
-# inside ``####`` (tftp progress) or right after ``##`` (``## Booting
-# kernel``) is a booting board, not a shell.
-# A bare ``> `` prompt (no name) is deliberately NOT covered: it is too easy
-# to find at the end of ordinary output, and a false "stopped at prompt" is
-# the one failure direction this command must never take. Pass ``--prompt``.
-DEFAULT_PROMPT = r"(?:=>|\w+\s*>+|(?<!\S)[#$])\s*$"
+# ``U-Boot> ``, ``CFE> ``, ``RedBoot> ``. Anchored to the end of the buffer,
+# not to a line end, because the prompt is by definition the last thing the
+# board printed; a ``=>`` inside an earlier line must not count.
+# A false "stopped at prompt" is the one failure direction this command must
+# never take, so two shapes are deliberately NOT covered — pass ``--prompt``:
+# - a bare ``> `` (no name): too easy to find at the end of ordinary output;
+# - a bare ``# `` / ``$ ``: that is what a Linux / Android console prints.
+#   A board whose bootloader could not be stopped boots on into the kernel,
+#   and every key typed there is answered with a fresh ``$ `` — which the
+#   quiet check below then confirms as soon as the kernel log pauses.
+DEFAULT_PROMPT = r"(?:=>|\w+\s*>+)\s*$"
+# Text that only appears once the bootloader has handed over to the kernel
+# (U-Boot's ``Starting kernel ...``, the kernel's own first lines). Seen after
+# the countdown, it ends the attempt at once: the window is over, and any
+# prompt from here on is the kernel's, not the bootloader's. Before the
+# countdown they end nothing: the board may have been mid-boot when the reader
+# came up, and the reset that matters (by hand, when told to) is still to
+# come. The same markers the serial state machine uses for its kernel_boot
+# state, so both agree on what a kernel start looks like.
+_KERNEL_HANDOFF = re.compile(DEFAULT_PATTERNS["kernel_boot"])
 # A prompt-shaped tail is only a candidate. It counts once the board has then
 # stayed silent this long: a UART chunk can end anywhere, so text that merely
 # ends in a prompt character mid-boot is followed by more bytes within
@@ -89,6 +102,7 @@ _RECONNECT_BACKOFF_S = 0.5
 Outcome = Literal[
     "stopped_at_prompt",
     "matched_no_prompt",
+    "booted_past",
     "pattern_never_seen",
     "link_error",
     "reboot_failed",
@@ -206,6 +220,8 @@ class _Watch:
         self.matched: bytes | None = None
         self.matched_at: float | None = None
         self.prompt_line: str | None = None
+        # The kernel-start marker seen after the match, if any.
+        self.handoff: bytes | None = None
         self.sends = 0
         self.last_send_at = 0.0
 
@@ -217,8 +233,18 @@ class _Watch:
             self._evicted = True
         if self.matched is not None:
             self._since_match += chunk
+            # Scanned before the trim: a marker split between the previous
+            # chunk and this one is still whole here.
+            self._scan_handoff()
             if len(self._since_match) > _MATCH_WINDOW:
                 del self._since_match[: len(self._since_match) - _MATCH_WINDOW]
+
+    def _scan_handoff(self) -> None:
+        if self.handoff is not None:
+            return
+        m = _KERNEL_HANDOFF.search(self._since_match)
+        if m is not None:
+            self.handoff = bytes(m.group(0))
 
     def try_match(self, now: float) -> bool:
         """First time the countdown shows up in the rolling window."""
@@ -231,6 +257,8 @@ class _Watch:
         self.matched = bytes(m.group(0))
         self.matched_at = now
         self._since_match = bytearray(window[m.end() :])
+        # A countdown of 0 and the kernel start can arrive in one chunk.
+        self._scan_handoff()
         return True
 
     def prompt_seen(self) -> bool:
@@ -270,6 +298,11 @@ class _Watch:
         if self.matched is None:
             return None
         return self.matched.decode("utf-8", errors="replace")
+
+    def handoff_text(self) -> str | None:
+        if self.handoff is None:
+            return None
+        return self.handoff.decode("utf-8", errors="replace")
 
 
 def _compile(pattern: str, what: str) -> re.Pattern[bytes] | Result[Any]:
@@ -402,6 +435,7 @@ async def break_in(
                 details={
                     "outcome": outcome,
                     "matched": watch.matched_text(),
+                    "handoff": watch.handoff_text(),
                     "sends": watch.sends,
                     "tail": watch.tail_text(),
                     "reboot": reboot,
@@ -528,6 +562,9 @@ async def break_in(
                 watch.feed(chunk)
                 if watch.matched_at is None:
                     if watch.try_match(now):
+                        if watch.handoff is not None:
+                            outcome = "booted_past"
+                            break
                         if watch.prompt_seen():
                             # Someone else (or the board itself) may already
                             # have stopped it; the silence decides.
@@ -537,6 +574,11 @@ async def break_in(
                                 await watch.send_keys(link, now)
                             except _LINK_ERRORS as e:
                                 return _link_failed(e, "while typing at the countdown")
+                elif watch.handoff is not None:
+                    # Checked before the prompt, and it voids a pending
+                    # candidate: past this point every prompt is the kernel's.
+                    outcome = "booted_past"
+                    break
                 elif watch.prompt_seen():
                     candidate_at = now
                 else:
@@ -561,6 +603,19 @@ async def break_in(
             artifacts=[artifact],
             timing_ms=_elapsed_ms(),
         )
+    if outcome == "booted_past":
+        return _failed(
+            outcome,
+            "BREAKIN_BOOTED_PAST",
+            f"the countdown appeared ({watch.matched_text()!r}) and {watch.sends} keypress(es) "
+            f"were sent, but the board went on to start its kernel "
+            f"({watch.handoff_text()!r}): it is not in the bootloader",
+            "Read the tail between the countdown and the kernel start. The key may have come "
+            "too late (match an earlier line with --expect, lower --repeat-ms), be the wrong "
+            "key (try --send '\\x03' or '\\r'), or this build has the bootloader command line "
+            "turned off — then no key stops it",
+            "device",
+        )
     if outcome == "matched_no_prompt":
         return _failed(
             outcome,
@@ -568,8 +623,9 @@ async def break_in(
             f"the countdown appeared ({watch.matched_text()!r}) and {watch.sends} keypress(es) "
             f"were sent, but no console prompt followed within {prompt_wait_s:g}s",
             "Run `alb serial status` to see where the board is now. At a prompt alb does "
-            "not recognise → pass --prompt; still booting → the key was ignored, try "
-            "--send '\\r' or '\\x03' and a smaller --repeat-ms",
+            "not recognise (a bare '#' or '$' is not accepted by default) → pass --prompt; "
+            "still booting → the key was ignored, try --send '\\r' or '\\x03' and a smaller "
+            "--repeat-ms",
             "timeout",
         )
     return _failed(

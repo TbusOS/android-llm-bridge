@@ -138,9 +138,10 @@ def cmd_break_in(
     working meanwhile — the link is shared, not taken over.
 
     Ends in one of: stopped at a prompt (exit 0, the prompt line is shown),
-    matched but no prompt followed, pattern never seen (exit 1 with the last
-    lines received — some bootloaders simply do not offer a key-press stop),
-    or a link error. The full UART log of the attempt is saved either way.
+    matched but the board went on into its kernel, matched but no prompt
+    followed, pattern never seen (exit 1 with the last lines received — some
+    bootloaders simply do not offer a key-press stop), or a link error. The
+    full UART log of the attempt is saved either way.
     """
     try:
         keys = parse_send_keys(send)
