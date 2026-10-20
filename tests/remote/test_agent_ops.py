@@ -605,7 +605,7 @@ def _sysfs_tree(root: Path) -> None:
         "idProduct": "D00D",
         "product": "Android",
         "manufacturer": "Example",
-        "serial": "3520000686",
+        "serial": "1000000003",
         "bDeviceClass": "00",
         "bDeviceSubClass": "00",
         "bDeviceProtocol": "00",
@@ -788,7 +788,7 @@ async def test_image_op_with_a_bad_size_is_corrupt_not_a_crash(monkeypatch, size
 
 _FASTBOOT_PNP = {
     "Name": "Android Bootloader Interface",
-    "PNPDeviceID": "USB\\VID_18D1&PID_D00D\\3520000686",
+    "PNPDeviceID": "USB\\VID_18D1&PID_D00D\\1000000003",
     "Status": "OK",
     "ConfigManagerErrorCode": 0,
     "PNPClass": "AndroidUsbDeviceClass",
@@ -845,7 +845,7 @@ def test_usb_json_fastboot_device():
     [dev] = agent._parse_usb_json(json.dumps([_FASTBOOT_PNP]))
     assert set(dev) == _USBDEV_KEYS
     assert dev["vid"] == "18d1" and dev["pid"] == "d00d"
-    assert dev["serial"] == "3520000686"
+    assert dev["serial"] == "1000000003"
     assert dev["interface"] == ""
     assert dev["problem"] == 0
     assert dev["service"] == "WinUSB" and dev["class"] == "AndroidUsbDeviceClass"
@@ -872,7 +872,7 @@ def test_usb_json_device_with_no_driver_keeps_the_problem_code_and_the_class_tri
 
 def test_usb_json_several_devices_keep_their_order():
     devs = agent._parse_usb_json(json.dumps([_FASTBOOT_PNP, _ADB_INTERFACE_PNP, _NO_DRIVER_PNP]))
-    assert [d["serial"] for d in devs] == ["3520000686", "7&2B3C4D5E&0&0001", "0123456789"]
+    assert [d["serial"] for d in devs] == ["1000000003", "7&2B3C4D5E&0&0001", "0123456789"]
 
 
 @pytest.mark.parametrize("text", ["", "   \r\n"])
@@ -924,7 +924,7 @@ def test_sysfs_enumeration_lists_device_then_interfaces(tmp_path):
     assert [d["instance_id"] for d in devs] == ["1-3", "1-3:1.0"], "root hub and alias excluded"
     dev, itf = devs
     assert set(dev) == _USBDEV_KEYS
-    assert dev["vid"] == "18d1" and dev["pid"] == "d00d" and dev["serial"] == "3520000686"
+    assert dev["vid"] == "18d1" and dev["pid"] == "d00d" and dev["serial"] == "1000000003"
     assert dev["name"] == "Android" and dev["manufacturer"] == "Example"
     assert dev["service"] == "usb" and dev["interface"] == ""
     assert dev["compatible_ids"] == [
@@ -934,7 +934,7 @@ def test_sysfs_enumeration_lists_device_then_interfaces(tmp_path):
     assert itf["interface"] == "00"
     assert itf["service"] == "", "no driver bound to the fastboot interface"
     assert itf["compatible_ids"] == ["USB\\Class_ff&SubClass_42&Prot_03"]
-    assert itf["serial"] == "3520000686"
+    assert itf["serial"] == "1000000003"
 
 
 def test_sysfs_enumeration_without_the_tree_is_empty_not_a_crash(tmp_path):

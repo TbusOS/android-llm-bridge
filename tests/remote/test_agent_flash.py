@@ -269,7 +269,7 @@ async def test_devices_with_no_output_reports_no_device(monkeypatch):
 
 async def test_devices_with_a_listing_is_success(monkeypatch):
     async def fake_run(_ws, argv, op=""):
-        return 0, "2870000540\tfastboot\n", ""
+        return 0, "1000000001\tfastboot\n", ""
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     ws = _FakeWs(_req(op="devices"))

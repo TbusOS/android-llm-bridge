@@ -27,7 +27,7 @@ def _no_ambient_state(monkeypatch):
     ae.reset_hub_cache()
 
 
-def _hub(port=15037, bound=True, devices=("2870000540",)):
+def _hub(port=15037, bound=True, devices=("1000000001",)):
     return ae.HubAdbView(port=port, bound=bound, devices=tuple(devices))
 
 
@@ -127,11 +127,11 @@ def test_the_2026_08_10_case(monkeypatch):
     """Stale ADB_SERVER_SOCKET on 5037, forwarder on 15037, board on the
     bench. The message must name both ports, the source, and the fix —
     'check your tunnel' is what the old code said and it was not enough."""
-    _with_hub(monkeypatch, _hub(port=15037, devices=("2870000540",)))
+    _with_hub(monkeypatch, _hub(port=15037, devices=("1000000001",)))
     msg = ae.endpoint_conflict(ae.AdbEndpoint("tcp:localhost:5037", "env"))
     assert "5037" in msg and "15037" in msg
     assert "ADB_SERVER_SOCKET" in msg
-    assert "2870000540" in msg
+    assert "1000000001" in msg
     assert "tcp:127.0.0.1:15037" in msg
 
 
@@ -216,7 +216,7 @@ def test_status_payload_is_parsed_from_the_real_shape():
         {
             "agents": [
                 {"agent_id": "other", "adb_devices": ["ignored"], "current": False},
-                {"agent_id": "win-x", "adb_devices": ["2870000540"], "current": True},
+                {"agent_id": "win-x", "adb_devices": ["1000000001"], "current": True},
             ],
             "forwarders": {
                 "adb": {"bound": True, "port": 15037},
@@ -226,5 +226,5 @@ def test_status_payload_is_parsed_from_the_real_shape():
     )
     assert view.port == 15037
     assert view.bound is True
-    assert view.devices == ("2870000540",)
+    assert view.devices == ("1000000001",)
     assert view.socket == "tcp:127.0.0.1:15037"

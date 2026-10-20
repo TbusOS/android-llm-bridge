@@ -314,7 +314,7 @@ so the next poll reflects plug/unplug.
     {
       "agent_id": "win-…", "name": "bench-01", "version": 1,
       "caps": ["adb"], "current": true,
-      "adb_devices": ["1240681723"],
+      "adb_devices": ["1000000002"],
       "adb_conflicts": [],
       "com_ports": [{"port": "COM4", "desc": "USB Serial Port"}]
     }
