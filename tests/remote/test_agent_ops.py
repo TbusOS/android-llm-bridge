@@ -17,6 +17,7 @@ import os
 import struct
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -673,6 +674,145 @@ async def test_exclusive_op_takes_the_lock(monkeypatch):
     assert data_ws.done()["ok"] is True
     assert locked_during == [True]
     assert not agent._job_lock.locked(), "and releases it"
+
+
+# ── back to back: run_plan opens the next row the moment it reads `done` ──
+
+
+class _ReplyingWs(_FakeWs):
+    """A data ws that, when it carries `done`, wakes the "hub" — which opens
+    the next row at once, as run_plan does (src/alb/remote/flash.py)."""
+
+    def __init__(self, incoming: bytes, got_done: asyncio.Event) -> None:
+        super().__init__(incoming)
+        self._got_done = got_done
+        self.locked_at_done: list[bool] = []
+
+    async def send(self, data: bytes) -> None:
+        await super().send(data)
+        if self.sent[-1].get("ev") == "done":
+            self.locked_at_done.append(agent._job_lock.locked())
+            self._got_done.set()
+
+
+class _ClosingDial:
+    """ws_connect stand-in: one fresh data ws per dial, picked by the cid in
+    the URL, and an exit that yields the way a real close handshake waits on
+    the network — the gap the next row used to land in."""
+
+    def __init__(self, requests: dict[str, bytes], got_done: asyncio.Event) -> None:
+        self._requests = requests
+        self._got_done = got_done
+        self.opened: dict[str, _ReplyingWs] = {}
+
+    def __call__(self, url, **_kw):
+        (cid,) = parse_qs(urlsplit(url).query)["cid"]
+        return _ClosingConn(self, cid)
+
+
+class _ClosingConn:
+    def __init__(self, dial: _ClosingDial, cid: str) -> None:
+        self._dial, self._cid = dial, cid
+
+    async def __aenter__(self):
+        ws = _ReplyingWs(self._dial._requests[self._cid], self._dial._got_done)
+        self._dial.opened[self._cid] = ws
+        return ws
+
+    async def __aexit__(self, *_a):
+        for _ in range(3):
+            await asyncio.sleep(0)
+        return False
+
+
+def _open_frame_cid(op: str, cid: str) -> dict:
+    frame = _open_frame(op)
+    frame["cid"] = cid
+    return frame
+
+
+def _fake_fastboot(monkeypatch, run) -> None:
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    monkeypatch.setattr(agent, "_FASTBOOT_PATH", FB)
+    monkeypatch.setattr(agent, "_OPS", _ops(FB))
+
+
+async def test_the_next_row_opened_on_done_is_not_refused_as_a_running_job(monkeypatch):
+    """The 2026-10-20 bench run: getvar answered, and flash uboot_a — opened
+    5 ms later — was refused because the getvar channel was still closing."""
+
+    async def fake_run(_ws, argv, timeout_s=0.0):
+        return 0, "", ""
+
+    _fake_fastboot(monkeypatch, fake_run)
+    got_done = asyncio.Event()
+    row = _req(op="erase", partition="misc")
+    dial = _ClosingDial({"c1": row, "c2": row}, got_done)
+    monkeypatch.setattr(agent, "ws_connect", dial)
+    sig = _FakeSignal()
+    url = "ws://h/agent/connect"
+
+    async def hub_runs_the_next_row() -> None:
+        await got_done.wait()
+        await agent._handle_job_channel(url, None, _open_frame_cid("erase", "c2"), sig)
+
+    await asyncio.wait_for(
+        asyncio.gather(
+            agent._handle_job_channel(url, None, _open_frame_cid("erase", "c1"), sig),
+            hub_runs_the_next_row(),
+        ),
+        2.0,
+    )
+    assert sig.errors() == []
+    assert [dial.opened[c].done()["ok"] for c in ("c1", "c2")] == [True, True]
+    assert [dial.opened[c].locked_at_done for c in ("c1", "c2")] == [[True], [True]], (
+        "the result goes out while the lock is still held — a stop request "
+        "waiting for the lock cannot cut it off"
+    )
+    assert not agent._job_lock.locked()
+
+
+async def test_a_read_only_job_ending_does_not_free_the_lock_a_running_flash_holds(
+    monkeypatch, tmp_path
+):
+    """The hand-back is per job: usb-list finishing DURING a flash must not
+    release the flash's hold and let a second write in."""
+    _sysfs_tree(tmp_path)
+    monkeypatch.setattr(agent, "_SYSFS_USB_ROOT", tmp_path)
+    flashing, finish = asyncio.Event(), asyncio.Event()
+
+    async def slow_run(_ws, argv, timeout_s=0.0):
+        flashing.set()
+        await finish.wait()
+        return 0, "", ""
+
+    _fake_fastboot(monkeypatch, slow_run)
+    got_done = asyncio.Event()
+    requests = {"c1": _req(op="erase", partition="misc"), "c2": _req(op="usb-list")}
+    dial = _ClosingDial(requests, got_done)
+    monkeypatch.setattr(agent, "ws_connect", dial)
+    sig = _FakeSignal()
+    url = "ws://h/agent/connect"
+
+    async def run() -> None:
+        flash = asyncio.create_task(
+            agent._handle_job_channel(url, None, _open_frame_cid("erase", "c1"), sig)
+        )
+        await flashing.wait()
+        await agent._handle_job_channel(url, None, _open_frame_cid("usb-list", "c2"), sig)
+        assert dial.opened["c2"].done()["ok"] is True
+        assert agent._job_lock.locked(), "usb-list's done released the flash's lock"
+        finish.set()
+        await flash
+
+    await asyncio.wait_for(run(), 2.0)
+    assert sig.errors() == []
+    assert dial.opened["c1"].done()["ok"] is True
+    assert not agent._job_lock.locked()
 
 
 async def test_fastboot_op_without_fastboot_is_refused_before_dialling(monkeypatch):

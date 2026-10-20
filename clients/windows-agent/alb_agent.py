@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import contextvars
 import csv
 import functools
 import hashlib
@@ -731,6 +732,13 @@ _JOB_MAX_FRAME = 8 * 1024 * 1024
 # thirty-minute flash, since that is when someone wants to know whether the
 # board is even on the bus.
 _job_lock = asyncio.Lock()
+
+# How the running job gives its hold of _job_lock back the moment its result
+# is sent (see _job_reported). Per task, not a global: a read-only job that
+# finishes while a flash runs must not release the lock the flash holds.
+_job_release: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
+    "_job_release", default=None
+)
 
 
 class _JobProtocolError(Exception):
@@ -1697,7 +1705,17 @@ async def _handle_job_channel(
             await _report_channel_error(ws, cid, "another flash job is already running")
             return
         await _job_lock.acquire()
+    held = exclusive
 
+    def release() -> None:
+        nonlocal held
+        if held:
+            held = False
+            _job_lock.release()
+
+    # Normally released by _job_reported() as `done` goes out; the finally
+    # below covers a job that ended without one.
+    reset = _job_release.set(release)
     try:
         async with ws_connect(url, max_size=None, additional_headers=headers) as data_ws:
             _STATUS.channel_opened(cid, "job", hint or "fastboot")
@@ -1705,8 +1723,8 @@ async def _handle_job_channel(
     except Exception as e:
         _log.warning("job channel %s ended: %s", cid[:8], e)
     finally:
-        if exclusive:
-            _job_lock.release()
+        _job_release.reset(reset)
+        release()
         _STATUS.channel_closed(cid)
 
 
@@ -1805,6 +1823,20 @@ async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1) -> Non
                 }
             )
         )
+    _job_reported()
+
+
+def _job_reported() -> None:
+    """`done` is out: free the job lock now, not when the channel has
+    finished closing. run_plan sends the next row the moment it reads
+    `done`, and that open arrives while this side is still in the close
+    handshake — every real plan run stopped at its second row with "another
+    flash job is already running" (2026-10-20). Called right after the send
+    with no await in between, so a stop request waiting for the lock still
+    cannot cut the result off."""
+    release = _job_release.get()
+    if release is not None:
+        release()
 
 
 async def _job_progress(data_ws: Any, phase: str, done: int, total: int, text: str = "") -> None:
@@ -2060,6 +2092,7 @@ async def _job_finish(
         msg["data"] = data
     with contextlib.suppress(Exception):
         await data_ws.send(_job_control(msg))
+    _job_reported()
 
 
 # ── self-update and single instance (ADR-060) ────────────────────────
