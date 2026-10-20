@@ -141,8 +141,16 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
        IdentitiesOnly yes
    ```
 
-   之后在 hub 上执行 `ssh alb-bench schtasks /Run /TN alb-agent`，就能启动 agent。
-   如果它已经在跑，`run-agent.bat` 会先让旧的退出，所以这条也能用来重启。
+4. hub 的 `deploy/hub/hub.env` 加一行 `ALB_BENCH_SSH_HOST=alb-bench`，重启 alb-api。
+
+之后 agent 没在跑时，在 hub 上执行 **`alb bench agent-start`**：hub 经 ssh 启动这个
+计划任务，再等 agent 连上来；没连上时把本文件夹 `logs\agent.log` 的最后几行一起
+带回来。不想经 hub，也可以直接 `ssh alb-bench schtasks /Run /TN alb-agent`。
+
+**这不是重启。** 这个任务已经在跑时，Windows 不会再启动第二份（任务设的是
+「已在运行就忽略新请求」），`schtasks /Run` 照样回「成功」，但什么都没变。
+换版本用 hub 上的 `alb bench agent-update`（文件没变时它也不重启）；目前 hub 这边
+没有单纯重启 agent 的命令。
 
 为什么经过计划任务，而不是用 ssh 直接启动：ssh 会话里启动的进程，桌面上看不到
 窗口，ssh 一断它也跟着退出；计划任务里的进程就像在这台机器上双击启动的一样。

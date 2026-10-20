@@ -392,6 +392,16 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "(ADR-060). NDJSON stream; waits for the agent to reconnect. done.data.outcome "
         "`updated`, or code AGENT_UPDATE_ROLLED_BACK / AGENT_UPDATE_NO_RETURN",
     },
+    {
+        "method": "POST",
+        "path": "/api/bench/agent-start",
+        "description": "Start the bench agent over ssh when none is connected (ADR-061); "
+        "body {wait_s}. Host and task come from the hub's environment "
+        "(ALB_BENCH_SSH_HOST / ALB_BENCH_AGENT_TASK), never from the request. NDJSON "
+        "stream; done.data.outcome `already_connected` / `started` / `reconnected`, or "
+        "code AGENT_START_NOT_CONFIGURED / _SSH_FAILED / _NO_TASK / _TASK_FAILED / "
+        "_NO_CONNECT (with the agent's log tail)",
+    },
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

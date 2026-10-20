@@ -7,6 +7,8 @@
     alb bench log <source> [-n LINES] [-g TEXT] tail a log on the bench host
     alb bench agent-update [--config FILE]      send the hub's agent files to the bench
                                                 host and restart the agent there
+    alb bench agent-start [--wait SECONDS]      start the bench agent over ssh when none
+                                                is connected
 
 `run` is the generic form: any op the agent reports, parameters by name.
 `usb` and `log` are short forms for the two read-only ops people reach for
@@ -294,3 +296,51 @@ def cmd_agent_update(
     changed = data.get("changed") or []
     if changed:
         typer.echo(f"  changed: {', '.join(str(c) for c in changed)}")
+
+
+@app.command("agent-start")
+def cmd_agent_start(
+    wait: float = typer.Option(
+        60.0, "--wait", min=5.0, max=300.0, help="seconds to wait for the agent to connect"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="print the done frame as JSON"),
+) -> None:
+    """Start the bench agent over ssh when no agent is connected (ADR-061).
+
+    The hub runs the bench host's scheduled task `alb-agent` (set up once
+    with setup-remote-start.bat there) and waits for the agent to connect.
+    The ssh host is the hub's ALB_BENCH_SSH_HOST. A connected agent is left
+    alone, and a task that is already running is not started again: this
+    is not a restart (Windows ignores a second run of a running task).
+    """
+    final = _run_job("agent-start", {"wait_s": wait}, base="/api/bench")
+    if as_json:
+        _finish(final, as_json=True)
+        return
+    data = final.get("data") or {}
+    if not final.get("ok"):
+        try:
+            # The log tail rides in stdout; shown below under its own heading.
+            _finish({**final, "stdout": ""})
+        finally:
+            where = str(data.get("log") or "")
+            tail = data.get("log_tail") or []
+            if tail:
+                typer.echo(f"  agent log on the bench host ({where}), last lines:", err=True)
+                for line in tail:
+                    typer.echo(f"    {line}", err=True)
+            elif where:
+                typer.echo(f"  agent log: {where}", err=True)
+        return
+    outcome = data.get("outcome")
+    if outcome == "already_connected":
+        typer.echo(f"[ok] {final.get('stdout')}")
+    elif outcome == "reconnected":
+        typer.echo(
+            f"[ok] task {data.get('task')} was already running on {data.get('host')}; "
+            f"{final.get('stdout')}"
+        )
+    else:
+        typer.echo(
+            f"[ok] started task {data.get('task')} on {data.get('host')}; {final.get('stdout')}"
+        )

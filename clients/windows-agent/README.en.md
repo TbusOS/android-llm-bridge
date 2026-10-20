@@ -80,11 +80,21 @@ authorizes that key for this account (for Administrators members in
 `C:\ProgramData\ssh\administrators_authorized_keys`, the only file Windows
 OpenSSH reads for them, locked to Administrators + SYSTEM) and registers a
 scheduled task `alb-agent` that runs `run-agent.bat` in the user's desktop
-session (also at logon, no 3-day run limit). From the hub:
-`ssh <user>@<host> schtasks /Run /TN alb-agent`. The task, not ssh, starts
-the agent: a process started by an ssh session has no visible window and
-ends with the session. Needs OpenSSH Server running and the user logged on;
-`setup-remote-start.bat --remove` undoes both changes.
+session (also at logon, no 3-day run limit). On the hub, set
+`ALB_BENCH_SSH_HOST` in `deploy/hub/hub.env` to the `~/.ssh/config` Host of
+this machine; then `alb bench agent-start` starts the task over ssh and
+waits for the agent to connect, bringing back the last lines of
+`logs\agent.log` when it does not (plain
+`ssh <user>@<host> schtasks /Run /TN alb-agent` works too). The task, not
+ssh, starts the agent: a process started by an ssh session has no visible
+window and ends with the session. Needs OpenSSH Server running and the user
+logged on; `setup-remote-start.bat --remove` undoes both changes.
+
+This is a start, not a restart: the task is registered to ignore a new run
+while it is running, so on a running agent `schtasks /Run` reports success
+and changes nothing. `alb bench agent-update` replaces a running agent with
+new files (and does not restart it when the files are the same); there is no
+plain restart from the hub yet.
 
 ### Status page
 

@@ -529,6 +529,43 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Look at the bench host: the agent window, and .alb-agent/update.log in "
         "the agent's folder. It may still come back after its rollback finishes",
     ),
+    # Starting the bench agent over ssh (ADR-061). One code per place to look:
+    # this hub's config, ssh, the bench host's task, the agent itself.
+    "AGENT_START_NOT_CONFIGURED": ErrorSpec(
+        "AGENT_START_NOT_CONFIGURED",
+        "input",
+        "This hub does not know how to reach the bench host over ssh",
+        "Set ALB_BENCH_SSH_HOST in deploy/hub/hub.env to a Host from the hub user's "
+        "~/.ssh/config and restart alb-api",
+    ),
+    "AGENT_START_SSH_FAILED": ErrorSpec(
+        "AGENT_START_SSH_FAILED",
+        "transport",
+        "ssh to the bench host failed; nothing was started",
+        "Run `ssh <host> echo ok` on the hub host: key not authorised (run "
+        "setup-remote-start.bat on the bench host), sshd not running, host unreachable, "
+        "or its host key not yet in known_hosts",
+    ),
+    "AGENT_START_NO_TASK": ErrorSpec(
+        "AGENT_START_NO_TASK",
+        "device",
+        "The bench host has no scheduled task to start the agent with",
+        "On the bench host run setup-remote-start.bat in the agent folder once",
+    ),
+    "AGENT_START_TASK_FAILED": ErrorSpec(
+        "AGENT_START_TASK_FAILED",
+        "device",
+        "The bench host's task did not start, or ended at once",
+        "The task runs only while a user is logged on to the bench host; if one is, "
+        "the agent log lines shown say why run-agent.bat stopped",
+    ),
+    "AGENT_START_NO_CONNECT": ErrorSpec(
+        "AGENT_START_NO_CONNECT",
+        "timeout",
+        "The agent's task is running on the bench host but no agent reached this hub",
+        "Read the agent log lines shown: hub_url / token in agent.conf, or the "
+        "network between the bench host and this hub",
+    ),
 }
 
 

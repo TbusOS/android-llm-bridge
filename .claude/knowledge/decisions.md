@@ -2718,3 +2718,111 @@ ADR-059 不做的理由是「能推代码就等于能在那台机器上执行任
   补进窗口。`data.result_lost` 那条路没确认走到过。
 
 **关联**: ADR-056(作业通道)· ADR-059(操作表;本条改其「不做」第 2 条)· DEBT-083(多 agent 寻址)
+
+## ADR-061 · hub 经 ssh 拉起台架 agent:`alb bench agent-start`
+
+**日期**: 2026-10-20 · **状态**: 已实现,台架实测 started / already_connected 两条经 hub 走通,NO_TASK / NO_CONNECT / SSH_FAILED 三条经真 ssh 走通(见「台架实测」)· 接 `cf163cd`(台架一次性配置脚本)
+
+### 这是什么
+
+agent 没连着 hub 时,`alb bench agent-start` 让 hub 经 ssh 启动台架 Windows 上的计划任务
+`alb-agent`,再等 agent 连上来。没连上时,把 agent 文件夹里 `logs\agent.log` 的最后
+20 行一起带回来。
+
+### 没有它会怎样
+
+`cf163cd` 之后已经能手敲 `ssh <Host> schtasks /Run /TN alb-agent`,但有三处不够:
+
+- 要记 Host 名和任务名;别的会话(MCP、网页)没有这条路。
+- `schtasks /Run` 回「成功」只说明 Windows 收到了请求。agent 起没起来、连没连上 hub,
+  要另查。2026-10-20 台架:agent 已在跑时 `/Run` 回「正在运行」+「成功」,进程号不变。
+- 连不上时,原因写在 agent 自己的日志里。agent 离线,`alb bench log agent` 用不了,
+  只能人去 Windows 上看。
+
+### 关系图
+
+```
+alb bench agent-start [--wait 60]
+  |  POST /api/bench/agent-start {wait_s}
+  v
+hub:有 agent 连着? ── 是 ─> already_connected,不 ssh
+  | 否
+  | ssh -o BatchMode=yes -- $ALB_BENCH_SSH_HOST powershell -EncodedCommand <脚本>
+  v
+台架 Windows:Get-ScheduledTask alb-agent
+  | State=Running ─> 不再启动(action=none)
+  | 否则 Start-ScheduledTask,3 秒后读回 State
+  |   不是 Running ─> AGENT_START_TASK_FAILED + 日志尾
+  v
+hub:等 hello(最多 wait_s)
+  | 连上 ─> started / reconnected
+  | 没连上 ─> 再 ssh 读 logs\agent.log 尾 ─> AGENT_START_NO_CONNECT
+```
+
+### 决定 1 · 放在 hub 里,不放在 CLI 里
+
+hub 知道 agent 什么时候连上(注册表),不用再轮询自己的 HTTP 接口;网页以后能直接用
+同一个接口。代价:ssh 用的是跑 hub 那个用户的 `~/.ssh/config` 和钥匙。
+
+### 决定 2 · ssh 去哪、跑什么,只从 hub 的环境来
+
+hub API 绑 0.0.0.0 且没有鉴权(ADR-060 的代价)。请求体只能说等多久(5-300 秒),
+主机来自 `ALB_BENCH_SSH_HOST`,任务名来自 `ALB_BENCH_AGENT_TASK`(默认 `alb-agent`),
+远端脚本是代码里写死的。主机名不许以 `-` 开头、不许有空白(否则会被 ssh 当成选项);
+任务名只许字母数字和 ` _.-`(它被放进脚本的单引号里)。ssh 带 `--`,主机放在选项之后。
+
+### 决定 3 · 远端回答靠标记行,不靠退出码和 schtasks 的文字
+
+- 脚本输出 `alb-start: state=…` / `action=…` / `after=…` 这类行,hub 按行解析。
+- 不靠退出码:台架上脚本里 `exit 3`,经 ssh 回来是 1(2026-10-20)。
+- 不靠 `schtasks` 的文字:中文 Windows 回「正在运行」「成功」,随系统语言变。
+  `Get-ScheduledTask` 的 `State` 是枚举名(`Running` / `Ready`),哪种语言都一样。
+- 脚本走 `-EncodedCommand`(UTF-16LE 再 base64):直接写在命令行里,`$_` 在远端会被吃掉。
+  输出用 `[Console]::OutputEncoding = UTF8`,hub 按 UTF-8 解码。
+
+### 决定 4 · 已在跑的任务不再启动;这不是重启
+
+任务注册时设了 `MultipleInstancesPolicy=IgnoreNew`(`clients/windows-agent/setup_remote_start.py:138`),
+在跑时再启动会被 Windows 忽略。脚本看到 `Running` 就不发启动,只等 agent 自己连回来
+(agent 断线后按 1/2/5/10 秒退避重连)。等不到就报 `AGENT_START_NO_CONNECT`,
+文字写明「再启动一次也不会变」。hub 这边目前没有单纯重启 agent 的办法:
+`agent-update` 只在文件变了时重启。
+
+### 决定 5 · 启动后 3 秒读回状态,不等满全程
+
+`Start-ScheduledTask` 成功只说明任务被触发。没人登录时任务不会真跑(任务是
+`InteractiveToken`);`run-agent.bat` 一开头就失败时任务几秒内结束。两种情况都等不到 agent。
+所以启动后 3 秒读回 `State`:不是 `Running` 就当场报 `AGENT_START_TASK_FAILED`,
+带上 `LastTaskResult` 和日志尾,不让人白等 60 秒。
+
+### 被否掉的做法
+
+| 做法 | 为什么没选 |
+|---|---|
+| CLI 自己 ssh | MCP / 网页用不了;CLI 不一定和 hub 在同一台机器上,`~/.ssh/config` 也不一定有这个 Host |
+| 请求体带主机名 | hub API 没鉴权,局域网里谁都能让 hub 用它的钥匙去 ssh 任意主机 |
+| 解析 `schtasks /Run` / `/Query` 的文字 | 随系统语言变 |
+| 任务在跑时先停再启动,当成重启 | 重启要单独想清楚(停掉时正在烧录怎么办),另立一条再做。停的手段已有实测:`Stop-ScheduledTask` 会把 cmd.exe 和 python 一起结束(见「台架实测」) |
+
+### 边界
+
+- 一个 hub 只配一个台架主机。和 ADR-060 一样,判断「有没有 agent 连着」看的是
+  `registry.current_agent`,两个 agent 时只要有一个连着就不启动(DEBT-083)。
+- agent 的 `log_file` 改过位置时,读不到日志,结果里写「no log at …」,不去猜。
+- 第一次连台架主机前,它的主机指纹要已在 hub 用户的 `known_hosts` 里;`BatchMode=yes`
+  遇到新指纹直接失败(报 `AGENT_START_SSH_FAILED` 并带上 ssh 的原话),不会挂在提问上。
+
+### 台架实测(2026-10-20,台架 agent build 02c19ab87957)
+
+| 路径 | 怎么造的 | 结果 |
+|---|---|---|
+| already_connected | 重启 hub 后立刻调;hub 起来要约 12 秒,agent 在这期间已经连上 | 0.3 秒返回,没有发 ssh |
+| started | 经 ssh `Stop-ScheduledTask alb-agent`,3 秒后 cmd.exe 和 python 都没了,任务 `Ready`,hub 上 0 个 agent | 5.4 秒 agent 连上;之后 `alb devices` 见板子、串口命令有回显 |
+| NO_TASK | 直接调 `start_agent()`,任务名给一个不存在的 | 报 NO_TASK,文字指向 setup-remote-start.bat |
+| NO_CONNECT(任务在跑) | 直接调 `start_agent()`,注册表换成永远没有 agent 的假对象,等 5 秒 | 读到 `state_before=Running`,没发启动;带回 `logs\agent.log` 最后 20 行(真实内容) |
+| SSH_FAILED | 主机名给一个解析不了的 | 报 SSH_FAILED,带 ssh 原话 `Could not resolve hostname` |
+
+没验到:reconnected 经 hub 那条(要卡在 hub 刚起、agent 还没连上的几秒里调,这次没卡上;单元测试覆盖)·
+TASK_FAILED(要让台架上没人登录,或把任务禁用)。
+
+**关联**: ADR-059(操作表)· ADR-060(远程更新;API 没鉴权的代价)· DEBT-083(多 agent 寻址)· `cf163cd`

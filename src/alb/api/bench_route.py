@@ -26,6 +26,15 @@ on the bench host — the agent builds the argv from its own table.
         stream; the done line's `data.outcome` says `updated`, and a failed
         line's code says whether the bench host rolled back
         (AGENT_UPDATE_ROLLED_BACK) or never came back (AGENT_UPDATE_NO_RETURN).
+
+    POST /api/bench/agent-start
+        Body: {"wait_s": <seconds to wait for the agent, 5-300, default 60>}
+        Start the bench agent over ssh when no agent is connected (ADR-061):
+        the bench host's scheduled task, then a wait for the agent's hello.
+        The ssh host and the task come from this hub's environment only —
+        the body says how long to wait, never where to connect or what to run.
+        done.data.outcome is `already_connected`, `started` or `reconnected`
+        (the task was already running and its agent came back on its own).
 """
 
 from __future__ import annotations
@@ -38,6 +47,7 @@ from pydantic import BaseModel, Field
 
 from alb.api.flash_route import _resolve_image, _stream
 from alb.api.schema import API_VERSION
+from alb.remote.agent_start import CONNECT_TIMEOUT_S, MAX_WAIT_S, MIN_WAIT_S, start_agent
 from alb.remote.agent_update import local_build, update_agent
 from alb.remote.flash import get_flash_service
 from alb.remote.registry import get_agent_registry
@@ -48,6 +58,15 @@ router = APIRouter(prefix="/api/bench", tags=["bench"])
 class AgentUpdateBody(BaseModel):
     config_text: str | None = Field(
         None, description="replace the bench agent's agent.conf with this text"
+    )
+
+
+class AgentStartBody(BaseModel):
+    wait_s: float = Field(
+        CONNECT_TIMEOUT_S,
+        ge=MIN_WAIT_S,
+        le=MAX_WAIT_S,
+        description="seconds to wait for the agent to reach the hub",
     )
 
 
@@ -88,4 +107,11 @@ async def bench_agent_update(body: AgentUpdateBody) -> StreamingResponse:
         lambda on_event: update_agent(
             svc, get_agent_registry(), config_text=body.config_text, on_event=on_event
         )
+    )
+
+
+@router.post("/agent-start")
+async def bench_agent_start(body: AgentStartBody) -> StreamingResponse:
+    return await _stream(
+        lambda on_event: start_agent(get_agent_registry(), wait_s=body.wait_s, on_event=on_event)
     )

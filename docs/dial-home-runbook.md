@@ -108,6 +108,12 @@ The agent auto-reconnects with backoff and serves a **local status page** on
 the hub *before* you involve a board, even when the hub never saw the agent
 (wrong token / hub unreachable show up here, with the last error).
 
+To start the agent later without going to the host: run
+`setup-remote-start.bat` there once (authorises the hub's ssh key, registers
+the `alb-agent` scheduled task), set `ALB_BENCH_SSH_HOST` in the hub's
+`hub.env`, and run `alb bench agent-start` on the hub. It starts an agent
+that is not running; it does not restart one that is (ADR-061).
+
 ## 3. Verify each hop
 
 Walk down the chain; each hop has an unambiguous "good" signal.
