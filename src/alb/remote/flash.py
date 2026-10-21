@@ -33,7 +33,7 @@ import hashlib
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -77,6 +77,10 @@ DIAL_BACK_TIMEOUT_S = 30.0
 # later caller — the failure mode this is protecting against is not a slow
 # flash, it is a permanently busy bench.
 JOB_TIMEOUT_S = 30 * 60.0
+
+# How long a failed image send waits for the agent's own report before the
+# send error alone is the answer.
+SEND_FAILED_GRACE_S = 5.0
 
 # After a plan's `reboot-bootloader`: how long to wait for the board to come
 # back to fastboot (callers may override per run), how often to look, and how
@@ -683,7 +687,7 @@ class FlashService:
         except JobProtocolError as e:
             return _fail("FLASH_FAILED", f"agent spoke an unexpected frame: {e}")
         except Exception as e:  # channel open / send failures
-            return _fail("FLASH_FAILED", f"job '{label}' failed: {e or type(e).__name__}")
+            return _fail("FLASH_FAILED", f"job '{label}' failed: {_error_text(e)}")
 
     async def _drive(
         self,
@@ -706,12 +710,71 @@ class FlashService:
         )
         try:
             await channel.send(encode_control(request))
-            if after_request is not None:
-                await after_request(channel)
-            return await _collect(channel, on_event, started)
+            if after_request is None:
+                return await _collect(channel, on_event, started)
+            return await _send_while_collecting(channel, after_request(channel), on_event, started)
         finally:
             with contextlib.suppress(Exception):
                 await channel.aclose()
+
+
+async def _send_while_collecting(
+    channel: DataChannel,
+    sending: Awaitable[Any],
+    on_event: EventSink | None,
+    started: float,
+) -> FlashResult:
+    """Send the image and read the agent's events at the same time.
+
+    The agent answers every 64 KiB with a progress frame. Read only after the
+    last byte went out, those frames pile up unread; once the buffers between
+    the two hosts are full the agent blocks on its next answer, stops reading
+    the image, and the hub blocks on its next chunk. Nobody answers a ping
+    either, so the agent drops the channel after its keepalive (20 s ping +
+    20 s wait) and a 10 s close wait. 2026-10-20 bench: a 160 MB boot.img
+    (2560 answers) still fit; the 2.2 GB super.img (34 000) failed after
+    exactly 50 s without a progress event.
+
+    The agent may also answer before the image is all out — no space, no
+    device: that answer is the result, and the rest is not sent."""
+    collector = asyncio.ensure_future(_collect(channel, on_event, started))
+    sender = asyncio.ensure_future(sending)
+    try:
+        await asyncio.wait({collector, sender}, return_when=asyncio.FIRST_COMPLETED)
+        if sender.done() and sender.exception() is None:
+            return await collector  # the image is out; the answer follows
+        if not collector.done():
+            # The send failed. The agent's report, or "closed without a
+            # result", still says more — unless the channel is up and only
+            # the hub side failed (the file could not be read).
+            try:
+                await asyncio.wait_for(asyncio.shield(collector), SEND_FAILED_GRACE_S)
+            except TimeoutError:
+                failed = sender.exception()
+                assert failed is not None
+                raise failed from None
+        outcome = collector.result()
+        if outcome.data.get("result_lost") and not sender.done():
+            # Closed under a send still in flight: it is failing too, and its
+            # error says how. Either side may notice first.
+            await asyncio.wait({sender}, timeout=SEND_FAILED_GRACE_S)
+        if not outcome.ok and sender.done() and not sender.cancelled():
+            failed = sender.exception()
+            if failed is not None:
+                outcome.error = f"{outcome.error} (sending the image: {_error_text(failed)})"
+        return outcome
+    finally:
+        for task in (collector, sender):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+
+def _error_text(e: BaseException) -> str:
+    """`str(e)` is "" for some of them — an exception object is always
+    truthy, so `e or type(e).__name__` printed nothing (2026-10-21 bench)."""
+    return f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
 
 
 async def _stream_file(channel: DataChannel, path: Path) -> None:

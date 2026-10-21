@@ -26,17 +26,27 @@ _HDR = struct.Struct(">cI")
 
 class _Channel:
     """A fake DataChannel that replays scripted agent frames and records what
-    the hub sent."""
+    the hub sent.
 
-    def __init__(self, replies: list[bytes]) -> None:
+    Like the real agent, it answers an image job only once the image is in
+    (the zero-length end frame) — unless `early`, the agent that refuses
+    before taking a byte."""
+
+    def __init__(self, replies: list[bytes], *, early: bool = False) -> None:
         self._replies = list(replies)
         self.sent: list[bytes] = []
         self.closed = False
+        self._early = early
+        self._image_in = asyncio.Event()
 
     async def send(self, data: bytes) -> None:
         self.sent.append(data)
+        if data == _HDR.pack(KIND_DATA, 0):
+            self._image_in.set()
 
     async def recv(self) -> bytes:
+        if not self._early and "size" in self.request():
+            await self._image_in.wait()
         if not self._replies:
             return b""
         return self._replies.pop(0)
@@ -353,3 +363,120 @@ def test_status_view_false_without_a_capable_agent(monkeypatch):
 
     monkeypatch.setattr(type(get_agent_registry()), "current_agent", lambda self: None)
     assert forwarder._flash_view()["available"] is False
+
+
+# ── the image goes out while the agent's answers are read ───────────────
+
+
+class _BoundedBench:
+    """Both directions as small bounded queues, like the socket buffers
+    between hub and agent. The agent answers every data frame with a
+    progress frame and blocks while the hub is not reading them — the
+    2026-10-21 bench: a 2.2 GB super.img stopped dead, 160 MB images
+    still fit."""
+
+    def __init__(self, depth: int = 4) -> None:
+        self.to_agent: asyncio.Queue[bytes] = asyncio.Queue(depth)
+        self.to_hub: asyncio.Queue[bytes] = asyncio.Queue(depth)
+        self.agent_id = "agent-1"
+        self.caps = ["adb", "fastboot"]
+        self.task: asyncio.Task | None = None
+
+    async def open_data_channel(self, *, ctype, role, params, timeout):  # noqa: ASYNC109
+        self.task = asyncio.create_task(self._agent())
+        return self
+
+    async def send(self, data: bytes) -> None:
+        await self.to_agent.put(data)
+
+    async def recv(self) -> bytes:
+        return await self.to_hub.get()
+
+    async def aclose(self) -> None:
+        if self.task is not None:
+            self.task.cancel()
+
+    async def _agent(self) -> None:
+        req = json.loads((await self.to_agent.get())[5:])
+        got = 0
+        while got < req["size"]:
+            frame = await self.to_agent.get()
+            got += len(frame) - 5
+            progress = {"ev": "progress", "phase": "transfer", "done": got, "total": req["size"]}
+            await self.to_hub.put(_ctl(progress))
+        await self.to_agent.get()  # the end frame
+        await self.to_hub.put(_ctl({"ev": "done", "ok": True, "rc": 0}))
+
+
+async def test_answers_are_read_while_the_image_goes_out(tmp_path):
+    img = tmp_path / "super.img"
+    img.write_bytes(b"s" * (CHUNK * 40))
+    bench = _BoundedBench()
+    r = await asyncio.wait_for(_service(bench).flash("super", img), 10)
+    assert r.ok, r.error
+    transfer = [e for e in r.events if e.phase == "transfer"]
+    assert len(transfer) == 40 and transfer[-1].done == CHUNK * 40
+
+
+async def test_an_agent_that_refuses_first_is_the_answer_and_the_rest_is_not_sent(tmp_path):
+    img = tmp_path / "super.img"
+    img.write_bytes(b"s" * (CHUNK * 8))
+    no_space = {"ev": "done", "ok": False, "code": "FLASH_AGENT_NO_SPACE", "error": "temp full"}
+    ch = _Channel([_ctl(no_space)], early=True)
+    r = await _service(_Agent(ch)).flash("super", img)
+    assert (r.ok, r.code, r.error) == (False, "FLASH_AGENT_NO_SPACE", "temp full")
+    assert len(ch.image_bytes()) < CHUNK * 8, "stopped sending once the agent had answered"
+
+
+class _BreaksWhileSending(_Channel):
+    """The connection drops under the hub's send; the agent's side then
+    reads as closed. ConnectionResetError() prints as "" — the bench's
+    "failed: " with nothing after it."""
+
+    def __init__(self) -> None:
+        super().__init__([], early=True)
+        self._broken = asyncio.Event()
+
+    async def send(self, data: bytes) -> None:
+        if self.sent:
+            self._broken.set()
+            raise ConnectionResetError()
+        await super().send(data)
+
+    async def recv(self) -> bytes:
+        await self._broken.wait()
+        return b""
+
+
+async def test_a_channel_that_breaks_mid_image_says_unknown_and_why(tmp_path):
+    img = tmp_path / "super.img"
+    img.write_bytes(b"s" * (CHUNK * 4))
+    r = await _service(_Agent(_BreaksWhileSending())).flash("super", img)
+    assert r.ok is False and r.data == {"result_lost": True}
+    assert "unknown" in r.error
+    assert r.error.endswith("(sending the image: ConnectionResetError)"), r.error
+
+
+async def test_an_unreadable_image_on_the_hub_fails_with_the_read_error(tmp_path, monkeypatch):
+    """The channel is fine and the agent is still waiting for bytes: only
+    the hub's own error can say what happened."""
+    import alb.remote.flash as flash_mod
+
+    async def unreadable(channel, path) -> None:
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(flash_mod, "_stream_file", unreadable)
+    monkeypatch.setattr(flash_mod, "SEND_FAILED_GRACE_S", 0.1)
+    img = tmp_path / "super.img"
+    img.write_bytes(b"s" * 10)
+    ch = _Channel([_ctl({"ev": "done", "ok": True, "rc": 0})])  # waits for the image
+    r = await asyncio.wait_for(_service(_Agent(ch)).flash("super", img), 5)
+    assert (r.ok, r.code) == (False, "FLASH_FAILED")
+    assert r.error.endswith("failed: OSError: disk went away"), r.error
+
+
+def test_an_exception_that_prints_as_nothing_is_named():
+    from alb.remote.flash import _error_text
+
+    assert _error_text(ConnectionResetError()) == "ConnectionResetError"
+    assert _error_text(OSError("disk")) == "OSError: disk"

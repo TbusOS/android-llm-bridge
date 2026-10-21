@@ -8,6 +8,7 @@ confirmed" is exercised end to end rather than asserted.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import struct
@@ -79,15 +80,21 @@ class _Chan:
         self.bench = bench
         self.sent: list[bytes] = []
         self.replies: list[bytes] | None = None
+        self._image_in = asyncio.Event()
 
     async def send(self, data: bytes) -> None:
         self.sent.append(data)
+        if data == _HDR.pack(KIND_DATA, 0):
+            self._image_in.set()
 
     async def aclose(self) -> None:
         pass
 
     async def recv(self) -> bytes:
         if self.replies is None:
+            # The real agent answers a flash once the image is in.
+            if json.loads(_frames(self.sent[0])[0][1])["op"] == "flash":
+                await self._image_in.wait()
             self.replies = await self._answer()
         return self.replies.pop(0) if self.replies else b""
 
