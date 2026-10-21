@@ -156,6 +156,12 @@ class AgentView:
     # The op table it reported (ADR-059). None = an agent from before the
     # table; its ops are then inferred from caps (bench_ops.legacy_ops).
     ops: dict[str, OpSpec] | None = None
+    # Why no partition list applies (ADR-063 phase 2: the agent keeps one per
+    # board, and none is chosen or it has none for this one). Non-empty =
+    # `partitions` is empty for that reason, NOT "any name".
+    partitions_problem: str = ""
+    # The agent.conf key the list comes from, for the "add it to" hint.
+    partitions_key: str = "flash_partitions"
 
     def table(self) -> dict[str, OpSpec]:
         return self.ops if self.ops is not None else legacy_ops(self.caps)
@@ -382,7 +388,11 @@ def check_agent(rows: list[PlanRow], agent: AgentView | None) -> list[str]:
             f"the agent refuses images over {ceiling} bytes ({shown}) — "
             "update alb_agent.py on the agent host"
         )
-    if agent.partitions:
+    if agent.partitions_problem:
+        lines = [r.line for r in running if r.partition]
+        if lines:
+            problems.append(f"{agent.partitions_problem} (line {', '.join(map(str, lines))})")
+    elif agent.partitions:
         allowed = set(agent.partitions)
         refused = [r for r in running if r.partition and r.partition not in allowed]
         if refused:
@@ -390,7 +400,7 @@ def check_agent(rows: list[PlanRow], agent: AgentView | None) -> list[str]:
             where = ", ".join(f"{r.partition} (line {r.line})" for r in refused)
             problems.append(
                 f"not on the agent's partition allowlist: {where} — add "
-                f"{','.join(names)} to flash_partitions in agent.conf, or skip them"
+                f"{','.join(names)} to {agent.partitions_key} in agent.conf, or skip them"
             )
     return problems
 

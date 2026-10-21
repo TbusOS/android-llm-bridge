@@ -723,8 +723,15 @@ def _flash_view() -> dict[str, Any]:
     # hard-coded picker offered four partitions, none of which this bench
     # permits, so every web flash died at FLASH_PARTITION_REJECTED — the
     # plumbing worked end to end and the page was still unusable.
-    partitions = list(getattr(agent, "flash_partitions", []) or []) if agent else []
+    from alb.remote.bench_board import current_board, partition_list
+
+    allowed = partition_list(agent, current_board())
+    lists = {
+        "partitions": allowed.names,
+        "partitions_problem": allowed.problem,
+        "board": allowed.board,
+    }
     service = _flash._SERVICE
     if service is None:
-        return {"available": available, "busy": False, "job": "", "partitions": partitions}
-    return {**service.status(), "available": available, "partitions": partitions}
+        return {"available": available, "busy": False, "job": "", **lists}
+    return {**service.status(), "available": available, **lists}

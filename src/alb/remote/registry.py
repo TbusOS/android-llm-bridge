@@ -85,6 +85,7 @@ class AgentConnection:
         send_control: SendControl,
         registry: AgentRegistry,
         flash_partitions: list[str] | None = None,
+        boards: dict[str, dict[str, Any]] | None = None,
         ops: dict[str, OpSpec] | None = None,
         build: str = "",
         last_update: dict[str, Any] | None = None,
@@ -105,6 +106,9 @@ class AgentConnection:
         # Callers must not read empty as "nothing allowed" — see the web
         # partition picker, which falls back to a generic list in that case.
         self.flash_partitions: list[str] = list(flash_partitions or [])
+        # Per-board lists and products (ADR-063 phase 2), as parsed by
+        # bench_board.parse_agent_boards. Empty = an agent without them.
+        self.boards: dict[str, dict[str, Any]] = dict(boards or {})
         # The agent's op table (ADR-059). An agent from before the table sends
         # none; it then gets one inferred from its caps, and `ops_reported`
         # stays False so status pages can say the table is a guess.
@@ -228,6 +232,7 @@ class AgentRegistry:
                 "last_update": c.last_update,
                 "caps": c.caps,
                 "flash_partitions": c.flash_partitions,
+                "boards": c.boards,
                 "ops": sorted(c.op_table),
                 "ops_reported": c.ops_reported,
                 "adb_devices": c.adb_devices,

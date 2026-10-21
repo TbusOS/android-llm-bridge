@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from alb.remote.bench_board import PartitionList, current_board, partition_list
 from alb.remote.bench_ops import OpSpec, check_params, legacy_ops, ops_of
 from alb.remote.flash_plan import AgentView, Plan, PlanResult, PlanRow
 from alb.remote.jobframe import FrameReader, JobProtocolError, encode_control, encode_data
@@ -260,19 +261,26 @@ class FlashService:
         "any well-formed name" — NOT "none allowed". Callers that render a
         picker must treat empty as "we don't know, offer something generic",
         because offering an empty list is indistinguishable from a bench that
-        cannot flash at all."""
-        agent = self._get_agent()
-        return list(getattr(agent, "flash_partitions", []) or []) if agent else []
+        cannot flash at all. With per-board lists it is the chosen board's,
+        and empty also when no list applies — `partition_list()` says why."""
+        return self.partition_list().names
+
+    def partition_list(self) -> PartitionList:
+        """The list that applies to the chosen bench board (ADR-063)."""
+        return partition_list(self._get_agent(), current_board())
 
     def agent_view(self) -> AgentView | None:
         """What a flash plan checks itself against before its first row."""
         agent = self._get_agent()
         if agent is None:
             return None
+        allowed = self.partition_list()
         return AgentView(
             caps=list(getattr(agent, "caps", []) or []),
-            partitions=self.partitions(),
+            partitions=allowed.names,
             ops=ops_of(agent),
+            partitions_problem=allowed.problem,
+            partitions_key=allowed.key,
         )
 
     def ops(self) -> dict[str, OpSpec]:
@@ -294,11 +302,14 @@ class FlashService:
         }
 
     def status(self) -> dict[str, Any]:
+        allowed = self.partition_list()
         return {
             "available": self.available(),
             "busy": self.busy,
             "job": self._current,
-            "partitions": self.partitions(),
+            "partitions": allowed.names,
+            "partitions_problem": allowed.problem,
+            "board": allowed.board,
         }
 
     @contextlib.asynccontextmanager
@@ -345,8 +356,10 @@ class FlashService:
         spec = table.get(name)
         if spec is None:
             return _unknown_op(agent, name, table)
-        allowlist = list(getattr(agent, "flash_partitions", []) or [])
-        values, code, problem = check_params(spec, dict(params or {}), allowlist)
+        allowed = partition_list(agent, current_board())
+        if allowed.problem and any(p.kind == "partition" for p in spec.params):
+            return _fail("FLASH_BOARD_NOT_LISTED", allowed.problem)
+        values, code, problem = check_params(spec, dict(params or {}), allowed.names)
         if problem:
             return _fail(code, problem)
         if spec.image and image is None:
@@ -722,6 +735,12 @@ class FlashService:
         if agent is None:
             return _fail("FASTBOOT_UNAVAILABLE", "agent disconnected before the job started")
         started = time.monotonic()
+        # Which board the job is for (ADR-063 phase 2): the agent applies that
+        # board's partition list and, if it has one, checks the product. An
+        # agent without per-board lists ignores the key.
+        board = current_board()
+        if board is not None:
+            request = {**request, "board": board}
         channel = await agent.open_data_channel(
             ctype=ChannelType.JOB,
             role=ChannelRole.JOB,
@@ -898,7 +917,11 @@ async def _open_timeline(
         # The whole request, digest included: six months later "which exact
         # image went onto this board" is the question the record has to
         # answer, and the digest is the only thing that answers it.
-        timeline.header(label=label, detail=dict(request))
+        detail = dict(request)
+        board = current_board()
+        if board is not None:
+            detail.setdefault("board", board)
+        timeline.header(label=label, detail=detail)
         if watch_uart:
             await timeline.attach_uart()
         return timeline

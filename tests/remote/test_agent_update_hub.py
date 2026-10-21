@@ -312,8 +312,10 @@ def test_ops_reports_which_build_this_hub_would_send(monkeypatch):
         def ops_reported(self):
             return True
 
-        def partitions(self):
-            return []
+        def partition_list(self):
+            from alb.remote.bench_board import PartitionList
+
+            return PartitionList([])
 
         def ops(self):
             return new_agent_ops()

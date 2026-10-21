@@ -90,6 +90,17 @@ class OpBody(BaseModel):
     image: str = Field("", description="workspace-relative path; image ops only")
 
 
+def _partition_fields(svc: Any) -> dict[str, Any]:
+    allowed = svc.partition_list()
+    # `partitions` empty with a problem = nothing may be written (ADR-063
+    # phase 2), not "any name"; `board` = the board whose list it is.
+    return {
+        "partitions": allowed.names,
+        "partitions_problem": allowed.problem,
+        "board": allowed.board,
+    }
+
+
 @router.get("/ops")
 async def bench_ops() -> dict[str, Any]:
     svc = get_flash_service()
@@ -101,7 +112,7 @@ async def bench_ops() -> dict[str, Any]:
         # the bench runs an older copy (`alb bench agent-update`).
         "bundle_build": local_build(),
         "reported": svc.ops_reported(),
-        "partitions": svc.partitions(),
+        **_partition_fields(svc),
         "ops": [spec.as_dict() for spec in sorted(svc.ops().values(), key=lambda s: s.name)],
     }
 

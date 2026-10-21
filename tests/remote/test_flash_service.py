@@ -124,8 +124,17 @@ async def test_status_reports_availability():
     # Exact equality on purpose: this is the payload a UI builds itself from,
     # so a silently-added key should have to be acknowledged here. `partitions`
     # is empty because this double advertises no allowlist — which downstream
-    # means "any well-formed name", not "nothing allowed".
-    assert svc.status() == {"available": True, "busy": False, "job": "", "partitions": []}
+    # means "any well-formed name", not "nothing allowed". `partitions_problem`
+    # says when empty means "nothing may be written" instead (ADR-063: per-board
+    # lists, none applies); `board` names whose list it is — none here.
+    assert svc.status() == {
+        "available": True,
+        "busy": False,
+        "job": "",
+        "partitions": [],
+        "partitions_problem": "",
+        "board": None,
+    }
 
 
 # ── the job round trip ──────────────────────────────────────────────────

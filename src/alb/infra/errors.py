@@ -284,6 +284,23 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Use a partition on the agent's allowlist, or widen it in agent.conf "
         "if you are certain",
     ),
+    "FLASH_BOARD_NOT_LISTED": ErrorSpec(
+        "FLASH_BOARD_NOT_LISTED",
+        "transport",
+        "The agent keeps a partition list per board, and none applies: no bench "
+        "board is chosen, or the agent has no list for the chosen one",
+        "Choose the board on the cable with `alb bench board use <name>`, or add "
+        "flash_partitions.<board> to agent.conf on the bench host",
+    ),
+    "FLASH_BOARD_MISMATCH": ErrorSpec(
+        "FLASH_BOARD_MISMATCH",
+        "transport",
+        "The board in fastboot is not the chosen bench board: `fastboot getvar "
+        "product` answered something other than its fastboot_product in agent.conf, "
+        "or nothing; nothing was written",
+        "Check which board is on the USB cable; switch with `alb bench board use "
+        "<name>` if the hub has the wrong one chosen",
+    ),
     "FLASH_OEM_REJECTED": ErrorSpec(
         "FLASH_OEM_REJECTED",
         "transport",

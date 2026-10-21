@@ -286,3 +286,89 @@ async def use_board(name: str, *, force: bool = False) -> dict[str, Any]:
         "cut_off": readers,
         "bound": bound,
     }
+
+
+# ── per-board flash allowlists (ADR-063 phase 2) ──────────────────────────
+
+
+def current_board() -> str | None:
+    """The chosen board when it is in the table, else None. Sent with every
+    job so the agent applies that board's partition list and identity check."""
+    board = serial_target()["board"]
+    return board if isinstance(board, str) else None
+
+
+def parse_agent_boards(raw: Any) -> dict[str, dict[str, Any]]:
+    """The `boards` field of an agent's hello, defensively.
+
+    {board: {"partitions": [names] | None, "product": str | None}}. None
+    means "not configured for that board" — it is never "any". Anything
+    malformed is dropped; an agent that sent nothing has no boards."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, entry in raw.items():
+        if not isinstance(name, str) or not _NAME_RE.match(name) or not isinstance(entry, dict):
+            continue
+        parts = entry.get("partitions")
+        product = entry.get("product")
+        out[name] = {
+            "partitions": [str(p) for p in parts] if isinstance(parts, list) else None,
+            "product": product if isinstance(product, str) and product else None,
+        }
+    return out
+
+
+@dataclass(frozen=True)
+class PartitionList:
+    """Which partitions the connected agent accepts for the chosen board.
+
+    `names` empty means "any well-formed name" — and only when `problem` is
+    "". A `problem` means no partition op can run; callers must check it
+    first, because the empty `names` that comes with it reads as "any"."""
+
+    names: list[str]
+    problem: str = ""
+    # The agent.conf key the list comes from, for "add it to …" hints.
+    key: str = "flash_partitions"
+    # The board whose list this is; None for an agent with one list for all.
+    board: str | None = None
+
+
+def partition_list(agent: Any, board: str | None) -> PartitionList:
+    """The one place the hub decides which list applies (ADR-063 phase 2).
+
+    An agent with no per-board lists: its single `flash_partitions`, as
+    before. With per-board lists: the chosen board's list, or a problem when
+    no board is chosen or the agent has no list for it. The agent checks the
+    same thing again; this is so a flash plan is refused before row 1, and
+    a picker offers the names that will be accepted."""
+    if agent is None:
+        return PartitionList([])
+    boards = getattr(agent, "boards", None) or {}
+    listed = sorted(b for b, e in boards.items() if e.get("partitions") is not None)
+    if not listed:
+        return PartitionList(list(getattr(agent, "flash_partitions", []) or []))
+    key = f"flash_partitions.{board}" if board else "flash_partitions.<board>"
+    if board is None:
+        return PartitionList(
+            [],
+            f"the agent keeps a partition list per board ({', '.join(listed)}) and no bench "
+            "board is chosen — `alb bench board use <name>`",
+            key,
+            board,
+        )
+    names = boards.get(board, {}).get("partitions")
+    if names is None:
+        return PartitionList(
+            [],
+            f"the agent has no partition list for board {board!r} (it has: {', '.join(listed)})"
+            f" — add {key}=… to agent.conf on the bench host",
+            key,
+            board,
+        )
+    if not names:
+        # The agent refuses to start with one; read as "any" it would undo
+        # the whole point of the per-board lists.
+        return PartitionList([], f"the agent's list for board {board!r} is empty", key, board)
+    return PartitionList(list(names), "", key, board)

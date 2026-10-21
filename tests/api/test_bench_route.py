@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from alb.api.server import create_app
+from alb.remote.bench_board import PartitionList
 from alb.remote.flash import FlashEvent, FlashResult
 from tests.remote.bench_tables import new_agent_ops
 
@@ -27,8 +28,8 @@ class _Svc:
     def ops_reported(self):
         return True
 
-    def partitions(self):
-        return ["boot_a"]
+    def partition_list(self):
+        return PartitionList(["boot_a"])
 
     def ops(self):
         return new_agent_ops()
@@ -57,6 +58,7 @@ def test_ops_lists_the_table_with_parameters(svc):
     log = next(o for o in body["ops"] if o["name"] == "log-tail")
     assert [p["name"] for p in log["params"]] == ["source", "lines", "grep"]
     assert body["reported"] is True and body["agent"]["name"] == "bench"
+    assert (body["partitions"], body["partitions_problem"], body["board"]) == (["boot_a"], "", None)
 
 
 def test_run_streams_progress_then_the_verdict_with_data(svc):

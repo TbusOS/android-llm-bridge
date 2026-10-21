@@ -2879,7 +2879,7 @@ uvicorn 默认开压缩,hub 发出的每一帧都在它自己的事件循环里�
 
 ## ADR-063 · 台架板子表:串口指向哪块板,hub 运行中切换
 
-**日期**: 2026-10-21 · **状态**: 第一期(串口)已实现;第二期(烧录白名单按板子分)未做
+**日期**: 2026-10-21 · **状态**: 第一期(串口)、第二期(烧录白名单按板子分 + 核对板子身份)都已实现
 
 ### 这是什么
 
@@ -2927,11 +2927,36 @@ com/baud 开口);只是 hub 侧只实现了 hub.env 一个固定值。所以只�
   `/agent/status` 的 `forwarders.serial` 多了 `board` / `board_problem`,`com` / `baud` 是转发实际在用的值
 - 新错误码:`BENCH_BOARDS_NOT_CONFIGURED` · `BENCH_BOARDS_INVALID` · `BENCH_BOARD_UNKNOWN` · `BENCH_SERIAL_BUSY`
 
-### 第二期(未做):烧录白名单按板子分
+### 第二期:烧录白名单按板子分,写之前核对板子身份
 
-现在 agent.conf 的 `flash_partitions` 整台 agent 共用一份,多块板时只能取并集(2026-10-21 台架 41 个)。
-打算:agent.conf 每块板一份名单,hub 在烧录请求里带上当前板子名,agent 用自己的那份检查,并用
-`fastboot getvar product` 核对接着的确实是这块板 —— agent 不全信 hub(hub API 没鉴权,ADR-060 的代价)。
-要改协议、要推新 agent。
+**这是什么**:agent.conf 可以给每块板写一份分区名单 `flash_partitions.<板>=…`,和这块板在 fastboot 里
+`getvar product` 的应答 `fastboot_product.<板>=…`。板名就是 hub 板子表里的名字。hub 每个作业请求都带上
+当前选中的板子(`"board"`),agent 用这块板的名单检查;配了 product 的,改设备的作业在动设备之前先问一次板子是谁。
+
+**没有它会怎样**:名单整台 agent 一份,几块板轮流接同一根线时只能取并集(10-21 台架 41 个 = 一块 19 + 另一块 22)。
+只有一块板有的分区名,对另一块板也放行。线换了而忘了 `alb bench board use`,写进去的就是另一块板。
+
+**为什么这么设计**:
+| 做法 | 为什么没选 |
+|---|---|
+| 名单放在 hub(板子表里) | hub API 没鉴权(ADR-060 记的代价),谁能调 API 谁就能改名单;名单只能在 agent 这边,由 agent 判 |
+| agent 只看 hub 说的板名 | 板名只说「用哪份名单」,不说「线上接的是哪块板」;所以再问一次设备(`getvar product`,约 20 ms) |
+| 没带板名就退回总名单 / 并集 | 就是要去掉的那个毛病;按板模式下没带板名、或板子没有名单,直接拒绝 `FLASH_BOARD_NOT_LISTED` |
+| 总名单和按板名单同时允许 | 要么总名单被忽略而且没有任何提示,要么没带板名的请求又用回并集;两个都写时 agent 拒绝启动 |
+| 空的按板名单当「没写」 | 一丢掉,agent 就回到「任何名字都行」;所以空名单也拒绝启动 |
+
+**什么时候用**:一台台架接多块板;往 agent.conf 加新板子时同时加它的名单,接上 USB 后读一次 `getvar product` 填进去。
+
+**机制**:
+- agent:`_load_config` 认 `<键>.<板名>`(只有 `flash_partitions` / `fastboot_product` 两个键,板名规则和 hub 板子表相同);
+  `_partition_refusal` 按板判名单;`_check_board_identity` 在查过设备在不在之后、收镜像之前跑,
+  只管 `mutates` 且 `needs=fastboot-device` 的作业(`getvar` / `devices` 不问);hello 的 `boards` 字段、
+  启动日志、`--self-check` 都报每块板的名单和 product。配置错误在停掉旧实例之前就拒绝,台架不会两头落空
+- hub:`bench_board.partition_list()` 是唯一决定用哪份名单的地方,返回(名单, problem);**problem 非空时名单为空
+  不等于「不限」**。`run_op` 预检查、flash plan 的 `check_agent`、`/api/bench/ops`、`/agent/status` 都读它;
+  `_drive` 给每个请求加 `board`,时间线头里也记
+- 老 agent 不认识 `board` 键,照旧用自己那一份名单(多出来的键忽略)
+- 新错误码:`FLASH_BOARD_NOT_LISTED` · `FLASH_BOARD_MISMATCH`
+- 没做:网页烧录页在按板模式下还会显示通用分区列表(写的时候 hub 会拒绝并说明原因)
 
 **关联**: ADR-050(COM/baud 按会话下发)· ADR-051(进程级转发)· ADR-054(串口共享会话)· ADR-056(烧录作业锁)

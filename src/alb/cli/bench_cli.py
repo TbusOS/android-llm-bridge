@@ -139,11 +139,13 @@ def cmd_ops(as_json: bool = typer.Option(False, "--json", help="raw table")) -> 
         if detail:
             typer.echo(f"  {'':<12} {detail}")
     partitions = data.get("partitions") or []
-    typer.echo(
-        f"  partition allowlist: {', '.join(partitions)}"
-        if partitions
-        else "  partition allowlist: none configured (any well-formed name)"
-    )
+    whose = f" (board {data['board']})" if data.get("board") else ""
+    if data.get("partitions_problem"):
+        typer.echo(f"  partition allowlist: none applies — {data['partitions_problem']}")
+    elif partitions:
+        typer.echo(f"  partition allowlist{whose}: {', '.join(partitions)}")
+    else:
+        typer.echo("  partition allowlist: none configured (any well-formed name)")
 
 
 @app.command("run")

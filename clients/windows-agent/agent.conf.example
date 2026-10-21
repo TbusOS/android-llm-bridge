@@ -51,3 +51,18 @@ log_file=logs/agent.log
 # undoable and the board may not come back to report it.
 #   flash_partitions=vendor_cfg,boot,dtbo
 #flash_partitions=
+
+# One bench host, several boards swapped on its cable: give each board its
+# own list instead (ADR-063). The board names are the hub's board table
+# names (`alb bench board`); the hub sends the board it has chosen with
+# every job. With any per-board list set:
+#   - a partition op must name a board that has a list here, and the
+#     partition must be on THAT board's list — otherwise FLASH_BOARD_NOT_LISTED
+#     or FLASH_PARTITION_REJECTED, before anything is written;
+#   - flash_partitions above must stay unset (the agent refuses to start).
+# fastboot_product.<board> is what `fastboot getvar product` answers on that
+# board. Set it and every write first asks the device; another board on the
+# cable is refused with FLASH_BOARD_MISMATCH and nothing is written.
+#   flash_partitions.board-a=boot,dtbo,vendor_cfg
+#   fastboot_product.board-a=board_a_product
+#   flash_partitions.board-b=boot_a,boot_b,dtbo_a,dtbo_b

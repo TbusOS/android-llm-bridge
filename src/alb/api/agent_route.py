@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from alb.api.schema import API_VERSION
 from alb.remote import protocol
+from alb.remote.bench_board import parse_agent_boards
 from alb.remote.bench_ops import parse_ops
 from alb.remote.forwarder import (
     forwarder_status,
@@ -211,6 +212,8 @@ async def agent_connect(ws: WebSocket) -> None:
             # same way downstream (fall back to a generic partition list rather
             # than claiming the bench allows nothing).
             flash_partitions=[str(p) for p in (hello.get("flash_partitions") or [])],
+            # Per-board lists (ADR-063 phase 2); absent on older agents.
+            boards=parse_agent_boards(hello.get("boards")),
             # None (absent) = an agent from before the op table — the
             # connection infers one from caps (ADR-059 决定 4).
             ops=parse_ops(hello.get("ops")),

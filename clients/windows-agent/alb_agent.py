@@ -430,6 +430,10 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
         # different statement from "no partitions allowed" and must stay
         # distinguishable at the far end.
         flash_partitions=sorted(_FLASH_PARTITIONS),
+        # Per-board lists (ADR-063 phase 2): {board: {"partitions": [...] or
+        # None, "product": "..." or None}}. None = not configured for that
+        # board — never "any", which is what an empty flash_partitions means.
+        boards=_boards_view(),
         # Outcome of the last remote update, if any (ADR-060).
         update=_LAST_UPDATE or None,
         token=token,
@@ -806,6 +810,17 @@ class _JobReader:
 # through every call would be noise.
 _FASTBOOT_PATH = ""
 _FLASH_PARTITIONS: frozenset[str] = frozenset()
+# Per-board lists (ADR-063 phase 2), from `flash_partitions.<board>` and
+# `fastboot_product.<board>` in agent.conf. One bench host, one USB cable,
+# boards swapped on it: a single list had to be the union of every board's
+# partitions, so a name only one board has was accepted for all of them.
+# Any per-board list puts this agent in per-board mode — a partition op must
+# then name a listed board, and the global list may not be set as well.
+# The hub sends the board it has chosen (`alb bench board use`); it is not
+# trusted further than that: the agent checks the name against its own
+# lists, and with a product configured, asks the device who it is.
+_BOARD_PARTITIONS: dict[str, frozenset[str]] = {}
+_BOARD_PRODUCT: dict[str, str] = {}
 # Where this agent's own log lands (None = file logging off). It is the only
 # file `log-tail agent` will ever read.
 _AGENT_LOG_PATH: Path | None = None
@@ -867,7 +882,7 @@ def _oem_allowed(command: str) -> bool:
     return command in _OEM_COMMANDS
 
 
-def _partition_allowed(name: str) -> bool:
+def _partition_allowed(name: str, board: Any = None) -> bool:
     """Partition names this agent will pass to fastboot.
 
     Deliberately a shape check plus an optional allowlist, both evaluated
@@ -877,9 +892,52 @@ def _partition_allowed(name: str) -> bool:
     `erase` shares the list with `flash`: erasing a partition takes no more
     authority than rewriting it, and a second list would only be a second
     thing to keep in step."""
+    return _partition_refusal(name, board) is None
+
+
+def _boards_view() -> dict[str, dict[str, Any]]:
+    """What hello, the start-up log and --self-check report per board."""
+    return {
+        b: {
+            "partitions": sorted(_BOARD_PARTITIONS[b]) if b in _BOARD_PARTITIONS else None,
+            "product": _BOARD_PRODUCT.get(b),
+        }
+        for b in sorted(set(_BOARD_PARTITIONS) | set(_BOARD_PRODUCT))
+    }
+
+
+def _partition_refusal(name: str, board: Any = None) -> tuple[str, str] | None:
+    """None when `name` may go to fastboot for `board`; otherwise (code,
+    reason). Code "" means the parameter's own rejection code, and the
+    reason is "" where the old one-line message already says it all.
+
+    In per-board mode a request without a board, or naming a board with no
+    list here, is refused outright (FLASH_BOARD_NOT_LISTED): falling back
+    to "any name" or to the union is exactly what the per-board lists are
+    there to stop."""
     if not _PARTITION_RE.match(name):
-        return False
-    return True if not _FLASH_PARTITIONS else name in _FLASH_PARTITIONS
+        return "", ""
+    if not _BOARD_PARTITIONS:
+        if _FLASH_PARTITIONS and name not in _FLASH_PARTITIONS:
+            return "", ""
+        return None
+    listed = ", ".join(sorted(_BOARD_PARTITIONS))
+    if not isinstance(board, str) or not board:
+        return (
+            "FLASH_BOARD_NOT_LISTED",
+            f" — this agent keeps a partition list per board ({listed}) and the "
+            "request names no board; choose one on the hub with `alb bench board use`",
+        )
+    allowed = _BOARD_PARTITIONS.get(board)
+    if allowed is None:
+        return (
+            "FLASH_BOARD_NOT_LISTED",
+            f" — this agent has no partition list for board {board[:64]!r} "
+            f"(lists for: {listed}); add flash_partitions.<board> to agent.conf",
+        )
+    if name not in allowed:
+        return "", f" — not on board {board!r}'s list"
+    return None
 
 
 # ── the op table ─────────────────────────────────────────────────────
@@ -963,8 +1021,12 @@ class ParamSpec:
             raw = ""
         what = self.label or self.name
         if self.kind == "partition":
-            if not isinstance(raw, str) or not _partition_allowed(raw):
+            if not isinstance(raw, str):
                 raise _JobRejected(self.code, f"{what} {raw!r} rejected by this agent")
+            refusal = _partition_refusal(raw, req.get("board"))
+            if refusal is not None:
+                code, why = refusal
+                raise _JobRejected(code or self.code, f"{what} {raw!r} rejected by this agent{why}")
             return raw
         if self.kind == "enum":
             # Exact: no case folding, no strip. The device would not fold it
@@ -1780,11 +1842,11 @@ async def _dispatch(data_ws: Any, reader: _JobReader, spec: OpSpec, req: Mapping
     if spec.image:
         await _run_image_op(data_ws, reader, spec, values, req)
         return
-    if spec.needs == "fastboot-device" and not await _device_present(
-        spec.argv[0] if spec.argv else _fastboot_path()
-    ):
+    fastboot = spec.argv[0] if spec.argv else _fastboot_path()
+    if spec.needs == "fastboot-device" and not await _device_present(fastboot):
         await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
         return
+    await _check_board_identity(spec, req, fastboot)
     if spec.builtin is not None:
         await data_ws.send(_job_control({"ev": "accepted", "detail": spec.name}))
         try:
@@ -1882,6 +1944,73 @@ async def _device_present(fastboot: str) -> bool:
     return bool(out.decode("utf-8", errors="replace").strip())
 
 
+# `fastboot getvar product` answers on stderr as `product: <value>`; some
+# bootloaders prefix `(bootloader) `.
+_PRODUCT_RE = re.compile(r"^(?:\(bootloader\)\s*)?product:[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
+
+
+async def _device_product(fastboot: str) -> tuple[str, str]:
+    """(product, what fastboot printed) for the board in fastboot now;
+    product is "" when the answer has no product line."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            fastboot,
+            "getvar",
+            "product",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as e:
+        raise _JobRejected("FLASH_FAILED", f"cannot run {fastboot!r} on this host: {e}") from e
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), _DEVICE_QUERY_TIMEOUT_S)
+    except TimeoutError:
+        await _reap(proc)
+        raise _JobRejected(
+            "FLASH_FAILED",
+            f"`fastboot getvar product` did not answer within {_DEVICE_QUERY_TIMEOUT_S:.0f}s — "
+            "the USB link or its driver is stuck; nothing was changed",
+        ) from None
+    except BaseException:
+        await _reap(proc)
+        raise
+    text = (out + b"\n" + err).decode("utf-8", errors="replace")
+    m = _PRODUCT_RE.search(text)
+    return (m.group(1) if m else ""), text.strip()
+
+
+async def _check_board_identity(spec: OpSpec, req: Mapping[str, Any], fastboot: str) -> None:
+    """Refuse (FLASH_BOARD_MISMATCH) unless the board in fastboot is the
+    board the request names. Only for ops that change the device, only when
+    agent.conf gives that board a `fastboot_product`.
+
+    The board name says which list applies; it does not say which board is
+    on the cable. Someone swaps the cable and forgets `alb bench board use`,
+    and every write would go to the other board under the wrong list. One
+    ~20 ms query before anything is written closes that."""
+    if not spec.mutates or spec.needs != "fastboot-device":
+        return
+    board = req.get("board")
+    want = _BOARD_PRODUCT.get(board) if isinstance(board, str) else None
+    if not want:
+        return
+    got, text = await _device_product(fastboot)
+    if got == want:
+        return
+    if not got:
+        raise _JobRejected(
+            "FLASH_BOARD_MISMATCH",
+            f"board {board!r} is product {want!r} in agent.conf, and `fastboot getvar product` "
+            f"named no product ({text[-200:]!r}) — nothing was changed",
+        )
+    raise _JobRejected(
+        "FLASH_BOARD_MISMATCH",
+        f"the board in fastboot is product {got!r}, but board {board!r} is {want!r} — "
+        "another board is on the cable, or the hub has the wrong one chosen "
+        "(`alb bench board use`); nothing was changed",
+    )
+
+
 async def _run_image_op(
     data_ws: Any,
     reader: _JobReader,
@@ -1923,6 +2052,7 @@ async def _run_image_op(
     if spec.needs == "fastboot-device" and not await _device_present(fastboot):
         await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
         return
+    await _check_board_identity(spec, req, fastboot)
 
     await data_ws.send(_job_control({"ev": "accepted", "detail": f"receiving {size} bytes"}))
 
@@ -3457,6 +3587,7 @@ def _self_check_main(args: argparse.Namespace) -> int:
                 "pyserial": pyserial,
                 "agent_id": args.agent_id,
                 "agent_id_fixed": args.agent_id_explicit,
+                "boards": _boards_view(),
             }
         )
     )
@@ -3819,6 +3950,15 @@ _CONFIG_KEYS: dict[str, Any] = {
     "fastboot_path": str,
     "flash_partitions": str,
 }
+# `<base>.<board>` keys (ADR-063 phase 2) → the args attribute holding
+# {board: value}. Config file only: a flag per board would be a flag whose
+# name is data.
+_BOARD_CONFIG_KEYS = {
+    "flash_partitions": "board_flash_partitions",
+    "fastboot_product": "board_fastboot_product",
+}
+# Same rule as the hub's board table (alb.remote.bench_board).
+_BOARD_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}\Z")
 
 
 def _default_config_path() -> Path:
@@ -3847,12 +3987,25 @@ def _load_config(path: Path) -> dict[str, Any]:
         value = value.strip()
         if not sep or not key:
             sys.exit(f"{path}:{lineno}: expected KEY=VALUE, got: {raw.strip()!r}")
-        if key not in _CONFIG_KEYS:
-            valid = ", ".join(sorted(_CONFIG_KEYS))
+        base, dot, board = key.partition(".")
+        board_dest = _BOARD_CONFIG_KEYS.get(base, "") if dot else ""
+        if board_dest:
+            if not _BOARD_NAME_RE.match(board):
+                sys.exit(
+                    f"{path}:{lineno}: bad board name {board!r} in {key!r} "
+                    "(1-32 of a-z 0-9 _ -, starting with a letter or digit)"
+                )
+        elif key not in _CONFIG_KEYS:
+            valid = ", ".join(
+                sorted(_CONFIG_KEYS) + [f"{b}.<board>" for b in sorted(_BOARD_CONFIG_KEYS)]
+            )
             sys.exit(f"{path}:{lineno}: unknown key {key!r} (valid keys: {valid})")
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
         if not value:
+            continue
+        if board_dest:
+            cfg.setdefault(board_dest, {})[board] = value
             continue
         try:
             cfg[key] = _CONFIG_KEYS[key](value)
@@ -4048,8 +4201,17 @@ def _log_environment(args: argparse.Namespace) -> None:
     # Say it at startup, not at the first failed flash: "no fastboot here" is
     # a five-minute fix on this host and an hour of confusion from the hub.
     if _fastboot_path():
-        allow = ",".join(sorted(_FLASH_PARTITIONS)) if _FLASH_PARTITIONS else "(any well-formed)"
+        if _BOARD_PARTITIONS:
+            allow = "per board"
+        elif _FLASH_PARTITIONS:
+            allow = ",".join(sorted(_FLASH_PARTITIONS))
+        else:
+            allow = "(any well-formed)"
         _log.info("fastboot: %s · partitions %s", _fastboot_path(), allow)
+        for board, row in _boards_view().items():
+            names = ",".join(row["partitions"]) if row["partitions"] is not None else "(no list)"
+            product = row["product"] or "(not checked)"
+            _log.info("board %s: product %s · partitions %s", board, product, names)
     else:
         _log.info(
             "fastboot: not found — this agent will NOT advertise the fastboot "
@@ -4063,6 +4225,10 @@ def _log_environment(args: argparse.Namespace) -> None:
     )
 
 
+def _partition_set(raw: str) -> frozenset[str]:
+    return frozenset(p.strip() for p in raw.split(",") if p.strip())
+
+
 def _apply_flash_config(args: argparse.Namespace) -> None:
     """Resolve the flash settings and build the op table once, before
     anything can use them.
@@ -4070,10 +4236,26 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
     Runs before the first `hello`, because the resolved path is what decides
     whether this agent claims the `fastboot` capability at all — and which
     rows the hello's op table carries."""
-    global _FASTBOOT_PATH, _FLASH_PARTITIONS, _OPS
+    global _FASTBOOT_PATH, _FLASH_PARTITIONS, _BOARD_PARTITIONS, _BOARD_PRODUCT, _OPS
     _FASTBOOT_PATH = _resolve_fastboot(getattr(args, "fastboot_path", None) or "")
-    raw = (getattr(args, "flash_partitions", None) or "").strip()
-    _FLASH_PARTITIONS = frozenset(p.strip() for p in raw.split(",") if p.strip())
+    _FLASH_PARTITIONS = _partition_set(getattr(args, "flash_partitions", None) or "")
+    per_board = getattr(args, "board_flash_partitions", None) or {}
+    _BOARD_PARTITIONS = {b: _partition_set(v) for b, v in per_board.items()}
+    products = getattr(args, "board_fastboot_product", None) or {}
+    _BOARD_PRODUCT = {b: v.strip() for b, v in products.items() if v.strip()}
+    # Both refuse at start-up rather than guess. An empty per-board list
+    # would be dropped, and the agent would be back to "any name"; a global
+    # list beside per-board ones is either ignored (surprise) or used for
+    # requests without a board (the union again).
+    empty = sorted(b for b, names in _BOARD_PARTITIONS.items() if not names)
+    if empty:
+        sys.exit(f"flash_partitions.{empty[0]} lists no partitions — name some, or remove the line")
+    if _BOARD_PARTITIONS and _FLASH_PARTITIONS:
+        sys.exit(
+            "flash_partitions and flash_partitions.<board> are both set — with per-board "
+            "lists, every partition must be on the list of the board it is meant for; "
+            "remove flash_partitions"
+        )
     # The op table follows from the same resolution (ADR-059): fastboot rows
     # only when the tool resolved, log-tail sources from what is configured.
     _OPS = _build_ops(_FASTBOOT_PATH, _log_sources())
@@ -4102,10 +4284,12 @@ def main() -> None:
     _CONFIG_EXPLICIT = args.config_explicit
     _IDENTITY_STABLE = args.agent_id_explicit
     _AGENT_ID = args.agent_id
+    # Before the previous instance is stopped: a flash setting this build
+    # refuses must leave the running agent in place, not the bench without one.
+    _apply_flash_config(args)
     # Before anything opens a COM port or the status page: the previous
     # instance of this agent holds both until it is gone.
     _claim_instance(args)
-    _apply_flash_config(args)
     _log_environment(args)
 
     try:
