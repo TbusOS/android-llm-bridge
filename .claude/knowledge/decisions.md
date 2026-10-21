@@ -2861,7 +2861,7 @@ uvicorn 默认开压缩,hub 发出的每一帧都在它自己的事件循环里�
 | 降低压缩级别 | 仍然比不压慢,而且台架和 hub 在同一个局域网,带宽不缺 |
 | 保持默认开 | 见上表 |
 
-保留 `ALB_WS_DEFLATE=1`,是因为 hub 和台架之间如果是慢速链路(VPN、公网),压缩可能反而更快。
+保留 `ALB_WS_DEFLATE=1`,是因为 hub 和台架之间如果是慢速网络(VPN、公网),压缩可能反而更快。
 默认值按现在的部署(同一局域网)取。
 
 ### 机制
@@ -2876,3 +2876,62 @@ uvicorn 默认开压缩,hub 发出的每一帧都在它自己的事件循环里�
 线上字节数翻倍(super 压缩后约 1.07 GB,不压 2.24 GB)。局域网里不是问题。
 
 **关联**: ADR-056(烧录作业通道)· `2c042ca`
+
+## ADR-063 · 台架板子表:串口指向哪块板,hub 运行中切换
+
+**日期**: 2026-10-21 · **状态**: 第一期(串口)已实现;第二期(烧录白名单按板子分)未做
+
+### 这是什么
+
+hub 读一张板子表(`ALB_BENCH_BOARDS` 指向的 TOML,每块板一个 `[boards.<名字>]`,写串口名和波特率)。
+`alb bench board use <名字>` 让串口转发改问 agent 要这块板的 COM 口和波特率,hub 不重启;
+选择记在工作目录 `bench/board.json`,hub 重启后还是这块板。没有表、或没选过,照旧用 hub.env 的
+`ALB_AGENT_SERIAL_COM` / `_BAUD`。
+
+### 没有它会怎样
+
+同一根串口线常在几块板之间换,板子波特率不同(一块 1500000,一块 115200)。原来 COM 口和波特率
+只在 alb-api 启动时从 hub.env 读一次(`forwarder.py` 进程级单例):换板子 = 改 hub.env + 重启 hub,
+重启时所有正在用台架的人(串口抓取、adb 转发、烧录)一起断。2026-10-21 一天里为此重启了 hub 两次,
+每次都要先跟别的会话约时间。
+
+### 为什么这么设计
+
+ADR-050 本来就定了「COM/baud 是 hub 下发的 per-session 参数」,agent 也照这个做了(每条串口通道按请求里的
+com/baud 开口);只是 hub 侧只实现了 hub.env 一个固定值。所以只改 hub,agent 不用更新。
+
+| 做法 | 为什么没选 |
+|---|---|
+| 每条 `alb serial …` 命令自带 `--baud` | 串口是共享会话(ADR-054,一个 COM 口多个读方):两条命令带不同波特率会互相打架;波特率属于「线接在哪块板上」这个事实,不属于某条命令 |
+| hub 自动认板子(读 adb 型号 / fastboot product) | 板子在 fastboot 或 bootloader 里时 adb 读不到;线换了而板子没开机时也读不到。可以做成切换后的核对,不能当唯一依据 |
+| 继续改 hub.env + 重启 | 见上 |
+| 有人在读也直接切 | 抓取会突然变乱码,而且没人知道为什么;所以默认拒绝,`--force` 才断开在读的人,并报断了几个 |
+
+切换期间占住烧录作业锁:烧录作业的时间线会挂这个串口,作业中途换波特率,证据就断了。有作业在跑时当场拒绝(和
+其他独占操作一样),切换期间新作业也会被拒。
+
+### 什么时候用
+
+把串口线从一块板换到另一块之后、开始抓串口或烧录之前。
+
+### 机制
+
+- `src/alb/remote/bench_board.py`:读表(名字 / 串口名 / 波特率逐项校验,错了报 `BENCH_BOARDS_INVALID`
+  并指出文件和条目)、`serial_target()` 决定用哪组值(选中的板子 > hub.env;选中的板子不在表里或表坏了,
+  回落 hub.env 并在状态里写 `problem`)、`use_board()`
+- `SerialForwarder.retarget()`:在会话锁里换参数;有活会话时拒绝(`SerialBusyError`)或在 `force` 下关掉它。
+  下一次打开串口就按新值问 agent
+- `FlashService.held()`:切换时占住作业锁,有作业时报 `FASTBOOT_BUSY`
+- 之前没绑过串口端口(hub.env 没写 COM)的 hub,切换后如果 agent 连着,立刻绑上 9001
+- 接口 `GET/POST /api/bench/board`;命令 `alb bench board` / `alb bench board use <名字> [--force]`;
+  `/agent/status` 的 `forwarders.serial` 多了 `board` / `board_problem`,`com` / `baud` 是转发实际在用的值
+- 新错误码:`BENCH_BOARDS_NOT_CONFIGURED` · `BENCH_BOARDS_INVALID` · `BENCH_BOARD_UNKNOWN` · `BENCH_SERIAL_BUSY`
+
+### 第二期(未做):烧录白名单按板子分
+
+现在 agent.conf 的 `flash_partitions` 整台 agent 共用一份,多块板时只能取并集(2026-10-21 台架 41 个)。
+打算:agent.conf 每块板一份名单,hub 在烧录请求里带上当前板子名,agent 用自己的那份检查,并用
+`fastboot getvar product` 核对接着的确实是这块板 —— agent 不全信 hub(hub API 没鉴权,ADR-060 的代价)。
+要改协议、要推新 agent。
+
+**关联**: ADR-050(COM/baud 按会话下发)· ADR-051(进程级转发)· ADR-054(串口共享会话)· ADR-056(烧录作业锁)

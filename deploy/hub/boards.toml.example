@@ -1,0 +1,25 @@
+# Bench boards: which COM port and baud each board's debug UART uses (ADR-063).
+#
+# One COM port on the bench host is often moved from board to board, and
+# boards speak different baud rates. List them here, point the hub at this
+# file with ALB_BENCH_BOARDS in hub.env, and switch while the hub runs:
+#
+#     alb bench board                 # the table, and where the console points
+#     alb bench board use board-b     # point the serial console at board-b
+#
+# The choice is remembered in the workspace (bench/board.json) across hub
+# restarts. With no board chosen, ALB_AGENT_SERIAL_COM / _BAUD in hub.env
+# apply as before.
+#
+# Names: 1-32 of a-z 0-9 _ -  ·  serial_com: the port name on the bench host
+# (COM27 on Windows)  ·  serial_baud: 300-12000000  ·  note: optional text.
+
+[boards.board-a]
+serial_com = "COM27"
+serial_baud = 1500000
+note = "example: a board whose debug UART runs at 1.5 Mbaud"
+
+[boards.board-b]
+serial_com = "COM27"
+serial_baud = 115200
+note = "example: another board on the same cable, at 115200"

@@ -33,7 +33,7 @@ import hashlib
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -218,6 +218,14 @@ async def digest_file(path: Path) -> tuple[int, str]:
     return await asyncio.to_thread(_work)
 
 
+class FlashBusyError(Exception):
+    """A job holds the lock; `job` names it."""
+
+    def __init__(self, job: str) -> None:
+        super().__init__(f"another job is running ({job})")
+        self.job = job
+
+
 class FlashService:
     """Process-level singleton (ADR-051 posture: one hub process owns device
     traffic). Resolves the agent lazily, so a reconnecting agent needs no
@@ -292,6 +300,21 @@ class FlashService:
             "job": self._current,
             "partitions": self.partitions(),
         }
+
+    @contextlib.asynccontextmanager
+    async def held(self, label: str) -> AsyncIterator[None]:
+        """Hold the job lock for a short hub-side change that must not overlap
+        a job — switching the bench board (ADR-063): a running job's timeline
+        reads that serial console. Refuses at once when a job runs, like every
+        exclusive op (FlashBusyError), and blocks jobs while held."""
+        if self._lock.locked():
+            raise FlashBusyError(self._current)
+        async with self._lock:
+            self._current = label
+            try:
+                yield
+            finally:
+                self._current = ""
 
     # ── operations ───────────────────────────────────────────────────
     #

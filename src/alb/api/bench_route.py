@@ -35,6 +35,15 @@ on the bench host — the agent builds the argv from its own table.
         the body says how long to wait, never where to connect or what to run.
         done.data.outcome is `already_connected`, `started` or `reconnected`
         (the task was already running and its agent came back on its own).
+
+    GET  /api/bench/board
+    POST /api/bench/board
+        Body: {"name": <board>, "force": false}
+        Which board the bench's serial console is wired to (ADR-063): the
+        table from ALB_BENCH_BOARDS and the board chosen. POST points the
+        serial forwarder at that board's COM port and baud while the hub
+        runs and remembers the choice. Plain JSON, not a stream; a refused
+        switch is ok:false with a code.
 """
 
 from __future__ import annotations
@@ -49,6 +58,7 @@ from alb.api.flash_route import _resolve_image, _stream
 from alb.api.schema import API_VERSION
 from alb.remote.agent_start import CONNECT_TIMEOUT_S, MAX_WAIT_S, MIN_WAIT_S, start_agent
 from alb.remote.agent_update import local_build, update_agent
+from alb.remote.bench_board import BoardError, board_view, use_board
 from alb.remote.flash import get_flash_service
 from alb.remote.registry import get_agent_registry
 
@@ -68,6 +78,11 @@ class AgentStartBody(BaseModel):
         le=MAX_WAIT_S,
         description="seconds to wait for the agent to reach the hub",
     )
+
+
+class BoardBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=32, description="a board in the table")
+    force: bool = Field(False, description="cut off whoever reads the serial console")
 
 
 class OpBody(BaseModel):
@@ -115,3 +130,17 @@ async def bench_agent_start(body: AgentStartBody) -> StreamingResponse:
     return await _stream(
         lambda on_event: start_agent(get_agent_registry(), wait_s=body.wait_s, on_event=on_event)
     )
+
+
+@router.get("/board")
+async def bench_board() -> dict[str, Any]:
+    return {"v": API_VERSION, "ok": True, **board_view()}
+
+
+@router.post("/board")
+async def bench_board_use(body: BoardBody) -> dict[str, Any]:
+    try:
+        data = await use_board(body.name, force=body.force)
+    except BoardError as e:
+        return {"v": API_VERSION, "ok": False, "code": e.code, "error": e.message}
+    return {"v": API_VERSION, "ok": True, "data": data, **board_view()}

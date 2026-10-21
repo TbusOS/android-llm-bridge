@@ -402,6 +402,21 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "code AGENT_START_NOT_CONFIGURED / _SSH_FAILED / _NO_TASK / _TASK_FAILED / "
         "_NO_CONNECT (with the agent's log tail)",
     },
+    {
+        "method": "GET",
+        "path": "/api/bench/board",
+        "description": "The bench board table (ALB_BENCH_BOARDS), the board chosen and "
+        "where the serial console points: {table, boards, active, source, problem, "
+        "serial:{com, baud, bound, readers}} (ADR-063)",
+    },
+    {
+        "method": "POST",
+        "path": "/api/bench/board",
+        "description": "Point the serial console at another bench board without "
+        "restarting the hub; body {name, force}. Remembered across restarts. ok:false "
+        "with code BENCH_BOARDS_NOT_CONFIGURED / BENCH_BOARD_UNKNOWN / BENCH_SERIAL_BUSY "
+        "(someone reads the console; force cuts them off) / FASTBOOT_BUSY (ADR-063)",
+    },
 ]
 
 WS_ENDPOINTS: list[WSSpec] = [

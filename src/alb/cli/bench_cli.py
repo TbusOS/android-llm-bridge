@@ -9,6 +9,10 @@
                                                 host and restart the agent there
     alb bench agent-start [--wait SECONDS]      start the bench agent over ssh when none
                                                 is connected
+    alb bench board                             the bench boards and which one the serial
+                                                console points at
+    alb bench board use <name> [--force]        point the serial console at another board
+                                                (its COM port and baud), hub keeps running
 
 `run` is the generic form: any op the agent reports, parameters by name.
 `usb` and `log` are short forms for the two read-only ops people reach for
@@ -344,3 +348,102 @@ def cmd_agent_start(
         typer.echo(
             f"[ok] started task {data.get('task')} on {data.get('host')}; {final.get('stdout')}"
         )
+
+
+# ── which board the serial console points at (ADR-063) ──────────────
+
+board_app = typer.Typer(
+    help="Which bench board the serial console points at.", invoke_without_command=True
+)
+app.add_typer(board_app, name="board")
+
+
+def _board_request(method: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+            resp = client.request(method, f"{hub_url()}/api/bench/board", json=body)
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+            return data
+    except httpx.HTTPError as e:
+        _hub_unreachable(e)
+    raise AssertionError("unreachable")  # _hub_unreachable exits
+
+
+def _print_boards(data: dict[str, Any]) -> None:
+    serial = data.get("serial") or {}
+    where = f"{serial.get('com')} @ {serial.get('baud')}" if serial.get("com") else "not configured"
+    active = data.get("active")
+    source = f"board {active}" if active else "hub.env (no board chosen)"
+    typer.echo(f"serial console: {where} · from {source} · readers {serial.get('readers', 0)}")
+    if data.get("problem"):
+        typer.echo(f"  [!] {data['problem']}")
+    boards = data.get("boards") or []
+    if not boards:
+        typer.echo(
+            "  no board table — set ALB_BENCH_BOARDS in deploy/hub/hub.env "
+            "(see deploy/hub/boards.toml.example)"
+        )
+        return
+    typer.echo(f"  boards ({data.get('table')}):")
+    for b in boards:
+        mark = "*" if b.get("name") == active else " "
+        note = f"  {b['note']}" if b.get("note") else ""
+        typer.echo(f"  {mark} {b['name']:<16} {b['serial_com']} @ {b['serial_baud']}{note}")
+
+
+@board_app.callback()
+def board_show(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="raw answer"),
+) -> None:
+    """List the bench boards and which one the serial console points at."""
+    if ctx.invoked_subcommand is not None:
+        return
+    data = _board_request("GET")
+    if as_json:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        return
+    _print_boards(data)
+
+
+@board_app.command("use")
+def board_use(
+    name: str = typer.Argument(..., help="a board from `alb bench board`"),
+    force: bool = typer.Option(
+        False, "--force", help="cut off whoever reads the serial console right now"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="raw answer"),
+) -> None:
+    """Point the serial console at another board, without restarting the hub.
+
+    The hub asks the agent for that board's COM port and baud from the next
+    serial open on, and remembers the choice across restarts. Refused while
+    a job runs, and while someone reads the console unless --force. adb and
+    fastboot are not touched.
+    """
+    data = _board_request("POST", {"name": name, "force": force})
+    if as_json:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        if not data.get("ok"):
+            raise typer.Exit(code=1)
+        return
+    if not data.get("ok"):
+        code = str(data.get("code") or "")
+        message, advice = _explain(code, str(data.get("error") or ""))
+        typer.echo(f"[fail] {code or 'error'}: {message}", err=True)
+        if advice:
+            typer.echo(f"  try: {advice}", err=True)
+        raise typer.Exit(code=1)
+    result = data.get("data") or {}
+    board = result.get("board") or {}
+    previous = result.get("previous") or {}
+    typer.echo(
+        f"[ok] serial console -> {board.get('name')} "
+        f"({board.get('serial_com')} @ {board.get('serial_baud')}); "
+        f"was {previous.get('com')} @ {previous.get('baud')}"
+    )
+    if result.get("cut_off"):
+        typer.echo(f"  cut off {result['cut_off']} reader(s)")
+    if not result.get("bound"):
+        typer.echo("  no agent connected yet: the console opens on this board once it is")

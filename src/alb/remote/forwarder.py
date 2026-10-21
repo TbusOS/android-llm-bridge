@@ -80,12 +80,18 @@ def _env_int(var: str, default: int) -> int:
 
 def serial_com() -> str | None:
     """The COM port the serial forwarder should ask the agent to open, or None
-    if serial is not configured on this hub (ALB_AGENT_SERIAL_COM)."""
-    return os.environ.get("ALB_AGENT_SERIAL_COM") or None
+    if serial is not configured on this hub: the bench board chosen with
+    `alb bench board use`, else ALB_AGENT_SERIAL_COM (ADR-063)."""
+    from alb.remote.bench_board import serial_target
+
+    com = serial_target()["com"]
+    return str(com) if com else None
 
 
 def serial_baud() -> int:
-    return _env_int("ALB_AGENT_SERIAL_BAUD", DEFAULT_BAUD)
+    from alb.remote.bench_board import serial_target
+
+    return int(serial_target()["baud"])
 
 
 def serial_configured() -> bool:
@@ -397,6 +403,14 @@ class _SerialSession:
             await self._channel.aclose()
 
 
+class SerialBusyError(Exception):
+    """The serial channel is in use; `readers` local connections share it."""
+
+    def __init__(self, readers: int) -> None:
+        super().__init__(f"{readers} reader(s) on the serial channel")
+        self.readers = readers
+
+
 class SerialForwarder(ChannelForwarder):
     """Bridge local TCP (127.0.0.1:9001) <-> the agent's COM port (GATEWAY).
 
@@ -422,6 +436,7 @@ class SerialForwarder(ChannelForwarder):
             host=host,
             port=port,
         )
+        self._com, self._baud = com, baud
         self._session: _SerialSession | None = None
         self._session_lock = asyncio.Lock()
         # (monotonic time, reason) of the last failed open; None once an open
@@ -448,6 +463,32 @@ class SerialForwarder(ChannelForwarder):
         """Local connections currently sharing the serial channel (0 = closed).
         Surfaced for /agent/status and tests."""
         return self._session.refs if self._session is not None else 0
+
+    @property
+    def target(self) -> tuple[str, int]:
+        """The COM port and baud the next channel open will ask for."""
+        return self._com, self._baud
+
+    async def retarget(self, com: str, baud: int, *, force: bool = False) -> int:
+        """Point later opens at another COM port / baud (ADR-063).
+
+        Under the session lock, so no open can race the change. A live
+        session is refused (SerialBusyError) unless `force`: then it is closed,
+        its readers see their connection end, and their count is returned. A
+        session cannot be moved in place — the agent's COM handle is already
+        open at the old baud."""
+        async with self._session_lock:
+            session = self._session
+            readers = session.refs if session is not None and not session.closed.is_set() else 0
+            if readers and not force:
+                raise SerialBusyError(readers)
+            self._com, self._baud = com, baud
+            self._params = {"com": com, "baud": baud}
+            self._open_error = None
+            if session is not None:
+                self._session = None
+                await session.aclose()
+            return readers
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -573,6 +614,27 @@ def get_serial_forwarder() -> ChannelForwarder:
     return _SERIAL_FORWARDER
 
 
+def existing_serial_forwarder() -> SerialForwarder | None:
+    """The serial forwarder if this process has created it — never creates."""
+    return _SERIAL_FORWARDER if isinstance(_SERIAL_FORWARDER, SerialForwarder) else None
+
+
+async def attach_serial_if_agent() -> bool:
+    """Bind the serial forwarder now, if an agent is connected.
+
+    The connect handler binds it only when a COM is configured at that
+    moment; a board chosen later on a hub whose hub.env names no COM would
+    otherwise stay unbound until the agent reconnects. True once bound."""
+    from alb.remote.registry import get_agent_registry
+
+    if get_agent_registry().current_agent() is None:
+        return False
+    forwarder = get_serial_forwarder()
+    if not forwarder.is_bound:
+        await forwarder.attach()
+    return forwarder.is_bound
+
+
 async def shutdown_forwarders() -> None:
     """Detach + drop both singletons (alb-api lifespan shutdown)."""
     global _ADB_FORWARDER, _SERIAL_FORWARDER
@@ -603,13 +665,23 @@ def _fwd_view(f: ChannelForwarder | None, default_port: int, env_var: str) -> di
 def forwarder_status() -> dict[str, Any]:
     """Read-only snapshot of the forwarders for the web Connection Center.
     Reads the module singletons WITHOUT creating them (no side effects)."""
+    from alb.remote.bench_board import serial_target
+
+    wanted = serial_target()
+    live = existing_serial_forwarder()
+    com, baud = live.target if live is not None else (wanted["com"], wanted["baud"])
     return {
         "adb": _fwd_view(_ADB_FORWARDER, DEFAULT_ADB_PORT, "ALB_ADB_FORWARD_PORT"),
         "serial": {
             **_fwd_view(_SERIAL_FORWARDER, DEFAULT_SERIAL_PORT, "ALB_SERIAL_FORWARD_PORT"),
-            "configured": serial_configured(),
-            "com": serial_com(),
-            "baud": serial_baud(),
+            "configured": bool(com),
+            # What the forwarder actually asks the agent for — after a
+            # `bench board use` this is the chosen board, not hub.env.
+            "com": com or None,
+            "baud": baud,
+            # Which bench board that is (ADR-063); None = hub.env's values.
+            "board": wanted["board"],
+            "board_problem": wanted["problem"],
             # how many alb readers/writers currently share the one COM channel
             # (capture + shell + web console can now coexist — issue #4)
             "readers": getattr(_SERIAL_FORWARDER, "session_refs", 0),

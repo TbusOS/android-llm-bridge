@@ -566,6 +566,32 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Read the agent log lines shown: hub_url / token in agent.conf, or the "
         "network between the bench host and this hub",
     ),
+    # Which board the bench's serial console points at (ADR-063).
+    "BENCH_BOARDS_NOT_CONFIGURED": ErrorSpec(
+        "BENCH_BOARDS_NOT_CONFIGURED",
+        "input",
+        "This hub has no bench board table",
+        "Set ALB_BENCH_BOARDS in deploy/hub/hub.env to a boards TOML file "
+        "(see deploy/hub/boards.toml.example) and restart alb-api",
+    ),
+    "BENCH_BOARDS_INVALID": ErrorSpec(
+        "BENCH_BOARDS_INVALID",
+        "input",
+        "The bench board table cannot be used",
+        "Fix the file and entry named in the message; nothing was switched",
+    ),
+    "BENCH_BOARD_UNKNOWN": ErrorSpec(
+        "BENCH_BOARD_UNKNOWN",
+        "input",
+        "No board by that name in the bench board table",
+        "`alb bench board` lists the names; add the board to the table first",
+    ),
+    "BENCH_SERIAL_BUSY": ErrorSpec(
+        "BENCH_SERIAL_BUSY",
+        "device",
+        "Someone is reading the serial console; the board was not switched",
+        "End the capture / shell / web console first, or pass --force to cut them off",
+    ),
 }
 
 
