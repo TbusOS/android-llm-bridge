@@ -150,10 +150,12 @@ def test_alb_api_main_does_not_override_uvicorn_ws_ping(monkeypatch) -> None:
         captured["kwargs"] = kwargs
 
     import uvicorn
+
     monkeypatch.setattr(uvicorn, "run", _fake_run)
     monkeypatch.setenv("ALB_API_HOST", "127.0.0.1")  # silence the 0.0.0.0 banner
 
     from alb.api.server import main
+
     main()
 
     # If ANY ws_ping_* override appears here, uvicorn's defaults are
@@ -174,6 +176,7 @@ def test_alb_api_main_does_not_override_uvicorn_ws_ping(monkeypatch) -> None:
     # Unfortunately Config has many positional defaults; use signature
     # introspection instead:
     import inspect
+
     params = inspect.signature(uvicorn.Config.__init__).parameters
     assert params["ws_ping_interval"].default == 20.0, (
         f"uvicorn ws_ping_interval default changed to "
@@ -184,3 +187,50 @@ def test_alb_api_main_does_not_override_uvicorn_ws_ping(monkeypatch) -> None:
         f"uvicorn ws_ping_timeout default changed to "
         f"{params['ws_ping_timeout'].default!r}; revisit MID-8 verification."
     )
+
+
+# ─── ADR-062: WebSocket compression is off unless asked for ───
+# The hub compresses every outgoing frame inside its own event loop. On the
+# bench (2026-10-21) that was the whole limit: a 2.2 GB super.img took
+# 108 s compressed and 19 s plain over the same link.
+
+
+def _run_main(monkeypatch, deflate_env: str | None) -> dict:
+    captured: dict = {}
+
+    def _fake_run(target: str, **kwargs):
+        captured.update(kwargs)
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", _fake_run)
+    monkeypatch.setenv("ALB_API_HOST", "127.0.0.1")
+    if deflate_env is None:
+        monkeypatch.delenv("ALB_WS_DEFLATE", raising=False)
+    else:
+        monkeypatch.setenv("ALB_WS_DEFLATE", deflate_env)
+    from alb.api.server import main
+
+    main()
+    return captured
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "true", "yes"])
+def test_alb_api_main_turns_websocket_compression_off(monkeypatch, value) -> None:
+    """Explicitly False: uvicorn's own default is True, so leaving the
+    argument out would compress again."""
+    assert _run_main(monkeypatch, value)["ws_per_message_deflate"] is False
+
+
+def test_alb_api_main_compresses_only_with_alb_ws_deflate_1(monkeypatch) -> None:
+    assert _run_main(monkeypatch, "1")["ws_per_message_deflate"] is True
+
+
+def test_uvicorn_still_compresses_by_default() -> None:
+    """Why main() must pass False rather than rely on a default."""
+    import inspect
+
+    import uvicorn
+
+    params = inspect.signature(uvicorn.Config.__init__).parameters
+    assert params["ws_per_message_deflate"].default is True

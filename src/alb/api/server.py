@@ -175,7 +175,18 @@ def main() -> None:
             " For local-only dev set: ALB_API_HOST=127.0.0.1",
             file=sys.stderr,
         )
-    uvicorn.run("alb.api.server:app", host=host, port=port, reload=False)
+    # WebSocket compression is off unless ALB_WS_DEFLATE=1 (ADR-062): the hub
+    # compresses every outgoing frame inside its own event loop, and on the
+    # bench that — not the network — was the limit. A 2.2 GB image took 108 s
+    # compressed, 19 s plain, over the same link.
+    deflate = os.environ.get("ALB_WS_DEFLATE", "").strip() == "1"
+    uvicorn.run(
+        "alb.api.server:app",
+        host=host,
+        port=port,
+        reload=False,
+        ws_per_message_deflate=deflate,
+    )
 
 
 if __name__ == "__main__":

@@ -2826,3 +2826,53 @@ hub API 绑 0.0.0.0 且没有鉴权(ADR-060 的代价)。请求体只能说等�
 TASK_FAILED(要让台架上没人登录,或把任务禁用)。
 
 **关联**: ADR-059(操作表)· ADR-060(远程更新;API 没鉴权的代价)· DEBT-083(多 agent 寻址)· `cf163cd`
+
+## ADR-062 · hub 的 WebSocket 默认不压缩:`ALB_WS_DEFLATE=1` 才打开
+
+**日期**: 2026-10-21 · **状态**: 已实现 · 接 `2c042ca`(发镜像时同时读回信)
+
+### 这是什么
+
+hub 起 uvicorn 时传 `ws_per_message_deflate=False`,所有 WebSocket(agent 控制连接、
+烧录作业、adb / 串口转发、网页)握手时都不再协商 permessage-deflate。
+环境变量 `ALB_WS_DEFLATE=1` 可以打开,其他任何值都是关。
+
+### 没有它会怎样
+
+uvicorn 默认开压缩,hub 发出的每一帧都在它自己的事件循环里先用 zlib 压一遍。
+2026-10-21 台架实测(同一条 hub → 台架路径、同一份真 super.img 2.24 GB、hub 代码 `2c042ca`):
+
+| hub 压缩 | 用时 | 速度 |
+|---|---|---|
+| 开(uvicorn 默认) | 107.9 s | 约 21 MB/s |
+| 关 | 19.0 s | 约 118 MB/s,千兆网跑满 |
+| 对照:hub 本机只压不发(zlib 默认级别,64 KiB 一块) | 102 s | 约 22 MB/s,压完剩 48% |
+
+第三行和第一行几乎一样:瓶颈就是压缩。这 100 多秒里,压缩占着 hub 的事件循环,
+同一个循环里的串口转发、网页也要等它。`2c042ca` 之前,这个速度还会让超过约 40 s 的
+传输被 keepalive 断掉。
+
+### 为什么这么设计
+
+| 做法 | 为什么没选 |
+|---|---|
+| 只在 agent 的作业通道关(`ws_connect(compression=None)`) | 要再推一次 agent;adb 推大文件走的是 adb 转发通道,同样在被压(推测:888 MB OTA 包推了 26 s,约 34 MB/s,没单独测) |
+| 压缩挪到线程里做 | websockets 的压缩在协议层同步执行,挪不出去;就算挪出去,速度还是 22 MB/s 的上限 |
+| 降低压缩级别 | 仍然比不压慢,而且台架和 hub 在同一个局域网,带宽不缺 |
+| 保持默认开 | 见上表 |
+
+保留 `ALB_WS_DEFLATE=1`,是因为 hub 和台架之间如果是慢速链路(VPN、公网),压缩可能反而更快。
+默认值按现在的部署(同一局域网)取。
+
+### 机制
+
+- `src/alb/api/server.py` `main()`:读 `ALB_WS_DEFLATE`,`== "1"` 才传 True。必须显式传
+  False,因为 uvicorn 的默认值是 True(`tests/api/test_meta_route.py` 锁住了这一点)。
+- 握手实测:关时响应里没有 `Sec-WebSocket-Extensions`,开时是 `permessage-deflate`。
+- 只管 `alb-api` 这个入口。用别的方式直接 `uvicorn.run` 起 hub 不受影响。
+
+### 代价
+
+线上字节数翻倍(super 压缩后约 1.07 GB,不压 2.24 GB)。局域网里不是问题。
+
+**关联**: ADR-056(烧录作业通道)· `2c042ca`
