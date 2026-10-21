@@ -359,3 +359,30 @@ def _capable_agent():
             return _Ch()
 
     return _Agent()
+
+
+async def test_two_jobs_in_the_same_second_keep_separate_records(monkeypatch):
+    """Seen 2026-10-22 on a real hub: a refusal returns in ~20 ms, the next
+    try lands in the same second, and with one directory per second the
+    second job's job.json replaced the first's — a successful write's
+    record overwritten by the refusal that followed it."""
+    from alb.remote import flash_timeline
+
+    monkeypatch.setattr(flash_timeline, "iso_timestamp", lambda: "2026-10-22T00-00-00")
+    records = []
+    for ok in (True, False, True):
+        tl = new_timeline("flash-boot")
+        tl.job_result(FlashResult(ok=ok, rc=0 if ok else 1))
+        await tl.aclose()
+        records.append(tl)
+    names = [tl.dir.name for tl in records]
+    assert names == [
+        "flash-boot-2026-10-22T00-00-00",
+        "flash-boot-2026-10-22T00-00-00-2",
+        "flash-boot-2026-10-22T00-00-00-3",
+    ]
+    assert [json.loads((tl.dir / "job.json").read_text())["ok"] for tl in records] == [
+        True,
+        False,
+        True,
+    ]

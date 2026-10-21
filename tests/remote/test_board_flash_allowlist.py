@@ -104,6 +104,14 @@ def test_per_board_lines_reach_the_lists_hello_and_self_check(tmp_path):
         ("flash_partitions.-a=boot", "bad board name"),
         ("flash_partitions.=boot", "bad board name"),
         ("flash_partitions.a.b=boot", "bad board name"),
+        # Not quietly lower-cased: the hub's table refuses this name too.
+        ("flash_partitions.Board-A=boot", "bad board name"),
+        # A truly empty value (not ` , ,`): the loader's "empty = unset" rule
+        # dropped it, and the agent came up on "any name". Seen 2026-10-22.
+        ("flash_partitions.board-a=", "is empty"),
+        ("flash_partitions.board-a=''", "is empty"),
+        # Dropped, this one would mean "not checked".
+        ("fastboot_product.board-a=", "is empty"),
         ("flash_partitionz.a=boot", "unknown key"),
         ("token.a=x", "unknown key"),
     ],

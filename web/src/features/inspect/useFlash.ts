@@ -28,6 +28,17 @@ export interface FlashStatus {
    * bench refuses; every web flash died at FLASH_PARTITION_REJECTED.)
    */
   partitions: string[];
+  /** The bench board the hub has chosen (`alb bench board use`), or "". */
+  board: string;
+  /**
+   * Why NO partition may be written right now (ADR-063 phase 2): the agent
+   * keeps a list per board and none applies — no board chosen, or no list
+   * for the chosen one. Non-empty means `partitions` is empty because
+   * nothing is allowed, the opposite of the "configured none" reading
+   * above. A picker must then offer nothing and show this instead: the
+   * generic names would each die at FLASH_BOARD_NOT_LISTED.
+   */
+  partitionsProblem: string;
 }
 
 export interface FlashLine {
@@ -65,6 +76,8 @@ export function useFlashStatus() {
         busy: !!body.busy,
         job: String(body.job ?? ""),
         partitions: Array.isArray(body.partitions) ? body.partitions.map(String) : [],
+        board: String(body.board ?? ""),
+        partitionsProblem: String(body.partitions_problem ?? ""),
       };
     },
   });

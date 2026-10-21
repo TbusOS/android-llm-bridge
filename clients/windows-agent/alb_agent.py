@@ -3973,8 +3973,12 @@ def _load_config(path: Path) -> dict[str, Any]:
     Rules (mirrored in agent.conf.example): one KEY=VALUE per line; comments
     on their own line only (a '#' inside a value is kept — tokens may contain
     it); only the first '=' splits key from value (values may contain '=');
-    one pair of surrounding quotes is stripped; an empty value means "unset";
-    an unknown key is a hard error, so a typo can't be silently ignored."""
+    one pair of surrounding quotes is stripped; an empty value means "unset" —
+    except on a `<key>.<board>` line, where it is a hard error (dropped, the
+    line would widen what the agent accepts: no list = any name, no product =
+    no identity check); an unknown key is a hard error, so a typo can't be
+    silently ignored. The board part keeps its case so that a name the hub's
+    board table would refuse is refused here too, not quietly lower-cased."""
     cfg: dict[str, Any] = {}
     # utf-8-sig: strip Notepad's BOM; splitlines(): swallow CRLF.
     text = path.read_text(encoding="utf-8-sig")
@@ -3983,11 +3987,14 @@ def _load_config(path: Path) -> dict[str, Any]:
         if not line or line.startswith("#"):
             continue
         key, sep, value = line.partition("=")
-        key = key.strip().lower()
+        key = key.strip()
         value = value.strip()
         if not sep or not key:
             sys.exit(f"{path}:{lineno}: expected KEY=VALUE, got: {raw.strip()!r}")
         base, dot, board = key.partition(".")
+        base = key = base.lower()
+        if dot:
+            key = f"{base}.{board}"
         board_dest = _BOARD_CONFIG_KEYS.get(base, "") if dot else ""
         if board_dest:
             if not _BOARD_NAME_RE.match(board):
@@ -4003,6 +4010,12 @@ def _load_config(path: Path) -> dict[str, Any]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
         if not value:
+            if board_dest:
+                what = "the partitions" if base == "flash_partitions" else "the product"
+                sys.exit(
+                    f"{path}:{lineno}: {key} is empty — name {what}, or remove the line "
+                    "(an empty per-board line would widen what this agent accepts)"
+                )
             continue
         if board_dest:
             cfg.setdefault(board_dest, {})[board] = value

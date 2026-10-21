@@ -260,6 +260,20 @@ def new_timeline(kind: str, *, device: str | None = None) -> FlashTimeline:
     # `..-..-etc` traverses nowhere but reads like a bug report.
     safe_kind = "".join(c if c.isalnum() or c in "-_." else "-" for c in kind)
     safe_kind = safe_kind.lstrip(".-")[:48] or "job"
-    directory = workspace_path("flash", f"{safe_kind}-{iso_timestamp()}", device=device)
-    directory.mkdir(parents=True, exist_ok=True)
-    return FlashTimeline(directory, device=device)
+    stamp = f"{safe_kind}-{iso_timestamp()}"
+    directory = workspace_path("flash", stamp, device=device)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    # The stamp has one-second resolution, and two jobs within a second are
+    # routine: a refusal returns in ~20 ms and the next try lands in the same
+    # second. With exist_ok=True the second job's record silently replaced
+    # the first's (seen 2026-10-22 on a real hub: a successful write's
+    # job.json overwritten by the FLASH_BOARD_MISMATCH refusal after it). A
+    # record that replaces another is worse than none — take the next name.
+    for n in range(1, 1000):
+        candidate = directory if n == 1 else directory.with_name(f"{stamp}-{n}")
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return FlashTimeline(candidate, device=device)
+    raise FileExistsError(f"{directory}: 999 records already started in this second")

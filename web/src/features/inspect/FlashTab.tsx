@@ -117,6 +117,16 @@ function StateCard({ lastJob }: { lastJob: LastJob | null }) {
           <span className="flash-state-card__field-value">{data.job}</span>
         </div>
       ) : null}
+      {/* Which board the hub has chosen (ADR-063): the partition list below
+          is THAT board's, and the agent will ask the board who it is before
+          writing. A write under the wrong board name is refused, so the
+          name belongs next to `ready`. */}
+      {data?.board ? (
+        <div className="flash-state-card__field">
+          <span className="flash-state-card__field-label">board</span>
+          <span className="flash-state-card__field-value">{data.board}</span>
+        </div>
+      ) : null}
       {/* The rest of this card answers "can this bench flash?", which stays
           `ready` after a job finishes — so on its own the card gives no
           feedback at all about the thing you just did. This row answers
@@ -165,7 +175,17 @@ export function FlashTab() {
   // The agent's list when it has one; ours only as a stand-in. Empty from the
   // agent means "no allowlist configured", so falling back is correct — it is
   // NOT the same as a bench that allows nothing.
-  const partitions = status?.partitions?.length ? status.partitions : FALLBACK_PARTITIONS;
+  //
+  // Except when the hub says why the list is empty (ADR-063 phase 2): the
+  // agent keeps a list per board and none applies. Then empty IS "nothing
+  // allowed", and the stand-in names would each be refused on the agent
+  // with FLASH_BOARD_NOT_LISTED while this page looked ready. Offer nothing.
+  const problem = status?.partitionsProblem ?? "";
+  const partitions = problem
+    ? []
+    : status?.partitions?.length
+      ? status.partitions
+      : FALLBACK_PARTITIONS;
   const partitionKey = partitions.join(",");
   useEffect(() => {
     // The list arrives after the first render (and can change when a different
@@ -288,6 +308,7 @@ export function FlashTab() {
             <select
               id="flash-partition"
               value={partition}
+              disabled={!!problem}
               onChange={(e) => {
                 setPartition(e.target.value);
                 setArmed(false); // a changed target must be re-confirmed
@@ -300,6 +321,13 @@ export function FlashTab() {
               ))}
             </select>
           </div>
+          {problem ? (
+            <div className="flash-problem" role="alert">
+              {lang === "zh"
+                ? `现在没有分区可以写：${problem}`
+                : `No partition may be written right now: ${problem}`}
+            </div>
+          ) : null}
           <button
             type="button"
             className="flash-btn flash-btn--danger"

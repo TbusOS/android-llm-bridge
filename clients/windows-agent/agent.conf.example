@@ -59,7 +59,9 @@ log_file=logs/agent.log
 #   - a partition op must name a board that has a list here, and the
 #     partition must be on THAT board's list — otherwise FLASH_BOARD_NOT_LISTED
 #     or FLASH_PARTITION_REJECTED, before anything is written;
-#   - flash_partitions above must stay unset (the agent refuses to start).
+#   - flash_partitions above must stay unset (the agent refuses to start);
+#   - an empty per-board line is refused too: dropped, it would widen the
+#     list to any name (or skip the product check).
 # fastboot_product.<board> is what `fastboot getvar product` answers on that
 # board. Set it and every write first asks the device; another board on the
 # cable is refused with FLASH_BOARD_MISMATCH and nothing is written.

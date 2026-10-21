@@ -223,6 +223,27 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 fastboot 没配（见上一节）时，表里只有 `usb-list` / `log-tail` / `agent-update`，hub
 会直接告诉调用方这台不能烧。状态页（http://127.0.0.1:8731）的 `ops` 一行列的就是这张表。
 
+### 几块板轮流接同一根线：按板分名单
+
+`flash_partitions` 整台 agent 一份，几块板轮流接同一根 USB 线时只能写成并集 ——
+只有一块板有的分区，对另一块也放行。可以改成每块板一份（ADR-063 第二期）：
+
+```
+flash_partitions.board-a=boot,dtbo,vendor_cfg
+fastboot_product.board-a=board_a_product
+flash_partitions.board-b=boot_a,boot_b
+```
+
+板名就是 hub 板子表里的名字（`alb bench board`）。写了按板名单之后：
+
+- hub 每个作业都带上它选中的板子，分区必须在**那块板**的名单上；没选板、或这块板
+  没有名单，作业在收镜像之前就被拒（`FLASH_BOARD_NOT_LISTED`）。
+- 配了 `fastboot_product.<板>` 的，改设备的作业动手前先跑一次 `fastboot getvar product`，
+  答案对不上就拒（`FLASH_BOARD_MISMATCH`），什么都不写。板名只说「用哪份名单」，
+  不说「线上接的是哪块板」，这一步才说。
+- `flash_partitions` 总名单必须删掉，按板名单不能为空 —— 两种写法都会让名单变宽，
+  agent 拒绝启动，而且在停掉旧实例之前就拒绝。
+
 ## 更新 agent：在 Linux 那边推，不用到这台机器上拷
 
 **只有第一次要手动装**：把整个文件夹拷到这台机器（比如 `D:\alb-windows-agent\`），

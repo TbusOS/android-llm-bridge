@@ -208,7 +208,12 @@ def _report_artifacts(directory: str, *, err: bool = False) -> None:
 
 @app.command("status")
 def cmd_status() -> None:
-    """Is a fastboot-capable agent connected, and is it busy?"""
+    """Is a fastboot-capable agent connected, is it busy, and may a partition be written?
+
+    Exit 1 when no partition may be written — `ready` alone was misleading
+    once the agent kept a list per board (ADR-063): devices/getvar worked,
+    and every write was refused.
+    """
     try:
         with httpx.Client(timeout=httpx.Timeout(10.0)) as client:
             data = client.get(f"{hub_url()}/api/flash/status").json()
@@ -224,7 +229,20 @@ def cmd_status() -> None:
     if data.get("busy"):
         typer.echo(f"[busy] {data.get('job') or 'a job is running'}")
         return
+    problem = str(data.get("partitions_problem") or "")
+    partitions = [str(p) for p in data.get("partitions") or []]
+    board = str(data.get("board") or "")
+    if problem:
+        typer.echo("[fail] ready, but no partition may be written")
+        typer.echo(f"        {problem}")
+        raise typer.Exit(code=1)
     typer.echo("[ok] ready")
+    if board:
+        typer.echo(f"        board {board} · partitions {', '.join(partitions)}")
+    elif partitions:
+        typer.echo(f"        partitions {', '.join(partitions)}")
+    else:
+        typer.echo("        partitions: none configured (any well-formed name)")
 
 
 @app.command("devices")

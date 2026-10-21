@@ -2957,6 +2957,18 @@ com/baud 开口);只是 hub 侧只实现了 hub.env 一个固定值。所以只�
   `_drive` 给每个请求加 `board`,时间线头里也记
 - 老 agent 不认识 `board` 键,照旧用自己那一份名单(多出来的键忽略)
 - 新错误码:`FLASH_BOARD_NOT_LISTED` · `FLASH_BOARD_MISMATCH`
-- 没做:网页烧录页在按板模式下还会显示通用分区列表(写的时候 hub 会拒绝并说明原因)
+- 网页烧录页:按板模式下按 `partitions_problem` 判,不再退回通用列表;状态卡显示选中的板子和「为什么不能写」
+- `alb flash status`:报选中的板子和它的名单;按板模式下没名单可用时报 `[fail]` 并退出 1(原来只打 `[ok] ready`,
+  而每次写都会被拒)
+
+**10-22 真实 hub + agent 验证**(公开仓分支代码起测试 hub,本机 agent 配三块板的名单 + 假 fastboot,
+`alb flash write / plan / bench run erase` 走了没选板 / 自己的分区 / 别的板的分区 / 板子不符 / 读不到 product /
+getvar 不问 / 超时 / 老 agent 共 20 条路径,全按设计)。补了三个只有真跑才看得见的洞:
+- `flash_partitions.<板>=`(值为空)被 `_load_config` 的「空值 = 没写」规则丢掉,agent 起来后回到「任何名字都行」——
+  单元测试用的是 `= , ,`,没覆盖真正的空值。现在按板键的空值是启动错误;板名保留大小写(原来先 lower 再校验,
+  `Board_A` 会悄悄变成 `board_a`)
+- 记录目录按秒命名、`exist_ok=True`:拒绝只要 20 ms,下一次尝试落在同一秒,**第二个作业的记录覆盖第一个**
+  (成功写入的 job.json 被紧接着的 FLASH_BOARD_MISMATCH 覆盖)。改成同秒加 `-2` / `-3` 后缀
+- 台架 Windows 的 ssh 公钥 10-22 被拒(端口通、密钥被拒),台架探测 agent 那条没跑;真板 product 值仍待读
 
 **关联**: ADR-050(COM/baud 按会话下发)· ADR-051(进程级转发)· ADR-054(串口共享会话)· ADR-056(烧录作业锁)

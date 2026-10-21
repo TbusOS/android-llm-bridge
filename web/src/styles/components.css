@@ -5492,6 +5492,20 @@ li:hover .screenshot-row__del,
   line-height: 1.55;
   color: #7d3629;
 }
+
+/* ADR-063 phase 2: why NO partition may be written right now — the agent
+   keeps a list per board and none applies. Not the armed warning above: that
+   one asks for a second click, this one says there is nothing to click for. */
+.flash-problem {
+  margin-top: var(--space-3);
+  padding: 10px 12px;
+  border: 1px solid var(--anth-orange);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--anth-orange) 8%, transparent);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
 /* ---- timeline (full width) ---- */
 .flash-timeline {
   background: #ffffff;

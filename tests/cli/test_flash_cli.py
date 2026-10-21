@@ -261,3 +261,53 @@ def test_a_plan_refusal_detail_is_printed_one_problem_per_line(capsys):
     err = capsys.readouterr().err
     assert "FLASH_PLAN_CHANGED" in err
     assert "  - one\n  - two" in err
+
+
+# ── status (ADR-063): which board's list applies, or why nothing may be written ──
+
+
+def _status_hub(monkeypatch, body: dict):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/flash/status"
+        return httpx.Response(200, json=body)
+
+    real = httpx.Client
+    monkeypatch.setattr(
+        flash_cli.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+
+
+_READY = {"available": True, "busy": False, "job": ""}
+
+
+def test_status_names_the_chosen_board_and_its_list(monkeypatch):
+    _status_hub(
+        monkeypatch,
+        {**_READY, "partitions": ["boot_a", "misc"], "partitions_problem": "", "board": "board-a"},
+    )
+    r = CliRunner().invoke(flash_cli.app, ["status"])
+    assert r.exit_code == 0
+    assert "[ok] ready" in r.output
+    assert "board board-a" in r.output and "boot_a, misc" in r.output
+
+
+def test_status_fails_when_no_partition_may_be_written(monkeypatch):
+    """`[ok] ready` alone was a lie here (seen 2026-10-22): devices and getvar
+    worked, and every write was refused with FLASH_BOARD_NOT_LISTED."""
+    problem = "the agent keeps a partition list per board (board-a) and no bench board is chosen"
+    _status_hub(
+        monkeypatch, {**_READY, "partitions": [], "partitions_problem": problem, "board": None}
+    )
+    r = CliRunner().invoke(flash_cli.app, ["status"])
+    assert r.exit_code == 1
+    assert "no partition may be written" in r.output and problem in r.output
+    assert "[ok]" not in r.output
+
+
+def test_status_with_one_list_for_all_boards_reads_as_before(monkeypatch):
+    _status_hub(
+        monkeypatch, {**_READY, "partitions": ["cfg"], "partitions_problem": "", "board": None}
+    )
+    r = CliRunner().invoke(flash_cli.app, ["status"])
+    assert r.exit_code == 0
+    assert "partitions cfg" in r.output and "board" not in r.output

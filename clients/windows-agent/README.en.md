@@ -158,6 +158,33 @@ Without a fastboot executable the table holds only `usb-list` / `log-tail` /
 `agent-update`, and the hub tells callers this bench cannot flash. The status
 page lists the table on its `ops` row.
 
+### Several boards on one cable: a list per board
+
+`flash_partitions` is one list for the whole agent. With boards swapped on
+the same USB cable it has to be the union, so a partition only one board
+has is accepted for the other. Give each board its own list instead
+(ADR-063 phase 2):
+
+```
+flash_partitions.board-a=boot,dtbo,vendor_cfg
+fastboot_product.board-a=board_a_product
+flash_partitions.board-b=boot_a,boot_b
+```
+
+Board names are the hub's board-table names (`alb bench board`). With any
+per-board list set:
+
+- every job carries the board the hub has chosen, and the partition must be
+  on THAT board's list; no board chosen, or no list for it, and the job is
+  refused before the image is received (`FLASH_BOARD_NOT_LISTED`);
+- with `fastboot_product.<board>` set, a job that changes the device first
+  runs `fastboot getvar product` and is refused on a mismatch
+  (`FLASH_BOARD_MISMATCH`), nothing written. The board name says which list
+  applies; only this step says which board is on the cable;
+- the global `flash_partitions` must go, and a per-board list may not be
+  empty — either would widen the list, so the agent refuses to start, and
+  does so before stopping the instance already running.
+
 ## Updating the agent from the hub
 
 Install by hand **once** (copy the folder, close the old agent window, run
