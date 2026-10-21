@@ -49,13 +49,19 @@ def _build(data: bytes) -> str:
 
 
 def _agent_text(
-    *, marker: str, fast: bool = True, broken_hello: bool = False, exits_at_start: bool = False
+    *,
+    marker: str,
+    fast: bool = True,
+    broken_hello: bool = False,
+    exits_at_start: bool = False,
+    hangs_at_start: bool = False,
 ) -> bytes:
     """The repo's agent, made distinct (a marker comment changes the build).
     `fast` shortens the helper's waits — the helper is the OLD build's code,
     so this is where its timing comes from. `broken_hello` makes a build that
     passes its self-check but can never get past the handshake;
-    `exits_at_start` one that passes its self-check and then exits at once."""
+    `exits_at_start` one that passes its self-check and then exits at once;
+    `hangs_at_start` one that stops before its first log line (10-20 bench)."""
     text = (_SRC / "alb_agent.py").read_text(encoding="utf-8")
     if fast:
         for old, new in (
@@ -72,6 +78,10 @@ def _agent_text(
         old = "        sys.exit(_self_check_main(args))\n"
         assert text.count(old) == 1
         text = text.replace(old, old + "    sys.exit(3)\n")
+    if hangs_at_start:
+        old = "        sys.exit(_self_check_main(args))\n"
+        assert text.count(old) == 1
+        text = text.replace(old, old + "    time.sleep(600)\n")
     return (text + f"\n# build marker: {marker}\n").encode("utf-8")
 
 
@@ -324,6 +334,31 @@ def test_a_build_that_never_reaches_the_hub_is_rolled_back(bench):
     assert hello["update"]["outcome"] == "rolled_back", _log(install)
     assert (install / "alb_agent.py").read_bytes() == old
     assert "rolling back" in _log(install)
+
+
+def test_a_build_stuck_before_its_first_log_line_is_written_down_then_rolled_back(bench):
+    """10-20 on the bench: the new build wrote no log line, never dialed the
+    hub, and the helper's stop took its window — the only account of why.
+    Now the helper writes down what still runs BEFORE it stops anything."""
+    hub, install, start = bench
+    old = _agent_text(marker="old")
+    stuck = _agent_text(marker="stuck", hangs_at_start=True)
+    start(old)
+    hub.wait_hello(lambda h: h.get("build") == _build(old))
+    seen = len(hub.hellos)
+
+    done = _update(hub, {**_repo_files(), "alb_agent.py": stuck})
+    assert done["ok"] and done["data"]["restarting"], done
+
+    hello = hub.wait_hello(lambda h: h.get("build") == _build(old), timeout=60, after=seen)
+    assert hello["update"]["outcome"] == "rolled_back", _log(install)
+    log = _log(install)
+    account = log[: log.index("rolling back")]
+    assert "instance record: none — build " in account, log
+    lines = account[account.index("processes under the start (pid ") :].splitlines()
+    assert str(install / "alb_agent.py") in lines[1], log
+    agent_log = (install / "agent.log").read_text(encoding="utf-8")
+    assert f"build {_build(stuck)}" not in agent_log, "the stuck build logged nothing"
 
 
 def test_a_build_that_exits_at_once_is_rolled_back_without_waiting_out_the_timeout(bench):

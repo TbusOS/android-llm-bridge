@@ -410,3 +410,86 @@ def test_no_start_time_means_no_record(tmp_path, monkeypatch):
     agent._claim_instance(argparse.Namespace(config_used="", agent_id="a"))
     assert agent._INSTANCE_PATH is None
     assert list((tmp_path / ".alb-agent").glob("instance-*.json")) == []
+
+
+# ── a start that never reached the hub leaves an account (10-20 bench) ──
+
+
+def test_the_tree_is_listed_parents_first_with_age_and_command_line():
+    table = {
+        10: (1, "cmd.exe"),  # the window the helper started
+        11: (10, "conhost.exe"),
+        12: (10, "python.exe"),  # run-agent.bat's `python -c` check
+        13: (12, "adb.exe"),
+        14: (10, "python.exe"),  # recycled pid: older than its "parent"
+        20: (1, "explorer.exe"),
+    }
+    created = {10: 100.0, 11: 100.1, 12: 101.0, 13: 101.5, 14: 50.0}
+    cmd = {
+        10: 'cmd.exe /c "run-agent.bat"',
+        12: "python  -c 'print(\"  [v]\")'\n",
+        13: "adb devices",
+    }
+    lines = agent._describe_tree(table, 10, created.get, lambda p: cmd.get(p, ""), now=160.0)
+    assert lines == [
+        'pid 10 cmd.exe, 60s old: cmd.exe /c "run-agent.bat"',
+        "  pid 11 conhost.exe, 60s old: (command line unreadable)",
+        "  pid 12 python.exe, 59s old: python  -c 'print(\"  [v]\")'",
+        "    pid 13 adb.exe, 58s old: adb devices",
+    ]
+    assert agent._describe_tree(table, 99, created.get, cmd.get, now=0.0) == [], "root gone"
+
+
+def test_a_report_step_that_hangs_or_fails_does_not_hold_up_the_rollback():
+    t0 = time.monotonic()
+    out = agent._within(0.3, lambda: time.sleep(30))
+    assert isinstance(out, TimeoutError) and time.monotonic() - t0 < 5
+    assert isinstance(agent._within(5, lambda: 1 / 0), ZeroDivisionError)
+    assert agent._within(5, lambda: "ok") == "ok"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+def test_a_stalled_start_is_written_down_while_it_is_still_running(tmp_path):
+    """What 10-20 lacked: which processes were still up under the start, and
+    whether the new build ever recorded itself."""
+    marker = "stalled-start-marker"
+    proc = subprocess.Popen(
+        ["sh", "-c", f'{sys.executable} -c "import time; time.sleep(30)" {marker}; true']
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not any(
+            marker in agent._posix_cmdline(pid) and pid != proc.pid
+            for pid, (parent, _n) in agent._process_table().items()
+            if parent == proc.pid
+        ):
+            time.sleep(0.05)
+        instance = tmp_path / "instance-x.json"
+        instance.write_text(json.dumps({"build": "old", "pid": 1, "created": 0}))
+        said: list[str] = []
+        agent._record_stalled_start(proc, instance, "new", said.append)
+    finally:
+        proc.kill()
+        proc.wait()
+    text = "\n".join(said)
+    assert "build old's — build new never wrote its own" in text, text
+    assert f"processes under the start (pid {proc.pid}):" in text, text
+    child = [s for s in said if s.startswith("    pid ") and marker in s]
+    assert child and "time.sleep(30)" in child[0], text
+
+
+def test_nothing_left_and_an_unreadable_table_are_said_too(tmp_path, monkeypatch):
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    said: list[str] = []
+    agent._record_stalled_start(proc, tmp_path / "none.json", "new", said.append)
+    assert any(s.endswith(": none left") for s in said), said
+    assert said[0].startswith("instance record: none — build new either never"), said
+
+    def broken() -> dict:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(agent, "_process_table", broken)
+    said.clear()
+    agent._record_stalled_start(proc, tmp_path / "none.json", "new", said.append)
+    assert any("not read — denied" in s for s in said), said

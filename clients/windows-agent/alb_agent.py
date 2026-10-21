@@ -2440,6 +2440,264 @@ def _kill_tree(pid: int) -> None:
             os.kill(pid, signal.SIGKILL)
 
 
+# ── what a start that never got anywhere left on screen ──────────────
+
+
+def _process_table() -> dict[int, tuple[int, str]]:
+    """pid -> (parent pid, lower-case name), Windows or /proc; empty
+    elsewhere."""
+    if sys.platform == "win32":
+        return _win_process_table()
+    table: dict[int, tuple[int, str]] = {}
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return table
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        name = stat[stat.find("(") + 1 : stat.rfind(")")]
+        fields = stat.rpartition(")")[2].split()
+        if len(fields) > 1 and fields[1].isdigit():
+            table[int(entry.name)] = (int(fields[1]), name.lower())
+    return table
+
+
+def _win_cmdline(pid: int) -> str:
+    """Windows: the command line of the live process `pid`, or "".
+
+    The exe name cannot tell run-agent.bat's `python -c` checks from the
+    agent itself — all are python.exe."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _UnicodeString(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.USHORT),
+            ("MaximumLength", wintypes.USHORT),
+            ("Buffer", ctypes.c_void_p),
+        ]
+
+    query = ctypes.WinDLL("ntdll").NtQueryInformationProcess  # type: ignore[attr-defined]
+    query.restype = ctypes.c_long
+    query.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+        ctypes.POINTER(wintypes.ULONG),
+    )
+    k32 = _win_kernel32()
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        size = wintypes.ULONG(0)
+        query(handle, 60, None, 0, ctypes.byref(size))  # 60 = ProcessCommandLineInformation
+        if not size.value:
+            return ""
+        buf = ctypes.create_string_buffer(size.value)
+        if query(handle, 60, buf, size.value, ctypes.byref(size)) != 0:
+            return ""
+        text = _UnicodeString.from_buffer(buf)  # Buffer points into `buf`
+        if not text.Buffer or not text.Length:
+            return ""
+        return ctypes.wstring_at(text.Buffer, text.Length // 2)
+    finally:
+        k32.CloseHandle(handle)
+
+
+def _describe_tree(
+    table: Mapping[int, tuple[int, str]],
+    root: int,
+    created_of: Callable[[int], float | None],
+    cmdline_of: Callable[[int], str],
+    now: float,
+) -> list[str]:
+    """`root` and what runs under it, parents first, one line each: how long
+    it has run and its command line. Empty when `root` is gone."""
+    if root not in table:
+        return []
+    children: dict[int, list[int]] = {}
+    for child, (parent, _name) in table.items():
+        if child != parent:
+            children.setdefault(parent, []).append(child)
+    lines: list[str] = []
+    seen: set[int] = set()
+
+    def walk(pid: int, depth: int) -> None:
+        if pid in seen or len(lines) >= 30:
+            return
+        seen.add(pid)
+        created = created_of(pid)
+        age = f", {now - created:.0f}s old" if created else ""
+        # Verbatim but on one line: the log is line-based.
+        cmd = re.sub(r"[\x00-\x1f]", " ", cmdline_of(pid)).strip()
+        if len(cmd) > 300:
+            cmd = cmd[:300] + " …"
+        lines.append(
+            f"{'  ' * depth}pid {pid} {table[pid][1]}{age}: {cmd or '(command line unreadable)'}"
+        )
+        for child in sorted(children.get(pid, [])):
+            # A recycled pid: something older than its "parent" is not its child.
+            child_created = created_of(child)
+            if created and child_created and child_created < created - 1.0:
+                continue
+            walk(child, depth + 1)
+
+    walk(root, 0)
+    return lines
+
+
+def _win_console_tail(pid: int, rows: int) -> list[str]:
+    """Windows: the last `rows` non-blank lines of the console window that
+    process `pid` runs in — what someone at the screen would read. Raises
+    OSError when the window cannot be read.
+
+    Needs a caller with no console of its own (the update helper has none);
+    detaches again before returning."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Coord(ctypes.Structure):
+        _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]
+
+    class _Rect(ctypes.Structure):
+        _fields_ = [(n, wintypes.SHORT) for n in ("Left", "Top", "Right", "Bottom")]
+
+    class _BufferInfo(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", _Coord),
+            ("dwCursorPosition", _Coord),
+            ("wAttributes", wintypes.WORD),
+            ("srWindow", _Rect),
+            ("dwMaximumWindowSize", _Coord),
+        ]
+
+    last_error = ctypes.get_last_error  # type: ignore[attr-defined]
+    k32 = _win_kernel32()
+    k32.AttachConsole.argtypes = (wintypes.DWORD,)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    k32.GetConsoleScreenBufferInfo.argtypes = (wintypes.HANDLE, ctypes.POINTER(_BufferInfo))
+    k32.ReadConsoleOutputCharacterW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        _Coord,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    if not k32.AttachConsole(pid):
+        raise OSError(f"cannot attach to its window (error {last_error()})")
+    try:
+        out = k32.CreateFileW("CONOUT$", 0xC0000000, 0x3, None, 3, 0, None)  # read+write, shared
+        if not out or out == ctypes.c_void_p(-1).value:
+            raise OSError(f"cannot open its window (error {last_error()})")
+        try:
+            info = _BufferInfo()
+            if not k32.GetConsoleScreenBufferInfo(out, ctypes.byref(info)):
+                raise OSError(f"cannot read its window (error {last_error()})")
+            width, last = int(info.dwSize.X), int(info.dwCursorPosition.Y)
+            text: list[str] = []
+            # Long lines wrap onto several rows; read more rows than wanted.
+            for y in range(max(0, last - 4 * rows), last + 1):
+                buf = ctypes.create_unicode_buffer(width)
+                got = wintypes.DWORD(0)
+                k32.ReadConsoleOutputCharacterW(out, buf, width, _Coord(0, y), ctypes.byref(got))
+                text.append(buf.value[: got.value].rstrip())
+        finally:
+            k32.CloseHandle(out)
+    finally:
+        k32.FreeConsole()
+    text = [t for t in text if t.strip()]
+    return text[-rows:]
+
+
+def _within(seconds: float, fn: Callable[[], Any]) -> Any:
+    """fn()'s result, its exception, or TimeoutError — never a wait longer
+    than `seconds`. The helper still has to start the old build after this."""
+    box: list[Any] = [TimeoutError(f"no answer within {seconds:.0f}s")]
+
+    def run() -> None:
+        try:
+            box[0] = fn()
+        except Exception as e:  # reported by the caller, never raised there
+            box[0] = e
+
+    worker = threading.Thread(target=run, name="stalled-start-report", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    return box[0]
+
+
+def _record_stalled_start(
+    proc: subprocess.Popen[bytes], instance: Path, build: str, say: Callable[[str], None]
+) -> None:
+    """Write down where a start that never reached the hub stands, before
+    anything is stopped: its instance record, the processes under it and
+    the last lines of its window.
+
+    2026-10-20 on the bench: a new build wrote no log line and never dialed
+    the hub; the helper closed its window after 60s and the only account
+    of why went with it. The same files started fine the next day."""
+    rec = _read_json(instance)
+    if rec.get("build") == build:
+        state = "running" if _same_process(rec) else "gone"
+        say(
+            f"instance record: build {build}, pid {rec.get('pid')} ({state}), "
+            f"connected_at {rec.get('connected_at')}"
+        )
+    elif not rec:
+        say(
+            f"instance record: none — build {build} either never got as far as writing "
+            "one (that comes after its first log line) or removed it when it exited"
+        )
+    else:
+        say(
+            f"instance record: build {rec.get('build')}'s — build {build} never wrote "
+            "its own (that comes after its first log line)"
+        )
+    if sys.platform == "win32":
+        created_of: Callable[[int], float | None] = _process_created
+        cmdline_of: Callable[[int], str] = _win_cmdline
+    else:
+        created_of, cmdline_of = (lambda _pid: None), (lambda pid: _posix_cmdline(pid).strip())
+    tree = _within(
+        10.0,
+        lambda: _describe_tree(_process_table(), proc.pid, created_of, cmdline_of, time.time()),
+    )
+    if isinstance(tree, BaseException):
+        say(f"processes under the start (pid {proc.pid}): not read — {tree}")
+    elif not tree:
+        say(f"processes under the start (pid {proc.pid}): none left")
+    else:
+        say(f"processes under the start (pid {proc.pid}):")
+        for line in tree:
+            say(f"  {line}")
+    if sys.platform != "win32":
+        return
+    window = _within(5.0, lambda: _win_console_tail(proc.pid, 40))
+    if isinstance(window, BaseException):
+        say(f"its window: not read — {window}")
+    elif not window:
+        say("its window: empty")
+    else:
+        say(f"its window, last {len(window)} lines:")
+        for line in window:
+            say(f"  | {line}")
+
+
 def _stop_flag(state: Path, pid: int) -> Path:
     return state / f"stop-{pid}"
 
@@ -3038,6 +3296,9 @@ def _launch_and_wait(
             say(f"the agent exited with code {proc.returncode} before reaching the hub")
             break
         time.sleep(0.5)
+    # Before the stop below: it closes the window, and with it the reason.
+    with contextlib.suppress(Exception):
+        _record_stalled_start(proc, instance, build, say)
     if stop_on_timeout:
         rec = _read_json(instance)
         if rec.get("build") == build and _same_process(rec):
