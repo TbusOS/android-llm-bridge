@@ -435,6 +435,12 @@ def test_hello_carries_the_table_from_apply_config(tmp_path, monkeypatch):
     exe.write_text("#!/bin/sh\n")
     monkeypatch.setattr(agent, "_AGENT_LOG_PATH", tmp_path / "agent.log")
     monkeypatch.setattr(agent, "_OPS", {})
+    # Without --config, _parse_args reads the agent.conf next to the script —
+    # a deployed checkout has a real one, and its lists would leak into every
+    # later test through the globals _apply_flash_config rebinds.
+    monkeypatch.setattr(agent, "_default_config_path", lambda: tmp_path / "absent.conf")
+    for name in ("_FASTBOOT_PATH", "_FLASH_PARTITIONS", "_BOARD_PARTITIONS", "_BOARD_PRODUCT"):
+        monkeypatch.setattr(agent, name, getattr(agent, name))
     agent._apply_flash_config(
         agent._parse_args(["--hub-url", "ws://h", "--fastboot-path", str(exe)])
     )

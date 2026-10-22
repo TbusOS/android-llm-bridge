@@ -404,6 +404,9 @@ def test_flash_config_reaches_the_module_globals(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(agent, "_FASTBOOT_PATH", "")
     monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset())
+    # _apply_flash_config rebinds these too; restore them after the test.
+    for name in ("_BOARD_PARTITIONS", "_BOARD_PRODUCT", "_OPS"):
+        monkeypatch.setattr(agent, name, getattr(agent, name))
     agent._apply_flash_config(agent._parse_args(["--config", str(cfg)]))
     assert agent._FASTBOOT_PATH == str(exe)
     assert agent._FLASH_PARTITIONS == frozenset({"boot", "dtbo"})  # whitespace trimmed
