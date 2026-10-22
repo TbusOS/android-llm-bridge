@@ -14,8 +14,9 @@ Routing matrix (primary is the user-declared default, alternates fill gaps):
     stream_read("dmesg"/"kmsg")     → adb → ssh → serial
     push / pull                     → ssh → adb            (serial deny)
     forward                         → adb → ssh            (serial deny)
-    reboot recovery/bootloader/     → adb (only adb can)
-    fastboot/sideload
+    reboot recovery/bootloader/     → adb → serial
+    fastboot
+    reboot sideload                 → adb (only adb can)
     reboot normal                   → primary
 
 check_permissions is delegated to the primary sub-transport — callers who
@@ -151,8 +152,10 @@ class HybridTransport(Transport):
 
         if op == "reboot":
             mode = hint if isinstance(hint, str) else "normal"
+            if mode == "sideload":
+                return self._by_name("adb")  # adbd arms recovery for sideload
             if mode in _BOOTLOADER_MODES:
-                return self._by_name("adb")  # only adb can reach bootloader-land
+                return self._by_name("adb") or self._by_name("serial")
             return self.primary
 
         # Unknown op — conservative default.
@@ -197,7 +200,8 @@ class HybridTransport(Transport):
     async def reboot(self, mode: str = "normal") -> ShellResult:
         t = self.pick_for("reboot", mode)
         if t is None:
-            return _no_route("reboot", f"mode={mode!r} requires adb")
+            need = "adb" if mode == "sideload" else "adb or serial"
+            return _no_route("reboot", f"mode={mode!r} requires {need}")
         return await t.reboot(mode)
 
     async def check_permissions(

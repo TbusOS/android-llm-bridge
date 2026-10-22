@@ -28,14 +28,12 @@
 - 输出是自由文本，LLM 解析容易出错
 - 出错只有 `stderr` 一串英文，没有结构化 error code
 - 长会话积累大量 logcat，context 一下塞爆
-- 危险命令（`rm -rf`、`reboot bootloader`）没挡一层，LLM 误触就是一次刷机
 - 多种连接方式（USB/WiFi/串口）各有各的命令，LLM 要记一堆
 - 跑分、ANR、性能采集这些高级能力每次都要 LLM 自己拼命令
 
 **alb 解决这些问题**：
 - 统一命令（`alb shell` / `alb logcat` / `alb pull` 等），自动选最合适的传输通道
 - 所有输出 `--json` 可选，返回 `{ok, data, error, artifacts}` 结构化
-- 内置权限系统，危险命令默认拦截，可配置 allow/ask/deny 多层策略
 - 长日志走 workspace 分层存储 + 换页机制，LLM 按需读取
 - MCP server 原生支持，Claude Code / Cursor 一行配置即可用
 
@@ -48,7 +46,7 @@
 | **多传输抽象** | adb USB / adb WiFi / 板子 sshd / UART 串口 —— 上层命令一致，底层自动路由 |
 | **LLM-first API** | 结构化返回、错误码、自描述 CLI、`SKILL.md` 自动生成 |
 | **三层接入** | CLI (`alb`) · MCP server (`alb-mcp`) · Web API (FastAPI)，共享同一套业务层 |
-| **权限与安全** | 危险命令黑名单 + tool 级 check_permissions + 多层策略覆盖 |
+| **权限与安全** | 板子上的命令不拦截；Windows 主机只执行 agent 操作表里登记过的操作 |
 | **产物规范化** | logcat / ANR / bugreport / 性能数据 全部入 `workspace/devices/<serial>/...` |
 | **长日志友好** | 分层存储（热/温/冷）+ 搜索 + 归档，LLM 不怕 context 爆 |
 | **Web 可视化**（后续） | 浏览器看设备状态、实时 log、性能曲线 |

@@ -43,11 +43,9 @@ async def alb_reboot(
     """
     Reboot the device. mode: normal | recovery | bootloader | fastboot | sideload.
 
-    Permission levels:
-      - normal: allow (safe)
-      - recovery: ask (typically intended)
-      - bootloader / fastboot / sideload: ask (low-level, may brick)
-      - Don't use alb_shell "reboot bootloader" - it's blocked. Use this tool.
+    Permission: every mode runs without confirmation (2026-10-23).
+    Transports: recovery / bootloader / fastboot over adb, or over serial
+    when the console is at a Linux shell; sideload needs adb.
 
     LLM notes:
       - mode=normal reboots to normal OS.
@@ -162,19 +160,21 @@ async def wait_boot(transport, timeout: int = 180) -> Result[BootResult]:
 
 ## 权限规则
 
-```python
-# src/alb/infra/permissions.py 内置
+所有模式都直接执行，不要确认（2026-10-23 起，见 [`permissions.md`](../permissions.md)）。
 
-POWER_REBOOT_RULES = {
-    "normal":     "allow",
-    "recovery":   "ask",      # 可能导致无法回到正常模式
-    "bootloader": "ask",      # 可能涉及刷机
-    "fastboot":   "ask",
-    "sideload":   "ask",
-}
-```
+| 模式 | adb | 串口 |
+|---|---|---|
+| normal | `adb reboot` | 板子在 Linux shell 时可用 |
+| recovery / bootloader / fastboot | `adb reboot <mode>` | 板子在 Linux shell 时可用 |
+| sideload | `adb reboot sideload` | 不支持（sideload 要 adbd 先设置 recovery） |
 
-shell 直接跑 `reboot bootloader` 被 deny（因为没有 ALB 的 "ask" 流程）。
+串口重启的做法：发 `(sleep 1; reboot <mode>) </dev/null >/dev/null 2>&1 & echo __ALB_REBOOT_QUEUED__`，
+看到这个标记才算成功（`src/alb/transport/serial.py` `reboot()`）。原因：
+
+- 安卓的 `reboot` 命令发出后不会返回。放在前台执行，串口 shell 等不到结束标记，
+  超时后还会补发一个 Ctrl-C。如果板子这时已经进了 U-Boot 的 fastboot，Ctrl-C 会把它打断。
+- 板子停在 U-Boot / recovery 时，这一行不会被当成 shell 命令执行，也就不会打出这个标记。
+  这时返回 `TRANSPORT_NOT_SUPPORTED`，不会误报重启成功。
 
 ---
 

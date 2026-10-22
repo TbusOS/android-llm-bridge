@@ -35,45 +35,10 @@ def _r(name: str, regex: str, reason: str) -> DangerRule:
     return DangerRule(name=name, pattern=re.compile(regex), reason=reason)
 
 
-# Conservative defaults. Add per-deployment via TerminalGuard(extra_rules=...).
-DEFAULT_DANGER_RULES: tuple[DangerRule, ...] = (
-    _r("rm-rf-root",
-       r"^\s*rm\s+(-[^/\s]*r[^/\s]*\s+)*/?(system|vendor|boot|data|root|sdcard|product|odm|dev|sys|proc)(/|$)",
-       "rm targeting a system or critical-data path"),
-    _r("rm-rf-bare-slash",
-       r"^\s*rm\s+(-[^/\s]*r[^/\s]*\s+)+/(\s|$)",
-       "rm -r at the filesystem root"),
-    _r("dd",
-       r"^\s*dd\s+",
-       "dd writes raw bytes to a device — extremely destructive"),
-    _r("mkfs",
-       r"^\s*mkfs[\.\w]*\s+",
-       "mkfs reformats a partition"),
-    _r("reboot",
-       r"^\s*reboot(\s|$)",
-       "reboot ends the session and may interrupt a long-running task"),
-    _r("setprop-persist",
-       r"^\s*setprop\s+persist\.\S+",
-       "persistent setprop survives reboot — needs explicit confirm"),
-    _r("setenforce",
-       r"^\s*setenforce\s+",
-       "changing SELinux mode is rarely intended"),
-    _r("mount-rw",
-       r"^\s*mount\s+(-o\s+\S*rw|--remount,?rw)",
-       "remounting a partition rw can let following commands brick the device"),
-    _r("dropbear-ssh-keygen",
-       r"^\s*ssh-keygen\s+-f\s+/(?:system|vendor)",
-       "writing keys into system partitions"),
-    _r("partition-tools",
-       r"^\s*(parted|fdisk|sgdisk|sfdisk)\s+",
-       "partition table editor"),
-    _r("fastboot-flash",
-       r"^\s*fastboot\s+(flash|erase)\s+",
-       "fastboot flash / erase requires a deliberate intent"),
-    _r("avbctl-disable",
-       r"^\s*avbctl\s+(disable-verification|disable-verity)",
-       "disabling Android Verified Boot"),
-)
+# Empty on purpose: this terminal is a shell ON THE BOARD, and board-side
+# commands are not restricted (docs/permissions.md, 2026-10-23). A
+# deployment that wants a confirm step passes TerminalGuard(rules=...).
+DEFAULT_DANGER_RULES: tuple[DangerRule, ...] = ()
 
 
 # Read-only allowlist — small set of obviously-safe commands. Anything

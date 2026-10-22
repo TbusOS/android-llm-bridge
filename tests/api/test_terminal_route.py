@@ -71,6 +71,23 @@ def client(monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def guarded_client(monkeypatch, client):
+    """`client` with confirm rules installed. The default rule set is empty
+    (board-side commands are not restricted), so the HITL path needs some.
+    TerminalGuard reads the module default when the WS connects."""
+    from alb.transport.terminal_guard import _r
+
+    monkeypatch.setattr(
+        "alb.transport.terminal_guard.DEFAULT_DANGER_RULES",
+        (
+            _r("rm-system", r"^\s*rm\s+(-\S+\s+)*/system(/|$)", "rm under /system"),
+            _r("reboot", r"^\s*reboot(\s|$)", "reboot ends the session"),
+        ),
+    )
+    return client
+
+
+@pytest.fixture
 def no_pty_client(monkeypatch, tmp_path):
     monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
     monkeypatch.chdir(tmp_path)
@@ -158,10 +175,36 @@ def test_terminal_ws_invalid_session_id_structured_close(client) -> None:
         assert ev["error"]["code"] == "INVALID_SESSION_ID"
 
 
-def test_terminal_ws_hitl_blocks_dangerous_command(client) -> None:
-    """Type a dangerous command — the WS should send a hitl_request
-    instead of forwarding it to the shell."""
+def test_terminal_ws_board_command_not_held_by_default(client) -> None:
+    """2026-10-23: with the default (empty) rule set a board command goes
+    straight to the shell — no hitl_request, and the shell echoes it."""
+    import json
+
     with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "rows": 24, "cols": 80})
+        ws.receive_json()  # ready
+        ws.send_json({"type": "input", "data": "reboot bootloader\n"})
+
+        seen = b""
+        for _ in range(80):
+            msg = ws.receive()
+            text = msg.get("text") if isinstance(msg, dict) else None
+            if text and json.loads(text).get("type") == "hitl_request":
+                pytest.fail("board command was held for confirmation")
+            data = msg.get("bytes") if isinstance(msg, dict) else None
+            if data:
+                seen += data
+                # One copy is the guard's own keystroke echo; a second can
+                # only come from the shell, i.e. the line was forwarded.
+                if seen.count(b"reboot bootloader") >= 2:
+                    return
+        pytest.fail(f"command never reached the shell: {seen!r}")
+
+
+def test_terminal_ws_hitl_blocks_dangerous_command(guarded_client) -> None:
+    """Type a command matching a confirm rule — the WS should send a
+    hitl_request instead of forwarding it to the shell."""
+    with guarded_client.websocket_connect("/terminal/ws") as ws:
         ws.send_json({"device": None, "rows": 24, "cols": 80})
         ws.receive_json()  # ready
 
@@ -183,10 +226,10 @@ def test_terminal_ws_hitl_blocks_dangerous_command(client) -> None:
         pytest.fail("never received hitl_request")
 
 
-def test_terminal_ws_hitl_deny_then_safe_command_works(client) -> None:
-    """After denying a dangerous command, the next safe command should
+def test_terminal_ws_hitl_deny_then_safe_command_works(guarded_client) -> None:
+    """After denying a held command, the next safe command should
     still flow through the shell."""
-    with client.websocket_connect("/terminal/ws") as ws:
+    with guarded_client.websocket_connect("/terminal/ws") as ws:
         ws.send_json({})
         ws.receive_json()  # ready
         ws.send_json({"type": "input", "data": "reboot\n"})
@@ -273,10 +316,10 @@ def test_terminal_command_publishes_to_event_bus(client, tmp_path) -> None:
     assert any(e["session_id"] == sid for e in cmd_events)
 
 
-def test_terminal_deny_publishes_to_event_bus(client, tmp_path) -> None:
+def test_terminal_deny_publishes_to_event_bus(guarded_client, tmp_path) -> None:
     """A denied (HITL) command should land as `terminal/<event>` —
     actual kind depends on TerminalGuard's audit payload schema."""
-    with client.websocket_connect("/terminal/ws") as ws:
+    with guarded_client.websocket_connect("/terminal/ws") as ws:
         ws.send_json({"device": None, "rows": 24, "cols": 80})
         ws.receive_json()
         ws.send_json({"type": "input", "data": "rm -rf /system/x\n"})

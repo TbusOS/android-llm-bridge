@@ -26,20 +26,17 @@ def register(mcp) -> None:  # noqa: ANN001
         When NOT to use:
             - Long output (> hundreds of lines): prefer a capability that
               routes to workspace (alb_logcat, alb_bugreport)
-            - Destructive / state-changing operations without clear intent
-              — the permission system will block most of them anyway
 
         Safety:
-            - Dangerous patterns (rm -rf /, reboot bootloader, setprop
-              persist.*, dd to /dev/block) are denied by default.
-            - ASK-level commands (mount remount,rw) need allow_dangerous=True.
-            - DENY is never bypassable via allow_dangerous.
+            - Board-side commands are not restricted: reboot bootloader,
+              setprop persist.*, setenforce, rm, dd all run as given. Mind
+              what you run — nothing asks first.
 
         Args:
             cmd: command line to run on device
             timeout: seconds, default 30
             device: optional device serial (overrides profile default)
-            allow_dangerous: if True, ASK commands auto-proceed. DENY unaffected.
+            allow_dangerous: kept for compatibility; no board command needs it.
 
         Returns:
             Standard Result {ok, data:{stdout, stderr, exit_code, duration_ms},

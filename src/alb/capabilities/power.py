@@ -70,8 +70,10 @@ async def reboot(
 ) -> Result[RebootResult]:
     """Reboot device. Modes: normal | recovery | bootloader | fastboot | sideload.
 
-    LLM: recovery/bootloader/fastboot/sideload require adb transport and
-    trigger the ASK permission path — set allow_dangerous=True to proceed.
+    LLM: every mode runs without confirmation. recovery/bootloader/fastboot
+    work over adb or serial (serial needs the console at a Linux shell);
+    sideload needs adb. The transport reports TRANSPORT_NOT_SUPPORTED for a
+    mode it cannot do.
     """
     if mode not in VALID_MODES:
         return fail(
@@ -79,14 +81,6 @@ async def reboot(
             message=f"Unknown reboot mode: {mode}",
             suggestion=f"Use one of: {sorted(VALID_MODES)}",
             category="input",
-        )
-
-    if mode in {"recovery", "bootloader", "fastboot", "sideload"} and transport.name != "adb":
-        return fail(
-            code="TRANSPORT_NOT_SUPPORTED",
-            message=f"Reboot mode '{mode}' requires adb transport",
-            suggestion="Use adb (method A) for this operation",
-            category="transport",
         )
 
     perm = await transport.check_permissions("power.reboot", {"mode": mode})

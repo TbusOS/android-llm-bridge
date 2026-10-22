@@ -25,11 +25,13 @@ def register(mcp) -> None:  # noqa: ANN001
         """Reboot the device.
 
         Modes:
-            - normal (default, safe)
-            - recovery / bootloader / fastboot / sideload (ASK-level,
-              may not auto-return; require allow_dangerous=True)
+            - normal (default)
+            - recovery / bootloader / fastboot — over adb, or over serial
+              when the UART console is at a Linux shell
+            - sideload — adb only
 
         LLM notes:
+            - No mode needs allow_dangerous (kept for compatibility).
             - wait_boot=True waits for sys.boot_completed=1 before returning.
             - For non-normal modes, make sure you have a recovery path
               (another adb connection or UART) before requesting.

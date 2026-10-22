@@ -13,12 +13,22 @@ from alb.transport.terminal_guard import (
     DangerRule,
     TerminalGuard,
     _check_line,
+    _r,
 )
 
 
 pytestmark = pytest.mark.skipif(
     sys.platform.startswith("win"),
     reason="Terminal guard targets Unix PTYs",
+)
+
+
+# The default rule set is empty (board commands are not restricted), so the
+# HITL machinery is exercised with rules a deployment could pass in.
+_RULES: tuple[DangerRule, ...] = (
+    _r("rm-system", r"^\s*rm\s+(-\S+\s+)*/system(/|$)", "rm under /system"),
+    _r("dd", r"^\s*dd\s+", "dd writes raw bytes"),
+    _r("reboot", r"^\s*reboot(\s|$)", "reboot ends the session"),
 )
 
 
@@ -47,14 +57,14 @@ class _FakeShell:
 
 
 def test_check_line_safe_command_passes() -> None:
-    v = _check_line("ls -la /sdcard", rules=DEFAULT_DANGER_RULES,
+    v = _check_line("ls -la /sdcard", rules=_RULES,
                     read_only=False, session_allowed=set())
     assert v.allow is True
 
 
 def test_check_line_blocks_rm_rf_system() -> None:
     v = _check_line("rm -rf /system/priv-app",
-                    rules=DEFAULT_DANGER_RULES,
+                    rules=_RULES,
                     read_only=False, session_allowed=set())
     assert v.allow is False
     assert v.rule and "rm" in v.rule.name
@@ -62,22 +72,48 @@ def test_check_line_blocks_rm_rf_system() -> None:
 
 def test_check_line_blocks_dd() -> None:
     v = _check_line("dd if=/dev/zero of=/dev/block/sda1 bs=1M",
-                    rules=DEFAULT_DANGER_RULES,
+                    rules=_RULES,
                     read_only=False, session_allowed=set())
     assert v.allow is False
     assert v.rule.name == "dd"
 
 
 def test_check_line_blocks_reboot() -> None:
-    v = _check_line("reboot recovery", rules=DEFAULT_DANGER_RULES,
+    v = _check_line("reboot recovery", rules=_RULES,
                     read_only=False, session_allowed=set())
     assert v.allow is False
     assert v.rule.name == "reboot"
 
 
+def test_default_rules_let_board_commands_through() -> None:
+    """2026-10-23: the web terminal is a shell on the board, and board-side
+    commands are not restricted — none of these may be held for HITL."""
+    assert DEFAULT_DANGER_RULES == ()
+    for line in (
+        "reboot bootloader",
+        "rm -rf /system/priv-app",
+        "dd if=/dev/zero of=/dev/block/sda1",
+        "setprop persist.sys.x 1",
+        "setenforce 0",
+        "fastboot flash boot boot.img",
+    ):
+        v = _check_line(line, rules=DEFAULT_DANGER_RULES,
+                        read_only=False, session_allowed=set())
+        assert v.allow is True, line
+
+
+@pytest.mark.asyncio
+async def test_guard_default_forwards_board_command() -> None:
+    shell = _FakeShell()
+    g = TerminalGuard(shell)  # type: ignore[arg-type]
+    await g.feed(b"reboot bootloader\n")
+    assert shell.written.endswith(b"reboot bootloader\n")
+    assert not g.has_pending
+
+
 def test_check_line_session_allow_overrides_rule() -> None:
     v = _check_line("rm -rf /system/x",
-                    rules=DEFAULT_DANGER_RULES,
+                    rules=_RULES,
                     read_only=False,
                     session_allowed={"rm -rf /system/x"})
     assert v.allow is True
@@ -96,7 +132,7 @@ def test_check_line_read_only_blocks_unknown() -> None:
 
 def test_check_line_read_only_blocks_dangerous_too() -> None:
     # Read-only mode blocks even if the deny-list also matched.
-    v = _check_line("rm -rf /system", rules=DEFAULT_DANGER_RULES,
+    v = _check_line("rm -rf /system", rules=_RULES,
                     read_only=True, session_allowed=set())
     assert v.allow is False
 
@@ -131,7 +167,7 @@ async def test_guard_blocks_dangerous_and_calls_hitl() -> None:
         audits.append(ev)
 
     g = TerminalGuard(  # type: ignore[arg-type]
-        shell, on_hitl=on_hitl, on_audit=on_audit,
+        shell, rules=_RULES, on_hitl=on_hitl, on_audit=on_audit,
     )
     await g.feed(b"rm -rf /system/x\n")
 
@@ -149,7 +185,7 @@ async def test_guard_blocks_dangerous_and_calls_hitl() -> None:
 @pytest.mark.asyncio
 async def test_guard_approve_forwards_held_command() -> None:
     shell = _FakeShell()
-    g = TerminalGuard(shell)  # type: ignore[arg-type]
+    g = TerminalGuard(shell, rules=_RULES)  # type: ignore[arg-type]
     await g.feed(b"reboot\n")
     assert g.has_pending
 
@@ -166,7 +202,7 @@ async def test_guard_deny_drops_held_command() -> None:
     async def on_echo(b: bytes) -> None:
         echos.append(b)
 
-    g = TerminalGuard(shell, on_echo=on_echo)  # type: ignore[arg-type]
+    g = TerminalGuard(shell, rules=_RULES, on_echo=on_echo)  # type: ignore[arg-type]
     await g.feed(b"reboot\n")
     await g.respond_hitl(approve=False)
     # The command bytes never reached the shell stdin.
@@ -179,7 +215,7 @@ async def test_guard_deny_drops_held_command() -> None:
 @pytest.mark.asyncio
 async def test_guard_allow_session_persists_for_same_command() -> None:
     shell = _FakeShell()
-    g = TerminalGuard(shell)  # type: ignore[arg-type]
+    g = TerminalGuard(shell, rules=_RULES)  # type: ignore[arg-type]
 
     # First time the command is dangerous → HITL → approve session
     await g.feed(b"reboot\n")
@@ -248,7 +284,7 @@ async def test_guard_backspace_edits_buffer() -> None:
     async def on_echo(b: bytes) -> None:
         echos.append(b)
 
-    g = TerminalGuard(shell, on_echo=on_echo)  # type: ignore[arg-type]
+    g = TerminalGuard(shell, rules=_RULES, on_echo=on_echo)  # type: ignore[arg-type]
     await g.feed(b"lls")          # typo
     await g.feed(b"\x7f")         # backspace removes "s"
     await g.feed(b"\x7f")         # remove second "l"
@@ -267,7 +303,7 @@ async def test_guard_pending_input_drops_with_bell() -> None:
     async def on_echo(b: bytes) -> None:
         echos.append(b)
 
-    g = TerminalGuard(shell, on_echo=on_echo)  # type: ignore[arg-type]
+    g = TerminalGuard(shell, rules=_RULES, on_echo=on_echo)  # type: ignore[arg-type]
     await g.feed(b"reboot\n")
     assert g.has_pending
     # Anything typed while waiting is dropped + a bell echoed.
@@ -279,7 +315,7 @@ async def test_guard_pending_input_drops_with_bell() -> None:
 @pytest.mark.asyncio
 async def test_guard_escape_sequences_passthrough() -> None:
     shell = _FakeShell()
-    g = TerminalGuard(shell)  # type: ignore[arg-type]
+    g = TerminalGuard(shell, rules=_RULES)  # type: ignore[arg-type]
     # ESC + [A is "arrow up" — should bypass HITL line buffer
     await g.feed(b"\x1b[A")
     await g.feed(b"\n")

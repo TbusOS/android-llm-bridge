@@ -69,8 +69,23 @@ async def test_reboot_ask_with_allow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reboot_non_adb_for_recovery() -> None:
+async def test_reboot_bootloader_over_serial_goes_to_transport() -> None:
+    """Non-normal modes are no longer adb-only: the transport decides."""
+    t = _mk_transport(name="serial")
+    r = await reboot(t, "bootloader", wait_boot=False)
+    assert r.ok
+    t.reboot.assert_awaited_once_with("bootloader")
+
+
+@pytest.mark.asyncio
+async def test_reboot_transport_refusal_is_reported() -> None:
     t = _mk_transport(name="ssh")
+    t.reboot = AsyncMock(
+        return_value=ShellResult(
+            ok=False, exit_code=-1, stderr="not supported",
+            error_code="TRANSPORT_NOT_SUPPORTED",
+        )
+    )
     r = await reboot(t, "recovery", wait_boot=False)
     assert not r.ok
     assert r.error is not None

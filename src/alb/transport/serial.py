@@ -75,6 +75,10 @@ _POSIX_SHELL_STATES = frozenset({
 })
 
 
+# Printed by the shell once a detached reboot is queued (see reboot()).
+_REBOOT_QUEUED = "__ALB_REBOOT_QUEUED__"
+
+
 # Map from non-shell-capable state → error code for shell() rejection.
 _STATE_REJECT: dict[SerialState, str] = {
     SerialState.PANIC: "BOARD_PANICKED",
@@ -718,18 +722,42 @@ class SerialTransport(Transport):
         )
 
     async def reboot(self, mode: str = "normal") -> ShellResult:
-        if mode != "normal":
+        if mode == "sideload":
+            # adbd is what arms recovery for sideload; a shell `reboot
+            # sideload` has no such step.
             return ShellResult(
                 ok=False,
                 exit_code=-1,
-                stderr=(
-                    f"Serial reboot mode '{mode}' not supported. Use adb for "
-                    "recovery/bootloader/fastboot/sideload; or interrupt u-boot "
-                    "manually via alb serial send."
-                ),
+                stderr="Serial reboot to 'sideload' not supported; use adb.",
                 error_code="TRANSPORT_NOT_SUPPORTED",
             )
-        return await self.shell("reboot", timeout=5)
+        target = "reboot" if mode == "normal" else f"reboot {mode}"
+        # Android's `reboot` never returns, so run in the foreground it
+        # leaves shell() waiting for an end marker that never comes — and
+        # the timeout then sends Ctrl-C, which can land in the bootloader
+        # we just asked for and stop it. Run it detached a second later
+        # instead; the shell answers at once with the token.
+        r = await self.shell(
+            f"(sleep 1; {target}) </dev/null >/dev/null 2>&1 & echo {_REBOOT_QUEUED}",
+            timeout=10,
+        )
+        if not r.ok:
+            return r
+        if _REBOOT_QUEUED not in (line.strip() for line in r.stdout.splitlines()):
+            # Only a POSIX shell prints the bare token; a U-Boot / recovery
+            # console answers with an error and the board stays where it is.
+            return ShellResult(
+                ok=False,
+                exit_code=-1,
+                stdout=r.stdout,
+                stderr=(
+                    f"Console did not run '{target}' (not at a Linux shell — "
+                    "U-Boot or recovery?). Check with: alb serial status"
+                ),
+                error_code="TRANSPORT_NOT_SUPPORTED",
+                duration_ms=r.duration_ms,
+            )
+        return ShellResult(ok=True, exit_code=0, duration_ms=r.duration_ms)
 
     async def detect_state(self) -> dict[str, Any]:
         """Connect, run handshake, and return a state snapshot.

@@ -84,9 +84,9 @@ if not r["ok"]:
             return f"请先配置: {r['error']['suggestion']}"
 ```
 
-### 4. 权限是硬约束
+### 4. 板子上的命令不设拦截
 
-黑名单命令（rm -rf / reboot bootloader / setprop persist / dd）被 deny 时，**你不能绕过**。参数 `allow_dangerous=True` 只影响 ask 级别，不改变 deny。
+2026-10-23 起，板子上的命令（rm -rf / reboot bootloader / setprop persist / dd 等）一律直接执行，不拦也不先问。撤不回的命令没人替你确认，用户没明确要求就不要跑。参数 `allow_dangerous` 保留，但板子侧已经没有命令需要它。
 
 ---
 

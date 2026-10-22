@@ -23,7 +23,7 @@ alb shell "<cmd>" [options]
 - `--timeout N` (秒，默认 30)
 - `--device <serial>` 多设备时指定
 - `--transport {adb|ssh|serial}` 指定传输（默认按 profile）
-- `--allow-dangerous` 绕过 ask 级权限（deny 级仍拦截）
+- `--allow-dangerous` 保留兼容，板子侧已没有命令需要它
 - `--json` 结构化输出
 
 输出（不加 `--json` 时，跟 `adb shell` 一样）：
@@ -39,7 +39,7 @@ alb shell "<cmd>" [options]
 ```bash
 alb shell "getprop ro.build.version.sdk"
 alb shell "ls /data/local/tmp" --device abc123
-alb shell "reboot" --allow-dangerous
+alb shell "reboot"
 alb --json shell "dumpsys battery | grep level"
 ```
 
@@ -70,8 +70,7 @@ async def alb_shell(
 
     LLM notes:
       - Default timeout is 30s. Increase for slow commands.
-      - Dangerous patterns (rm -rf /, reboot bootloader, etc.) are BLOCKED by default.
-      - Use allow_dangerous=True for ask-level commands; deny-level stays blocked.
+      - Board-side commands are not blocked or confirmed; nothing asks first.
       - The output IS included in data.stdout, BUT for long output use alb_logcat etc.
 
     Returns:
@@ -152,22 +151,17 @@ alb shell "ls /sdcard/Download/ | tail -10"
 
 ## 权限切点
 
-高危模式 → deny（见 [`permissions.md`](../permissions.md) 黑名单）：
+板子上的命令不拦截（2026-10-23 起，见 [`permissions.md`](../permissions.md)）。下面这些都直接执行，不会先问：
 
 ```bash
-alb shell "rm -rf /"                    # deny
-alb shell "rm -rf /sdcard"              # deny
-alb shell "reboot bootloader"           # deny (建议用 alb reboot bootloader)
-alb shell "setprop persist.sys.x 1"     # deny
-alb shell "dd if=/dev/zero of=/dev/..."  # deny
+alb shell "reboot bootloader"
+alb shell "setprop persist.sys.x 1"
+alb shell "rm -rf /sdcard/tmp"
+alb shell "dd if=/dev/zero of=/dev/..."
 ```
 
-中危 → ask（可 `--allow-dangerous` 放行）：
-
-```bash
-alb shell "mount -o remount,rw /system"  # ask
-alb shell "mv /data/important /tmp"      # ask
-```
+要从串口重启到 bootloader，用 `alb power reboot bootloader` 比 `alb serial shell "reboot bootloader"` 好：
+前者让板子在后台延迟 1 秒重启、命令立刻返回；后者等不到 shell 的结束标记，会超时并补发 Ctrl-C。
 
 ---
 

@@ -162,24 +162,20 @@ def test_reboot_invalid_mode_returns_envelope(monkeypatch, stub_transport) -> No
     assert body["error"]["code"] == "INVALID_FILTER"
 
 
-def test_reboot_dangerous_mode_requires_allow_flag(monkeypatch, stub_transport) -> None:
-    """recovery/bootloader/fastboot/sideload need allow_dangerous=true."""
-    stub_transport.check_permissions = AsyncMock(
-        return_value=PermissionResult(
-            behavior="ask",
-            reason="dangerous reboot",
-            suggestion="Pass allow_dangerous=true",
-        )
+def test_reboot_bootloader_needs_no_allow_flag(monkeypatch, stub_transport) -> None:
+    """2026-10-23: non-normal modes run without allow_dangerous."""
+    monkeypatch.setattr(
+        "alb.api.power_route.build_transport", lambda **_kw: stub_transport
     )
     app = create_app()
     with TestClient(app) as c:
         r = c.post(
             "/api/power/reboot?device=abc",
-            json={"mode": "recovery", "allow_dangerous": False},
+            json={"mode": "bootloader", "allow_dangerous": False, "wait_boot": False},
         )
     body = r.json()
-    assert body["ok"] is False
-    assert body["error"]["code"] == "PERMISSION_DENIED"
+    assert body["ok"] is True, body
+    stub_transport.reboot.assert_awaited_once_with("bootloader")
 
 
 # ─── /sleep-wake ───────────────────────────────────────────────────

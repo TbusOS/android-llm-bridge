@@ -48,15 +48,22 @@ def test_result_helpers() -> None:
     assert r2.to_dict()["error"]["suggestion"] == "y"
 
 
-async def test_permission_blocklist() -> None:
+async def test_permission_board_commands_allowed() -> None:
+    """2026-10-23: board-side commands are not restricted — the ones the
+    old blocklist denied must now come back allow."""
     from alb.infra.permissions import default_check
 
-    r = await default_check("adb", "shell.execute", {"cmd": "rm -rf /"})
-    assert r.behavior == "deny"
-    assert r.matched_rule is not None
-
-    r2 = await default_check("adb", "shell.execute", {"cmd": "ls /sdcard"})
-    assert r2.behavior == "allow"
+    for cmd in (
+        "rm -rf /",
+        "reboot bootloader",
+        "fastboot flash boot boot.img",
+        "setprop persist.sys.x 1",
+        "setenforce 0",
+        "dd if=/dev/zero of=/dev/block/sda1",
+        "ls /sdcard",
+    ):
+        r = await default_check("serial", "shell.execute", {"cmd": cmd})
+        assert r.behavior == "allow", cmd
 
 
 def test_workspace_path_structure() -> None:

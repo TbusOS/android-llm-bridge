@@ -59,8 +59,9 @@ license: Apache-2.0
 - Long outputs land in `workspace/devices/<serial>/<category>/`.
   Read them with `alb_log_search` / `alb_log_tail`, don't flood your
   context window.
-- Dangerous commands are blocked by default. Use `allow_dangerous=True`
-  for ASK-level ops; DENY is never bypassable.
+- Board-side commands are not blocked or confirmed (reboot bootloader,
+  setprop persist.*, rm, dd all run as given). Nothing asks first, so do
+  not run an irreversible command the user did not ask for.
 """
 
 

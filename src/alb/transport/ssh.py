@@ -19,7 +19,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from alb.infra.permissions import PermissionResult, default_check
 from alb.infra.process import run as proc_run
 from alb.transport.base import ShellResult, Transport
 
@@ -269,30 +268,6 @@ class SshTransport(Transport):
                 error_code="TRANSPORT_NOT_SUPPORTED",
             )
         return await self.shell("reboot", timeout=10)
-
-    async def check_permissions(
-        self, action: str, input_data: dict[str, Any]
-    ) -> PermissionResult:
-        base = await default_check(self.name, action, input_data)
-        if base.behavior == "deny":
-            return base
-
-        if action in ("filesync.push", "push"):
-            remote = input_data.get("remote", "")
-            if remote.startswith(("/system/", "/vendor/", "/product/", "/odm/")):
-                return PermissionResult(
-                    behavior="ask",
-                    reason=f"Pushing to read-only system path: {remote}",
-                    suggestion="mount -o remount,rw first, or push to /data/local/tmp",
-                )
-            if remote.startswith(("/dev/block/", "/proc/")):
-                return PermissionResult(
-                    behavior="deny",
-                    reason=f"Writing to kernel-interface path: {remote}",
-                    matched_rule="ssh.push.kernel-path",
-                    suggestion="Use a regular file path",
-                )
-        return base
 
     async def health(self) -> dict[str, Any]:
         info: dict[str, Any] = {

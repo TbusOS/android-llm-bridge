@@ -773,14 +773,6 @@ async def test_custom_patterns_make_handshake_recognize_board_prompt() -> None:
     assert info["state"] == "shell_root"
 
 
-@pytest.mark.asyncio
-async def test_shell_reboot_non_normal_unsupported() -> None:
-    t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
-    r = await t.reboot("recovery")
-    assert not r.ok
-    assert r.error_code == "TRANSPORT_NOT_SUPPORTED"
-
-
 # ─── Bug-1: ser2net back-to-back connect retry ─────────────────────
 
 
@@ -1152,3 +1144,80 @@ async def test_a_send_that_was_dropped_carries_the_bench_agents_reason(monkeypat
         r = await t.send_raw(b"reboot\n")
     assert (r.ok, r.error_code) == (False, "SERIAL_PORT_BUSY")
     assert "拒绝访问" in r.stderr
+
+
+# ─── reboot: detached so the bootloader never gets our Ctrl-C ──────
+async def _fake_shell_recording(reader, writer, seen: list[bytes]) -> None:
+    """POSIX shell that records the wrapped command and, like a real shell,
+    prints the bare token only when the command line echoes it."""
+    import re as _re
+
+    await reader.readline()
+    writer.write(b"# ")
+    await writer.drain()
+    wrapped = await reader.readline()
+    seen.append(wrapped)
+    nonce = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped).group(1)
+    writer.write(wrapped)
+    writer.write(b"__ALB_BEG_" + nonce + b"__\n")
+    tok = _re.search(rb"echo (__ALB_REBOOT_QUEUED__);", wrapped)
+    if tok:
+        writer.write(tok.group(1) + b"\n")
+    writer.write(b"__ALB_END_" + nonce + b"__=0\n# ")
+    await writer.drain()
+    writer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "target"),
+    [
+        ("bootloader", b"reboot bootloader"),
+        ("recovery", b"reboot recovery"),
+        ("fastboot", b"reboot fastboot"),
+        ("normal", b"reboot)"),
+    ],
+)
+async def test_reboot_runs_detached_and_returns_at_once(mode: str, target: bytes) -> None:
+    seen: list[bytes] = []
+
+    async def handler(r, w):
+        await _fake_shell_recording(r, w, seen)
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.reboot(mode)
+
+    assert r.ok, r.stderr
+    # Backgrounded behind a sleep: the shell answers before the board goes down.
+    assert b"(sleep 1; " + target in seen[0]
+    assert b") </dev/null >/dev/null 2>&1 & echo __ALB_REBOOT_QUEUED__" in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_reboot_at_uboot_is_not_reported_as_done() -> None:
+    """U-Boot rejects the line; the board stays put, so no ok=True."""
+
+    async def handler(reader, writer):
+        await reader.readline()
+        writer.write(b"\n=> ")
+        await writer.drain()
+        cmd_line = await reader.readline()
+        writer.write(cmd_line)
+        writer.write(b"Unknown command '(sleep' - try 'help'\n=> ")
+        await writer.drain()
+        writer.close()
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        r = await t.reboot("bootloader")
+
+    assert (r.ok, r.error_code) == (False, "TRANSPORT_NOT_SUPPORTED")
+    assert "not at a Linux shell" in r.stderr
+
+
+@pytest.mark.asyncio
+async def test_reboot_sideload_needs_adb() -> None:
+    t = SerialTransport(tcp_host="127.0.0.1", tcp_port=1)
+    r = await t.reboot("sideload")
+    assert (r.ok, r.error_code) == (False, "TRANSPORT_NOT_SUPPORTED")

@@ -187,12 +187,23 @@ def test_pick_forward_denies_serial_only() -> None:
 # ─── pick_for: reboot ────────────────────────────────────────────────
 
 
-def test_pick_reboot_recovery_requires_adb(hybrid_all) -> None:
+def test_pick_reboot_recovery_prefers_adb(hybrid_all) -> None:
     h, adb, ssh, ser = hybrid_all
     assert h.pick_for("reboot", "recovery") is adb
     assert h.pick_for("reboot", "bootloader") is adb
     assert h.pick_for("reboot", "fastboot") is adb
     assert h.pick_for("reboot", "sideload") is adb
+
+
+def test_pick_reboot_bootloader_falls_back_to_serial() -> None:
+    ssh = FakeTransport("ssh")
+    ser = FakeTransport("serial")
+    h = HybridTransport(primary=ssh, alternates=[ser])
+    assert h.pick_for("reboot", "recovery") is ser
+    assert h.pick_for("reboot", "bootloader") is ser
+    assert h.pick_for("reboot", "fastboot") is ser
+    # sideload is armed by adbd — serial cannot do it.
+    assert h.pick_for("reboot", "sideload") is None
 
 
 def test_pick_reboot_recovery_no_adb_returns_none() -> None:

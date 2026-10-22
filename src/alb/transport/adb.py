@@ -21,7 +21,6 @@ from time import perf_counter
 from typing import Any
 
 from alb.infra.adb_endpoint import AdbEndpoint, endpoint_conflict
-from alb.infra.permissions import PermissionResult, default_check
 from alb.infra.process import run as proc_run, spawn_stream
 
 if False:  # TYPE_CHECKING shim
@@ -297,40 +296,6 @@ class AdbTransport(Transport):
             ["reboot", arg] if arg else ["reboot"],
             timeout=30,
         )
-
-    async def check_permissions(
-        self, action: str, input_data: dict[str, Any]
-    ) -> PermissionResult:
-        base = await default_check(self.name, action, input_data)
-        if base.behavior == "deny":
-            return base
-
-        if action in ("filesync.push", "push"):
-            remote = input_data.get("remote", "")
-            if remote.startswith(("/system/", "/vendor/", "/product/", "/odm/")):
-                return PermissionResult(
-                    behavior="ask",
-                    reason=f"Pushing to read-only system path: {remote}",
-                    suggestion="mount -o remount,rw first, or use /data/local/tmp/",
-                )
-            if remote.startswith(("/dev/block/", "/proc/")):
-                return PermissionResult(
-                    behavior="deny",
-                    reason=f"Writing to kernel-interface path: {remote}",
-                    matched_rule="adb.push.kernel-path",
-                    suggestion="Use a regular file path; /dev/block/* can brick the device",
-                )
-
-        if action in ("power.reboot", "reboot"):
-            mode = input_data.get("mode", "normal")
-            if mode in ("recovery", "bootloader", "fastboot", "sideload"):
-                return PermissionResult(
-                    behavior="ask",
-                    reason=f"Rebooting to '{mode}' — device may not return automatically",
-                    suggestion="Confirm you have a way back (another adb connection / UART)",
-                )
-
-        return base
 
     async def health(self) -> dict[str, Any]:
         # 1. adb binary exists

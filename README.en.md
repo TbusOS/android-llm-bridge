@@ -26,13 +26,11 @@ Traditional `adb` / `ssh` works great for humans but is painful for LLMs:
 - Free-form text output → parsing errors
 - Errors are unstructured → agent can't recover
 - Long logcat floods the context window
-- No safety net for destructive commands (`rm -rf`, `reboot bootloader`)
 - Each transport (USB / WiFi / serial) has its own commands to memorize
 
 **alb fixes these**:
 - Unified commands (`alb shell` / `alb logcat` / `alb pull`), transport auto-routed
 - Structured JSON output with stable error codes
-- Built-in permission system with pattern-based blocklist and multi-layer policy
 - Tiered workspace storage for long logs (hot / warm / cold) with search
 - First-class MCP server — one line of config for Claude Code, Cursor, etc.
 
@@ -45,7 +43,7 @@ Traditional `adb` / `ssh` works great for humans but is painful for LLMs:
 | **Multi-transport abstraction** | adb USB · adb WiFi · on-device sshd · UART serial — same upper API, auto-routed |
 | **LLM-first API** | Structured return, error catalog, self-describing CLI, auto-generated `SKILL.md` |
 | **Three interfaces** | CLI (`alb`) · MCP server (`alb-mcp`) · Web API (FastAPI), sharing one business layer |
-| **Permissions & safety** | Dangerous-command blocklist + tool-level `check_permissions` + layered policy |
+| **Permissions & safety** | Board-side commands run unrestricted; the Windows host runs only the ops listed in its agent's op table |
 | **Workspace conventions** | All artifacts under `workspace/devices/<serial>/...` — predictable paths |
 | **Long-log friendly** | Tiered storage + paged access — no context overflow |
 | **Web visualization** (later) | Device dashboard, live logs, perf charts |

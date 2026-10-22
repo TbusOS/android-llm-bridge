@@ -32,46 +32,22 @@ def test_parse_devices_output_with_state() -> None:
 
 # ─── Permission hook (does NOT invoke subprocess) ──────────────────
 @pytest.mark.asyncio
-async def test_check_permissions_allows_plain_shell() -> None:
+@pytest.mark.parametrize(
+    ("action", "data"),
+    [
+        ("shell.execute", {"cmd": "ls /sdcard"}),
+        ("shell.execute", {"cmd": "rm -rf /sdcard"}),
+        ("filesync.push", {"local": "/x", "remote": "/system/priv-app/foo"}),
+        ("filesync.push", {"local": "/x", "remote": "/dev/block/by-name/boot"}),
+        ("power.reboot", {"mode": "recovery"}),
+        ("power.reboot", {"mode": "bootloader"}),
+    ],
+)
+async def test_check_permissions_allows_board_actions(action: str, data: dict) -> None:
+    """2026-10-23: board-side actions are not restricted (docs/permissions.md)."""
     t = AdbTransport()
-    r = await t.check_permissions("shell.execute", {"cmd": "ls /sdcard"})
+    r = await t.check_permissions(action, data)
     assert r.behavior == "allow"
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_denies_dangerous() -> None:
-    t = AdbTransport()
-    r = await t.check_permissions("shell.execute", {"cmd": "rm -rf /sdcard"})
-    assert r.behavior == "deny"
-    assert r.matched_rule
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_asks_on_system_push() -> None:
-    t = AdbTransport()
-    r = await t.check_permissions(
-        "filesync.push",
-        {"local": "/x", "remote": "/system/priv-app/foo"},
-    )
-    assert r.behavior == "ask"
-    assert "/system/" in (r.reason or "")
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_denies_block_device_push() -> None:
-    t = AdbTransport()
-    r = await t.check_permissions(
-        "filesync.push",
-        {"local": "/x", "remote": "/dev/block/by-name/boot"},
-    )
-    assert r.behavior == "deny"
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_asks_reboot_recovery() -> None:
-    t = AdbTransport()
-    r = await t.check_permissions("power.reboot", {"mode": "recovery"})
-    assert r.behavior == "ask"
 
 
 # ─── Mocked subprocess (validates argv shape + env handling) ───────

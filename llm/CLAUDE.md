@@ -71,18 +71,14 @@ if not st["data"]["devices"]:
     return "没有连接的设备"
 ```
 
-### ❌ 不要绕权限系统
+### ⚠ 板子上的命令不设拦截
 
-权限拦截的命令（返回 `PERMISSION_DENIED`）：
-- `rm -rf /` / `rm -rf /sdcard`
-- `reboot bootloader` / `fastboot erase`
-- `setprop persist.*`
-- `dd of=/dev/block/*`
+2026-10-23 起，板子上的命令一律直接执行：`reboot bootloader`、`fastboot flash/erase`、
+`setprop persist.*`、`setenforce 0`、`rm -rf`、`dd of=/dev/block/*` 都不会被拦，也不会先问。
+板子是调试对象，拦这些命令只会让调试做不下去。
 
-**遇到 deny 时**：
-1. 读 `error.suggestion`
-2. 告诉用户需要授权或换方式
-3. **不要尝试用 `--allow-dangerous` 自动绕** —— 让用户明确决定
+所以**执行前自己想清楚**：删数据、写块设备、擦分区这类命令撤不回，用户没明确要求就不要跑。
+`allow_dangerous` 参数还在，但板子侧已经没有命令需要它。
 
 ### ❌ 不要一次性跑超长任务
 
@@ -206,7 +202,7 @@ alb_rsync local_dir="~/aosp/out/..." remote_dir="/system-dev/"
 | `DEVICE_NOT_FOUND` | `alb_devices` 让用户看列表 |
 | `DEVICE_UNAUTHORIZED` | 告诉用户到设备屏幕点"允许 USB 调试" |
 | `DEVICE_OFFLINE` | 建议断开重连 / `alb_wait_boot` |
-| `PERMISSION_DENIED` | 读 suggestion，**不要绕** |
+| `PERMISSION_DENIED` | 读 suggestion（板子侧命令现在不会返回它） |
 | `TIMEOUT_BOOT` | 怀疑 kernel panic，建议切 UART 方案 |
 | `TRANSPORT_NOT_SUPPORTED` | 告诉用户切到支持的 transport |
 | `WORKSPACE_FULL` | 建议 `alb workspace clean` |
@@ -231,10 +227,10 @@ alb_rsync local_dir="~/aosp/out/..." remote_dir="/system-dev/"
 
 ## 权限策略要点
 
-- 默认黑名单拦下最危险命令（rm/reboot bootloader/setprop persist/dd 等）
-- **你不能自己决定绕过** —— `allow_dangerous` 参数对 deny 级无效
-- 遇到 ask 级，MCP 客户端会问用户，不是你做主
-- 用户如果坚持要跑危险命令，告诉他在 config 里加 allow 规则（不要临时绕）
+- 板子上的命令不拦截（2026-10-23 起），见上文「板子上的命令不设拦截」
+- 权限检查只为保护接板子的 Windows 主机：那边的 agent 只执行它操作表里登记过的操作，
+  不接受任意命令，所以板子侧的命令删不到 Windows 上的文件
+- 撤不回的命令（删数据 / 写块设备 / 擦分区）没人替你确认，用户没要求就别跑
 
 ---
 

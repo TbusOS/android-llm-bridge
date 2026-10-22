@@ -2,7 +2,7 @@
 
 We don't spin up a real sshd; instead we cover:
   - parameter / error-mapping logic (_classify_ssh_error)
-  - transport-specific check_permissions rules
+  - check_permissions lets board-side actions through
   - rsync argv construction via mocked subprocess
   - graceful ImportError when asyncssh isn't installed
 """
@@ -41,35 +41,20 @@ def test_classify_generic_fallback() -> None:
 
 # ─── Permission rules ──────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_check_permissions_allows_benign() -> None:
+@pytest.mark.parametrize(
+    ("action", "data"),
+    [
+        ("shell.execute", {"cmd": "ls /data"}),
+        ("shell.execute", {"cmd": "rm -rf /"}),
+        ("filesync.push", {"local": "/x", "remote": "/vendor/etc/foo.conf"}),
+        ("filesync.push", {"local": "/x", "remote": "/dev/block/by-name/boot"}),
+    ],
+)
+async def test_check_permissions_allows_board_actions(action: str, data: dict) -> None:
+    """2026-10-23: board-side actions are not restricted (docs/permissions.md)."""
     t = SshTransport(host="1.2.3.4")
-    r = await t.check_permissions("shell.execute", {"cmd": "ls /data"})
+    r = await t.check_permissions(action, data)
     assert r.behavior == "allow"
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_asks_on_system_push() -> None:
-    t = SshTransport(host="1.2.3.4")
-    r = await t.check_permissions(
-        "filesync.push", {"local": "/x", "remote": "/vendor/etc/foo.conf"}
-    )
-    assert r.behavior == "ask"
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_denies_block_device_push() -> None:
-    t = SshTransport(host="1.2.3.4")
-    r = await t.check_permissions(
-        "filesync.push", {"local": "/x", "remote": "/dev/block/by-name/boot"}
-    )
-    assert r.behavior == "deny"
-
-
-@pytest.mark.asyncio
-async def test_check_permissions_denies_rm_rf_root() -> None:
-    t = SshTransport(host="1.2.3.4")
-    r = await t.check_permissions("shell.execute", {"cmd": "rm -rf /"})
-    assert r.behavior == "deny"
 
 
 # ─── ImportError when asyncssh is missing ──────────────────────────
