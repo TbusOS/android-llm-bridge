@@ -332,6 +332,10 @@ async def test_no_product_configured_means_no_query(monkeypatch):
     [
         ("product: prod_a\nFinished. Total time: 0.001s", "prod_a"),
         ("(bootloader) product: prod_a  ", "prod_a"),
+        # fastboot.exe on Windows: \r\n line ends (2026-10-23 a real board
+        # read as 'khaje\r' and every write was refused as another board).
+        ("product: prod_a\r\nFinished. Total time: 0.001s\r", "prod_a"),
+        ("(bootloader) product: prod_a \r", "prod_a"),
         ("getvar:product FAILED (remote: 'unknown variable')", ""),
         ("", ""),
     ],

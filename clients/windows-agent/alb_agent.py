@@ -1946,7 +1946,9 @@ async def _device_present(fastboot: str) -> bool:
 
 # `fastboot getvar product` answers on stderr as `product: <value>`; some
 # bootloaders prefix `(bootloader) `.
-_PRODUCT_RE = re.compile(r"^(?:\(bootloader\)\s*)?product:[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
+# fastboot.exe on Windows ends lines with \r\n: the \r must not end up in the
+# product, or every board compares unequal (FLASH_BOARD_MISMATCH on all writes).
+_PRODUCT_RE = re.compile(r"^(?:\(bootloader\)\s*)?product:[ \t]*(\S.*?)[ \t\r]*$", re.MULTILINE)
 
 
 async def _device_product(fastboot: str) -> tuple[str, str]:
