@@ -11,6 +11,7 @@ from alb.capabilities.power import (
     wait_boot_completed,
 )
 from alb.mcp.transport_factory import build_transport
+from alb.transport.factory import serial_fallback_for
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -35,6 +36,10 @@ def register(mcp) -> None:  # noqa: ANN001
             - wait_boot=True waits for sys.boot_completed=1 before returning.
             - For non-normal modes, make sure you have a recovery path
               (another adb connection or UART) before requesting.
+            - Without `device`, a reboot adb cannot place (DEVICE_NOT_FOUND)
+              is retried over the serial console. Then data.fallback holds
+              adb's error — tell the user adb saw no device, so they can
+              find out why.
         """
         t = build_transport(device_serial=device)
         r = await reboot(
@@ -43,6 +48,7 @@ def register(mcp) -> None:  # noqa: ANN001
             wait_boot=wait_boot,
             timeout=timeout,
             allow_dangerous=allow_dangerous,
+            serial_fallback=serial_fallback_for(device_serial=device),
         )
         return r.to_dict()
 

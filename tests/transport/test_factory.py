@@ -44,3 +44,36 @@ def test_build_transport_allows_none_device() -> None:
 def test_build_transport_allows_wellformed_serial(good: str) -> None:
     t = build_transport(override="adb", device_serial=good)
     assert t.name == "adb"
+
+
+# ─── serial_fallback_for (2026-10-23) ──────────────────────────────
+def test_serial_fallback_only_when_adb_was_the_default(monkeypatch) -> None:
+    from alb.transport import factory
+
+    monkeypatch.delenv("ALB_TRANSPORT", raising=False)
+    monkeypatch.setattr(
+        factory, "active_settings",
+        lambda force_reload=False: type("S", (), {"primary_transport": "adb"})(),
+    )
+    monkeypatch.setattr(
+        factory, "build_transport",
+        lambda **kw: type("T", (), {"name": kw.get("override")})(),
+    )
+    t = factory.serial_fallback_for()
+    assert t is not None and t.name == "serial"
+    # Anything that chose the transport or the device turns it off.
+    assert factory.serial_fallback_for(override="adb") is None
+    assert factory.serial_fallback_for(device_serial="abc123") is None
+    monkeypatch.setenv("ALB_TRANSPORT", "adb")
+    assert factory.serial_fallback_for() is None
+
+
+def test_serial_fallback_off_when_default_is_not_adb(monkeypatch) -> None:
+    from alb.transport import factory
+
+    monkeypatch.delenv("ALB_TRANSPORT", raising=False)
+    monkeypatch.setattr(
+        factory, "active_settings",
+        lambda force_reload=False: type("S", (), {"primary_transport": "serial"})(),
+    )
+    assert factory.serial_fallback_for() is None

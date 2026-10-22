@@ -14,7 +14,7 @@ Endpoints:
                        "sideload",
                "wait_boot": bool,                # default true (only honored for normal)
                "timeout": int,                   # seconds; default 180
-               "allow_dangerous": bool}          # required for non-normal modes
+               "allow_dangerous": bool}          # kept for compatibility; no mode needs it
         Returns the RebootResult / failure envelope verbatim.
 
     POST /api/power/sleep-wake?device=<serial>
@@ -88,7 +88,7 @@ async def post_reboot(
     body: RebootRequest,
     device: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
-    """Reboot the device. Non-normal modes require ``allow_dangerous=true``."""
+    """Reboot the device. No mode needs ``allow_dangerous`` (kept for compatibility)."""
     transport, err = _resolve_transport(device)
     if err is not None:
         return err

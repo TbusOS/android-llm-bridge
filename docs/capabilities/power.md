@@ -168,6 +168,16 @@ async def wait_boot(transport, timeout: int = 180) -> Result[BootResult]:
 | recovery / bootloader / fastboot | `adb reboot <mode>` | 板子在 Linux shell 时可用 |
 | sideload | `adb reboot sideload` | 不支持（sideload 要 adbd 先设置 recovery） |
 
+**adb 找不到设备时自动改走串口**（2026-10-23）：`alb power reboot` 和 MCP `alb_reboot` 在
+没指定 `--transport`、没设 `ALB_TRANSPORT`、没给 `--device` 时，如果 adb 回 `DEVICE_NOT_FOUND`，
+就改从串口重启。adb 那次的错误不会被吞掉：
+
+- 成功时，结果里的 `data.fallback` 记着 adb 的错误码和原文；CLI 另外往 stderr 打一行
+  `warning: adb found no device (DEVICE_NOT_FOUND: …); rebooted over the serial console instead`。
+- 串口也失败时，报错信息里两边的错误都有，`details.fallback` 是 adb 那次的错误。
+- 只认 `DEVICE_NOT_FOUND`。设备离线、未授权这类错误说明设备还在，只是状态不对；这时改去重启串口上的板子，会把问题盖住。
+- 给了 `--device` 就不回退：点名的 adb 设备不一定就是串口上接的那块板。
+
 串口重启的做法：发 `(sleep 1; reboot <mode>) </dev/null >/dev/null 2>&1 & echo __ALB_REBOOT_QUEUED__`，
 看到这个标记才算成功（`src/alb/transport/serial.py` `reboot()`）。原因：
 

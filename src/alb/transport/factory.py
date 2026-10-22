@@ -120,3 +120,21 @@ def build_transport(
             **common,
         )
     raise ValueError(f"Unknown transport: {which}")
+
+
+def serial_fallback_for(
+    *,
+    override: str | None = None,
+    device_serial: str | None = None,
+) -> Transport | None:
+    """The serial transport to retry on when adb finds no device, or None.
+
+    Only when adb was picked by default: no explicit transport, no
+    ALB_TRANSPORT, and no device serial — a named adb device that is
+    missing may not be the board on the serial console.
+    """
+    if override or os.environ.get("ALB_TRANSPORT") or device_serial:
+        return None
+    if active_settings().primary_transport != "adb":
+        return None
+    return build_transport(override="serial")

@@ -18,9 +18,15 @@ from alb.transport.base import Transport
 class RebootResult:
     mode: str
     wait_boot_ms: int | None
+    # Set when adb found no device and the reboot went over serial:
+    # {"from", "error_code", "message"} of the adb attempt.
+    fallback: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"mode": self.mode, "wait_boot_ms": self.wait_boot_ms}
+        d: dict[str, Any] = {"mode": self.mode, "wait_boot_ms": self.wait_boot_ms}
+        if self.fallback is not None:
+            d["fallback"] = self.fallback
+        return d
 
 
 @dataclass(frozen=True)
@@ -67,6 +73,7 @@ async def reboot(
     wait_boot: bool = True,
     timeout: int = 180,
     allow_dangerous: bool = False,
+    serial_fallback: Transport | None = None,
 ) -> Result[RebootResult]:
     """Reboot device. Modes: normal | recovery | bootloader | fastboot | sideload.
 
@@ -74,6 +81,10 @@ async def reboot(
     work over adb or serial (serial needs the console at a Linux shell);
     sideload needs adb. The transport reports TRANSPORT_NOT_SUPPORTED for a
     mode it cannot do.
+
+    serial_fallback: tried when `transport` answers DEVICE_NOT_FOUND. On
+    success `data.fallback` carries adb's error code and message, so the
+    caller can still tell that adb saw no device.
     """
     if mode not in VALID_MODES:
         return fail(
@@ -102,6 +113,33 @@ async def reboot(
         )
 
     r = await transport.reboot(mode)
+    fallback: dict[str, Any] | None = None
+    if not r.ok and r.error_code == "DEVICE_NOT_FOUND" and serial_fallback is not None:
+        # adb sees no device, but a board with adb off still has its serial
+        # console. adb's own error is kept and reported either way: someone
+        # still has to find out why adb sees nothing.
+        fallback = {
+            "from": transport.name,
+            "error_code": r.error_code,
+            "message": r.stderr.strip(),
+        }
+        transport = serial_fallback
+        r = await transport.reboot(mode)
+        if not r.ok:
+            return fail(
+                code=r.error_code or "ADB_COMMAND_FAILED",
+                message=(
+                    f"{fallback['from']}: {fallback['message'] or 'no device'}; "
+                    f"serial: {r.stderr.strip() or 'reboot failed'}"
+                ),
+                suggestion=(
+                    "adb sees no device (check: alb devices) and the serial "
+                    "console did not take the reboot (check: alb serial status)"
+                ),
+                category="transport",
+                details={"stderr": r.stderr, "fallback": fallback},
+                timing_ms=r.duration_ms,
+            )
     if not r.ok:
         return fail(
             code=r.error_code or "ADB_COMMAND_FAILED",
@@ -127,7 +165,7 @@ async def reboot(
         wait_ms = wr.timing_ms
 
     return ok(
-        data=RebootResult(mode=mode, wait_boot_ms=wait_ms),
+        data=RebootResult(mode=mode, wait_boot_ms=wait_ms, fallback=fallback),
         timing_ms=r.duration_ms + (wait_ms or 0),
     )
 

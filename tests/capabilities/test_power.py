@@ -128,3 +128,72 @@ def test_parse_battery_handles_missing_fields() -> None:
     assert info.level == 50
     assert info.scale == 100
     assert info.voltage_mv == -1
+
+
+# ─── adb finds no device → serial fallback (2026-10-23) ─────────────
+def _not_found() -> ShellResult:
+    return ShellResult(
+        ok=False, exit_code=1, stderr="error: no devices/emulators found",
+        error_code="DEVICE_NOT_FOUND",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reboot_falls_back_to_serial_and_keeps_adb_error() -> None:
+    adb = _mk_transport(name="adb")
+    adb.reboot = AsyncMock(return_value=_not_found())
+    ser = _mk_transport(name="serial")
+    r = await reboot(adb, "bootloader", wait_boot=False, serial_fallback=ser)
+    assert r.ok, r.error
+    ser.reboot.assert_awaited_once_with("bootloader")
+    assert r.data is not None
+    assert r.data.fallback == {
+        "from": "adb",
+        "error_code": "DEVICE_NOT_FOUND",
+        "message": "error: no devices/emulators found",
+    }
+    assert r.data.to_dict()["fallback"]["error_code"] == "DEVICE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_reboot_without_fallback_reports_adb_error() -> None:
+    adb = _mk_transport(name="adb")
+    adb.reboot = AsyncMock(return_value=_not_found())
+    r = await reboot(adb, "bootloader", wait_boot=False)
+    assert not r.ok
+    assert r.error is not None and r.error.code == "DEVICE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_reboot_other_adb_errors_do_not_fall_back() -> None:
+    """Only "no device" moves to serial: an offline / unauthorized device is
+    still THE device, and rebooting whatever is on the console instead would
+    hide that."""
+    adb = _mk_transport(name="adb")
+    adb.reboot = AsyncMock(return_value=ShellResult(
+        ok=False, exit_code=1, stderr="error: device offline",
+        error_code="DEVICE_OFFLINE",
+    ))
+    ser = _mk_transport(name="serial")
+    r = await reboot(adb, "bootloader", wait_boot=False, serial_fallback=ser)
+    assert not r.ok
+    assert r.error is not None and r.error.code == "DEVICE_OFFLINE"
+    ser.reboot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reboot_fallback_failure_reports_both_errors() -> None:
+    adb = _mk_transport(name="adb")
+    adb.reboot = AsyncMock(return_value=_not_found())
+    ser = _mk_transport(name="serial")
+    ser.reboot = AsyncMock(return_value=ShellResult(
+        ok=False, exit_code=-1, stderr="no bytes from the console",
+        error_code="BOARD_UNREACHABLE",
+    ))
+    r = await reboot(adb, "bootloader", wait_boot=False, serial_fallback=ser)
+    assert not r.ok
+    assert r.error is not None
+    assert r.error.code == "BOARD_UNREACHABLE"
+    assert "no devices/emulators found" in r.error.message
+    assert "no bytes from the console" in r.error.message
+    assert r.error.details["fallback"]["error_code"] == "DEVICE_NOT_FOUND"

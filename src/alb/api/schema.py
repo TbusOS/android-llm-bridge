@@ -257,7 +257,7 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     {
         "method": "POST",
         "path": "/api/power/reboot",
-        "description": "Reboot the device; non-normal modes require allow_dangerous",
+        "description": "Reboot the device; no mode needs allow_dangerous",
     },
     {
         "method": "POST",
