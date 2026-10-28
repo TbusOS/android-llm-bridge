@@ -105,7 +105,7 @@ hub 上一样。完整链路与逐跳排障：[docs/dial-home-runbook.md](./docs
 │  ├─ CLI (typer)          给人 / LLM 直接用              │
 │  ├─ MCP Server           给 Claude/Cursor/Codex 调用    │
 │  ├─ Web API (FastAPI)    给 Web UI / 外部集成           │
-│  └─ Web UI (后续)         可视化                         │
+│  └─ Web UI (Material 3)  板子状态/日志/时间轴/烧录/助手 │
 ├────────────────────────────────────────────────────────┤
 │  业务能力层 Capabilities（M1 六个）                      │
 │  shell │ logging │ filesync │ diagnose │ power │ app   │

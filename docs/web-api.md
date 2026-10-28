@@ -5,7 +5,7 @@
 specific version. REST paths and WS message types may be added freely
 within a schema version; removals or shape changes bump the major.
 
-The Web UI (see `docs/webui-preview.html`) is the primary client of this
+The Web UI (design baseline `docs/webui-preview-v3*.html`) is the primary client of this
 API; anything it needs must be documented here.
 
 ## Base URL
@@ -351,6 +351,59 @@ mid-flash would interrupt it.
 {"v": "1", "ok": true, "agent_id": "win-…", "kill_conflicts": false,
  "note": "restart requested — poll /agent/status for the refreshed device list"}
 ```
+
+## Timeline (serial + dmesg + logcat on one clock)
+
+Recordings live under `workspace/devices/<serial>/timeline/capture-<ts>/`, the same place
+`alb timeline capture` writes, so CLI and web recordings show up in both.
+
+### POST /api/timeline/capture?device=
+
+Body `{"duration_s": 1..600, "sources": ["logcat","dmesg","uart"], "reboot": "" | "system" | "bootloader",
+"logcat_buffers": ["main","system","crash","events"]}`. NDJSON: `{"ev":"progress","elapsed_s":..,"lines":{..}}`
+about once a second, then `{"ev":"done","ok":..,"data":{"name","duration_s","sources":{src:{lines,missing}}}}`.
+With `reboot` set the capture starts first and the reboot follows about a second later (serial console
+fallback when adb is gone), so the bootloader output is recorded. The `events` buffer is what carries the
+Android `boot_progress_*` milestones.
+
+### GET /api/timeline/captures?device=&limit=
+
+Newest first: `{name, started_at, duration_s, sources:{logcat,dmesg,uart}, size_bytes, has_boot}`.
+
+### GET /api/timeline/captures/{name}/lines?device=&sources=&grep=&t0=&t1=&limit=&offset=
+
+`{lines:[{t, ts, src, text, level, tag, pid}], truncated}`; `t` is seconds from the start of the recording;
+level / tag / pid are parsed from logcat threadtime lines only.
+
+### GET /api/timeline/captures/{name}/density?device=&bucket_s=
+
+Line counts per bucket for each track (logcat split by level) plus `markers` (panic, ANR, crash, SELinux
+denial, boot milestone, alb's own `[alb]` notes) — what the timeline lanes are drawn from.
+
+### GET /api/timeline/captures/{name}/boot?device=
+
+`{found, total_s, milestones:[{key,label,src,t}], stages:[{key,src,t0,t1}], previous}`; `previous` is the
+newest older recording of the same device that also has milestones, for "this boot vs the last one".
+
+## Diagnostics, adb, serial
+
+| Endpoint | What it does |
+|---|---|
+| `POST /api/diag/pstore?device=` | Pull `/sys/fs/pstore` (else `/proc/last_kmsg`) into the workspace; records with a one-line summary and `has_panic`. `ROOT_REQUIRED` when the listing is denied. |
+| `POST /api/adb/root` · `/unroot` · `/remount` `?device=` | Wrap `alb adb root / unroot / remount`; codes such as `ADB_UNROOT_NO_EFFECT` pass through. |
+| `POST /api/serial/break-in?device=` | Body `{reboot: "" \| "auto" \| "adb" \| "serial", timeout_s}`. NDJSON; stops the board at its bootloader prompt over the hub's shared serial session (`BREAKIN_BOOTED_PAST` if the countdown was missed). |
+
+## Flash job records
+
+`GET /api/flash/jobs?limit=` → `{running, jobs:[{id, op, label, started_at, ok, code, failed_line, rows}]}` and
+`GET /api/flash/jobs/{id}` → the full `job.json` plus its timeline file. A package flash keeps running when the
+browser goes away; these let a reloaded page show what happened.
+
+## Assistant
+
+`POST /api/assistant/ondevice/probe?device=` body `{ports: [8080, 8000, 11434]}` → per port
+`{port, ok, kind: "openai" | "ollama" | null, models, error}`. It reaches the board-local port through the adb
+`tcp:<port>` service (the same path as `alb port`), so the bench agent does not change.
 
 ## Error codes (cross-endpoint)
 
