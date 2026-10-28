@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ search: {} as Record<string, string> }));
+const clip = vi.hoisted(() => ({ copyText: vi.fn(async (_text: string) => true) }));
+vi.mock("../../../lib/clipboard", () => clip);
 vi.mock("@tanstack/react-router", () => ({
   useSearch: () => router.search,
   useNavigate: () => vi.fn(),
@@ -15,8 +17,8 @@ vi.mock("@tanstack/react-router", () => ({
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
 import { LogsPage } from "./LogsPage";
-import { LineSplitter, makeMatcher, parseQuery, parseThreadtime } from "./logcatModel";
-import { parseDmesg } from "./OtherPanels";
+import { badSpecTokens, LineSplitter, makeMatcher, parseQuery, parseThreadtime } from "./logcatModel";
+import { markRegex, parseDmesg } from "./OtherPanels";
 
 const DEVICE = "0123456789ABCDEF";
 
@@ -216,7 +218,7 @@ describe("LogsPage other tabs", () => {
     expect(screen.getByText("Search everything already recorded")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("search"), { target: { value: "panic" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Kernel panic - not syncing")).toBeInTheDocument();
+    expect(await screen.findByText((_, el) => el?.classList.contains("list__title") === true && el.textContent === "Kernel panic - not syncing")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: "Open" })).toHaveLength(1);
   });
 
@@ -231,5 +233,328 @@ describe("LogsPage other tabs", () => {
     f.mockImplementation(async () => json({ ok: false, error: { code: "INVALID_FILTER", message: "bad regex" } }));
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(screen.getByText(/INVALID_FILTER/)).toBeInTheDocument());
+  });
+});
+
+/* ---------------- restored from the v2 tabs ---------------- */
+
+const wsAt = (path: string) => FakeWS.instances.filter((w) => w.url.endsWith(path));
+const firstFrame = (ws: FakeWS) => JSON.parse(ws.sent[0] ?? "null") as Record<string, unknown> | null;
+const many = (n: number, msg: string) => Array.from({ length: n }, (_, i) => L("09:31:05.000", 2000, "E", "Flood", `${msg} ${i}`)).join("");
+
+describe("logcat: clear, stop / start, board filter, pause", () => {
+  it("Clear empties the view and keeps the stream running", async () => {
+    renderPage();
+    const ws = wsAt("/logcat/stream")[0] as FakeWS;
+    act(() => ws.open());
+    act(() => ws.text(L("09:31:04.121", 1188, "E", "SensorsHal", "before clear")));
+    await screen.findByText("before clear");
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(await screen.findByText("Connected, no lines yet")).toBeInTheDocument();
+    expect(screen.queryByText("before clear")).not.toBeInTheDocument();
+    act(() => ws.text(L("09:31:05.000", 1188, "E", "SensorsHal", "after clear")));
+    expect(await screen.findByText("after clear")).toBeInTheDocument();
+    expect(wsAt("/logcat/stream")).toHaveLength(1);
+  });
+
+  it("Stop closes the stream and Start reopens it from an empty view", async () => {
+    renderPage();
+    const ws = wsAt("/logcat/stream")[0] as FakeWS;
+    act(() => ws.open());
+    act(() => ws.text(L("09:31:04.121", 1188, "E", "SensorsHal", "kept while stopped")));
+    await screen.findByText("kept while stopped");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(ws.readyState).toBe(3);
+    expect(ws.sent).toContain(JSON.stringify({ type: "close" }));
+    expect(screen.getByText("Stopped")).toBeInTheDocument();
+    expect(screen.getByText("kept while stopped")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const again = wsAt("/logcat/stream");
+    expect(again).toHaveLength(2);
+    // the board replays its ring buffer on a new stream: old rows are dropped first
+    expect(screen.queryByText("kept while stopped")).not.toBeInTheDocument();
+    act(() => (again[1] as FakeWS).open());
+    expect(firstFrame(again[1] as FakeWS)).toEqual({ device: DEVICE });
+  });
+
+  it("sends the board filter to the stream and refuses a malformed one", async () => {
+    renderPage();
+    const ws = wsAt("/logcat/stream")[0] as FakeWS;
+    act(() => ws.open());
+    expect(firstFrame(ws)).toEqual({ device: DEVICE });
+    const input = screen.getByLabelText("Filter on the board");
+    const apply = screen.getByRole("button", { name: "Apply" });
+    fireEvent.change(input, { target: { value: "SensorsHal" } });
+    expect(apply).toBeDisabled();
+    expect(screen.getByText(/Board filter not valid: SensorsHal/)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "SensorsHal:V  *:S" } });
+    fireEvent.click(apply);
+    const next = wsAt("/logcat/stream")[1] as FakeWS;
+    expect(next).toBeDefined();
+    act(() => next.open());
+    expect(firstFrame(next)).toEqual({ device: DEVICE, filter: "SensorsHal:V *:S" });
+    expect(screen.getByText("Board filter SensorsHal:V *:S")).toBeInTheDocument();
+    // a later Start keeps using it
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    const third = wsAt("/logcat/stream")[2] as FakeWS;
+    act(() => third.open());
+    expect(firstFrame(third)).toMatchObject({ filter: "SensorsHal:V *:S" });
+  });
+
+  it("Pause keeps the rows on screen even after the buffer overflows", async () => {
+    renderPage();
+    const ws = wsAt("/logcat/stream")[0] as FakeWS;
+    act(() => ws.open());
+    act(() => ws.text(L("09:31:04.121", 1188, "E", "SensorsHal", "row being read")));
+    await screen.findByText("row being read");
+    fireEvent.click(screen.getByRole("button", { name: /Pause/ }));
+    act(() => ws.text(many(6000, "flood")));
+    // wait for the render that follows the flood, not the one from the click
+    await screen.findByText(/paused, [1-9]\d* buffered/);
+    expect(screen.getByText("row being read")).toBeInTheDocument();
+    expect(screen.getByText(/paused, 5000 buffered, 1000 more pushed out of the buffer/)).toBeInTheDocument();
+    expect(screen.queryByText("flood 5999")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
+    expect(await screen.findByText("flood 5999")).toBeInTheDocument();
+  });
+
+  it("offers clear and reconnect after a stream error", async () => {
+    renderPage();
+    const ws = wsAt("/logcat/stream")[0] as FakeWS;
+    act(() => ws.open());
+    act(() => ws.text(L("09:31:04.121", 1188, "E", "SensorsHal", "line before the error")));
+    await screen.findByText("line before the error");
+    act(() => ws.emit("message", { data: JSON.stringify({ type: "closed", reason: "stream_error", error: "adb went away" }) }));
+    fireEvent.click(await screen.findByRole("button", { name: "Clear and reconnect" }));
+    expect(wsAt("/logcat/stream")).toHaveLength(2);
+    expect(screen.queryByText("line before the error")).not.toBeInTheDocument();
+  });
+
+  it("checks filter tokens the way the server does", () => {
+    expect(badSpecTokens("*:E")).toEqual([]);
+    expect(badSpecTokens("ActivityManager:I MyApp:v *:S")).toEqual([]);
+    expect(badSpecTokens("MyApp *:X a:b:E")).toEqual(["MyApp", "*:X", "a:b:E"]);
+  });
+});
+
+/** Serves the serial tab's REST calls; `calls` records method + url. */
+function serialFetch(over: { captures?: Record<string, unknown[]>; text?: string } = {}) {
+  const calls: string[] = [];
+  const caps = over.captures ?? {
+    "": [{ name: "2026-10-27T21-03-11-uart.log", size_bytes: 2048, mtime: Date.now() / 1000 - 120 }],
+  };
+  const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push(`${method} ${url}`);
+    if (url.startsWith("/uart/capture?") && method === "POST") {
+      return json({ ok: true, duration: 5, lines: 42, errors: 3, filename: "2026-10-28T09-00-00-uart.log", path: "/ws/logs/2026-10-28T09-00-00-uart.log" });
+    }
+    if (url.startsWith("/uart/captures/") && method === "DELETE") return json({ ok: true, name: "x" });
+    if (url.startsWith("/uart/captures/")) return json({ ok: true, name: "x", size_bytes: 40, text: over.text ?? "U-Boot SPL board init\nStarting kernel ...\n" });
+    if (url.startsWith("/uart/captures")) {
+      const dev = new URL(url, "http://x").searchParams.get("device") ?? "";
+      return json({ ok: true, device: dev || null, captures: caps[dev] ?? [] });
+    }
+    return json({}, 404);
+  });
+  vi.stubGlobal("fetch", f);
+  return calls;
+}
+
+describe("serial tab", () => {
+  it("connects with no adb device selected", async () => {
+    serialFetch();
+    useApp.setState({ device: null });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    const ws = wsAt("/uart/stream")[0] as FakeWS;
+    expect(ws).toBeDefined();
+    act(() => ws.open());
+    expect(firstFrame(ws)).toEqual({});
+    expect(screen.queryByText("No device selected")).not.toBeInTheDocument();
+    act(() => ws.text("U-Boot SPL board init\n"));
+    expect(await screen.findByText(/U-Boot SPL board init/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Capture 60 s/ })).toBeEnabled();
+  });
+
+  it("keeps the stream and its lines when an adb device shows up mid-boot", async () => {
+    serialFetch();
+    useApp.setState({ device: null });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    const ws = wsAt("/uart/stream")[0] as FakeWS;
+    act(() => ws.open());
+    act(() => ws.text("Starting kernel ...\n"));
+    await screen.findByText(/Starting kernel/);
+    act(() => useApp.setState({ device: DEVICE }));
+    act(() => ws.text("init: second stage\n"));
+    expect(await screen.findByText(/init: second stage/)).toBeInTheDocument();
+    expect(screen.getByText(/Starting kernel/)).toBeInTheDocument();
+    expect(wsAt("/uart/stream")).toHaveLength(1);
+  });
+
+  it("keeps up to 5000 lines and can clear, copy and open them large", async () => {
+    serialFetch();
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    const ws = wsAt("/uart/stream")[0] as FakeWS;
+    act(() => ws.open());
+    act(() => ws.text(`${Array.from({ length: 600 }, (_, i) => `boot line ${i}`).join("\n")}\n`));
+    await waitFor(() => expect(document.querySelector("pre.term")?.textContent).toContain("boot line 599"));
+    // the old view kept 500 lines, so the first 100 were gone by now
+    expect(document.querySelector("pre.term")?.textContent?.startsWith("boot line 0\n")).toBe(true);
+    expect(screen.getByText("Last 600 lines, up to 5,000 kept")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy all" }));
+    await waitFor(() => expect(clip.copyText).toHaveBeenCalled());
+    const copied = clip.copyText.mock.calls.at(-1)?.[0] ?? "";
+    expect(copied.startsWith("boot line 0\n")).toBe(true);
+    expect(copied.endsWith("boot line 599")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Open large/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Serial output");
+    expect(dialog).toHaveTextContent("600 lines");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(await screen.findByText("Connected, nothing on the serial line yet")).toBeInTheDocument();
+  });
+
+  it("captures for the chosen length, keeps the result, opens and deletes captures", async () => {
+    const calls = serialFetch();
+    useApp.setState({ device: null });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    expect(await screen.findByText("2026-10-27T21-03-11-uart.log")).toBeInTheDocument();
+    expect(calls).toContain("GET /uart/captures");
+
+    fireEvent.change(screen.getByLabelText(/Capture length/), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Capture 5 s" }));
+    expect(await screen.findByText("Captured 2026-10-28T09-00-00-uart.log: 42 lines, 3 with error keywords.")).toBeInTheDocument();
+    expect(calls).toContain("POST /uart/capture?duration=5");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open 2026-10-27T21-03-11-uart.log" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog).toHaveTextContent("Starting kernel ..."));
+    expect(calls).toContain("GET /uart/captures/2026-10-27T21-03-11-uart.log");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete 2026-10-27T21-03-11-uart.log" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Delete 2026-10-27T21-03-11-uart.log?");
+    expect(calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(calls).toContain("DELETE /uart/captures/2026-10-27T21-03-11-uart.log"));
+    // the result of the capture is still on screen
+    expect(screen.getByText(/Captured 2026-10-28T09-00-00-uart\.log/)).toBeInTheDocument();
+  });
+
+  it("cancel leaves the capture alone", async () => {
+    const calls = serialFetch();
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete 2026-10-27T21-03-11-uart.log" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+  });
+
+  it("lists captures filed under the device and those without one", async () => {
+    const calls = serialFetch({
+      captures: {
+        [DEVICE]: [{ name: "2026-10-28T10-00-00-uart.log", size_bytes: 10, mtime: Date.now() / 1000 - 10 }],
+        "": [{ name: "2026-10-28T08-00-00-uart.log", size_bytes: 10, mtime: Date.now() / 1000 - 3600 }],
+      },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    expect(await screen.findByText("2026-10-28T10-00-00-uart.log")).toBeInTheDocument();
+    expect(screen.getByText("2026-10-28T08-00-00-uart.log")).toBeInTheDocument();
+    expect(calls).toEqual(expect.arrayContaining([`GET /uart/captures?device=${DEVICE}`, "GET /uart/captures"]));
+    fireEvent.click(screen.getByRole("button", { name: "Open 2026-10-28T10-00-00-uart.log" }));
+    await waitFor(() => expect(calls).toContain(`GET /uart/captures/2026-10-28T10-00-00-uart.log?device=${DEVICE}`));
+  });
+
+  it("shows a failed capture until it is dismissed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith("/uart/capture?") && init?.method === "POST") return json({ ok: false, duration: 60, error: "serial port busy" });
+        if (url.startsWith("/uart/captures")) return json({ ok: true, device: null, captures: [] });
+        return json({}, 404);
+      }),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Serial/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Capture 60 s" }));
+    expect(await screen.findByText(/serial port busy/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/serial port busy/)).not.toBeInTheDocument();
+  });
+});
+
+describe("search tab", () => {
+  const hits = {
+    ok: true,
+    timing_ms: 12,
+    data: {
+      pattern: "panic|oops|fatal",
+      truncated: true,
+      match_count: 3,
+      matches: [
+        { path: "devices/x/logs/a-dmesg.txt", line_number: 3, content: "Kernel panic - not syncing: fatal exception" },
+        { path: "devices/x/logs/a-dmesg.txt", line_number: 9, content: "oops again" },
+        { path: "devices/x/logs/b-uart.log", line_number: 1, content: "nothing to mark here" },
+      ],
+    },
+  };
+
+  it("starts from panic|oops|fatal, marks the hits, and reports files, time and the limit", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input));
+        return json(hits);
+      }),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Search all recordings/ }));
+    expect(screen.getByLabelText("search")).toHaveValue("panic|oops|fatal");
+    fireEvent.change(screen.getByLabelText("most hits to list"), { target: { value: "500" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText(/3 hits in 2 files · 12 ms; only the first 500 are listed/)).toBeInTheDocument();
+    const q = new URL(urls[0] as string, "http://x").searchParams;
+    expect(q.get("pattern")).toBe("panic|oops|fatal");
+    expect(q.get("max")).toBe("500");
+    const marks = Array.from(document.querySelectorAll(".log-search-hit mark")).map((m) => m.textContent);
+    expect(marks).toEqual(["panic", "fatal", "oops"]);
+  });
+
+  it("collects dmesg and runs the search again", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.startsWith("/api/log/dmesg")) return json({ ok: true, data: { lines: 120, errors: 2, duration_captured_ms: 5000 } });
+        return json(hits);
+      }),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Search all recordings/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Collect dmesg and search/ }));
+    expect(await screen.findByText("dmesg collected: 120 lines, 2 with error keywords.")).toBeInTheDocument();
+    await waitFor(() => expect(urls.filter((u) => u.startsWith("/api/log/search"))).toHaveLength(1));
+    expect(urls[0]).toBe(`/api/log/dmesg?device=${DEVICE}`);
+  });
+
+  it("marks regex hits and leaves text alone when the browser cannot compile the pattern", () => {
+    render(<p data-testid="m">{markRegex("a1b22c", "\\d+")}</p>);
+    expect(Array.from(screen.getByTestId("m").querySelectorAll("mark")).map((m) => m.textContent)).toEqual(["1", "22"]);
+    expect(markRegex("abc", "(?<")).toBe("abc");
+    expect(markRegex("abc", "^")).toBe("abc");
   });
 });

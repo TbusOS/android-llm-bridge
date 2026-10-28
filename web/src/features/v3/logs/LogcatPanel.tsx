@@ -4,9 +4,10 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 
 import { Icon } from "../../../components/v3/Icon";
 import { Dot, Empty, ErrorBanner, toast } from "../../../components/v3/ui";
+import { copyText } from "../../../lib/clipboard";
 import { useT } from "../../../lib/i18n";
 import { useShell } from "../../../stores/shell";
-import { LEVELS, type Level, type LogEntry, makeMatcher, parseQuery, type useLogcat } from "./logcatModel";
+import { badSpecTokens, LEVELS, type Level, type LogEntry, makeMatcher, parseQuery, type useLogcat } from "./logcatModel";
 
 const PAGE = 1000;
 
@@ -20,7 +21,10 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
   const [follow, setFollow] = useState(true);
   const [limit, setLimit] = useState(PAGE);
   const [selId, setSelId] = useState<number | null>(null);
+  const [draft, setDraft] = useState(lc.spec);
   const pane = useRef<HTMLDivElement>(null);
+  const badSpec = badSpecTokens(draft);
+  const specChanged = draft.trim().split(/\s+/).filter(Boolean).join(" ") !== lc.spec;
 
   const matcher = useMemo(() => makeMatcher(q, levels, regex), [q, levels, regex]);
   const filtered = useMemo(() => lc.visible.filter(matcher.test), [lc.visible, matcher]);
@@ -50,12 +54,7 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
     openSheet({ zh: `日志 · ${e.tag}`, en: `Log · ${e.tag}`, detail: `Live logcat on device ${device}. Selected line and its neighbours:\n${near}` });
   };
   const copy = async (e: LogEntry) => {
-    try {
-      await navigator.clipboard.writeText(rowText(e));
-      toast(t("已复制。", "Copied."));
-    } catch {
-      toast(t("复制失败。", "Copy failed."));
-    }
+    toast((await copyText(rowText(e))) ? t("已复制。", "Copied.") : t("复制失败。", "Copy failed."));
   };
 
   const max = Math.max(1, ...lc.histogram.map((b) => b.d + b.i + b.w + b.e));
@@ -67,6 +66,34 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
     <div id="p-logcat" role="tabpanel">
       <div className="log-pad stack">
         <div className="log-tools">
+          <form
+            className="log-spec"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!badSpec.length && specChanged) lc.applySpec(draft);
+            }}
+          >
+            <label
+              className="input--search"
+              title={t(
+                "交给 adb logcat 的过滤表达式。*:E 只收错误;Tag:V *:S 只收这一个 tag。不符合的行板子上就丢了,不占这里的 5000 行缓冲。应用时会清屏重连,板子会把缓存里符合的日志重发一遍。",
+                "Filter spec handed to adb logcat. *:E keeps errors only; Tag:V *:S keeps one tag. Lines it drops never reach this page, so they do not use up the 5000-line buffer. Applying clears the view and reconnects; the board resends what still matches in its buffer.",
+              )}
+            >
+              <Icon name="filter" size="sm" />
+              <input
+                className="mono"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                aria-label={t("板上过滤", "Filter on the board")}
+                aria-invalid={badSpec.length > 0}
+                placeholder={t("板上过滤,如 *:E", "Board filter, e.g. *:E")}
+              />
+            </label>
+            <button type="submit" className="btn btn--tonal btn--sm" disabled={badSpec.length > 0 || !specChanged}>
+              {t("应用", "Apply")}
+            </button>
+          </form>
           <div className="seg seg--sm" role="group" aria-label={t("级别", "levels")}>
             {LEVELS.map((l) => (
               <button key={l} type="button" aria-pressed={levels.has(l)} onClick={() => toggleLevel(l)}>{l}</button>
@@ -96,6 +123,14 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
           <button type="button" className="chip" aria-pressed={follow} onClick={() => setFollow((v) => !v)}>{t("跟随最新", "Follow")}</button>
           {matcher.badRegex ? <span className="t-body-small" style={{ color: "var(--md-sys-color-error)" }}>{t("正则写得不对,先不按文字过滤。", "Invalid regex; text filter ignored.")}</span> : null}
         </div>
+        {badSpec.length ? (
+          <span className="t-body-small" aria-live="polite" style={{ color: "var(--md-sys-color-error)" }}>
+            {t(
+              `板上过滤写法不对:${badSpec.slice(0, 3).join("、")}。每一项写成「tag:级别」,级别是 V D I W E F S 中的一个,tag 可以用 *。`,
+              `Board filter not valid: ${badSpec.slice(0, 3).join(", ")}. Write each item as tag:level, where level is one of V D I W E F S and the tag may be *.`,
+            )}
+          </span>
+        ) : null}
         <div>
           <div className="row row--between t-body-small t-muted">
             <span>{t("每 2 秒行数,最近 5 分钟", "Lines per 2 s, last 5 minutes")}</span>
@@ -129,7 +164,7 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
 
       {lc.state === "error" ? (
         <div style={{ padding: "0 16px 8px" }}>
-          <ErrorBanner action={<button type="button" className="btn btn--text btn--sm" onClick={lc.reconnect}>{t("重连", "Reconnect")}</button>}>
+          <ErrorBanner action={<button type="button" className="btn btn--text btn--sm" onClick={lc.start}>{t("清屏并重连", "Clear and reconnect")}</button>}>
             {t("logcat 流断了:", "The logcat stream failed: ")}{lc.error}
           </ErrorBanner>
         </div>
@@ -137,6 +172,8 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
 
       {!device ? (
         <Empty icon="logs" title={t("还没有选设备", "No device selected")}>{t("在顶栏选一台设备后,这里会开始显示它的 logcat。", "Pick a device in the top bar to see its logcat here.")}</Empty>
+      ) : shown.length === 0 && lc.stopped ? (
+        <Empty icon="logs" title={t("logcat 已停止", "logcat is stopped")}>{t("点下面的「开始」重新接收。", "Press Start below to receive it again.")}</Empty>
       ) : shown.length === 0 ? (
         <Empty icon="logs" title={lc.received === 0 ? (live ? t("连上了,还没有新日志", "Connected, no lines yet") : t("等待 logcat", "Waiting for logcat")) : t("过滤条件把所有行都滤掉了", "The filters hide every line")}>
           {lc.received === 0 ? t("板子有输出时这里会自动出现。", "Lines appear here as soon as the board prints.") : t("放开级别或清掉搜索词。", "Turn on more levels or clear the search.")}
@@ -182,11 +219,39 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
       )}
 
       <div className="log-status">
-        <span><Dot tone={stateTone} inline />{live ? t(`实时 · 每分钟 ${lc.perMinute.toLocaleString()} 行`, `Live · ${lc.perMinute.toLocaleString()} lines/min`) : lc.state === "connecting" ? t("连接中…", "Connecting…") : t("未连接", "Not connected")}{lc.paused ? t(` · 已暂停,缓存 ${lc.buffered} 行`, ` · paused, ${lc.buffered} buffered`) : ""}</span>
+        <span>
+          <Dot tone={stateTone} inline />
+          {live
+            ? t(`实时 · 每分钟 ${lc.perMinute.toLocaleString()} 行`, `Live · ${lc.perMinute.toLocaleString()} lines/min`)
+            : lc.state === "connecting"
+              ? t("连接中…", "Connecting…")
+              : lc.stopped
+                ? t("已停止", "Stopped")
+                : lc.state === "ended"
+                  ? t("流已结束", "Stream ended")
+                  : t("未连接", "Not connected")}
+          {lc.paused ? t(` · 已暂停,缓存 ${lc.buffered} 行`, ` · paused, ${lc.buffered} buffered`) : ""}
+          {lc.paused && lc.dropped > 0 ? t(`,另有 ${lc.dropped} 行已挤出缓冲`, `, ${lc.dropped} more pushed out of the buffer`) : ""}
+        </span>
         <span>{t(`显示 ${shown.length.toLocaleString()} / ${lc.visible.length.toLocaleString()} 行 · 过滤掉 ${hidden.toLocaleString()} 行`, `Showing ${shown.length.toLocaleString()} of ${lc.visible.length.toLocaleString()} lines · ${hidden.toLocaleString()} hidden by filters`)}</span>
+        {lc.spec ? <span className="mono">{t(`板上过滤 ${lc.spec}`, `Board filter ${lc.spec}`)}</span> : null}
         <span>{selId === null ? t("没有选中的行", "No line selected") : t("已选 1 行", "Selected: 1 line")}</span>
-        {lc.stopped || lc.state === "idle" || lc.state === "ended" ? (
-          <button type="button" className="btn btn--text btn--sm" onClick={lc.reconnect} disabled={!device}>{t("重新连接", "Reconnect")}</button>
+        {lc.state === "ready" || lc.state === "connecting" ? (
+          <button type="button" className="btn btn--text btn--sm" onClick={lc.stop}>
+            <Icon name="stop" size="sm" />
+            {t("停止", "Stop")}
+          </button>
+        ) : lc.state !== "error" ? (
+          <button
+            type="button"
+            className="btn btn--text btn--sm"
+            onClick={lc.start}
+            disabled={!device}
+            title={t("板子会先把缓存里的日志重发一遍,所以先清屏。", "The board first resends its buffered log, so the view is cleared first.")}
+          >
+            <Icon name="play" size="sm" />
+            {lc.state === "ended" && !lc.stopped ? t("清屏并重连", "Clear and reconnect") : t("开始", "Start")}
+          </button>
         ) : null}
       </div>
     </div>

@@ -16,3 +16,31 @@
 .log-search-hit {
   cursor: default;
 }
+.log-search-hit mark {
+  background: var(--alb-color-warning-container);
+  color: var(--alb-color-on-warning-container);
+  border-radius: 2px;
+}
+/* logcat: the filter handed to adb logcat, ahead of the in-browser ones */
+.log-spec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 300px;
+  min-width: 0;
+}
+.log-tools .log-spec .input--search { flex: 1 1 140px; }
+.log-note { padding: 0 16px 8px; }
+/* serial: capture to a file + history */
+.log-caps { border-top: 1px solid var(--alb-color-divider); }
+.log-caps h3 { margin: 0; }
+.log-caps__none { margin: 0; }
+.log-caps__confirm { grid-column: 1 / -1; margin-top: 8px; }
+.log-dur {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--alb-color-text-muted);
+}
+.log-dur .input { width: 76px; min-height: 32px; padding: 4px 8px; }

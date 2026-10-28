@@ -3,6 +3,12 @@
  * /logcat/stream (reused hook from the v2 Inspect tab) is split into
  * `logcat -v threadtime` entries, kept in a bounded buffer, counted into
  * 2-second bins for the histogram, and filtered on the client.
+ *
+ * Two filters exist on purpose. The level / tag / text filter runs here in
+ * the browser and changes nothing on the wire. The board filter (`spec`,
+ * e.g. `Tag:V *:S` or `*:E`) is handed to `adb logcat` itself, so lines it
+ * drops never reach the bounded buffer; on a noisy board that is the only
+ * way to keep a long history of what matters.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -45,6 +51,16 @@ export class LineSplitter {
     this.tail = parts.pop() ?? "";
     return parts;
   }
+}
+
+/* ---------------- board filter spec ---------------- */
+
+/** One `<TAG>:<LEVEL>` token, the rule /logcat/stream applies before it starts adb. */
+const SPEC_TOKEN = /^[A-Za-z0-9_.*-]+:[VDIWEFS]$/i;
+
+/** Tokens of a logcat filter spec the server would refuse; empty when the spec is fine. */
+export function badSpecTokens(spec: string): string[] {
+  return spec.split(/\s+/).filter((tok) => tok && !SPEC_TOKEN.test(tok));
 }
 
 /* ---------------- query ---------------- */
@@ -120,10 +136,16 @@ export function useLogcat(device: string | null) {
   const stamps = useRef<number[]>([]);
   const dirty = useRef(false);
   const pausedAt = useRef<number | null>(null);
+  // The rows on screen while paused. A copy, not a window into `entries`:
+  // the live buffer keeps dropping its oldest rows, and a window would
+  // lose exactly the rows being read.
+  const frozen = useRef<LogEntry[] | null>(null);
   const [paused, setPaused] = useState(false);
   const [tick, setTick] = useState(0);
   const [received, setReceived] = useState(0);
   const total = useRef(0);
+  const [spec, setSpec] = useState("");
+  const specRef = useRef("");
 
   useEffect(() => {
     const split = new LineSplitter();
@@ -166,57 +188,90 @@ export function useLogcat(device: string | null) {
     return () => window.clearInterval(id);
   }, []);
 
+  /** Empty the buffer, the histogram and the pause snapshot. */
+  const reset = useCallback(() => {
+    entries.current = [];
+    bins.current.clear();
+    stamps.current = [];
+    total.current = 0;
+    pausedAt.current = null;
+    frozen.current = null;
+    setPaused(false);
+    setReceived(0);
+    setTick((n) => n + 1);
+  }, []);
+
   const [stopped, setStopped] = useState(false);
   useEffect(() => {
     if (!device) {
       disconnect();
       return;
     }
-    entries.current = [];
-    bins.current.clear();
-    stamps.current = [];
-    total.current = 0;
-    setReceived(0);
+    reset();
     setStopped(false);
-    connect({ device });
+    connect({ device, filter: specRef.current || null });
     return () => disconnect();
-  }, [device, connect, disconnect]);
+  }, [device, connect, disconnect, reset]);
 
   const pause = useCallback(() => {
     pausedAt.current = nextId.current;
+    frozen.current = entries.current.slice();
     setPaused(true);
   }, []);
   const resume = useCallback(() => {
     pausedAt.current = null;
+    frozen.current = null;
     setPaused(false);
     setTick((n) => n + 1);
   }, []);
+  /** Clear the view; the stream keeps running, so only lines from now on show. */
   const clear = useCallback(() => {
     entries.current = [];
+    total.current = 0;
+    if (frozen.current) {
+      frozen.current = [];
+      pausedAt.current = nextId.current;
+    }
+    setReceived(0);
     setTick((n) => n + 1);
   }, []);
-  const reconnect = useCallback(() => {
+  /**
+   * (Re)open the stream from an empty view. `adb logcat` without `-T`
+   * starts by sending everything still in the board's ring buffer, so
+   * keeping the old rows would show each of them twice.
+   */
+  const start = useCallback(() => {
     if (!device) return;
+    reset();
     setStopped(false);
-    connect({ device });
-  }, [device, connect]);
+    connect({ device, filter: specRef.current || null });
+  }, [device, connect, reset]);
   const stop = useCallback(() => {
     setStopped(true);
     disconnect();
   }, [disconnect]);
+  /** Change the filter handed to `adb logcat`; restarts the stream when one is wanted. */
+  const applySpec = useCallback(
+    (next: string) => {
+      const s = next.trim().split(/\s+/).filter(Boolean).join(" ");
+      specRef.current = s;
+      setSpec(s);
+      if (device && !stopped) start();
+    },
+    [device, stopped, start],
+  );
 
   // `tick` is the change signal for the refs read below.
   const visible = useMemo(() => {
     void tick;
-    const all = entries.current;
-    const lim = pausedAt.current;
-    if (lim === null) return all.slice();
-    let end = all.length;
-    while (end > 0 && (all[end - 1] as LogEntry).id >= lim) end--;
-    return all.slice(0, end);
+    return frozen.current ?? entries.current.slice();
   }, [tick, paused]);
 
-  const buffered = paused && pausedAt.current !== null ? Math.max(0, nextId.current - pausedAt.current) : 0;
+  // Lines that arrived since the pause, and how many of them the live
+  // buffer still holds (the rest were pushed out by newer ones).
+  const arrived = paused && pausedAt.current !== null ? Math.max(0, nextId.current - pausedAt.current) : 0;
+  const buffered = Math.min(arrived, entries.current.length);
+  const dropped = arrived - buffered;
 
   const histogram = useMemo(() => {
     void tick;
@@ -232,5 +287,5 @@ export function useLogcat(device: string | null) {
     return n;
   }, [tick]);
 
-  return { ...stream, stopped, visible, received, paused, buffered, pause, resume, clear, reconnect, stop, histogram, perMinute };
+  return { ...stream, stopped, visible, received, paused, buffered, dropped, pause, resume, clear, start, stop, spec, applySpec, histogram, perMinute };
 }

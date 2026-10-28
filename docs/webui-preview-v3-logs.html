@@ -7,6 +7,17 @@
 <!-- Web UI v3 design baseline (Material 3): logs. Sample data only. -->
 <link rel="stylesheet" href="assets/v3/alb.css">
 <script src="assets/v3/icons.js"></script>
+<style>
+/* Page-only classes; the React page has the same rules in features/v3/logs/logs.css. */
+.log-search-hit mark { background: var(--alb-color-warning-container); color: var(--alb-color-on-warning-container); border-radius: 2px; }
+.log-spec { display: flex; align-items: center; gap: 8px; flex: 0 1 300px; min-width: 0; }
+.log-tools .log-spec .input--search { flex: 1 1 140px; }
+.log-caps { border-top: 1px solid var(--alb-color-divider); }
+.log-caps h3 { margin: 0; }
+.log-caps__confirm { grid-column: 1 / -1; margin-top: 8px; }
+.log-dur { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--alb-color-text-muted); }
+.log-dur .input { width: 76px; min-height: 32px; padding: 4px 8px; }
+</style>
 </head>
 <body>
 <div class="app" id="app" data-page="logs">
@@ -20,6 +31,7 @@
     </div>
     <div class="page-head__actions">
       <button class="btn btn--outlined" data-toast-zh="已暂停,新日志先缓存。" data-toast-en="Paused; new lines are buffered."><i data-ic="pause"></i><span data-en="Pause">暂停</span></button>
+      <button class="btn btn--outlined" data-toast-zh="设计稿:已清屏,只看之后来的。" data-toast-en="Draft: cleared; only new lines show."><i data-ic="close"></i><span data-en="Clear">清屏</span></button>
       <button class="btn btn--outlined" data-toast-zh="设计稿:已存到工作区 logs/。" data-toast-en="Draft: saved to workspace logs/."><i data-ic="download"></i><span data-en="Save">保存</span></button>
       <a class="btn btn--tonal" href="webui-preview-v3-timeline.html"><i data-ic="timeline"></i><span data-en="Open in timeline">在时间轴中看</span></a>
     </div>
@@ -39,6 +51,10 @@
         <div class="log-tools">
           <label class="visually-hidden" for="buf">buffer</label>
           <select class="select" id="buf" style="width:auto"><option>main + system + crash</option><option>events</option><option>radio</option><option>all</option></select>
+          <form class="log-spec" onsubmit="return false">
+            <label class="input--search" title="交给 adb logcat 的过滤表达式;应用时清屏重连"><i data-ic="filter" class="ic--sm"></i><input class="mono" value="*:W" aria-label="板上过滤" data-en-label="Filter on the board" placeholder="板上过滤,如 *:E" data-en-ph="Board filter, e.g. *:E"></label>
+            <button type="submit" class="btn btn--tonal btn--sm" data-toast-zh="设计稿:清屏后按新的板上过滤重连。" data-toast-en="Draft: clears and reconnects with the new board filter."><span data-en="Apply">应用</span></button>
+          </form>
           <div class="seg seg--sm" data-multi role="group" aria-label="levels">
             <button aria-pressed="false">V</button><button aria-pressed="false">D</button><button aria-pressed="true">I</button><button aria-pressed="true">W</button><button aria-pressed="true">E</button><button aria-pressed="true">F</button>
           </div>
@@ -55,7 +71,7 @@
         <div class="src-note"><code>WS /logcat/stream?device=&amp;filter=</code></div>
       </div>
       <div class="logs log-pane" id="logcat"></div>
-      <div class="log-status"><span><span class="dot dot--live" style="display:inline-block;margin-right:6px"></span><span data-en="Live · 1,240 lines/min">实时 · 每分钟 1,240 行</span></span><span data-en="Showing 2,000 of 18,412 lines · 16,412 hidden by filters">显示 2,000 / 18,412 行 · 过滤掉 16,412 行</span><span data-en="Selected: 1 line">已选 1 行</span></div>
+      <div class="log-status"><span><span class="dot dot--live" style="display:inline-block;margin-right:6px"></span><span data-en="Live · 1,240 lines/min">实时 · 每分钟 1,240 行</span></span><span data-en="Showing 2,000 of 18,412 lines · 16,412 hidden by filters">显示 2,000 / 18,412 行 · 过滤掉 16,412 行</span><span class="mono" data-en="Board filter *:W">板上过滤 *:W</span><span data-en="Selected: 1 line">已选 1 行</span><button class="btn btn--text btn--sm" data-toast-zh="设计稿:已停止,行都留着。" data-toast-en="Draft: stopped; the lines stay."><i data-ic="stop" class="ic--sm"></i><span data-en="Stop">停止</span></button></div>
     </div>
 
     <!-- dmesg -->
@@ -82,7 +98,9 @@
         <span class="chip"><span class="dot dot--ok"></span><b>COM7</b><span>115200 8N1</span></span>
         <span class="t-body-small t-muted" data-en="2 readers share the port: this page and a capture">2 个读者共用这个口:本页和一个抓取</span>
         <span class="grow"></span>
-        <button class="btn btn--outlined btn--sm" data-toast-zh="设计稿:开始抓 60 秒,存到工作区。" data-toast-en="Draft: captures 60 s to the workspace."><i data-ic="record" class="ic--sm"></i><span data-en="Capture 60 s">抓取 60 秒</span></button>
+        <button class="icon-btn icon-btn--sm" aria-label="清屏" data-en-label="Clear" title="清屏"><i data-ic="close" class="ic--sm"></i></button>
+        <button class="icon-btn icon-btn--sm" aria-label="复制全部" data-en-label="Copy all" title="复制全部" data-toast-zh="已复制 8 行。" data-toast-en="Copied 8 lines."><i data-ic="copy" class="ic--sm"></i></button>
+        <button class="btn btn--text btn--sm" data-toast-zh="设计稿:在大窗口里打开全部行(LogDialog)。" data-toast-en="Draft: opens every line in the large view (LogDialog)."><i data-ic="open-full" class="ic--sm"></i><span data-en="Open large">放大查看</span></button>
         <a class="btn btn--tonal btn--sm" href="webui-preview-v3-console.html"><i data-ic="terminal" class="ic--sm"></i><span data-en="Type into it">打开控制台输入</span></a>
         <div class="src-note"><code>WS /uart/stream</code><code>POST /uart/capture</code></div>
       </div>
@@ -94,22 +112,42 @@
 <span class="d">09:31:07.502</span> DDR 4096 MiB, 1560 MHz
 <span class="d">09:31:08.910</span> Hit any key to stop autoboot:  1
 <span class="d">09:31:09.912</span> Starting kernel ...</pre>
+      <div class="log-status"><span data-en="Last 8 lines, up to 5,000 kept">最近 8 行,最多留 5,000 行</span></div>
+      <section class="log-pad stack log-caps" style="padding:14px 16px 8px" aria-label="captures">
+        <div class="log-tools">
+          <h3 class="t-title-small" data-en="Capture to a file">抓到文件</h3>
+          <span class="t-body-small t-muted" data-en="2 so far">已有 2 份</span>
+          <span class="grow"></span>
+          <label class="log-dur"><span data-en="Length">时长</span><input type="number" class="input" min="1" max="300" value="60" aria-label="抓取时长(秒,1 到 300)" data-en-label="Capture length (seconds, 1 to 300)"><span data-en="s">秒</span></label>
+          <button class="btn btn--outlined btn--sm" data-toast-zh="设计稿:开始抓 60 秒,存到工作区。" data-toast-en="Draft: captures 60 s to the workspace."><i data-ic="record" class="ic--sm"></i><span data-en="Capture 60 s">抓取 60 秒</span></button>
+          <button class="icon-btn icon-btn--sm" aria-label="刷新抓取记录" data-en-label="Refresh captures"><i data-ic="refresh" class="ic--sm"></i></button>
+          <div class="src-note"><code>POST /uart/capture?duration=</code><code>GET /uart/captures</code><code>GET · DELETE /uart/captures/{name}</code></div>
+        </div>
+        <div class="banner banner--ok"><i data-ic="check-circle"></i><p data-en="Captured 2026-10-28T09-31-02-uart.log: 1,204 lines, 3 with error keywords.">抓好了:2026-10-28T09-31-02-uart.log,1,204 行,其中 3 行带错误字样。</p><div class="banner__actions"><button class="btn btn--text btn--sm" data-en="Open">打开</button></div></div>
+        <ul class="list">
+          <li class="list__item"><span class="list__lead"><i data-ic="record"></i></span><span class="list__title mono">2026-10-28T09-31-02-uart.log</span><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Open">打开</button><button class="btn btn--text btn--sm" data-en="Delete">删除</button></span><span class="list__meta"><span data-en="88.4 KB · 2 min ago · not tied to an adb device">88.4 KB · 2 分钟前 · 没有关联 adb 设备</span></span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="record"></i></span><span class="list__title mono">2026-10-27T21-03-11-uart.log</span><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Open">打开</button><button class="btn btn--text btn--sm" data-en="Delete">删除</button></span><span class="list__meta"><span data-en="1.2 MB · 12 h ago">1.2 MB · 12 小时前</span> · <span class="mono">board-a</span></span>
+            <div class="log-caps__confirm"><div class="confirm" role="alert"><i data-ic="alert"></i><p data-en="Delete 2026-10-27T21-03-11-uart.log? The file is removed from the workspace and cannot be restored.">删除 2026-10-27T21-03-11-uart.log?文件会从工作区删掉,不能恢复。</p><div class="confirm__actions"><button class="btn btn--danger btn--sm" data-en="Delete">删除</button><button class="btn btn--text btn--sm" data-en="Cancel">取消</button></div></div></div>
+          </li>
+        </ul>
+      </section>
     </div>
 
     <!-- search -->
     <div id="p-search" role="tabpanel" hidden>
       <div style="padding:14px 16px" class="stack">
         <div class="log-tools">
-          <label class="input--search" style="flex:1 1 320px"><i data-ic="search" class="ic--sm"></i><input value="Unable to handle kernel" aria-label="search"></label>
-          <select class="select" style="width:auto" aria-label="range"><option data-en="Last 7 days">最近 7 天</option><option data-en="All">全部</option></select>
+          <label class="input--search" style="flex:1 1 320px"><i data-ic="search" class="ic--sm"></i><input value="panic|oops|fatal" aria-label="search"></label>
+          <select class="select" style="width:auto" aria-label="most hits to list"><option data-en="up to 50 hits">最多 50 处</option><option selected data-en="up to 200 hits">最多 200 处</option><option data-en="up to 500 hits">最多 500 处</option><option data-en="up to 1000 hits">最多 1000 处</option></select>
           <button class="btn btn--filled btn--sm"><i data-ic="search" class="ic--sm"></i><span data-en="Search">搜索</span></button>
-          <div class="src-note"><code>GET /api/log/search</code></div>
+          <button class="btn btn--text btn--sm" data-toast-zh="设计稿:读一次 dmesg 存进工作区,再搜一遍。" data-toast-en="Draft: reads dmesg into the workspace, then searches again."><i data-ic="cpu" class="ic--sm"></i><span data-en="Collect dmesg and search">采集 dmesg 再搜</span></button>
+          <div class="src-note"><code>GET /api/log/search?max=</code><code>POST /api/log/dmesg</code></div>
         </div>
-        <div class="t-body-small t-muted" data-en="3 hits in 2 recordings and 1 serial capture">3 处命中:2 段时间轴录制、1 份串口抓取</div>
+        <div class="t-body-small t-muted" data-en="3 hits in 3 files · 41 ms">3 处命中,在 3 个文件里 · 用时 41 ms</div>
         <ul class="list">
-          <li class="list__item"><span class="list__lead"><span class="src-tag src--kernel">dmesg</span></span><span class="list__title mono">Unable to handle kernel NULL pointer dereference at …0008</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">timeline 10-28 09:30:58 · +63.22 s</span></li>
-          <li class="list__item"><span class="list__lead"><span class="src-tag src--uart" data-en="serial">串口</span></span><span class="list__title mono">Unable to handle kernel NULL pointer dereference at …0008</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">uart-2026-10-27T21-03.log · line 1,882</span></li>
-          <li class="list__item"><span class="list__lead"><span class="src-tag src--kernel">dmesg</span></span><span class="list__title mono">Unable to handle kernel paging request at …0040</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">timeline 10-27 21:03:11 · +12.08 s</span></li>
+          <li class="list__item log-search-hit"><span class="list__lead"><span class="src-tag src--kernel">dmesg</span></span><span class="list__title mono">Kernel <mark>panic</mark> - not syncing: Oops: Fatal exception</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">timeline 10-28 09:30:58 · +63.22 s</span></li>
+          <li class="list__item log-search-hit"><span class="list__lead"><span class="src-tag src--uart" data-en="serial">串口</span></span><span class="list__title mono">Kernel <mark>panic</mark> - not syncing: <mark>fatal</mark> exception in interrupt</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">uart-2026-10-27T21-03.log · line 1,882</span></li>
+          <li class="list__item log-search-hit"><span class="list__lead"><span class="src-tag src--kernel">dmesg</span></span><span class="list__title mono">sysctl: kernel.<mark>panic</mark>_on_<mark>oops</mark> = 1</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">timeline 10-27 21:03:11 · +12.08 s</span></li>
         </ul>
       </div>
     </div>

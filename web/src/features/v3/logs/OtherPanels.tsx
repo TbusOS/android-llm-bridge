@@ -1,15 +1,12 @@
-/** Logs page: dmesg, serial and search-all-recordings tabs. */
+/** Logs page: the dmesg and search-all-recordings tabs (serial is in SerialPanel.tsx). */
 import { Link } from "@tanstack/react-router";
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "../../../components/v3/Icon";
-import { Dot, Empty, ErrorBanner, toast } from "../../../components/v3/ui";
-import { fetchLogSearch, type LogSearchMatch, postDmesg, triggerUartCapture } from "../../../lib/api";
-import { fetchBenchBoard, fetchWorkspace } from "../../../lib/api3";
-import { useDashboardQuery } from "../../../lib/dashboardQuery";
+import { Empty, ErrorBanner } from "../../../components/v3/ui";
+import { fetchLogSearch, type LogSearchMatch, postDmesg } from "../../../lib/api";
+import { fetchWorkspace } from "../../../lib/api3";
 import { useT } from "../../../lib/i18n";
-import { useUartStream } from "../../inspect/useUartStream";
-import { LineSplitter } from "./logcatModel";
 
 /* ---------------- dmesg ---------------- */
 
@@ -128,106 +125,6 @@ export function DmesgPanel({ device }: { device: string | null }) {
   );
 }
 
-/* ---------------- serial ---------------- */
-
-const TERM_CAP = 500;
-
-export function SerialPanel({ device }: { device: string | null }) {
-  const t = useT();
-  const { state, error, connect, disconnect, onBytes } = useUartStream();
-  const [rows, setRows] = useState<string[]>([]);
-  const buf = useRef<string[]>([]);
-  const dirty = useRef(false);
-  const [capturing, setCapturing] = useState(false);
-  const board = useDashboardQuery({ queryKey: ["bench-board"], queryFn: ({ signal }) => fetchBenchBoard(signal), refetchMs: 30_000 });
-  const term = useRef<HTMLPreElement>(null);
-
-  useEffect(() => {
-    const split = new LineSplitter();
-    const off = onBytes((chunk) => {
-      const ls = split.push(chunk);
-      if (!ls.length) return;
-      buf.current.push(...ls);
-      if (buf.current.length > TERM_CAP) buf.current.splice(0, buf.current.length - TERM_CAP);
-      dirty.current = true;
-    });
-    const id = window.setInterval(() => {
-      if (!dirty.current) return;
-      dirty.current = false;
-      setRows(buf.current.slice());
-    }, 250);
-    return () => {
-      off();
-      window.clearInterval(id);
-    };
-  }, [onBytes]);
-
-  useEffect(() => {
-    if (!device) return;
-    buf.current = [];
-    setRows([]);
-    connect(device);
-    return () => disconnect();
-  }, [device, connect, disconnect]);
-
-  useEffect(() => {
-    const el = term.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [rows]);
-
-  const capture = async () => {
-    setCapturing(true);
-    try {
-      const r = await triggerUartCapture(60, device);
-      if (r.ok) toast(t(`抓好了,${r.lines ?? 0} 行,存为 ${r.filename ?? ""}。`, `Captured ${r.lines ?? 0} lines to ${r.filename ?? ""}.`));
-      else toast(r.error ?? t("抓取失败。", "Capture failed."));
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCapturing(false);
-    }
-  };
-
-  const b = board.data;
-  const tone = state === "ready" ? "ok" : state === "connecting" ? "busy" : state === "error" ? "bad" : "idle";
-  return (
-    <div id="p-uart" role="tabpanel">
-      <div className="log-pad log-tools">
-        {b?.serial?.com ? (
-          <span className="chip"><Dot tone={tone} /><b>{b.serial.com}</b><span>{b.serial.baud}</span></span>
-        ) : (
-          <span className="chip"><Dot tone={tone} /><span>{state === "ready" ? t("已连上", "connected") : state === "connecting" ? t("连接中…", "connecting…") : t("未连接", "not connected")}</span></span>
-        )}
-        {b?.serial ? (
-          <span className="t-body-small t-muted">{t(`${b.serial.readers} 个读者共用这个口`, `${b.serial.readers} readers share the port`)}</span>
-        ) : null}
-        <span className="grow" />
-        <button type="button" className="btn btn--outlined btn--sm" disabled={!device || capturing} onClick={() => void capture()}>
-          {capturing ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <Icon name="record" size="sm" />}
-          <span>{t("抓取 60 秒", "Capture 60 s")}</span>
-        </button>
-        <Link className="btn btn--tonal btn--sm" to="/console"><Icon name="terminal" size="sm" /><span>{t("打开控制台输入", "Type into it")}</span></Link>
-      </div>
-      {error ? (
-        <div style={{ padding: "0 16px 8px" }}>
-          <ErrorBanner action={<button type="button" className="btn btn--text btn--sm" onClick={() => device && connect(device)}>{t("重连", "Reconnect")}</button>}>
-            {t("串口流断了:", "The serial stream failed: ")}{error}
-          </ErrorBanner>
-        </div>
-      ) : null}
-      {!device ? (
-        <Empty icon="plug" title={t("还没有选设备", "No device selected")} />
-      ) : rows.length === 0 ? (
-        <Empty icon="plug" title={state === "ready" ? t("连上了,串口还没有输出", "Connected, nothing on the serial line yet") : t("等待串口", "Waiting for the serial port")}>
-          {t("板子往串口打印时,这里会逐行出现。", "Lines appear here as the board prints to the console.")}
-        </Empty>
-      ) : (
-        <pre className="term" ref={term} style={{ margin: "0 16px 16px", height: 380 }}>{rows.join("\n")}</pre>
-      )}
-    </div>
-  );
-}
-
 /* ---------------- search ---------------- */
 
 const CAPTURE_RE = /capture-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d(?:-\d{1,3})?/;
@@ -238,12 +135,55 @@ function sourceOf(path: string): "dmesg" | "uart" | "logcat" {
   return "logcat";
 }
 
+/**
+ * Mark every match of `pattern` in `text`. The server runs Python `re`;
+ * a pattern the browser cannot compile is shown without marks.
+ */
+export function markRegex(text: string, pattern: string): ReactNode {
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern, "g");
+  } catch {
+    return text;
+  }
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null = re.exec(text);
+  while (m !== null) {
+    if (m[0].length === 0) {
+      // zero-width match (e.g. `^`): step past it so the loop ends
+      re.lastIndex++;
+    } else {
+      if (m.index > last) out.push(text.slice(last, m.index));
+      out.push(<mark key={m.index}>{m[0]}</mark>);
+      last = m.index + m[0].length;
+    }
+    m = re.exec(text);
+  }
+  if (!out.length) return text;
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+const LIMITS = [50, 200, 500, 1000] as const;
+
+interface SearchResult {
+  pattern: string;
+  matches: LogSearchMatch[];
+  truncated: boolean;
+  max: number;
+  ms: number | null;
+}
+
 export function SearchPanel({ device }: { device: string | null }) {
   const t = useT();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState("panic|oops|fatal");
+  const [max, setMax] = useState<number>(200);
   const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<{ matches: LogSearchMatch[]; truncated: boolean } | null>(null);
+  const [res, setRes] = useState<SearchResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [collecting, setCollecting] = useState(false);
+  const [collected, setCollected] = useState<{ ok: boolean; text: string } | null>(null);
 
   const run = async () => {
     const pattern = q.trim();
@@ -251,8 +191,8 @@ export function SearchPanel({ device }: { device: string | null }) {
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetchLogSearch(pattern, { device, max: 200 });
-      if (r.ok && r.data) setRes({ matches: r.data.matches, truncated: r.data.truncated });
+      const r = await fetchLogSearch(pattern, { device, max });
+      if (r.ok && r.data) setRes({ pattern, matches: r.data.matches, truncated: r.data.truncated, max, ms: r.timing_ms ?? null });
       else {
         setRes(null);
         setErr(`${r.error?.code ?? "ERROR"}: ${r.error?.message ?? ""}`);
@@ -265,6 +205,27 @@ export function SearchPanel({ device }: { device: string | null }) {
     }
   };
 
+  // A fresh dmesg lands in the workspace; search again so it is included.
+  const collectDmesg = async () => {
+    if (!device) return;
+    setCollecting(true);
+    try {
+      const r = await postDmesg(device, 5);
+      if (r.ok && r.data) {
+        setCollected({ ok: true, text: t(`已采集 dmesg:${r.data.lines} 行,其中 ${r.data.errors} 行带错误字样。`, `dmesg collected: ${r.data.lines} lines, ${r.data.errors} with error keywords.`) });
+        if (q.trim()) await run();
+      } else {
+        setCollected({ ok: false, text: `${r.error?.code ?? "ERROR"}: ${r.error?.message ?? ""}` });
+      }
+    } catch (e) {
+      setCollected({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setCollecting(false);
+    }
+  };
+
+  const files = useMemo(() => new Set(res?.matches.map((m) => m.path) ?? []).size, [res]);
+
   return (
     <div id="p-search" role="tabpanel">
       <div className="log-pad stack">
@@ -273,11 +234,29 @@ export function SearchPanel({ device }: { device: string | null }) {
             <Icon name="search" size="sm" />
             <input value={q} onChange={(e) => setQ(e.target.value)} aria-label={t("搜索", "search")} placeholder={t("正则,例如 Unable to handle kernel", "Regex, e.g. Unable to handle kernel")} />
           </label>
+          <select className="select" style={{ width: "auto" }} aria-label={t("最多列出几处命中", "most hits to list")} value={max} onChange={(e) => setMax(Number(e.target.value))}>
+            {LIMITS.map((n) => (
+              <option key={n} value={n}>{t(`最多 ${n} 处`, `up to ${n} hits`)}</option>
+            ))}
+          </select>
           <button type="submit" className="btn btn--filled btn--sm" disabled={busy || !q.trim()}>
             {busy ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <Icon name="search" size="sm" />}
             <span>{t("搜索", "Search")}</span>
           </button>
+          <button
+            type="button"
+            className="btn btn--text btn--sm"
+            disabled={!device || collecting}
+            onClick={() => void collectDmesg()}
+            title={device ? t("现在读一次内核日志存进工作区,然后重新搜索", "Read the kernel log into the workspace now, then search again") : t("要先在顶栏选一台 adb 设备", "Pick an adb device in the top bar first")}
+          >
+            {collecting ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <Icon name="cpu" size="sm" />}
+            <span>{t("采集 dmesg 再搜", "Collect dmesg and search")}</span>
+          </button>
         </form>
+        {collected ? (
+          <div className="t-body-small" aria-live="polite" style={collected.ok ? undefined : { color: "var(--md-sys-color-error)" }}>{collected.text}</div>
+        ) : null}
         {err ? <ErrorBanner>{err}</ErrorBanner> : null}
         {res === null && !err ? (
           <Empty icon="search" title={t("在所有已录的日志里搜索", "Search everything already recorded")}>
@@ -287,8 +266,10 @@ export function SearchPanel({ device }: { device: string | null }) {
           <Empty icon="search" title={t("没有命中", "No hits")}>{t("换个关键词,或者先录一段时间轴。", "Try another pattern, or record a timeline first.")}</Empty>
         ) : res ? (
           <>
-            <div className="t-body-small t-muted">
-              {t(`${res.matches.length} 处命中`, `${res.matches.length} hits`)}{res.truncated ? t(",只列前面这些", ", first ones only") : ""}
+            <div className="t-body-small t-muted" aria-live="polite">
+              {t(`${res.matches.length} 处命中,在 ${files} 个文件里`, `${res.matches.length} hits in ${files} files`)}
+              {res.ms !== null ? t(` · 用时 ${res.ms} ms`, ` · ${res.ms} ms`) : ""}
+              {res.truncated ? t(`,只列了前 ${res.max} 处,调大上限能看到更多`, `; only the first ${res.max} are listed, raise the limit to see more`) : ""}
             </div>
             <ul className="list">
               {res.matches.map((m, i) => {
@@ -297,7 +278,7 @@ export function SearchPanel({ device }: { device: string | null }) {
                 return (
                   <li className="list__item log-search-hit" key={`${m.path}-${m.line_number}-${i}`}>
                     <span className="list__lead"><span className={`src-tag ${src === "uart" ? "src--uart" : src === "dmesg" ? "src--kernel" : "src--logcat"}`}>{src === "uart" ? t("串口", "serial") : src}</span></span>
-                    <span className="list__title mono">{m.content}</span>
+                    <span className="list__title mono">{markRegex(m.content, res.pattern)}</span>
                     <span className="list__trail">
                       {cap ? <Link className="btn btn--text btn--sm" to="/timeline" search={{ name: cap } as never}>{t("打开", "Open")}</Link> : null}
                     </span>

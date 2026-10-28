@@ -11,7 +11,8 @@ import { useT } from "../../../lib/i18n";
 import { useApp } from "../../../stores/app";
 import { LogcatPanel } from "./LogcatPanel";
 import { useLogcat } from "./logcatModel";
-import { DmesgPanel, SearchPanel, SerialPanel } from "./OtherPanels";
+import { DmesgPanel, SearchPanel } from "./OtherPanels";
+import { SerialPanel } from "./SerialPanel";
 import "./logs.css";
 
 type Tab = "logcat" | "dmesg" | "serial" | "search";
@@ -69,6 +70,10 @@ export function LogsPage() {
                 <button type="button" className="btn btn--outlined" disabled={!device} onClick={() => { if (lc.paused) lc.resume(); else { lc.pause(); toast(t("已暂停,新日志先缓存。", "Paused; new lines are buffered.")); } }}>
                   <Icon name={lc.paused ? "play" : "pause"} />
                   {lc.paused ? t("继续", "Resume") : t("暂停", "Pause")}
+                </button>
+                <button type="button" className="btn btn--outlined" disabled={!device} onClick={lc.clear} title={t("清掉现在显示的行,之后只看新来的", "Drop the lines shown now and keep only what arrives next")}>
+                  <Icon name="close" />
+                  {t("清屏", "Clear")}
                 </button>
                 <button type="button" className="btn btn--outlined" onClick={save}>
                   <Icon name="download" />
