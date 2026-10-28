@@ -155,4 +155,6 @@ adb-via-ssh-tunnel-guide*.md
 
 # Misc local log outputs
 logs/
+# the web UI's Logs page lives in a directory called logs; keep it tracked
+!web/src/features/v3/logs/
 *.jsonl
