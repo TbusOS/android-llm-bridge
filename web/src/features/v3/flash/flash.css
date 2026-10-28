@@ -1,0 +1,3 @@
+/* Flash page extras. Only variables from styles/v3/tokens.css. */
+.flash-feed > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.flash-feed { overflow-y: auto; }
