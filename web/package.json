@@ -17,7 +17,9 @@
     "web-check": "cd .. && node web/scripts/web_check.mjs",
     "web-check:dashboard": "cd .. && WEB_CHECK_WAIT_FOR_SELECTOR=article node web/scripts/web_check.mjs /app/",
     "e2e:flash": "cd .. && node web/scripts/flash_e2e.mjs",
-    "e2e:v3": "cd .. && node web/scripts/v3_e2e.mjs"
+    "e2e:v3": "cd .. && node web/scripts/v3_e2e.mjs",
+    "e2e:func": "cd .. && node web/scripts/func_e2e.mjs",
+    "shots:v3": "node scripts/shoot_v3_previews.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
