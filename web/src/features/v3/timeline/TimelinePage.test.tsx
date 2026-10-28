@@ -176,6 +176,20 @@ describe("TimelinePage", () => {
     expect(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
   });
 
+  it("lines that share a timestamp can each be selected (a serial command and its output)", async () => {
+    const same = [
+      { t: 63.5, ts: null, src: "uart", text: "echo hello", level: null, tag: null, pid: null },
+      { t: 63.5, ts: null, src: "uart", text: "hello", level: null, tag: null, pid: null },
+    ];
+    mockFetch({ ...full, "/lines": () => json({ ok: true, data: { lines: same, truncated: false } }) });
+    renderPage();
+    const second = (await screen.findByText("hello", { selector: ".log__msg" })).closest("button") as HTMLElement;
+    const first = (screen.getByText("echo hello", { selector: ".log__msg" })).closest("button") as HTMLElement;
+    fireEvent.click(second);
+    expect(second).toHaveAttribute("aria-pressed", "true");
+    expect(first).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("says so when a source recorded nothing", async () => {
     mockFetch({ ...full, "/api/timeline/captures?": () => json({ ok: true, data: [{ ...CAP, sources: { logcat: 3, dmesg: 2, uart: 0 }, has_boot: false }] }) });
     renderPage();

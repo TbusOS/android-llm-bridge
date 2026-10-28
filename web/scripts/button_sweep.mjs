@@ -214,6 +214,8 @@ async function clickOne(path, c0) {
   const dlBefore = downloads;
   const errBefore = errors.length;
   const blockedBefore = blocked.length;
+  // a checkbox flips a property, not an attribute: no DOM mutation to see
+  const checkedBefore = now.tag === "input" ? await loc.isChecked().catch(() => null) : null;
   try {
     await loc.click({ timeout: 4000 });
   } catch (e) {
@@ -228,6 +230,10 @@ async function clickOne(path, c0) {
   if (requests > reqBefore) effects.push(`${requests - reqBefore} req`);
   if (downloads > dlBefore) effects.push("download");
   if (mut > 0) effects.push(`${mut} DOM changes`);
+  if (checkedBefore !== null) {
+    const checkedAfter = await loc.isChecked().catch(() => null);
+    if (checkedAfter !== null && checkedAfter !== checkedBefore) effects.push(checkedAfter ? "checked" : "unchecked");
+  }
   if (blocked.length > blockedBefore) {
     record("FAIL", path, c0.name, `tried a board-changing request: ${blocked.slice(blockedBefore).join(" | ")}`);
   } else if (errors.length > errBefore) {

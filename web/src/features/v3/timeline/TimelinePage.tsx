@@ -130,7 +130,10 @@ export function TimelinePage() {
 
   /* ---- range, selection, filters ---- */
   const [userRange, setUserRange] = useState<{ key: string; a: number; b: number } | null>(null);
-  const [selT, setSelT] = useState<{ key: string; t: number } | null>(null);
+  // `line` is set when a row was clicked: lines read in one chunk share a
+  // timestamp (a serial command and its output), so the time alone would
+  // always land on the first of them. A marker click only knows the time.
+  const [selT, setSelT] = useState<{ key: string; t: number; line?: TimelineLine } | null>(null);
   const firstBad = useMemo(() => d?.markers.find((m) => m.kind === "panic" || m.kind === "crash" || m.kind === "anr") ?? d?.markers.find((m) => m.kind === "avc") ?? null, [d]);
   const defWin = Math.min(total, 10);
   const defStart = total <= 30 ? 0 : clamp((firstBad?.t ?? 0) - defWin * 0.4, 0, total - defWin);
@@ -171,7 +174,10 @@ export function TimelinePage() {
 
   const selIdx = useMemo(() => {
     if (lines.length === 0) return -1;
-    if (selT && selT.key === name) return nearest(lines, selT.t);
+    if (selT && selT.key === name) {
+      const exact = selT.line ? lines.indexOf(selT.line) : -1;
+      return exact >= 0 ? exact : nearest(lines, selT.t);
+    }
     const bad = lines.findIndex(isProblem);
     return bad >= 0 ? bad : 0;
   }, [lines, selT, name]);
@@ -559,7 +565,7 @@ export function TimelinePage() {
                       key={`${l.t}-${idx}`}
                       className={`log${bad ? ` log--${bad}` : ""}`}
                       aria-pressed={idx === selIdx}
-                      onClick={() => setSelT({ key: name ?? "", t: l.t })}
+                      onClick={() => setSelT({ key: name ?? "", t: l.t, line: l })}
                     >
                       <span className="log__t">{clock(base, l.t, true)}</span>
                       {srcTag(l.src)}
