@@ -70,11 +70,37 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TimelinePage", () => {
-  it("asks for a device when none is selected", () => {
+  it("with no adb device and no bench serial port, says what is missing", async () => {
     useApp.setState({ device: null });
-    mockFetch({});
+    mockFetch({ "/api/bench/board": () => json({ ok: true, active: null, boards: [], serial: { com: null, baud: null, bound: false, readers: 0 } }) });
     renderPage();
-    expect(screen.getByText("No device selected")).toBeInTheDocument();
+    expect(await screen.findByText("No device, and no bench serial port")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Record$/ })).toBeDisabled();
+  });
+
+  it("with no adb device but a bench serial port, lists and records the serial console only", async () => {
+    useApp.setState({ device: null });
+    let body: unknown;
+    let captureUrl = "";
+    const f = mockFetch({
+      "/api/bench/board": () => json({ ok: true, active: "board-a", boards: [], serial: { com: "COM7", baud: 115200, bound: true, readers: 0 } }),
+      "/api/timeline/captures?": () => json({ ok: true, data: [] }),
+      "/api/timeline/captures": () => json({ ok: true, data: [] }),
+      "/api/timeline/capture": (url, init) => {
+        captureUrl = url;
+        body = JSON.parse(String(init?.body));
+        return new Response(`${JSON.stringify({ ev: "done", ok: true, name: "capture-x" })}\n`, { headers: { "content-type": "application/x-ndjson" } });
+      },
+      "/api/flash/jobs": () => json({ ok: true, running: null, jobs: [] }),
+    });
+    renderPage();
+    expect(await screen.findByText("No serial recordings yet")).toBeInTheDocument();
+    expect(screen.getByText(/only the serial console is recorded/)).toBeInTheDocument();
+    expect(f.mock.calls.some(([u]) => String(u).startsWith("/api/timeline/captures"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /^Record$/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /30 seconds/ }));
+    await waitFor(() => expect(body).toMatchObject({ duration_s: 30, sources: ["uart"] }));
+    expect(captureUrl).not.toContain("device=");
   });
 
   it("shows the empty state when the device has no recordings", async () => {

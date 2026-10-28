@@ -8,6 +8,7 @@ import { type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode,
 
 import { Icon } from "../../../components/v3/Icon";
 import { CardHead, Confirm, Empty, ErrorBanner, Menu, PageHead, toast } from "../../../components/v3/ui";
+import { copyText } from "../../../lib/clipboard";
 import {
   type BootView,
   captureBoot,
@@ -15,6 +16,7 @@ import {
   captureLines,
   type CaptureSummary,
   type DensityView,
+  fetchBenchBoard,
   fetchFlashJobs,
   listCaptures,
   startCapture,
@@ -46,12 +48,19 @@ export function TimelinePage() {
   const openSheet = useShell((s) => s.openSheet);
   const search = useSearch({ strict: false }) as { record?: string; name?: string };
   const qc = useQueryClient();
+  // A board on the bench serial port with no adb (in its bootloader, or adb
+  // dead) is exactly when a timeline matters most. The hub records the
+  // serial console without a device; those recordings live under
+  // workspace/timeline instead of workspace/devices/<serial>/timeline.
+  const board = useDashboardQuery({ queryKey: ["bench-board"], queryFn: ({ signal }) => fetchBenchBoard(signal), refetchMs: 30_000 });
+  const serialOnly = !device && !!board.data?.serial?.bound;
+  const canRecord = !!device || serialOnly;
 
   const caps = useDashboardQuery({
     queryKey: ["captures", device],
     queryFn: ({ signal }) => listCaptures(device, signal),
     refetchMs: 60_000,
-    enabled: !!device,
+    enabled: canRecord,
   });
   const list: CaptureSummary[] = caps.data?.data ?? [];
   const [picked, setPicked] = useState<string | null>(null);
@@ -74,7 +83,8 @@ export function TimelinePage() {
     setConfirmBoot(false);
     setRec({ total: seconds, elapsed: 0, lines: {}, boot: reboot });
     try {
-      const done = await startCapture(device, { duration_s: seconds, sources: ["logcat", "dmesg", "uart"], reboot: reboot ? "system" : "" }, (ev) => {
+      const sources = serialOnly ? ["uart"] : ["logcat", "dmesg", "uart"];
+      const done = await startCapture(device, { duration_s: seconds, sources, reboot: reboot ? "system" : "" }, (ev) => {
         if (ev.ev === "progress") {
           setRec((r) => (r ? { ...r, elapsed: Number(ev.elapsed_s ?? 0), lines: (ev.lines as Record<string, number>) ?? {} } : r));
         }
@@ -216,16 +226,15 @@ export function TimelinePage() {
   };
   const copyLine = async () => {
     if (!sel) return;
-    try {
-      await navigator.clipboard.writeText(sel.text);
-      toast(t("已复制这一行。", "Line copied."));
-    } catch {
-      toast(t("复制失败。", "Copy failed."));
-    }
+    toast((await copyText(sel.text)) ? t("已复制这一行。", "Line copied.") : t("复制失败。", "Copy failed."));
   };
 
   /* ---- render ---- */
-  const eyebrow = <span>{t("设备", "Device")}{device ? ` · ${device}` : ""}</span>;
+  const eyebrow = serialOnly ? (
+    <span>{t("只有串口", "Serial only")}{board.data?.serial?.com ? ` · ${board.data.serial.com}` : ""}</span>
+  ) : (
+    <span>{t("设备", "Device")}{device ? ` · ${device}` : ""}</span>
+  );
   const head = (
     <PageHead
       eyebrow={eyebrow}
@@ -236,7 +245,7 @@ export function TimelinePage() {
           <Menu
             align="end"
             trigger={(p) => (
-              <button type="button" className="btn btn--tonal" disabled={!device || !!rec} {...p}>
+              <button type="button" className="btn btn--tonal" disabled={!canRecord || !!rec} {...p}>
                 <Icon name="record" />
                 {t("录一段", "Record")}
                 <Icon name="chevron-down" size="sm" />
@@ -248,7 +257,7 @@ export function TimelinePage() {
               { key: "300", icon: "clock", label: t("5 分钟", "5 minutes"), onSelect: () => void record(300, false) },
             ]}
           />
-          <button type="button" className="btn btn--filled" disabled={!device || !!rec} onClick={() => setConfirmBoot(true)}>
+          <button type="button" className="btn btn--filled" disabled={!canRecord || !!rec} onClick={() => setConfirmBoot(true)}>
             <Icon name="power" />
             {t("录一次开机", "Record a boot")}
           </button>
@@ -273,18 +282,29 @@ export function TimelinePage() {
     </div>
   ) : null;
 
-  if (!device) {
+  if (!canRecord) {
     return (
       <>
         {head}
         <article className="card">
-          <Empty icon="timeline" title={t("还没有选设备", "No device selected")}>
-            {t("在顶栏选一台设备,这里会列出它录过的时间轴。", "Pick a device in the top bar to list its recordings.")}
+          <Empty icon="timeline" title={t("没有设备,台架串口也没接上", "No device, and no bench serial port")}>
+            {t(
+              "在顶栏选一台 adb 设备;或者在台架页给当前板子配好串口,没有 adb 时也能只录串口。",
+              "Pick an adb device in the top bar, or give the current board a serial port on the Bench page — then the serial console can be recorded without adb.",
+            )}
           </Empty>
         </article>
       </>
     );
   }
+
+  const serialNote = serialOnly ? (
+    <div className="banner banner--info" style={{ marginBottom: 16 }}>
+      <Icon name="info" />
+      <p>{t("没有 adb 设备,这里只录、只列串口。dmesg 和 logcat 要等 adb 连上。", "No adb device, so only the serial console is recorded and listed here. dmesg and logcat need adb.")}</p>
+      <span />
+    </div>
+  ) : null;
 
   const recBox = rec ? (
     <div className="tl-rec" role="status" style={{ marginBottom: 16 }}>
@@ -302,6 +322,7 @@ export function TimelinePage() {
     return (
       <>
         {head}
+        {serialNote}
         {confirm}
         <ErrorBanner action={<button type="button" className="btn btn--text btn--sm" onClick={() => void caps.refetch()}>{t("重试", "Retry")}</button>}>
           {t("读不到录制列表:", "Could not read the recordings: ")}{caps.error?.message}
@@ -313,6 +334,7 @@ export function TimelinePage() {
     return (
       <>
         {head}
+        {serialNote}
         {confirm}
         {recBox}
         <div className="skeleton" style={{ height: 240 }} />
@@ -323,10 +345,11 @@ export function TimelinePage() {
     return (
       <>
         {head}
+        {serialNote}
         {confirm}
         {recBox}
         <article className="card">
-          <Empty icon="timeline" title={t("这台设备还没有录制", "No recordings for this device yet")}>
+          <Empty icon="timeline" title={serialOnly ? t("串口上还没有录制", "No serial recordings yet") : t("这台设备还没有录制", "No recordings for this device yet")}>
             {t("点右上角的「录一段」,或者「录一次开机」。录的时候串口、dmesg、logcat 一起开始。", "Use Record at the top right, or Record a boot. Serial, dmesg and logcat start together.")}
           </Empty>
         </article>
@@ -347,6 +370,7 @@ export function TimelinePage() {
   return (
     <>
       {head}
+      {serialNote}
       {confirm}
       {recBox}
       <div className="stack">

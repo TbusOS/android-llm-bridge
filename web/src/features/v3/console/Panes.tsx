@@ -256,19 +256,51 @@ export interface SerialInfo {
   readers: number | null;
 }
 
+// Keystrokes reach the board only while this is on. A key pressed by
+// accident during a boot stops U-Boot's autoboot countdown and leaves the
+// board sitting at its prompt, so v2 kept typing off until asked; the
+// choice is remembered per browser. Buttons (Ctrl+C, snippets, break-in)
+// are deliberate and are not gated by it.
+const TYPING_KEY = "alb.console.serialTyping";
+
+function readTyping(): boolean {
+  try {
+    return localStorage.getItem(TYPING_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function SerialPane({ id, active, register, info }: PaneProps & { info: SerialInfo }) {
   const t = useT();
   const device = useApp((s) => s.device);
   const { state, error, writeEnabled, connect, disconnect, onBytes, sendBytes } = useUartStream();
   const [askBreak, setAskBreak] = useState(false);
   const [breaking, setBreaking] = useState(false);
+  const [typing, setTypingState] = useState(readTyping);
+  const hinted = useRef(false);
+  const setTyping = (on: boolean) => {
+    setTypingState(on);
+    hinted.current = false;
+    try {
+      localStorage.setItem(TYPING_KEY, on ? "1" : "0");
+    } catch {
+      // storage blocked: the switch still works for this page
+    }
+  };
 
   const x = useXterm({
     convertEol: true,
     cursorBlink: false,
     active,
     onData: (d) => {
-      if (writeEnabled) sendBytes(ENC.encode(d));
+      if (!writeEnabled) return;
+      if (typing) {
+        sendBytes(ENC.encode(d));
+      } else if (!hinted.current) {
+        hinted.current = true;
+        note(t("键盘输入是关的,按键没有发给板子。要敲命令,先打开上面的「键盘输入」。", "Typing is off, so that key was not sent to the board. Turn on Typing above to type commands."));
+      }
     },
   });
   const actions = useTermActions(x, "serial");
@@ -306,7 +338,13 @@ export function SerialPane({ id, active, register, info }: PaneProps & { info: S
     return () => register(id, null);
   }, [id, register, state, writeEnabled, sendBytes, x]);
 
-  const note = (text: string) => x.write(`\r\n\x1b[2m[alb] ${text}\x1b[0m\r\n`);
+  function note(text: string) {
+    x.write(`\r\n\x1b[2m[alb] ${text}\x1b[0m\r\n`);
+  }
+  const clearAndStart = () => {
+    x.clear();
+    start();
+  };
 
   const doBreak = async () => {
     setBreaking(true);
@@ -349,6 +387,12 @@ export function SerialPane({ id, active, register, info }: PaneProps & { info: S
         <span>{label}</span>
         {link ? <span className="mono">{link}</span> : null}
         {state === "ready" && !writeEnabled ? <span className="pill pill--warn">{t("只读", "read-only")}</span> : null}
+        {writeEnabled ? (
+          <label className="row" title={t("关着时按键不会发给板子,防止误按停住开机倒计时", "While off, keys are not sent, so a stray key cannot stop the boot countdown")}>
+            <input type="checkbox" className="switch" checked={typing} onChange={(e) => setTyping(e.target.checked)} aria-label={t("键盘输入", "Typing")} />
+            <span>{t("键盘输入", "Typing")}</span>
+          </label>
+        ) : null}
         {live ? (
           <button type="button" className="btn btn--text btn--sm" onClick={disconnect}>
             {t("断开", "Disconnect")}
@@ -387,7 +431,14 @@ export function SerialPane({ id, active, register, info }: PaneProps & { info: S
       ) : null}
       {error ? (
         <div className="console__note">
-          <ErrorBanner action={<button type="button" className="btn btn--text btn--sm" onClick={start}>{t("重试", "Retry")}</button>}>
+          <ErrorBanner
+            action={
+              <>
+                <button type="button" className="btn btn--text btn--sm" onClick={start}>{t("重试", "Retry")}</button>
+                <button type="button" className="btn btn--text btn--sm" onClick={clearAndStart}>{t("清屏并重连", "Clear and reconnect")}</button>
+              </>
+            }
+          >
             {error}
           </ErrorBanner>
         </div>
@@ -398,6 +449,7 @@ export function SerialPane({ id, active, register, info }: PaneProps & { info: S
           <p>{t("串口连接已结束:串口线被拔掉,或台架代理断开了。", "The serial stream ended: the cable was unplugged or the bench agent dropped.")}</p>
           <div className="banner__actions">
             <button type="button" className="btn btn--text btn--sm" onClick={start}>{t("重新连接", "Reconnect")}</button>
+            <button type="button" className="btn btn--text btn--sm" onClick={clearAndStart}>{t("清屏并重连", "Clear and reconnect")}</button>
           </div>
         </div>
       ) : null}

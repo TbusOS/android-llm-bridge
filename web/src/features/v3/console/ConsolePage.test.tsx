@@ -165,6 +165,26 @@ describe("Console", () => {
     expect(Array.from(uartWs().sent.at(-1) as Uint8Array)).toEqual([3]);
   });
 
+  it("serial keystrokes are held back until Typing is switched on; buttons still send", async () => {
+    localStorage.removeItem("alb.console.serialTyping");
+    mockFetch();
+    renderPage();
+    await waitFor(() => expect(uartWs()).toBeTruthy());
+    await act(async () => uartWs().emit("message", { data: JSON.stringify({ type: "ready", transport: "serial", write: true }) }));
+    fireEvent.click(screen.getByRole("tab", { name: /串口/ }));
+    const serialTerm = term.instances[1];
+    const before = uartWs().sent.length;
+    act(() => serialTerm.cb("x"));
+    expect(uartWs().sent.length).toBe(before);
+    expect(String(serialTerm.written.at(-1))).toContain("键盘输入是关的");
+    fireEvent.click(screen.getByRole("button", { name: "发送 Ctrl+C" }));
+    expect(Array.from(uartWs().sent.at(-1) as Uint8Array)).toEqual([3]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "键盘输入" }));
+    act(() => serialTerm.cb("ls\r"));
+    expect(Array.from(uartWs().sent.at(-1) as Uint8Array)).toEqual([108, 115, 13]);
+    expect(localStorage.getItem("alb.console.serialTyping")).toBe("1");
+  });
+
   it("Stop in bootloader asks first, then streams the result into the terminal", async () => {
     const calls = mockFetch({
       "/api/serial/break-in": () =>

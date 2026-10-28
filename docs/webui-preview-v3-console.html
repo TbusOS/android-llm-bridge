@@ -53,7 +53,7 @@ crw-rw---- 1 system system <span class="a">u:object_r:iio_device:s0</span> 241, 
 <span class="p">board_x:/ #</span> <span class="caret"></span></pre>
       </div>
       <div id="t-uart" role="tabpanel" hidden style="display:contents">
-        <div class="console__bar"><span class="dot dot--ok"></span><span data-en="COM7 · 115200 8N1 · 2 readers">COM7 · 115200 8N1 · 2 个读者</span><span class="src-note"><code>WS /uart/stream</code><span class="new" data-en="new: POST /api/serial/break-in">新:POST /api/serial/break-in</span></span>
+        <div class="console__bar"><span class="dot dot--ok"></span><span data-en="COM7 · 115200 8N1 · 2 readers">COM7 · 115200 8N1 · 2 个读者</span><label class="row" title="关着时按键不会发给板子,防止误按停住开机倒计时"><input type="checkbox" class="switch" aria-label="Typing"><span data-en="Typing">键盘输入</span></label><span class="src-note"><code>WS /uart/stream</code><span class="new" data-en="new: POST /api/serial/break-in">新:POST /api/serial/break-in</span></span>
           <span class="row"><button class="btn btn--text btn--sm" data-en="Send Ctrl+C">发送 Ctrl+C</button><button class="btn btn--tonal btn--sm" data-toast-zh="设计稿:重启并在倒计时里按键,先出确认。" data-toast-en="Draft: reboots and catches the countdown, after a confirm."><i data-ic="stop" class="ic--sm"></i><span data-en="Stop in bootloader">停在 bootloader</span></button></span></div>
 <pre class="term"><span class="d">09:31:07.431</span> U-Boot SPL board init
 <span class="d">09:31:08.910</span> Hit any key to stop autoboot:  0
