@@ -251,6 +251,27 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     },
     {
         "method": "POST",
+        "path": "/api/diag/pstore",
+        "description": "Pull the previous boot's crash record (pstore / last_kmsg); "
+        "one entry per record with its first meaningful line; ROOT_REQUIRED when denied",
+    },
+    {
+        "method": "POST",
+        "path": "/api/adb/root",
+        "description": "Restart adbd as root and verify id -u == 0",
+    },
+    {
+        "method": "POST",
+        "path": "/api/adb/unroot",
+        "description": "Restart adbd as the shell user and verify id -u != 0",
+    },
+    {
+        "method": "POST",
+        "path": "/api/adb/remount",
+        "description": "adb remount; outcome remounted / needs_reboot / failed",
+    },
+    {
+        "method": "POST",
         "path": "/api/timeline/capture",
         "description": "Capture logcat + dmesg + UART on one clock, optionally rebooting "
         "the board a second in (NDJSON: progress lines, then done)",

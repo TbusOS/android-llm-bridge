@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from alb import __version__
+from alb.api.adb_route import router as adb_router
 from alb.api.agent_route import router as agent_router
 from alb.api.app_route import router as app_route_router
 from alb.api.audit_route import router as audit_router
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"ok": "true", "version": __version__, "api": "alb"}
 
+    app.include_router(adb_router)
     app.include_router(agent_router)
     app.include_router(app_route_router)
     app.include_router(audit_router)

@@ -19,6 +19,13 @@ Endpoints:
       Body: {"limit": int}
       Pulls /data/tombstones/* (newest N).
 
+  POST /api/diag/pstore?device=<serial>
+      Pulls the previous boot's crash record (/sys/fs/pstore/*, else
+      /proc/last_kmsg) and returns one entry per record: name, size, the
+      first meaningful line (the panic line when there is one) and the
+      workspace-relative path it was saved to. Needs root: ROOT_REQUIRED
+      comes back as an ordinary error envelope.
+
   GET  /api/diag/artifacts?device=<serial>
       List already-collected bugreports / anr / tombstones bundles
       under workspace/devices/<serial>/. Read-only; bounded by N=200
@@ -159,6 +166,92 @@ async def post_tombstone(
         transport, limit=body.limit, device=device
     )
     return envelope_dict(r)
+
+
+_PSTORE_SUMMARY_MAX = 200
+
+
+def _first_meaningful_line(path: Path) -> str:
+    """First non-blank line of a pulled record, cut short. Sync (L-033)."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for _ in range(2000):
+                raw = f.readline()
+                if not raw:
+                    break
+                text = raw.strip()
+                if text:
+                    return text[:_PSTORE_SUMMARY_MAX]
+    except OSError:
+        return ""
+    return ""
+
+
+def _pstore_view_in_thread(data: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Re-shape ``PstoreResult.to_dict()`` for the browser.
+
+    Absolute host paths are replaced with workspace-relative ones (same
+    reason as ``_scan_artifacts_in_thread``), and each record gets a short
+    ``summary``: the panic line if the scan found one, else the first
+    non-blank line. A logcat record (pmsg) is binary, so it gets the
+    capability's hint instead of unreadable bytes.
+    """
+
+    def rel(p: str | None) -> str | None:
+        if not p:
+            return None
+        try:
+            return Path(p).relative_to(root).as_posix()
+        except ValueError:
+            return None
+
+    records: list[dict[str, Any]] = []
+    for f in data.get("files", []):
+        local = f.get("local_path") or ""
+        if f.get("first_panic_line"):
+            summary = str(f["first_panic_line"])[:_PSTORE_SUMMARY_MAX]
+        elif f.get("kind") == "logcat":
+            summary = diag_cap.LOGCAT_RECORD_HINT
+        elif local:
+            summary = _first_meaningful_line(Path(local))
+        else:
+            summary = ""
+        records.append(
+            {
+                "name": f.get("name"),
+                "size": f.get("size", 0),
+                "kind": f.get("kind", "kernel"),
+                "summary": summary,
+                "has_panic": bool(f.get("first_panic_line")),
+                "saved_path": rel(local),
+                "error": f.get("error", ""),
+            }
+        )
+    return {
+        "source": data.get("source"),
+        "pstore_present": data.get("pstore_present"),
+        "last_kmsg_present": data.get("last_kmsg_present"),
+        "saved_dir": rel(data.get("saved_dir")),
+        "note": data.get("note", ""),
+        "records": records,
+    }
+
+
+@router.post("/pstore")
+async def post_pstore(
+    device: str | None = Query(None, max_length=128),
+) -> dict[str, Any]:
+    transport, err = _resolve_transport(device)
+    if err is not None:
+        return err
+    assert transport is not None  # err is None means the transport was built
+    r = await diag_cap.pstore_pull(transport, device=device)
+    env = envelope_dict(r)
+    if r.ok and isinstance(env.get("data"), dict):
+        env["data"] = await asyncio.to_thread(
+            _pstore_view_in_thread, env["data"], workspace_root().resolve()
+        )
+    return env
 
 
 def _scan_artifacts_in_thread(
