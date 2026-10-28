@@ -823,7 +823,7 @@ def _resolve_search_targets(path: Path | None, device: str | None) -> list[Path]
     the escaped target.
     """
     if path is not None:
-        return [path] if path.is_file() else sorted(path.rglob("*.txt"))
+        return [path] if path.is_file() else sorted(_log_files(path))
     root = workspace_root()
     if device:
         if not is_safe_device(device):
@@ -831,5 +831,23 @@ def _resolve_search_targets(path: Path | None, device: str | None) -> list[Path]
                 f"invalid device {device!r}: must match [A-Za-z0-9._:-]{{1,64}} "
                 f"with alnum leading char (rejected to prevent path traversal)"
             )
-        return sorted((root / "devices" / device / "logs").rglob("*.txt"))
-    return sorted((root / "devices").rglob("*.txt"))
+        base = root / "devices" / device
+        return sorted(_log_files(base / "logs") + _log_files(base / "timeline"))
+    # No device: every board, plus what was recorded with no adb device at
+    # all (a serial-only board) — those land in logs/ and timeline/ at the
+    # workspace root, not under devices/.
+    return sorted(
+        _log_files(root / "devices") + _log_files(root / "logs") + _log_files(root / "timeline")
+    )
+
+
+# Serial captures are `<ts>-uart.log` and each timeline recording keeps a
+# `uart.log`; with only `*.txt` searched, no serial line was ever found.
+# timeline.jsonl / summary.json are left out: the same lines again, as JSON.
+_SEARCH_SUFFIXES = (".txt", ".log")
+
+
+def _log_files(base: Path) -> list[Path]:
+    if not base.is_dir():
+        return []
+    return [p for p in base.rglob("*") if p.suffix in _SEARCH_SUFFIXES and p.is_file()]

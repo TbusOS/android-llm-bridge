@@ -190,6 +190,37 @@ async def test_search_logs_finds_matches(monkeypatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_logs_covers_serial_and_timeline_recordings(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Serial captures are *.log and timeline recordings keep uart.log; a
+    board with no adb device records into logs/ and timeline/ at the
+    workspace root. All of them must be searchable, the JSON copies not."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    (tmp_path / "devices" / "abc" / "logs").mkdir(parents=True)
+    (tmp_path / "devices" / "abc" / "logs" / "1-logcat.txt").write_text("MARK in logcat\n")
+    (tmp_path / "devices" / "abc" / "logs" / "2-uart.log").write_text("MARK on serial\n")
+    (tmp_path / "devices" / "abc" / "timeline" / "capture-1").mkdir(parents=True)
+    (tmp_path / "devices" / "abc" / "timeline" / "capture-1" / "uart.log").write_text("MARK rec\n")
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "3-uart.log").write_text("MARK no device\n")
+    rec = tmp_path / "timeline" / "capture-2"
+    rec.mkdir(parents=True)
+    (rec / "uart.log").write_text("MARK serial-only recording\n")
+    (rec / "timeline.jsonl").write_text('{"text": "MARK serial-only recording"}\n')
+    (tmp_path / "hub.log").write_text("MARK hub log at the root is not a recording\n")
+
+    everything = await search_logs("MARK")
+    assert everything.ok and everything.data is not None
+    found = sorted(Path(m.path).name for m in everything.data.matches)
+    assert found == ["1-logcat.txt", "2-uart.log", "3-uart.log", "uart.log", "uart.log"]
+
+    one = await search_logs("MARK", device="abc")
+    assert one.ok and one.data is not None
+    assert len(one.data.matches) == 3  # that board's logs + its recordings only
+
+
+@pytest.mark.asyncio
 async def test_tail_log_rejects_path_traversal(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
     outside = tmp_path.parent / "secret.txt"
