@@ -250,6 +250,34 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "description": "List previously captured diag artifacts (bugreport / anr / tombstone)",
     },
     {
+        "method": "POST",
+        "path": "/api/timeline/capture",
+        "description": "Capture logcat + dmesg + UART on one clock, optionally rebooting "
+        "the board a second in (NDJSON: progress lines, then done)",
+    },
+    {
+        "method": "GET",
+        "path": "/api/timeline/captures",
+        "description": "Saved timeline captures for a device, newest first",
+    },
+    {
+        "method": "GET",
+        "path": "/api/timeline/captures/{name}/lines",
+        "description": "Merged lines of one capture, filterable by source / text / time",
+    },
+    {
+        "method": "GET",
+        "path": "/api/timeline/captures/{name}/density",
+        "description": "Per-bucket line counts per source plus jump-to markers "
+        "(panic / ANR / crash / avc / boot)",
+    },
+    {
+        "method": "GET",
+        "path": "/api/timeline/captures/{name}/boot",
+        "description": "Boot milestones and stage durations found in one capture, "
+        "with the previous boot of the same device for comparison",
+    },
+    {
         "method": "GET",
         "path": "/api/power/battery",
         "description": "Parsed dumpsys battery snapshot",

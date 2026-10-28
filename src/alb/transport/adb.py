@@ -167,9 +167,15 @@ class AdbTransport(Transport):
             clear: bool — run logcat -c first (logcat only)
             tail: int — `logcat -T <n>`: start from the device's last n lines
                 instead of its whole buffer, then follow (logcat only)
+            buffers: list[str] — `logcat -b <name>` for each, e.g. "events"
+                (logcat only; default = the device's default buffers)
         """
         if source == "logcat":
             args = ["logcat", "-v", "threadtime"]
+            for buf in kwargs.get("buffers") or ():
+                if not isinstance(buf, str) or not (buf.isalpha() and buf.isascii()):
+                    raise ValueError(f"bad logcat buffer name: {buf!r}")
+                args += ["-b", buf]
             if kwargs.get("clear"):
                 # logcat -c doesn't stream; run as a pre-step
                 await self._run(["logcat", "-c"], timeout=5)

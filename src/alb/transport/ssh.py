@@ -154,6 +154,11 @@ class SshTransport(Transport):
         """
         if source == "logcat":
             cmd = "logcat -v threadtime"
+            for buf in kwargs.get("buffers") or ():
+                # Goes into a shell command line: letters only.
+                if not isinstance(buf, str) or not (buf.isalpha() and buf.isascii()):
+                    raise ValueError(f"bad logcat buffer name: {buf!r}")
+                cmd += f" -b {buf}"
             if kwargs.get("clear"):
                 cmd = "logcat -c && " + cmd
             if (tail := kwargs.get("tail")) is not None:

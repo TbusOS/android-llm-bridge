@@ -117,3 +117,32 @@ async def test_ssh_refuses_a_tail_that_is_not_a_positive_int(bad: object) -> Non
     """It is pasted into a remote shell command: only a real int passes."""
     with pytest.raises(ValueError, match="tail"):
         await _ssh_cmd(tail=bad)
+
+
+# ─── buffers: `-b events` is where Android's boot_progress_* tags live ───
+async def test_adb_logcat_buffers_become_dash_b_options(monkeypatch) -> None:
+    argv = await _adb_argv(monkeypatch, tail=1, buffers=["main", "events"], filter="*:E")
+    assert argv[argv.index("logcat") :] == [
+        "logcat", "-v", "threadtime", "-b", "main", "-b", "events", "-T", "1", "*:E",
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize("bad", ["events; reboot", "ev ents", "$(id)", "", "événements", 1])
+async def test_adb_refuses_a_buffer_name_that_is_not_plain_letters(
+    monkeypatch, bad: object
+) -> None:
+    with pytest.raises(ValueError, match="buffer"):
+        await _adb_argv(monkeypatch, buffers=[bad])
+
+
+async def test_ssh_logcat_buffers_go_into_the_command_line() -> None:
+    assert await _ssh_cmd(tail=1, buffers=["main", "events"]) == [
+        "logcat -v threadtime -b main -b events -T 1"
+    ]
+
+
+@pytest.mark.parametrize("bad", ["events; reboot", "$(id)", "", "événements"])
+async def test_ssh_refuses_a_buffer_name_that_is_not_plain_letters(bad: str) -> None:
+    """It is pasted into a remote shell command line."""
+    with pytest.raises(ValueError, match="buffer"):
+        await _ssh_cmd(buffers=[bad])

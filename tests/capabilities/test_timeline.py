@@ -732,3 +732,25 @@ async def test_a_uart_that_spoke_is_not_second_guessed(monkeypatch, tmp_path: Pa
     assert r.ok
     notes = [x["line"] for x in _records(tmp_path) if x.get("note")]
     assert not any("could not open the serial port" in n for n in notes), notes
+
+
+async def test_logcat_buffers_are_handed_to_the_transport_only_when_asked(tmp_path: Path) -> None:
+    t = _adb_mock({"logcat": [b"L\n"]})
+    r = await capture_timeline(
+        0.2,
+        sources={"logcat"},
+        transport=t,
+        logcat_buffers=["main", "events"],
+        output=tmp_path,
+    )
+    assert r.ok
+    assert t.calls == [("logcat", {"filter": None, "tail": 1, "buffers": ["main", "events"]})]
+
+
+@pytest.mark.parametrize("bad", [["main;reboot"], ["ev ents"], [""], ["événements"]])
+async def test_bad_logcat_buffer_names_are_refused(tmp_path: Path, bad: list[str]) -> None:
+    r = await capture_timeline(
+        0.2, sources={"logcat"}, transport=_adb_mock({}), logcat_buffers=bad, output=tmp_path
+    )
+    assert not r.ok and r.error is not None
+    assert r.error.code == "INVALID_LOGCAT_BUFFER"

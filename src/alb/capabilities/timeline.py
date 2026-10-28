@@ -61,7 +61,15 @@ import json
 import re
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -477,6 +485,7 @@ async def capture_timeline(
     output: Path | str | None = None,
     streams: Mapping[str, StreamFactory] | None = None,
     logcat_filter: str | None = None,
+    logcat_buffers: Sequence[str] | None = None,
     idle_flush_s: float = IDLE_FLUSH_S,
 ) -> Result[TimelineSummary]:
     """Capture the requested sources concurrently into one timeline directory.
@@ -491,6 +500,10 @@ async def capture_timeline(
         output: directory to write into instead of the workspace.
         streams: per-source byte-stream factories that replace the transport
             for that source (tests, or any caller with its own byte source).
+        logcat_buffers: logcat buffers to read (``-b`` each), e.g.
+            ``["main", "system", "crash", "events"]``. ``None`` keeps the
+            device default. The events buffer is where Android's
+            ``boot_progress_*`` milestones are logged.
         idle_flush_s: silence after which a trailing fragment is written out.
 
     LLM notes:
@@ -507,6 +520,15 @@ async def capture_timeline(
             category="input",
         )
     wanted = [s for s in ALL_SOURCES if s in sources]
+    if logcat_buffers is not None and not all(
+        isinstance(b, str) and b.isalpha() and b.isascii() for b in logcat_buffers
+    ):
+        return fail(
+            code="INVALID_LOGCAT_BUFFER",
+            message="logcat buffer names are letters only (main, system, crash, events, ...)",
+            suggestion="Use e.g. main, system, crash, events",
+            category="input",
+        )
     unknown = sorted(set(sources) - set(ALL_SOURCES))
     if unknown or not wanted:
         return fail(
@@ -540,6 +562,7 @@ async def capture_timeline(
         serial=serial,
         streams=streams,
         logcat_filter=logcat_filter,
+        logcat_buffers=logcat_buffers,
         deadline_perf=deadline,
     )
 
@@ -620,6 +643,7 @@ async def _pick_factories(
     serial: Transport | None,
     streams: Mapping[str, StreamFactory] | None,
     logcat_filter: str | None,
+    logcat_buffers: Sequence[str] | None = None,
     deadline_perf: float,
 ) -> tuple[dict[str, StreamFactory], dict[str, _Backlog]]:
     """Decide where each requested source's bytes come from, noting the
@@ -662,7 +686,10 @@ async def _pick_factories(
                 )
             else:
                 backlog[src] = _Backlog(before=stamp)
-            factories[src] = _stream_factory(transport, "logcat", filter=logcat_filter, tail=1)
+            extra: dict[str, Any] = {"buffers": list(logcat_buffers)} if logcat_buffers else {}
+            factories[src] = _stream_factory(
+                transport, "logcat", filter=logcat_filter, tail=1, **extra
+            )
         else:
             upto = await _dmesg_last_stamp(transport)
             count = None if upto is not None else await _dmesg_backlog(transport)
