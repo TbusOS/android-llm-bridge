@@ -715,7 +715,14 @@ export async function fetchBackendModels(
       "BACKEND_MODELS_FAILED",
     );
   }
-  return (await r.json()) as BackendModelsResponse;
+  // The hub passes the backend's catalog through (docs/web-api.md: Ollama
+  // entries are objects with at least {name, size, modified_at}); callers
+  // only need the names, and rendering an entry object crashed Playground.
+  const body = (await r.json()) as { backend: string; models?: unknown[] };
+  const models = (body.models ?? [])
+    .map((m) => (typeof m === "string" ? m : m && typeof m === "object" && "name" in m ? String((m as { name: unknown }).name) : ""))
+    .filter(Boolean);
+  return { backend: body.backend, models };
 }
 
 export async function fetchBackendHealth(

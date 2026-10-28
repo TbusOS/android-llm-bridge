@@ -30,7 +30,6 @@ export function PageSearch() {
     if (open) {
       setQ("");
       setSel(0);
-      window.setTimeout(() => input.current?.focus(), 0);
     }
   }, [open]);
 
@@ -48,6 +47,7 @@ export function PageSearch() {
           <Icon name="search" size="sm" />
           <input
             ref={input}
+            autoFocus
             value={q}
             placeholder={t("输入页面名或关键词,比如 logcat、截屏、fastboot", "Type a page or a word, e.g. logcat, screenshot, fastboot")}
             onChange={(e) => {

@@ -101,8 +101,8 @@ await themeBtn.click();
 await page.keyboard.press("Control+k");
 const palette = await page.locator(".palette").isVisible().catch(() => false);
 check("Ctrl+K opens the page search", palette);
-await page.keyboard.type("timeline");
-await page.keyboard.press("Enter");
+await page.locator(".palette input").fill("timeline");
+await page.locator(".palette input").press("Enter");
 await page.waitForTimeout(300);
 check("search + Enter navigates", new URL(page.url()).pathname.endsWith("/timeline"), page.url());
 
