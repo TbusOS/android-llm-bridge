@@ -71,21 +71,35 @@ export const NAV: NavGroup[] = [
   },
 ];
 
+/** Where an old Inspect tab lives now: a page, and the tab on it when the page has several. */
+export interface InspectTarget {
+  to: string;
+  /** Value for the page's `?tab=` (LogsPage: logcat|dmesg|serial|search; ScreenPage: shot|tree). */
+  tab?: string;
+}
+
 /** Old Inspect tab → new address. */
-export const INSPECT_REDIRECTS: Record<string, string> = {
-  system: "/info",
-  charts: "/perf",
-  uart: "/logs",
-  logcat: "/logs",
-  shell: "/console",
-  screenshot: "/screen",
-  "ui-dump": "/screen",
-  files: "/files",
-  power: "/power",
-  "log-search": "/logs",
-  diag: "/problems",
-  app: "/apps",
-  flash: "/flash",
+export const INSPECT_REDIRECTS: Record<string, InspectTarget> = {
+  system: { to: "/info" },
+  charts: { to: "/perf" },
+  uart: { to: "/logs", tab: "serial" },
+  logcat: { to: "/logs", tab: "logcat" },
+  shell: { to: "/console" },
+  screenshot: { to: "/screen", tab: "shot" },
+  "ui-dump": { to: "/screen", tab: "tree" },
+  files: { to: "/files" },
+  power: { to: "/power" },
+  "log-search": { to: "/logs", tab: "search" },
+  diag: { to: "/problems" },
+  app: { to: "/apps" },
+  flash: { to: "/flash" },
 };
+
+/** The redirect for an old tab key (`/inspect/<key>` or `/inspect?tab=<key>`); unknown keys go to the overview. */
+export function inspectTarget(key: string | undefined): { to: string; search: { tab?: string } } {
+  const hit = key ? INSPECT_REDIRECTS[key] : undefined;
+  if (!hit) return { to: "/dashboard", search: {} };
+  return { to: hit.to, search: hit.tab ? { tab: hit.tab } : {} };
+}
 
 export const ALL_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);

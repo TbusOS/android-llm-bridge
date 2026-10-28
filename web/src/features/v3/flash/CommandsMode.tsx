@@ -3,14 +3,16 @@
  * Only what the bench agent's operation table offers. Baseline:
  * docs/webui-preview-v3-flash.html (#m-cmd).
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { CardHead, Confirm, ErrorBanner } from "../../../components/v3/ui";
 import { Icon } from "../../../components/v3/Icon";
+import { LogDialog } from "../../../components/v3/LogDialog";
 import { useBenchOps } from "../bench/useBenchOps";
 import { type NdjsonEvent, flashOp, runBenchOp } from "../../../lib/api3";
 import { useT } from "../../../lib/i18n";
 import { failureOf, outputOf } from "./flashApi";
+import { OpenLargeButton, linesOf } from "./OutputBlock";
 import type { FlashRun } from "./useFlashRun";
 
 type Pending = { kind: "oem" | "set-active" | "reboot"; value: string } | null;
@@ -31,6 +33,8 @@ export function CommandsMode({ run, available, disabledReason }: { run: FlashRun
   const [target, setTarget] = useState("");
   const [pending, setPending] = useState<Pending>(null);
   const [term, setTerm] = useState("");
+  const [large, setLarge] = useState(false);
+  const termLines = useMemo(() => linesOf(term), [term]);
 
   const busy = run.running;
   const off = !available || busy;
@@ -114,12 +118,22 @@ export function CommandsMode({ run, available, disabledReason }: { run: FlashRun
         <div className="row">
           {busy && run.label === "cmd" ? <span className="t-muted"><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2, display: "inline-block", verticalAlign: "middle" }} /> {t("执行中…", "Running…")}</span> : null}
           <span className="grow" />
+          {term ? <OpenLargeButton onClick={() => setLarge(true)} /> : null}
           <button type="button" className="btn btn--text btn--sm" disabled={!term} onClick={() => setTerm("")}>
             <Icon name="close" size="sm" />
             {t("清空输出", "Clear output")}
           </button>
         </div>
-        <pre className="term" style={{ height: 180 }} aria-label={t("命令输出", "command output")}>{term || t("还没有输出。", "No output yet.")}</pre>
+        <pre className="term" style={{ height: 180 }} aria-label={t("命令输出", "command output")} onDoubleClick={() => term && setLarge(true)}>{term || t("还没有输出。", "No output yet.")}</pre>
+        <LogDialog
+          open={large}
+          onClose={() => setLarge(false)}
+          title={t("fastboot 命令输出", "fastboot command output")}
+          sub={busy && run.label === "cmd" ? t("还在执行,输出会继续追加。", "Still running; output keeps arriving.") : undefined}
+          lines={termLines}
+          loading={busy && run.label === "cmd"}
+          fileName="fastboot-commands.log"
+        />
       </article>
     </div>
   );

@@ -60,18 +60,56 @@ export function parseTimeline(text: string): FeedLine[] {
         out.push({ t, src: "job", text: String(o.text) });
       }
     } else if (o.ev === "start") {
-      out.push({ t, src: "meta", text: String(o.label ?? "start") });
+      // A single write records the image's size and digest in its header:
+      // the only answer, later, to "which bytes went onto this board".
+      const sha = typeof o.sha256 === "string" && o.sha256 ? ` · sha256 ${o.sha256}` : "";
+      const extra = o.op === "flash" && typeof o.size === "number" ? ` · ${o.size} bytes${sha}` : "";
+      out.push({ t, src: "meta", text: `${String(o.label ?? "start")}${extra}` });
     }
   }
   return out;
 }
 
-export async function fetchTimelineLines(path: string, signal?: AbortSignal): Promise<FeedLine[]> {
-  const url = `/workspace/files/preview/${path.split("/").map(encodeURIComponent).join("/")}?max_bytes=262144`;
+/** The workspace preview endpoint's hard cap: more than this is never returned in one read. */
+export const TIMELINE_READ_BYTES = 1024 * 1024;
+
+export interface TimelineRead {
+  lines: FeedLine[];
+  /** The file is longer than one read: only its first TIMELINE_READ_BYTES are in `lines`. */
+  truncated: boolean;
+  size: number;
+}
+
+export async function fetchTimelineLines(path: string, signal?: AbortSignal): Promise<TimelineRead> {
+  const url = `/workspace/files/preview/${path.split("/").map(encodeURIComponent).join("/")}?max_bytes=${TIMELINE_READ_BYTES}`;
   const r = await fetch(url, { signal });
   if (!r.ok) throw new AlbApiError(`preview returned ${r.status}`, r.status, `HTTP_${r.status}`);
-  const b = (await r.json()) as { ok?: boolean; text?: string };
-  return b.ok ? parseTimeline(b.text ?? "") : [];
+  const b = (await r.json()) as { ok?: boolean; text?: string; truncated?: boolean; size_bytes?: number };
+  if (!b.ok) return { lines: [], truncated: false, size: 0 };
+  return { lines: parseTimeline(b.text ?? ""), truncated: !!b.truncated, size: Number(b.size_bytes ?? 0) };
+}
+
+/** One feed line as plain text, the way the card shows it: `+1.23 uart  text`. */
+export function feedText(l: FeedLine): string {
+  return `+${l.t.toFixed(2)} ${l.src.padEnd(4)} ${l.text}`;
+}
+
+/**
+ * Where a finished job's record is, from its `done` line: the hub puts the
+ * job directory in `artifacts` (empty when nothing was recorded).
+ */
+export function timelineFileOf(ev: NdjsonEvent | null): string {
+  const dir = typeof ev?.artifacts === "string" ? ev.artifacts.replace(/[\\/]+$/, "") : "";
+  return dir ? `${dir}/timeline.jsonl` : "";
+}
+
+/** The job id in GET /api/flash/jobs that a `done` line's `artifacts` directory belongs to. */
+export function jobIdOfArtifacts(ev: NdjsonEvent | null, ids: string[]): string | null {
+  const dir = typeof ev?.artifacts === "string" ? ev.artifacts.replace(/[\\/]+$/, "") : "";
+  const base = dir.split(/[\\/]/).pop() ?? "";
+  if (!base) return null;
+  // ids are `<dir name>` (no device) or `<device>~<dir name>`
+  return ids.find((id) => id === base || id.endsWith(`~${base}`)) ?? null;
 }
 
 export interface WorkspaceFile {

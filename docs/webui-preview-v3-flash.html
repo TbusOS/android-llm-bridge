@@ -20,6 +20,7 @@
     </div>
     <div class="page-head__actions">
       <a class="btn btn--text" href="webui-preview-v3-bench.html"><i data-ic="usb"></i><span data-en="Bench USB">台架 USB</span></a>
+      <a class="btn btn--text" href="#" title="板子开机后,从系统里读回配置分区" data-toast-zh="设计稿:去配置分区页,板子开机后读回配置分区。" data-toast-en="Draft: opens Board config, where the config partition is read back from the booted board."><i data-ic="sliders"></i><span data-en="Board config">配置分区</span></a>
       <button class="btn btn--outlined" data-toast-zh="设计稿:fastboot reboot,板子回系统。" data-toast-en="Draft: fastboot reboot, back to Android."><i data-ic="power"></i><span data-en="Reboot to Android">重启回系统</span></button>
     </div>
   </div>
@@ -116,13 +117,15 @@
         <article class="card" id="s-fail" hidden>
           <div class="card__head"><h2 data-en="3 · Stopped at line 23">3 · 停在第 23 行</h2></div>
           <div class="banner banner--error"><i data-ic="error"></i><p><b>FLASH_WRITE_FAILED</b> · <span class="mono">FAILED (remote: 'Partition should be flashed in fastbootd')</span><br><span data-en="super is a logical partition here; reboot to fastbootd and run the rest. 13 rows done, 15 not run.">这块板的 super 要在 fastbootd 里刷:重启到 fastbootd 后继续执行剩下的行。已完成 13 行,15 行未执行。</span></p><div class="banner__actions"><button class="btn btn--text btn--sm" data-en="Reboot to fastbootd">重启到 fastbootd</button><button class="btn btn--text btn--sm" data-en="Run the rest">继续剩下的</button></div></div>
-          <a class="btn btn--tonal btn--sm" href="webui-preview-v3-timeline.html" style="align-self:flex-start"><i data-ic="timeline" class="ic--sm"></i><span data-en="See job and serial output on the timeline">在时间轴上看作业和串口输出</span></a>
+          <pre class="term" style="font-size:12px;max-height:160px">Sending sparse 'super' 3/5 (524288 KB)  OKAY
+Writing 'super'  FAILED (remote: 'Partition should be flashed in fastbootd')</pre>
+          <div class="row"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:放大查看这段输出的全部行。" data-toast-en="Draft: opens every line of this output large."><i data-ic="open-full" class="ic--sm"></i><span data-en="Open large">放大查看</span></button></div>
         </article>
       </div>
 
       <div class="stack span-4">
         <article class="card">
-          <div class="card__head"><h2 data-en="Job and serial, one clock">作业和串口</h2><span class="card__sub" data-en="last 8 lines">最后 8 行</span><div class="src-note"><code>timeline.jsonl</code></div></div>
+          <div class="card__head"><h2 data-en="Job and serial, one clock">作业和串口</h2><span class="card__sub" data-en="8 lines">共 8 行</span><div class="card__actions"><button class="btn btn--tonal btn--sm" data-toast-zh="设计稿:放大查看全部行(行号、换行、复制、存文件)。" data-toast-en="Draft: opens every line large (numbers, wrap, copy, save)."><i data-ic="open-full" class="ic--sm"></i><span data-en="Open large">放大查看</span></button></div><div class="src-note"><code>timeline.jsonl</code></div></div>
           <pre class="term" style="font-size:12px;height:220px"><span class="d">+0.00</span> <span class="a">job</span> plan flash_all · 28 rows
 <span class="d">+0.41</span> <span class="a">job</span> getvar product: board_x
 <span class="d">+0.52</span> <span class="a">job</span> flash boot_a (96 MB)
@@ -131,6 +134,8 @@
 <span class="d">+5.71</span> <span class="a">job</span> flash vendor_boot_a OKAY
 <span class="d">+5.80</span> <span class="a">job</span> flash super (2.24 GB)
 <span class="d">+33.9</span> uart  sparse: chunk 3/5</pre>
+          <p class="t-body-small t-muted" style="margin:0;overflow-wrap:anywhere"><span data-en="Record file (in the workspace): ">记录文件(工作区内):</span><span class="mono">flash/plan-flash_all-2026-10-28T09-12-00/timeline.jsonl</span></p>
+          <a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" style="align-self:flex-start" title="时间轴页列的是在那里录的录制,打不开这次作业的记录;这次作业的全部行在「放大查看」里。"><i data-ic="timeline" class="ic--sm"></i><span data-en="Open the Timeline page">打开时间轴页</span></a>
         </article>
         <article class="card">
           <div class="card__head"><h2 data-en="Recent jobs">最近作业</h2><span class="card__sub" data-en="kept after a reload">刷新页面后仍在</span><div class="src-note"><span class="new" data-en="new: GET /api/flash/jobs">新:GET /api/flash/jobs</span></div></div>
@@ -152,6 +157,8 @@
           <label class="field"><span class="field__label" data-en="Image in the workspace">工作区里的镜像</span><select class="select"><option>flash-images/board-x/boot.img · 96 MB</option><option>uploads/boot-test.img · 96 MB</option></select></label>
         </div>
         <div class="dropzone"><i data-ic="upload" class="ic--lg"></i><span data-en="Or drop an image here (up to 2 GiB)">或把镜像拖到这里(不超过 2 GiB)</span></div>
+        <!-- after a write: drawn from what was sent, not from the current picks -->
+        <div class="banner banner--ok"><i data-ic="check-circle"></i><p><span class="mono">boot_a ← boot.img</span> <span data-en="(100663296 bytes) · 3.1 s">(100663296 字节)· 用时 3.1 秒</span><br><span data-en="fastboot reported the write succeeded; the partition was &lt;strong&gt;not read back&lt;/strong&gt;. If the contents matter, check on the board after it boots; a config partition can be read back on the Board config page once the board is up.">fastboot 报告写入成功,<strong>没有回读校验</strong>。内容要紧的话,等板子起来后去板上验一下;配置分区可以在开机后到「配置分区」页读回。</span></p><div class="banner__actions"><a class="btn btn--text btn--sm" href="#" data-toast-zh="设计稿:去配置分区页。" data-toast-en="Draft: opens Board config." data-en="Board config">配置分区</a></div></div>
         <div class="confirm"><i data-ic="alert"></i><p data-en="Write boot.img to boot_a on board-a. A wrong partition cannot be undone from here.">把 boot.img 写到 board-a 的 boot_a。写错分区在这里撤不回。</p><div class="confirm__actions"><button class="btn btn--danger" data-toast-zh="设计稿:不会真的写。" data-toast-en="Draft: nothing was written."><i data-ic="bolt"></i><span data-en="Write">写入</span></button></div></div>
       </article>
     </section>
@@ -166,6 +173,7 @@
           <label class="field"><span class="field__label">set_active</span><div class="row"><select class="select grow"><option>a</option><option>b</option></select><button class="btn btn--outlined btn--sm" data-en="Set">设置</button></div></label>
           <label class="field"><span class="field__label">reboot</span><div class="row"><select class="select grow"><option data-en="Android">系统</option><option>bootloader</option><option>fastbootd</option><option>recovery</option></select><button class="btn btn--outlined btn--sm" data-en="Reboot">重启</button></div></label>
         </div>
+        <div class="row"><span class="grow"></span><button class="btn btn--text btn--sm" data-toast-zh="设计稿:放大查看命令输出。" data-toast-en="Draft: opens the command output large."><i data-ic="open-full" class="ic--sm"></i><span data-en="Open large">放大查看</span></button><button class="btn btn--text btn--sm"><i data-ic="close" class="ic--sm"></i><span data-en="Clear output">清空输出</span></button></div>
         <pre class="term" style="height:180px"><span class="d">$</span> fastboot getvar all
 (bootloader) product:board_x
 (bootloader) current-slot:a

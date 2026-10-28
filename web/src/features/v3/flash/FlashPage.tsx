@@ -8,19 +8,65 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Icon } from "../../../components/v3/Icon";
-import { useBenchBoard, useFlashStatusQuery } from "../../../components/v3/TopBar";
+import { LogDialog } from "../../../components/v3/LogDialog";
+import { useAgentStatus, useBenchBoard, useFlashStatusQuery } from "../../../components/v3/TopBar";
 import { CardHead, Confirm, Dot, Empty, ErrorBanner, PageHead, Pill, toast } from "../../../components/v3/ui";
+import type { AgentStatus } from "../../../lib/api";
 import { type FlashJobSummary, fetchFlashJobs, flashOp } from "../../../lib/api3";
 import { useDashboardQuery } from "../../../lib/dashboardQuery";
-import { useT } from "../../../lib/i18n";
+import { type T, useT } from "../../../lib/i18n";
 import { CommandsMode } from "./CommandsMode";
-import { OneMode } from "./OneMode";
+import { NotReadBack, OneMode } from "./OneMode";
+import { OpenLargeButton, OutputBlock } from "./OutputBlock";
 import { PackageMode } from "./PackageMode";
-import { type FeedLine, failureOf, fetchFlashJob, fetchTimelineLines, fmtClock, fmtMaxDownload, outputOf, parseGetvar } from "./flashApi";
+import {
+  type FeedLine,
+  TIMELINE_READ_BYTES,
+  failureOf,
+  feedText,
+  fetchFlashJob,
+  fetchTimelineLines,
+  fmtBytes,
+  fmtClock,
+  fmtMaxDownload,
+  jobIdOfArtifacts,
+  outputOf,
+  parseGetvar,
+  timelineFileOf,
+} from "./flashApi";
 import { useFlashRun } from "./useFlashRun";
 import "./flash.css";
 
 type Mode = "pkg" | "one" | "cmd";
+
+/**
+ * Why GET /api/flash/status says `available: false`. That endpoint only
+ * carries the boolean (agent connected AND it advertises fastboot), so the
+ * reason comes from GET /agent/status: no agent at all, or an agent whose
+ * `caps` lack `fastboot` because it found no fastboot executable on its host.
+ */
+export function unavailableReason(t: T, agents: AgentStatus | undefined): string {
+  if (agents) {
+    const current = agents.agents.find((a) => a.current) ?? agents.agents[0];
+    if (!current) {
+      return t(
+        "烧录现在不可用:没有台架 agent 连到 hub。在接板子的那台 Windows 上启动 agent,或者去台架页远程拉起。",
+        "Flashing is unavailable: no bench agent is connected to the hub. Start the agent on the Windows machine the boards are plugged into, or start it remotely from the Bench page.",
+      );
+    }
+    if (!current.caps.includes("fastboot")) {
+      const who = current.name || current.agent_id;
+      return t(
+        `烧录现在不可用:agent ${who} 连上了,但没有报告 fastboot 能力,它那台机器上找不到 fastboot。在那台机器的 agent.conf 里把 fastboot_path 设成 fastboot 可执行文件的路径,然后重启 agent。`,
+        `Flashing is unavailable: agent ${who} is connected but does not advertise fastboot, because it finds no fastboot executable on its machine. Set fastboot_path in that machine's agent.conf to the fastboot executable, then restart the agent.`,
+      );
+    }
+  }
+  return t(
+    "烧录现在不可用:台架 agent 没有连上,或者它没有报告 fastboot 能力。agent 连着时,在它的 agent.conf 里设 fastboot_path 后重启 agent。",
+    "Flashing is unavailable: the bench agent is not connected, or it does not advertise fastboot. If it is connected, set fastboot_path in its agent.conf and restart it.",
+  );
+}
 
 export function FlashPage() {
   const t = useT();
@@ -38,14 +84,16 @@ export function FlashPage() {
   }, [qc]);
   const run = useFlashRun(refreshJobs);
 
+  const agents = useAgentStatus();
   const s = status.data;
   const available = !!s?.available;
   const boardName = s?.board ?? board.data?.active ?? null;
+  const whyUnavailable = unavailableReason(t, agents.data);
   const disabledReason = status.isError
     ? t("读不到烧录状态。", "Cannot read the flash status.")
     : !s
       ? t("正在读取烧录状态…", "Reading the flash status…")
-      : t("台架 agent 没有连上,或它不支持烧录。", "The bench agent is not connected, or it cannot flash.");
+      : whyUnavailable;
 
   /* ---- who is on the other end: one `getvar all` ---- */
   const [vars, setVars] = useState<Record<string, string> | null>(null);
@@ -79,7 +127,14 @@ export function FlashPage() {
   const jobs = useDashboardQuery({ queryKey: ["flash-jobs"], queryFn: ({ signal }) => fetchFlashJobs(20, signal), refetchMs: 4_000 });
   const list = jobs.data?.jobs ?? [];
   const runningId = jobs.data?.running ? (list.find((j) => j.ok === null)?.id ?? null) : null;
-  const effectiveId = selected ?? runningId ?? list[0]?.id ?? null;
+  const ownActive = run.running || run.done !== null;
+  // The job this page just ran, found on disk by the directory its verdict names.
+  const ownJobId = !run.running ? jobIdOfArtifacts(run.done, list.map((j) => j.id)) : null;
+  const effectiveId = selected ?? ownJobId ?? runningId ?? list[0]?.id ?? null;
+  // A new run takes the right-hand card back to its own live stream.
+  useEffect(() => {
+    if (run.running) setSelected(null);
+  }, [run.running]);
   const detail = useQuery({
     queryKey: ["flash-job", effectiveId],
     queryFn: ({ signal }) => fetchFlashJob(effectiveId as string, signal),
@@ -95,8 +150,35 @@ export function FlashPage() {
     refetchOnWindowFocus: false,
     retry: false,
   });
-  const ownActive = run.running || run.done !== null;
-  const feed: FeedLine[] = ownActive ? run.lines : (timeline.data ?? []);
+  // The record on disk has the serial console on the job's clock; the live
+  // stream has job lines only. Show the record unless this page is streaming,
+  // or its own just-finished job is not on disk (yet).
+  const fromRecord = !run.running && (!ownActive || selected !== null || ownJobId !== null);
+  const recorded = timeline.data?.lines ?? [];
+  const feed: FeedLine[] = !fromRecord ? run.lines : selected !== null || !ownActive || recorded.length > 0 ? recorded : run.lines;
+  const feedFromDisk = fromRecord && feed === recorded;
+  const showLast = !run.running && (!ownActive || selected !== null);
+  const recordFile = feedFromDisk && detail.data?.timeline_path
+    ? { onHub: false, path: detail.data.timeline_path }
+    : timelineFileOf(run.done)
+      ? { onHub: true, path: timelineFileOf(run.done) }
+      : null;
+  const truncatedNote =
+    feedFromDisk && timeline.data?.truncated
+      ? t(
+          `记录文件有 ${fmtBytes(timeline.data.size)},这里只读了前 ${fmtBytes(TIMELINE_READ_BYTES)},更后面的行只在文件里。`,
+          `The record is ${fmtBytes(timeline.data.size)}; only its first ${fmtBytes(TIMELINE_READ_BYTES)} is shown here, later lines are only in the file.`,
+        )
+      : "";
+  const [feedLarge, setFeedLarge] = useState(false);
+  const feedRef = useRef<HTMLPreElement>(null);
+  const stick = useRef(true);
+  // Newest lines are at the bottom: stay there unless the reader scrolled up.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: new lines are the trigger
+  useEffect(() => {
+    const el = feedRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [feed]);
 
   const rebootAndroid = () => {
     setRebootOpen(false);
@@ -126,6 +208,10 @@ export function FlashPage() {
               <Icon name="usb" />
               {t("台架 USB", "Bench USB")}
             </Link>
+            <Link className="btn btn--text" to="/board-config" title={t("板子开机后,从系统里读回配置分区", "Read the config partition back from the booted board")}>
+              <Icon name="sliders" />
+              {t("配置分区", "Board config")}
+            </Link>
             <button type="button" className="btn btn--outlined" disabled={!available || run.running} title={!available ? disabledReason : undefined} onClick={() => setRebootOpen(true)}>
               <Icon name="power" />
               {t("重启回系统", "Reboot to Android")}
@@ -152,7 +238,7 @@ export function FlashPage() {
         ) : s && !s.available ? (
           <div className="banner banner--warn" role="alert">
             <Icon name="alert" />
-            <p>{t("烧录现在不可用:台架 agent 没有连上,或者它的版本不支持烧录。去台架页看 agent 状态。", "Flashing is unavailable: the bench agent is not connected, or its version cannot flash. Check the agent on the Bench page.")}</p>
+            <p>{whyUnavailable}</p>
             <div className="banner__actions"><Link className="btn btn--text btn--sm" to="/bench">{t("台架", "Bench")}</Link></div>
           </div>
         ) : null}
@@ -238,31 +324,66 @@ export function FlashPage() {
             <div hidden={mode !== "cmd"}>
               <CommandsMode run={run} available={available} disabledReason={disabledReason} />
             </div>
-            {!ownActive ? <LastJob detail={detail.data} loading={detail.isLoading && !!effectiveId} runningLabel={s?.busy ? (s.job ?? "") : ""} /> : null}
+            {showLast ? <LastJob detail={detail.data} loading={detail.isLoading && !!effectiveId} runningLabel={s?.busy ? (s.job ?? "") : ""} /> : null}
           </div>
 
           <div className="stack span-4">
             <article className="card">
-              <CardHead title={t("作业和串口", "Job and serial, one clock")} sub={t("最后 40 行", "last 40 lines")} />
+              <CardHead
+                title={t("作业和串口", "Job and serial, one clock")}
+                sub={feed.length > 0 ? t(`共 ${feed.length} 行`, `${feed.length} lines`) : undefined}
+                actions={feed.length > 0 ? <OpenLargeButton tonal onClick={() => setFeedLarge(true)} /> : undefined}
+              />
               {feed.length === 0 ? (
                 <Empty icon="terminal" title={t("还没有输出", "No output yet")}>
                   {t("执行一次烧录后,作业输出和同一时钟上的串口输出会出现在这里。", "After a flash, the job output and the serial console on the same clock show up here.")}
                 </Empty>
               ) : (
-                <pre className="term flash-feed" style={{ fontSize: 12, height: 220 }} aria-label={t("作业和串口输出", "job and serial output")}>
-                  {feed.slice(-40).map((l, i) => (
+                <pre
+                  ref={feedRef}
+                  className="term flash-feed"
+                  style={{ fontSize: 12, height: 220 }}
+                  aria-label={t("作业和串口输出", "job and serial output")}
+                  title={t("双击放大", "Double-click to open large")}
+                  onDoubleClick={() => setFeedLarge(true)}
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+                  }}
+                >
+                  {feed.map((l, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: a line's position in the record is its identity
                     <div key={i}>
                       <span className="d">+{l.t.toFixed(2)}</span> {l.src === "job" ? <span className="a">job</span> : l.src === "uart" ? "uart" : "meta"} {l.text}
                     </div>
                   ))}
                 </pre>
               )}
-              {detail.data?.timeline_path && !ownActive ? (
-                <Link className="btn btn--tonal btn--sm" style={{ alignSelf: "flex-start" }} to="/timeline">
+              {truncatedNote ? <p className="t-body-small t-muted" style={{ margin: 0 }}>{truncatedNote}</p> : null}
+              {recordFile ? (
+                <p className="t-body-small t-muted" style={{ margin: 0, overflowWrap: "anywhere" }}>
+                  {recordFile.onHub ? t("记录文件(hub 上):", "Record file (on the hub): ") : t("记录文件(工作区内):", "Record file (in the workspace): ")}
+                  <span className="mono">{recordFile.path}</span>
+                </p>
+              ) : null}
+              {feedFromDisk && detail.data?.timeline_path ? (
+                // The Timeline page opens its own recordings (timeline/capture-*), not a
+                // flash job's record (flash/<job>/), so this cannot deep-link to the job.
+                <Link className="btn btn--text btn--sm" style={{ alignSelf: "flex-start" }} to="/timeline" title={t("时间轴页列的是在那里录的录制,打不开这次作业的记录;这次作业的全部行在「放大查看」里。", "The Timeline page lists the recordings made there; it cannot open this job's record. Every line of this job is under Open large.")}>
                   <Icon name="timeline" size="sm" />
-                  {t("在时间轴页看串口", "Open the timeline")}
+                  {t("打开时间轴页", "Open the Timeline page")}
                 </Link>
               ) : null}
+              <LogDialog
+                open={feedLarge}
+                onClose={() => setFeedLarge(false)}
+                title={t("作业和串口", "Job and serial, one clock")}
+                sub={feedFromDisk && detail.data ? <span className="mono">{detail.data.label}</span> : run.running ? t("还在进行,新行会继续追加。", "Still running; new lines keep arriving.") : undefined}
+                lines={feed.map(feedText)}
+                loading={run.running}
+                note={[truncatedNote, recordFile?.path ?? ""].filter(Boolean).join(" · ")}
+                fileName={`flash-${(feedFromDisk && detail.data?.id) || run.label || "job"}.log`}
+              />
             </article>
             <article className="card">
               <CardHead title={t("最近作业", "Recent jobs")} sub={t("刷新页面后仍在", "kept after a reload")} />
@@ -342,7 +463,15 @@ function LastJob({ detail, loading, runningLabel }: { detail: Awaited<ReturnType
       ) : detail.ok ? (
         <div className="banner banner--ok">
           <Icon name="check-circle" />
-          <p>{j?.total ? t(`整包完成:执行 ${j.ran ?? 0} 行,跳过 ${j.skipped ?? 0} 行。`, `Package done: ${j.ran ?? 0} rows ran, ${j.skipped ?? 0} skipped.`) : t("作业完成。", "Job finished.")}</p>
+          <p>
+            {j?.total ? t(`整包完成:执行 ${j.ran ?? 0} 行,跳过 ${j.skipped ?? 0} 行。`, `Package done: ${j.ran ?? 0} rows ran, ${j.skipped ?? 0} skipped.`) : t("作业完成。", "Job finished.")}
+            {detail.op === "flash" ? (
+              <>
+                <br />
+                <NotReadBack />
+              </>
+            ) : null}
+          </p>
           <span />
         </div>
       ) : (
@@ -362,7 +491,7 @@ function LastJob({ detail, loading, runningLabel }: { detail: Awaited<ReturnType
             </p>
             <span />
           </div>
-          {out ? <pre className="term" style={{ fontSize: 12, maxHeight: 140 }}>{out}</pre> : null}
+          {out ? <OutputBlock text={out} title={t(`${detail.label} 的输出`, `Output of ${detail.label}`)} fileName={`flash-${detail.id}.log`} /> : null}
         </>
       )}
     </article>

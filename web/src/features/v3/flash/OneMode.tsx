@@ -2,6 +2,7 @@
  * Write one partition from an image in the workspace (or one just uploaded).
  * Baseline: docs/webui-preview-v3-flash.html (#m-one).
  */
+import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
@@ -11,9 +12,22 @@ import { flashOp } from "../../../lib/api3";
 import { useT } from "../../../lib/i18n";
 import { uploadImage } from "../../inspect/useFlash";
 import { failureOf, fmtBytes, outputOf, walkWorkspace } from "./flashApi";
+import { OutputBlock } from "./OutputBlock";
 import type { FlashRun } from "./useFlashRun";
 
 const MAX_UPLOAD = 2 * 1024 ** 3;
+
+/**
+ * What a write was started with. The form stays editable while the result
+ * is on screen, so the result is drawn from this snapshot, never from the
+ * current picks: a banner naming a partition that was not written is worse
+ * than no banner.
+ */
+interface Sent {
+  partition: string;
+  image: string;
+  size: number;
+}
 
 export interface OneModeProps {
   run: FlashRun;
@@ -35,6 +49,7 @@ export function OneMode({ run, available, board, partitions, partitionsProblem, 
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [drag, setDrag] = useState(false);
+  const [sent, setSent] = useState<Sent | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
   const mine = run.label === "flash";
@@ -67,6 +82,7 @@ export function OneMode({ run, available, board, partitions, partitionsProblem, 
 
   const go = () => {
     setConfirm(false);
+    setSent({ partition: part, image: img, size: options.find((o) => o.path === img)?.size ?? 0 });
     void run.start("flash", (on) => flashOp("flash", { partition: part, image: img }, on)).then((d) => {
       if (d.ok) toast(t(`${part} 已写入。`, `${part} written.`));
     });
@@ -75,6 +91,8 @@ export function OneMode({ run, available, board, partitions, partitionsProblem, 
   const done = mine ? run.done : null;
   const failure = done && !done.ok ? failureOf(done) : null;
   const pct = run.frac !== null ? Math.round(run.frac * 100) : 0;
+  const shown = sent ?? { partition: part, image: img, size: 0 };
+  const shownName = shown.image.split("/").pop() ?? shown.image;
 
   return (
     <div id="m-one">
@@ -139,18 +157,29 @@ export function OneMode({ run, available, board, partitions, partitionsProblem, 
 
         {mine && run.running ? (
           <div className="run-head">
-            <span><b className="mono">flash {part} ← {img}</b></span>
+            <span><b className="mono">flash {shown.partition} ← {shown.image}</b></span>
             <span className="t-muted num">{pct}%</span>
             <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${pct}%` }} /></div>
           </div>
         ) : null}
         {done ? (
           done.ok ? (
-            <div className="banner banner--ok"><Icon name="check-circle" /><p>{t(`${part} 已写入,用时 ${Number(done.duration_s ?? 0).toFixed(1)} 秒。`, `${part} written in ${Number(done.duration_s ?? 0).toFixed(1)} s.`)}</p><span /></div>
+            <div className="banner banner--ok" aria-label={t("写入结果", "Write result")}>
+              <Icon name="check-circle" />
+              <p>
+                <span className="mono">{shown.partition} ← {shownName}{shown.size > 0 ? t(`(${shown.size} 字节)`, ` (${shown.size} bytes)`) : ""}</span>
+                {t(` · 用时 ${Number(done.duration_s ?? 0).toFixed(1)} 秒`, ` · ${Number(done.duration_s ?? 0).toFixed(1)} s`)}
+                <br />
+                <NotReadBack />
+              </p>
+              <div className="banner__actions">
+                <Link className="btn btn--text btn--sm" to="/board-config">{t("配置分区", "Board config")}</Link>
+              </div>
+            </div>
           ) : (
             <>
               <div className="banner banner--error" role="alert"><Icon name="error" /><p><b>{failure?.code || "FAILED"}</b>{failure?.message ? <> · <span className="mono">{failure.message}</span></> : null}</p><span /></div>
-              {outputOf(done) ? <pre className="term" style={{ fontSize: 12, maxHeight: 140 }}>{outputOf(done)}</pre> : null}
+              {outputOf(done) ? <OutputBlock text={outputOf(done)} title={t(`写 ${shown.partition} 的输出`, `Output of writing ${shown.partition}`)} fileName={`flash-${shown.partition}.log`} /> : null}
             </>
           )
         ) : null}
@@ -178,5 +207,24 @@ export function OneMode({ run, available, board, partitions, partitionsProblem, 
         )}
       </article>
     </div>
+  );
+}
+
+/**
+ * Says what a successful write established and no more: `OKAY` is fastboot
+ * reporting that it wrote, not a read-back, and alb performs none. Implying
+ * otherwise is the overclaim this line exists to stop.
+ */
+export function NotReadBack() {
+  const t = useT();
+  return (
+    <span>
+      {t("fastboot 报告写入成功,", "fastboot reported the write succeeded; the partition was ")}
+      <strong>{t("没有回读校验", "not read back")}</strong>
+      {t(
+        "。内容要紧的话,等板子起来后去板上验一下;配置分区可以在开机后到「配置分区」页读回。",
+        ". If the contents matter, check on the board after it boots; a config partition can be read back on the Board config page once the board is up.",
+      )}
+    </span>
   );
 }

@@ -10,6 +10,7 @@ import { CardHead, Confirm, Empty, ErrorBanner, Pill, toast } from "../../../com
 import { type NdjsonEvent, type PlanRow, type PlanView, checkPlan, flashOp, runPlan } from "../../../lib/api3";
 import { useT } from "../../../lib/i18n";
 import { failureOf, fmtBytes, fmtClock, looksLikeImage, outputOf, problemLines, walkWorkspace } from "./flashApi";
+import { OutputBlock } from "./OutputBlock";
 import type { FlashRun } from "./useFlashRun";
 
 const SKIPPABLE_ACTIONS = ["setvar", "getvar", "oem", "reboot-bootloader", "reboot"];
@@ -474,7 +475,7 @@ function ResultBanner({ done, doneRows, onFastbootd }: { done: NdjsonEvent; done
           {wantsFastbootd ? <button type="button" className="btn btn--text btn--sm" onClick={onFastbootd}>{t("重启到 fastbootd", "Reboot to fastbootd")}</button> : null}
         </div>
       </div>
-      {out ? <pre className="term" style={{ fontSize: 12, maxHeight: 160 }}>{out}</pre> : null}
+      {out ? <OutputBlock text={out} title={failedLine ? t(`停在第 ${failedLine} 行时的输出`, `Output where it stopped (line ${failedLine})`) : t("整包作业的输出", "Package job output")} fileName={`flash-plan${failedLine ? `-line-${failedLine}` : ""}.log`} maxHeight={160} /> : null}
     </>
   );
 }

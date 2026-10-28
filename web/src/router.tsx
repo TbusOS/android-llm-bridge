@@ -13,7 +13,7 @@
 import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { lazy } from "react";
 
-import { INSPECT_REDIRECTS } from "./components/v3/nav";
+import { INSPECT_REDIRECTS, inspectTarget } from "./components/v3/nav";
 import { AuditPage } from "./features/audit/AuditPage";
 import { ConnectionsPage } from "./features/connections/ConnectionsPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
@@ -93,7 +93,7 @@ const routeTree = rootRoute.addChildren([
   legacy("/perf", "性能", "Performance", "CPU、内存、温度、网络、磁盘的实时曲线。", "Live CPU, memory, temperature, network and disk.", ChartsTab),
   legacy("/files", "文件", "Files", "板子上的文件和工作区的文件,推送和拉取。", "Files on the board and in the workspace; push and pull.", FilesTab),
   legacy("/apps", "应用", "Apps", "安装、启动、停止、清数据和卸载应用。", "Install, start, stop, clear and uninstall apps.", AppTab),
-  page("/screen", ScreenPage),
+  page("/screen", ScreenPage, (s) => ({ tab: s.tab === "shot" || s.tab === "tree" ? s.tab : undefined })),
   page("/problems", ProblemsPage),
   legacy("/info", "系统信息", "System info", "属性、分区、挂载和块设备。", "Properties, partitions, mounts and block devices.", SystemInfoTab),
   legacy("/power", "电源", "Power", "电池、休眠唤醒测试和重启。", "Battery, sleep / wake tests and reboot.", PowerTab),
@@ -108,15 +108,29 @@ const routeTree = rootRoute.addChildren([
   page("/audit", AuditPage),
   page("/connections", ConnectionsPage),
   redirectRoute("/terminal", "/console"),
-  redirectRoute("/inspect", "/dashboard"),
+  // v2 bookmarks: `/inspect?tab=<key>` and `/inspect/<key>` both land on
+  // the page that took that tab over, on the matching tab of that page.
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/inspect",
+    validateSearch: (s: Record<string, unknown>) => ({ tab: typeof s.tab === "string" ? s.tab : undefined }),
+    beforeLoad: ({ search }) => {
+      const { to, search: next } = inspectTarget(search.tab);
+      throw redirect({ to, search: next as never, replace: true });
+    },
+  }),
   createRoute({
     getParentRoute: () => rootRoute,
     path: "/inspect/$tabKey",
     beforeLoad: ({ params }) => {
-      throw redirect({ to: INSPECT_REDIRECTS[params.tabKey] ?? "/dashboard", replace: true });
+      const { to, search: next } = inspectTarget(params.tabKey);
+      throw redirect({ to, search: next as never, replace: true });
     },
   }),
 ]);
+
+/** The route tree, exported so tests can drive the redirects on a memory history. */
+export { routeTree };
 
 const RAW_BASE = import.meta.env.BASE_URL || "/";
 const BASEPATH = RAW_BASE === "/" ? "" : RAW_BASE.replace(/\/$/, "");
