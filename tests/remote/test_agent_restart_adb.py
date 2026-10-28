@@ -194,3 +194,48 @@ def test_list_processes_treats_missing_stdout_as_empty(monkeypatch):
         agent.subprocess, "run", lambda cmd, **_kw: subprocess.CompletedProcess(cmd, 0, stdout=None)
     )
     assert agent._list_processes() == []
+
+
+def test_uncaught_thread_exception_reaches_the_log_file(monkeypatch, tmp_path):
+    """A traceback that escapes a thread used to go to the console window
+    only; the hub reads the log FILE, so it was invisible remotely. After
+    _route_uncaught_to_log it must be in the file, with its traceback."""
+    import logging
+    import threading
+
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    log_file = tmp_path / "agent.log"
+    handler = logging.FileHandler(log_file, encoding="utf-8")
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        agent._route_uncaught_to_log()
+
+        def boom():
+            b"\xad\xff".decode("gbk")
+
+        t = threading.Thread(target=boom, name="_readerthread")
+        t.start()
+        t.join()
+        handler.flush()
+    finally:
+        root.removeHandler(handler)
+        handler.close()
+    text = log_file.read_text(encoding="utf-8")
+    assert "uncaught exception in thread _readerthread" in text
+    assert "UnicodeDecodeError" in text  # the traceback itself, not just the line
+
+
+def test_uncaught_main_thread_crash_is_logged(monkeypatch, caplog):
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    import threading
+
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    agent._route_uncaught_to_log()
+    try:
+        raise RuntimeError("main loop died")
+    except RuntimeError as e:
+        with caplog.at_level("CRITICAL", logger="alb-agent"):
+            sys.excepthook(type(e), e, e.__traceback__)
+    assert any("uncaught exception" in r.getMessage() and r.exc_info for r in caplog.records)

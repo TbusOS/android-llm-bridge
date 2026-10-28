@@ -4194,6 +4194,39 @@ def _setup_file_logging(log_file: str) -> None:
     _log.info("logging to %s", path)
 
 
+def _route_uncaught_to_log() -> None:
+    """Send uncaught exceptions through logging instead of bare stderr.
+
+    Python prints an exception that escapes a thread (or the main thread)
+    straight to stderr — the console window on the bench, nowhere else.
+    The hub reads this agent's log FILE (`log-tail agent`), so such a
+    traceback was invisible remotely: on 2026-10-28 subprocess's reader
+    thread died on a GBK decode error every 5 s for hours and only someone
+    standing at the bench could see it. Logged instead, it lands in the
+    console AND the file (both handlers sit on the root logger), so the
+    default hooks are replaced rather than chained — chaining would print
+    every traceback twice on the console."""
+
+    def thread_hook(args: threading.ExceptHookArgs) -> None:
+        if issubclass(args.exc_type, SystemExit):
+            return  # what the default hook does too
+        name = args.thread.name if args.thread is not None else "?"
+        exc = args.exc_value
+        if exc is None:
+            _log.error("uncaught exception in thread %s: %s", name, args.exc_type.__name__)
+            return
+        _log.error("uncaught exception in thread %s", name, exc_info=exc)
+
+    def main_hook(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
+        _log.critical("agent stopped on an uncaught exception", exc_info=(exc_type, exc, tb))
+
+    threading.excepthook = thread_hook
+    sys.excepthook = main_hook
+
+
 def _log_environment(args: argparse.Namespace) -> None:
     """One startup line with everything a post-mortem needs (never the token)."""
     try:
@@ -4300,6 +4333,7 @@ def main() -> None:
     root.addHandler(console)
     if args.log_file:
         _setup_file_logging(args.log_file)
+    _route_uncaught_to_log()
     global _LAUNCH_ARGV, _CONFIG_USED, _CONFIG_EXPLICIT, _IDENTITY_STABLE, _AGENT_ID
     _LAUNCH_ARGV = sys.argv[1:]
     _CONFIG_USED = args.config_used
