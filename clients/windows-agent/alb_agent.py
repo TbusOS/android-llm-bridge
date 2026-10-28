@@ -3637,8 +3637,15 @@ def _list_processes() -> list[tuple[str, str]]:
     """Best-effort (name, pid) listing of running processes; [] on failure."""
     windows = sys.platform == "win32"
     cmd = ["tasklist", "/fo", "csv", "/nh"] if windows else ["ps", "-eo", "comm=,pid="]
+    # errors="replace": tasklist prints names in the console code page, and
+    # one byte that code page can't decode (seen on a GBK-locale bench) used
+    # to kill subprocess's reader thread. .stdout then came back None, the
+    # splitlines() below raised, and the whole adb_list reply died with it —
+    # every time adb saw no device, so the hub kept the last list it had.
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, errors="replace", timeout=10
+        ).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return []
     procs: list[tuple[str, str]] = []

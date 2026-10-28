@@ -162,3 +162,35 @@ def test_kill_adb_conflicts_posix_path(monkeypatch):
     killed = agent._kill_adb_conflicts()
     assert killed == ["vendor_adb pid=4242"]  # unparsable pid skipped
     assert sent == [(4242, agent.signal.SIGTERM)]
+
+
+def test_list_processes_survives_bytes_the_locale_cannot_decode(monkeypatch):
+    """A bench with a GBK console printed a process name tasklist's code
+    page could not round-trip; the strict decode killed subprocess's reader
+    thread and the adb_list reply with it. One bad name must cost one
+    garbled name, not the listing."""
+    import subprocess
+
+    real_run = subprocess.run
+    script = "import sys; sys.stdout.buffer.write(b'vendor_adb 4242\\n\\xff\\xfe\\xad 7\\n')"
+
+    def fake_run(_cmd, **kw):
+        return real_run([sys.executable, "-c", script], **kw)
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    monkeypatch.setattr(agent.sys, "platform", "linux")
+    procs = agent._list_processes()
+    assert ("vendor_adb", "4242") in procs
+    assert len(procs) == 2
+    assert agent._find_adb_conflicts() == ["vendor_adb pid=4242"]
+
+
+def test_list_processes_treats_missing_stdout_as_empty(monkeypatch):
+    """subprocess hands back stdout=None when its reader thread died; that
+    is "no listing", not an AttributeError in the reply task."""
+    import subprocess
+
+    monkeypatch.setattr(
+        agent.subprocess, "run", lambda cmd, **_kw: subprocess.CompletedProcess(cmd, 0, stdout=None)
+    )
+    assert agent._list_processes() == []
