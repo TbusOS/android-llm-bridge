@@ -158,13 +158,13 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
             const cls = e.level === "E" || e.level === "F" ? "E" : e.level === "W" ? "W" : "";
             return (
               <div key={e.id}>
-                <div className={`log${cls ? ` log--${cls}` : ""}`} aria-selected={sel ? "true" : undefined} onClick={() => setSelId(sel ? null : e.id)}>
+                <button type="button" className={`log${cls ? ` log--${cls}` : ""}`} aria-expanded={sel} onClick={() => setSelId(sel ? null : e.id)}>
                   <span className="log__t">{e.ts.slice(6)}</span>
                   <span className="log__pid t-muted">{e.pid}</span>
                   <span className={`lvl lvl--${e.level}`}>{e.level}</span>
                   <span className="log__tag">{e.tag}</span>
                   <span className="log__msg">{e.msg}</span>
-                </div>
+                </button>
                 {sel ? (
                   <div className="log-detail">
                     {e.cont.length ? e.cont.join("\n") : `${e.ts}  pid ${e.pid}  tid ${e.tid}\n${e.tag}: ${e.msg}`}

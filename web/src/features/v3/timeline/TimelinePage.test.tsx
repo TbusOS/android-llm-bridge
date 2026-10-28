@@ -100,7 +100,7 @@ describe("TimelinePage", () => {
     const panic = await screen.findAllByRole("button", { name: /^panic/ });
     fireEvent.click(panic[0] as HTMLElement);
     await waitFor(() => {
-      const sel = document.querySelector('.log[aria-selected="true"]');
+      const sel = document.querySelector('.log[aria-pressed="true"]');
       expect(sel?.textContent).toContain("Kernel panic");
     });
     expect(screen.getByText(/into the recording/)).toHaveTextContent("+63.20 s");

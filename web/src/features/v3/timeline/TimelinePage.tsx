@@ -529,10 +529,11 @@ export function TimelinePage() {
                   const idx = winStart + i;
                   const bad = l.level === "E" || l.level === "F" ? "E" : l.level === "W" ? "W" : "";
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={`${l.t}-${idx}`}
                       className={`log${bad ? ` log--${bad}` : ""}`}
-                      aria-selected={idx === selIdx ? "true" : undefined}
+                      aria-pressed={idx === selIdx}
                       onClick={() => setSelT({ key: name ?? "", t: l.t })}
                     >
                       <span className="log__t">{clock(base, l.t, true)}</span>
@@ -540,7 +541,7 @@ export function TimelinePage() {
                       {l.level ? <span className={`lvl lvl--${l.level}`}>{l.level}</span> : <span />}
                       <span className="log__tag">{l.tag ?? ""}</span>
                       <span className="log__msg">{l.text}</span>
-                    </div>
+                    </button>
                   );
                 })}
                 {lines.length > ROW_CAP ? (
@@ -583,11 +584,13 @@ export function TimelinePage() {
             ) : (
               <ul className="list">
                 {marks.slice(0, 8).map((m, i) => (
-                  <li className="list__item" key={`${m.t}-${i}`} onClick={() => selectT(m.t)} style={{ cursor: "pointer" }}>
+                  <li key={`${m.t}-${i}`}>
+                    <button type="button" className="list__item list__item--action" onClick={() => selectT(m.t)}>
                     <span className="list__lead"><i className={`marker marker--${m.kind}`} style={{ position: "static", margin: 0 }} /></span>
                     <span className="list__title">{m.kind}</span>
                     <span className="list__trail mono t-muted">{clock(base, m.t, true)}</span>
                     <span className="list__meta">{m.text}</span>
+                    </button>
                   </li>
                 ))}
               </ul>

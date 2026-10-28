@@ -487,6 +487,19 @@
   border-top: 1px solid var(--alb-color-divider);
 }
 .list__item:first-child { border-top: 0; }
+/* a whole row that acts: a button laid out like a list item */
+button.list__item--action {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--alb-color-divider);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--md-sys-shape-corner-small);
+}
+li:first-child > button.list__item--action { border-top: 0; }
 .list__lead { grid-row: span 2; color: var(--md-sys-color-on-surface-variant); }
 .list__title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .list__meta { grid-column: 2; font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); overflow-wrap: anywhere; }
@@ -742,9 +755,26 @@
   border-left: 3px solid transparent;
 }
 .log:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 5%, transparent); }
-.log[aria-selected="true"] { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-left-color: var(--md-sys-color-primary); }
+/* a log row is a button when it can be picked: keyboard reaches it, Enter toggles it */
+button.log {
+  width: 100%;
+  border: 0;
+  border-left: 3px solid transparent;
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.log[aria-selected="true"],
+.log[aria-pressed="true"],
+.log[aria-expanded="true"] { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-left-color: var(--md-sys-color-primary); }
 .log[aria-selected="true"] .src-tag,
-.log[aria-selected="true"] .lvl { background: var(--alb-color-card); }
+.log[aria-pressed="true"] .src-tag,
+.log[aria-expanded="true"] .src-tag,
+.log[aria-selected="true"] .lvl,
+.log[aria-pressed="true"] .lvl,
+.log[aria-expanded="true"] .lvl { background: var(--alb-color-card); }
 .log--E,
 .log--F { background: color-mix(in srgb, var(--md-sys-color-error) 7%, transparent); }
 .log--W { background: color-mix(in srgb, var(--alb-color-warning) 6%, transparent); }

@@ -50,11 +50,16 @@ export function AppShell() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setSearchOpen(true);
+      } else if (e.key === "Escape") {
+        // Keyboard way out of the sheet and the modal drawer; the scrim
+        // below is the pointer way.
+        closeSheet();
+        setNavOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setSearchOpen]);
+  }, [setSearchOpen, closeSheet, setNavOpen]);
 
   const overlaySheet = sheetOpen && width < 1200;
   const compact = width < 600;
@@ -77,6 +82,7 @@ export function AppShell() {
         />
       </div>
       {overlaySheet || (compact && navOpen) ? (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: pointer-only scrim; Escape (handled above) is the keyboard equivalent
         <div
           className="scrim"
           aria-hidden

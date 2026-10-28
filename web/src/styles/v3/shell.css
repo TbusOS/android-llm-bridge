@@ -316,6 +316,6 @@ body::before {
 }
 .palette__input { height: 48px; background: var(--md-sys-color-surface-container-highest); }
 .palette__list { overflow-y: auto; min-height: 0; }
-.palette__list .menu__item { width: 100%; border-radius: var(--md-sys-shape-corner-medium); }
-.palette__list [aria-selected="true"] .menu__item { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.palette__none { padding: 16px; color: var(--alb-color-text-muted); }
+.palette__list .menu__item { width: 100%; border-radius: var(--md-sys-shape-corner-medium); cursor: pointer; }
+.palette__list .menu__item[aria-selected="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.palette__none { margin: 0; padding: 16px; color: var(--alb-color-text-muted); }
