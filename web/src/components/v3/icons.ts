@@ -65,6 +65,8 @@ export const ICONS: Record<string, string> = {
   "list": "<path d='M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01'/>",
   "zoom-in": "<circle cx='11' cy='11' r='6.5'/><path d='m16 16 4.5 4.5M11 8v6M8 11h6'/>",
   "zoom-out": "<circle cx='11' cy='11' r='6.5'/><path d='m16 16 4.5 4.5M8 11h6'/>",
+  "open-full": "<path d='M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7'/>",
+  "wrap": "<path d='M4 6h16M4 12h13a3 3 0 0 1 0 6h-4M15 16l-2 2 2 2M4 18h5'/>",
   "arrow-right": "<path d='M5 12h14M13 6l6 6-6 6'/>",
   "wrench": "<path d='M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-2-2-6.5-6.5a4 4 0 0 1 5-5z'/>",
   "lock": "<rect x='5' y='11' width='14' height='10' rx='2'/><path d='M8 11V8a4 4 0 0 1 8 0v3'/>",

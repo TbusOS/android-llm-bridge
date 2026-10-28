@@ -738,6 +738,61 @@ li:first-child > button.list__item--action { border-top: 0; }
 .term .caret { display: inline-block; width: 8px; height: 16px; vertical-align: text-bottom; background: var(--alb-color-terminal-fg); animation: alb-blink 1s steps(1) infinite; }
 @keyframes alb-blink { 50% { opacity: 0; } }
 
+/* ---------- log dialog: a log opened over most of the screen ---------- */
+/* Above the sheet (50), scrim (45) and page search (70); below the
+   snackbar (80) so "Copied" still shows while the dialog is open. */
+.dialog-scrim {
+  position: fixed;
+  z-index: 75;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px max(24px, env(safe-area-inset-right, 0px)) 24px max(24px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--md-sys-color-scrim) 40%, transparent);
+}
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1440px, 100%);
+  height: 100%;
+  max-height: 960px;
+  min-height: 0;
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  box-shadow: var(--md-sys-elevation-level3);
+  overflow: hidden;
+}
+.dialog__head { display: flex; align-items: center; gap: 4px; padding: 16px 12px 8px 24px; }
+.dialog__title { flex: 1; min-width: 0; }
+.dialog__title h2 { font-size: 22px; line-height: 28px; font-weight: 400; }
+.dialog__title p { margin: 2px 0 0; font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); overflow-wrap: anywhere; }
+.dialog__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 24px 12px; }
+.dialog__body { flex: 1; min-height: 0; display: flex; padding: 0 16px; }
+.dialog__body .term { flex: 1; min-height: 0; font-size: 12.5px; line-height: 19px; }
+.dialog__foot { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 10px 24px 16px; font-size: 12px; color: var(--alb-color-text-muted); font-variant-numeric: tabular-nums; }
+.dialog .icon-btn[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+
+/* Numbered log lines: the number column never wraps or gets selected
+   with the text, so a copied block is just the log. */
+.term--lines { padding-left: 0; }
+.term--lines > div { display: grid; grid-template-columns: var(--ln-w, 5ch) minmax(0, 1fr); column-gap: 12px; }
+.term--lines > div > i { font-style: normal; text-align: right; color: var(--alb-color-terminal-muted); user-select: none; }
+.term--nowrap { white-space: pre; overflow-wrap: normal; }
+.term--nowrap > div > span { white-space: pre; }
+.term mark { border-radius: 2px; background: var(--alb-color-terminal-warn); color: var(--alb-color-terminal-bg); }
+
+/* Compact windows: M3 full-screen dialog. */
+@media (max-width: 599px) {
+  .dialog-scrim { padding: 0; }
+  .dialog { max-height: none; border-radius: 0; }
+  .dialog__head { padding: calc(8px + env(safe-area-inset-top, 0px)) 4px 4px 16px; }
+  .dialog__tools { padding: 0 16px 8px; }
+  .dialog__body { padding: 0; }
+  .dialog__body .term { border-radius: 0; }
+  .dialog__foot { padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
+}
+
 /* ---------- log rows ---------- */
 .logs {
   min-width: 0;

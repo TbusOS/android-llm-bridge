@@ -13,6 +13,7 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { type MutableRefObject, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { copyText as writeClipboard } from "../../../lib/clipboard";
 import { useApp } from "../../../stores/app";
 
 const COLOR_VARS: [keyof ITheme, string][] = [
@@ -219,10 +220,5 @@ export function downloadText(name: string, text: string): boolean {
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
+  return writeClipboard(text);
 }
