@@ -3,7 +3,7 @@
  * saved commands, the recent-command list from the audit log and the adb
  * root / unroot / remount buttons. Baseline: docs/webui-preview-v3-console.html.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Icon } from "../../../components/v3/Icon";
 import { useBenchBoard } from "../../../components/v3/TopBar";
@@ -11,6 +11,7 @@ import { CardHead, Confirm, Empty, ErrorBanner, Menu, PageHead, Pill, toast } fr
 import { type AuditEvent, fetchAudit } from "../../../lib/api";
 import { adbAction } from "../../../lib/api3";
 import { useDashboardQuery } from "../../../lib/dashboardQuery";
+import { useDevices } from "../../../lib/hooks/useDevices";
 import { useT } from "../../../lib/i18n";
 import { useApp } from "../../../stores/app";
 import "./console.css";
@@ -33,6 +34,15 @@ export function ConsolePage() {
     { id: "serial-1", kind: "serial" },
   ]);
   const [activeId, setActiveId] = useState("adb-1");
+  // Open on the serial tab when adb has nothing to talk to (board in its
+  // bootloader, in fastboot, or adb not wired up) — unless the user has
+  // already picked a tab.
+  const { devices, isLoading: devicesLoading } = useDevices();
+  const picked = useRef(false);
+  const adbOnline = devices.some((d) => d.serial === device && d.state === "device");
+  useEffect(() => {
+    if (!picked.current && !devicesLoading && !adbOnline) setActiveId("serial-1");
+  }, [devicesLoading, adbOnline]);
   const seq = useRef(1);
   const panes = useRef(new Map<string, PaneApi>());
   const register = useCallback((id: string, api: PaneApi | null) => {
@@ -119,7 +129,10 @@ export function ConsolePage() {
             <>
               <div className="tabs" role="tablist" aria-label={t("终端", "Terminals")}>
                 {tabs.map((tab) => (
-                  <button key={tab.id} type="button" className="tab" role="tab" aria-selected={tab.id === activeId} aria-controls={`t-${tab.id}`} onClick={() => setActiveId(tab.id)}>
+                  <button key={tab.id} type="button" className="tab" role="tab" aria-selected={tab.id === activeId} aria-controls={`t-${tab.id}`} onClick={() => {
+                    picked.current = true;
+                    setActiveId(tab.id);
+                  }}>
                     <Icon name={tab.kind === "adb" ? "terminal" : "plug"} size="sm" />
                     {tabLabel(tab)}
                   </button>

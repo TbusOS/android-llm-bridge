@@ -224,6 +224,16 @@ describe("Console", () => {
     expect(screen.getByText(/没有选中的设备,adb shell 连不上/)).toBeInTheDocument();
   });
 
+  it("opens on the serial tab when adb has no device to talk to", async () => {
+    mockFetch({ "/devices": () => Response.json({ ok: true, transport: "AdbTransport", devices: [] }) });
+    useApp.setState({ device: null });
+    renderPage();
+    await waitFor(() => {
+      const selected = screen.getAllByRole("tab").find((el) => el.getAttribute("aria-selected") === "true");
+      expect(selected?.textContent).toMatch(/串口/);
+    });
+  });
+
   it("lists recent terminal commands from the audit log", async () => {
     mockFetch({
       "/audit": () =>
