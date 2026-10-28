@@ -1,0 +1,22 @@
+/* Chat page extras. Colours come from the shared v3 variables only. */
+.chat__list .list__item { position: relative; }
+.chat__pick {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* the whole row is the hit area */
+.chat__pick::after { content: ""; position: absolute; inset: 0; border-radius: var(--md-sys-shape-corner-medium); }
+.chat__pick:focus-visible { outline: none; }
+.chat__pick:focus-visible::after { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
+.chat__ctxrow { padding: 0 4px 8px; }
+.chat__readonly { margin-top: 8px; }
+.chat__turn { display: contents; }
