@@ -4,8 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { App } from "./App";
 import { AlbApiError } from "./lib/api";
-import "./styles/global.css";
+// v2 component styles first; the v3 (Material 3) sheets load after them so
+// a class both define (.btn, .pill, .dot …) takes the v3 look.
 import "./styles/components.css";
+import "./styles/v3/index.css";
+import "./styles/v3/legacy.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

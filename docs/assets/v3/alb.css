@@ -704,6 +704,29 @@ body::before {
   .topbar__menu { display: none; }
 }
 
+/* ---------- page search (⌘K) ---------- */
+.palette {
+  position: fixed;
+  z-index: 70;
+  top: calc(env(safe-area-inset-top, 0px) + 72px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: var(--md-sys-elevation-level3);
+}
+.palette__input { height: 48px; background: var(--md-sys-color-surface-container-highest); }
+.palette__list { overflow-y: auto; min-height: 0; }
+.palette__list .menu__item { width: 100%; border-radius: var(--md-sys-shape-corner-medium); }
+.palette__list [aria-selected="true"] .menu__item { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.palette__none { padding: 16px; color: var(--alb-color-text-muted); }
+
 /* ---- components.css ---- */
 /*
  * v3 components — Material 3 specs, sized for a dense tool.

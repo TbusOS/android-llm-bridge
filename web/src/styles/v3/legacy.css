@@ -1,0 +1,60 @@
+/*
+ * v2 → v3 bridge, React only (not part of the docs mockup bundle).
+ * The v2 feature components still style themselves with the Anthropic-era
+ * variables; this maps every one they use onto a Material 3 role, so those
+ * pages follow the theme (light / dark) and the bundled fonts. Delete a
+ * line once nothing reads that variable any more.
+ */
+:root {
+  --anth-bg: var(--md-sys-color-surface);
+  --anth-bg-subtle: var(--alb-color-well);
+  --anth-cream: var(--alb-color-well);
+  --anth-text: var(--md-sys-color-on-surface);
+  --anth-text-primary: var(--md-sys-color-on-surface);
+  --anth-text-secondary: var(--alb-color-text-muted);
+  --anth-text-tertiary: var(--alb-color-text-muted);
+  --anth-fg-muted: var(--alb-color-text-muted);
+  --anth-orange: var(--md-sys-color-primary);
+  --anth-orange-hover: var(--md-sys-color-primary);
+  --anth-blue: var(--md-sys-color-secondary);
+  --anth-green: var(--alb-color-success);
+  --anth-danger: var(--md-sys-color-error);
+  --anth-mid-gray: var(--md-sys-color-outline);
+  --anth-medium-gray: var(--md-sys-color-outline);
+  --anth-light-gray: var(--md-sys-color-outline-variant);
+  --anth-border: var(--md-sys-color-outline-variant);
+
+  --font-heading: var(--md-ref-typeface-plain);
+  --font-body: var(--md-ref-typeface-plain);
+  --font-mono: var(--md-ref-typeface-mono);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --radius-sm: var(--md-sys-shape-corner-small);
+  --radius-md: var(--md-sys-shape-corner-medium);
+  --radius-lg: var(--md-sys-shape-corner-large);
+  --radius-pill: var(--md-sys-shape-corner-full);
+  --shadow-card: none;
+  --shadow-pop: var(--md-sys-elevation-level2);
+  --ease-anth: cubic-bezier(.2, 0, 0, 1);
+  --duration-sm: 150ms;
+  --duration-md: 250ms;
+  --duration-lg: 400ms;
+}
+
+/* v2 pages sit inside one v3 card */
+.legacy {
+  min-width: 0;
+  padding: 16px 20px 20px;
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--alb-color-card);
+}
+.legacy h1,
+.legacy .h-title { font-size: 22px; line-height: 28px; font-weight: 400; }
+.legacy code { background: var(--alb-color-well); padding: 1px 6px; border-radius: 4px; }

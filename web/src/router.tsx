@@ -1,9 +1,7 @@
 /**
- * Router assembly — code-based TanStack Router setup with the
- * RootLayout wrapping every route.  v2 module map (8 entries on the
- * activity bar): Dashboard / Chat / Terminal / Inspect / Playground /
- * Sessions / Files / Audit.  All 8 are real now; Terminal and Files
- * are thin redirects to the matching Inspect tab.
+ * Router (v3). One top-level route per page in the navigation map
+ * (components/v3/nav.ts); the v2 /inspect/<tab> and /terminal addresses
+ * redirect to their new homes so old links and bookmarks keep working.
  *
  * Cross-repo invariant (DEBT-014, 2026-04-29): every `path:` value
  * below MUST NOT contain `.` in any segment. The backend SPA fallback
@@ -12,72 +10,21 @@
  * route", so a route like `/app/v2.0/foo` would be misclassified as
  * an asset 404. See `.claude/knowledge/architecture.md` 关键不变量.
  */
-import {
-  createRootRoute,
-  createRoute,
-  createRouter,
-  redirect,
-} from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { lazy } from "react";
-import { ChatPage } from "./features/chat/ChatPage";
-import { DashboardPage } from "./features/dashboard/DashboardPage";
+
+import { INSPECT_REDIRECTS } from "./components/v3/nav";
 import { AuditPage } from "./features/audit/AuditPage";
 import { ConnectionsPage } from "./features/connections/ConnectionsPage";
 import { DoctorPage } from "./features/doctor/DoctorPage";
 import { PlaygroundPage } from "./features/playground/PlaygroundPage";
-import { InspectLayout } from "./features/inspect/InspectLayout";
 import { SessionDetailPage } from "./features/session/SessionDetailPage";
 import { SessionsListPage } from "./features/session/SessionsListPage";
-import { RootLayout } from "./layouts/RootLayout";
+import { LegacyPage } from "./features/v3/LegacyPage";
+import { OverviewPage } from "./features/v3/overview/OverviewPage";
+import { AppShell } from "./layouts/AppShell";
 
-const rootRoute = createRootRoute({ component: RootLayout });
-
-const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/dashboard" });
-  },
-});
-
-const dashboardRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/dashboard",
-  component: DashboardPage,
-});
-
-const chatRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/chat",
-  component: ChatPage,
-});
-
-// Terminal & Files: top-level redirects to the matching Inspect tab.
-// Until they get their own pages, the activity-bar entries should at
-// least land users on the existing implementation, not a stub.
-const terminalRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/terminal",
-  beforeLoad: () => {
-    throw redirect({
-      to: "/inspect/$tabKey",
-      params: { tabKey: "shell" },
-      replace: true,
-    });
-  },
-});
-
-// Inspect is a nested-route subtree: `/inspect/<tabKey>` per tab. The
-// 12 child routes are built programmatically from `INSPECT_TAB_KEYS`
-// (the source of truth) and an explicit `InspectTabKey → component`
-// map. This avoids the 12-branch conditional in InspectPage and lets
-// TanStack Router's `defaultPreload: intent` warm each tab on hover.
-//
-// Back-compat: bookmarks of the form `/inspect?tab=logcat` land on the
-// `inspectIndexRoute`, which redirects to `/inspect/logcat`. Clean
-// `/inspect` redirects to `/inspect/system`. SPA fallback test in
-// `tests/api/test_ui_static.py` still passes since FastAPI just
-// serves index.html for the prefix.
+/** v2 Inspect tab keys — kept for the redirects and older imports. */
 export type InspectTabKey =
   | "system"
   | "charts"
@@ -92,218 +39,85 @@ export type InspectTabKey =
   | "diag"
   | "app"
   | "flash";
-export const INSPECT_TAB_KEYS: InspectTabKey[] = [
-  "system",
-  "charts",
-  "uart",
-  "logcat",
-  "shell",
-  "screenshot",
-  "ui-dump",
-  "files",
-  "power",
-  "log-search",
-  "diag",
-  "app",
-  "flash",
-];
+export const INSPECT_TAB_KEYS = Object.keys(INSPECT_REDIRECTS) as InspectTabKey[];
 
-// Lazy-loaded tab components — each tab chunk only fetches on demand,
-// matching the previous InspectPage `lazy(...)` setup so bundle splits
-// don't regress.
-const InspectTabComponents: Record<
-  InspectTabKey,
-  React.LazyExoticComponent<React.ComponentType>
-> = {
-  system: lazy(() =>
-    import("./features/inspect/SystemInfoTab").then((m) => ({
-      default: m.SystemInfoTab,
-    })),
-  ),
-  charts: lazy(() =>
-    import("./features/inspect/ChartsTab").then((m) => ({
-      default: m.ChartsTab,
-    })),
-  ),
-  uart: lazy(() =>
-    import("./features/inspect/UartTab").then((m) => ({ default: m.UartTab })),
-  ),
-  logcat: lazy(() =>
-    import("./features/inspect/LogcatTab").then((m) => ({
-      default: m.LogcatTab,
-    })),
-  ),
-  shell: lazy(() =>
-    import("./features/inspect/ShellTab").then((m) => ({
-      default: m.ShellTab,
-    })),
-  ),
-  screenshot: lazy(() =>
-    import("./features/inspect/ScreenshotTab").then((m) => ({
-      default: m.ScreenshotTab,
-    })),
-  ),
-  "ui-dump": lazy(() =>
-    import("./features/inspect/UiDumpTab").then((m) => ({
-      default: m.UiDumpTab,
-    })),
-  ),
-  files: lazy(() =>
-    import("./features/inspect/FilesTab").then((m) => ({
-      default: m.FilesTab,
-    })),
-  ),
-  power: lazy(() =>
-    import("./features/inspect/PowerTab").then((m) => ({
-      default: m.PowerTab,
-    })),
-  ),
-  "log-search": lazy(() =>
-    import("./features/inspect/LogSearchTab").then((m) => ({
-      default: m.LogSearchTab,
-    })),
-  ),
-  diag: lazy(() =>
-    import("./features/inspect/DiagTab").then((m) => ({ default: m.DiagTab })),
-  ),
-  app: lazy(() =>
-    import("./features/inspect/AppTab").then((m) => ({ default: m.AppTab })),
-  ),
-  flash: lazy(() =>
-    import("./features/inspect/FlashTab").then((m) => ({
-      default: m.FlashTab,
-    })),
-  ),
-};
+const lazyNamed = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) =>
+  lazy(() => load().then((m) => ({ default: m[name] })));
 
-const inspectRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/inspect",
-  component: InspectLayout,
-});
+const ConsolePage = lazyNamed(() => import("./features/v3/console/ConsolePage"), "ConsolePage");
+const LogsPage = lazyNamed(() => import("./features/v3/logs/LogsPage"), "LogsPage");
+const TimelinePage = lazyNamed(() => import("./features/v3/timeline/TimelinePage"), "TimelinePage");
+const FlashPage = lazyNamed(() => import("./features/v3/flash/FlashPage"), "FlashPage");
+const BenchPage = lazyNamed(() => import("./features/v3/bench/BenchPage"), "BenchPage");
+const ChatPage3 = lazyNamed(() => import("./features/v3/chat/ChatPage3"), "ChatPage3");
+const ProblemsPage = lazyNamed(() => import("./features/v3/problems/ProblemsPage"), "ProblemsPage");
+const ScreenPage = lazyNamed(() => import("./features/v3/screen/ScreenPage"), "ScreenPage");
 
-// `/inspect` (no child) → redirect. Preserve `?tab=logcat` style URLs
-// from old bookmarks / Dashboard quick-actions written before this
-// refactor.
-const inspectIndexRoute = createRoute({
-  getParentRoute: () => inspectRoute,
-  path: "/",
-  validateSearch: (search: Record<string, unknown>): { tab?: InspectTabKey } => {
-    const raw = search.tab;
-    if (typeof raw === "string" && (INSPECT_TAB_KEYS as string[]).includes(raw)) {
-      return { tab: raw as InspectTabKey };
-    }
-    return {};
-  },
-  beforeLoad: ({ search }) => {
-    const target = search.tab ?? "system";
-    throw redirect({
-      to: "/inspect/$tabKey",
-      params: { tabKey: target },
-      replace: true,
-    });
-  },
-});
+const ChartsTab = lazyNamed(() => import("./features/inspect/ChartsTab"), "ChartsTab");
+const FilesTab = lazyNamed(() => import("./features/inspect/FilesTab"), "FilesTab");
+const AppTab = lazyNamed(() => import("./features/inspect/AppTab"), "AppTab");
+const SystemInfoTab = lazyNamed(() => import("./features/inspect/SystemInfoTab"), "SystemInfoTab");
+const PowerTab = lazyNamed(() => import("./features/inspect/PowerTab"), "PowerTab");
+const BoardConfigCard = lazyNamed(() => import("./features/inspect/BoardConfigCard"), "BoardConfigCard");
 
-// Each tab is its own child route. Unknown `$tabKey` redirects to
-// `/inspect/system` so bad URLs degrade gracefully.
-const inspectTabRoutes = INSPECT_TAB_KEYS.map((key) =>
+const rootRoute = createRootRoute({ component: AppShell });
+
+const page = (path: string, C: React.ComponentType, validateSearch?: (s: Record<string, unknown>) => Record<string, unknown>) =>
+  createRoute({ getParentRoute: () => rootRoute, path, component: () => <C />, ...(validateSearch ? { validateSearch } : {}) });
+
+const legacy = (path: string, zh: string, en: string, descZh: string, descEn: string, C: React.ComponentType, needsDevice = true) =>
+  page(path, () => (
+    <LegacyPage zh={zh} en={en} descZh={descZh} descEn={descEn} needsDevice={needsDevice}>
+      <C />
+    </LegacyPage>
+  ));
+
+const redirectRoute = (path: string, to: string) =>
   createRoute({
-    getParentRoute: () => inspectRoute,
-    path: key,
-    component: InspectTabComponents[key],
-  }),
-);
+    getParentRoute: () => rootRoute,
+    path,
+    beforeLoad: () => {
+      throw redirect({ to, replace: true });
+    },
+  });
 
-const inspectTabFallbackRoute = createRoute({
-  getParentRoute: () => inspectRoute,
-  path: "$tabKey",
-  beforeLoad: () => {
-    throw redirect({
-      to: "/inspect/$tabKey",
-      params: { tabKey: "system" },
-      replace: true,
-    });
-  },
-});
-
-const playgroundRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/playground",
-  component: PlaygroundPage,
-});
-
-const sessionsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/sessions",
-  component: SessionsListPage,
-});
-
-// /sessions/$sessionId — drill-in chat replay for a single ChatSession.
-// Wired from the Dashboard RecentSessions card today; eventually the
-// /sessions list route will link here too.
-const sessionDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/sessions/$sessionId",
-  component: SessionDetailPage,
-});
-
-const filesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/files",
-  beforeLoad: () => {
-    throw redirect({
-      to: "/inspect/$tabKey",
-      params: { tabKey: "files" },
-      replace: true,
-    });
-  },
-});
-
-const doctorRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/doctor",
-  component: DoctorPage,
-});
-
-const auditRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/audit",
-  component: AuditPage,
-});
-
-const connectionsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/connections",
-  component: ConnectionsPage,
-});
-
-// `addChildren` must be chained inline so the route-tree TYPE picks
-// up `/inspect/$tabKey` and `/inspect/system|charts|...` paths. A
-// separate statement keeps it runtime-correct but the type
-// inference loses the children.
 const routeTree = rootRoute.addChildren([
-  indexRoute,
-  dashboardRoute,
-  chatRoute,
-  terminalRoute,
-  inspectRoute.addChildren([
-    inspectIndexRoute,
-    ...inspectTabRoutes,
-    inspectTabFallbackRoute,
-  ]),
-  playgroundRoute,
-  sessionsRoute,
-  sessionDetailRoute,
-  filesRoute,
-  doctorRoute,
-  auditRoute,
-  connectionsRoute,
+  redirectRoute("/", "/dashboard"),
+  page("/dashboard", OverviewPage),
+  page("/console", ConsolePage),
+  page("/logs", LogsPage, (s) => ({ tab: typeof s.tab === "string" ? s.tab : undefined })),
+  page("/timeline", TimelinePage, (s) => ({
+    record: s.record === "boot" ? "boot" : undefined,
+    name: typeof s.name === "string" ? s.name : undefined,
+  })),
+  legacy("/perf", "性能", "Performance", "CPU、内存、温度、网络、磁盘的实时曲线。", "Live CPU, memory, temperature, network and disk.", ChartsTab),
+  legacy("/files", "文件", "Files", "板子上的文件和工作区的文件,推送和拉取。", "Files on the board and in the workspace; push and pull.", FilesTab),
+  legacy("/apps", "应用", "Apps", "安装、启动、停止、清数据和卸载应用。", "Install, start, stop, clear and uninstall apps.", AppTab),
+  page("/screen", ScreenPage),
+  page("/problems", ProblemsPage),
+  legacy("/info", "系统信息", "System info", "属性、分区、挂载和块设备。", "Properties, partitions, mounts and block devices.", SystemInfoTab),
+  legacy("/power", "电源", "Power", "电池、休眠唤醒测试和重启。", "Battery, sleep / wake tests and reboot.", PowerTab),
+  page("/flash", FlashPage),
+  legacy("/board-config", "配置分区", "Board config", "从已开机的板子读回配置分区,解析成 KEY=VALUE。", "Read the config partition back from a booted board, parsed as KEY=VALUE.", BoardConfigCard),
+  page("/bench", BenchPage),
+  page("/chat", ChatPage3),
+  page("/playground", PlaygroundPage),
+  page("/sessions", SessionsListPage),
+  createRoute({ getParentRoute: () => rootRoute, path: "/sessions/$sessionId", component: SessionDetailPage }),
+  page("/doctor", DoctorPage),
+  page("/audit", AuditPage),
+  page("/connections", ConnectionsPage),
+  redirectRoute("/terminal", "/console"),
+  redirectRoute("/inspect", "/dashboard"),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/inspect/$tabKey",
+    beforeLoad: ({ params }) => {
+      throw redirect({ to: INSPECT_REDIRECTS[params.tabKey] ?? "/dashboard", replace: true });
+    },
+  }),
 ]);
 
-// Strip the deployment base (e.g. `/app/` in dev + alb-api mount, or
-// `/android-llm-bridge/app/` on GitHub Pages) before matching routes,
-// so route definitions stay deployment-agnostic.
 const RAW_BASE = import.meta.env.BASE_URL || "/";
 const BASEPATH = RAW_BASE === "/" ? "" : RAW_BASE.replace(/\/$/, "");
 
