@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 烧录 Flash · v3</title>
+<!-- Web UI v3 design baseline (Material 3): fastboot flashing. Sample data only. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="flash">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Flash · board-a">烧录 · board-a</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Flash">烧录</h1>
+      <p data-en="fastboot writes, one partition or a whole vendor package. The board is identified before anything is written, and the serial console is recorded throughout.">fastboot 烧写,单个分区或整包。写之前先核对板子是谁,写的全程同时录串口。</p>
+    </div>
+    <div class="page-head__actions">
+      <a class="btn btn--text" href="webui-preview-v3-bench.html"><i data-ic="usb"></i><span data-en="Bench USB">台架 USB</span></a>
+      <button class="btn btn--outlined" data-toast-zh="设计稿:fastboot reboot,板子回系统。" data-toast-en="Draft: fastboot reboot, back to Android."><i data-ic="power"></i><span data-en="Reboot to Android">重启回系统</span></button>
+    </div>
+  </div>
+
+  <div class="stack">
+    <!-- who is on the other end -->
+    <article class="card">
+      <div class="ident">
+        <div class="ident__board"><span class="qa__ic"><i data-ic="chip" class="ic--lg"></i></span><div><b>board-a</b><span class="pill pill--ok"><span class="dot dot--ok"></span><span data-en="fastboot ready">fastboot 就绪</span></span></div></div>
+        <dl class="kv">
+          <div><dt data-en="product (expected → read)">product(应为 → 读到)</dt><dd class="mono">board_x → board_x ✓</dd></div>
+          <div><dt data-en="Slot · unlocked">槽位 · 解锁</dt><dd class="mono">_a · yes</dd></div>
+          <div><dt>max-download-size</dt><dd class="mono">512 MiB</dd></div>
+          <div><dt data-en="Flash list">烧录名单</dt><dd><span data-en="24 partitions for board-a">board-a 共 24 个分区</span></dd></div>
+          <div><dt data-en="Serial recording">串口录制</dt><dd class="mono">COM7 · 115200</dd></div>
+        </dl>
+        <div class="src-note"><code>GET /api/flash/status</code><code>POST /api/flash/getvar</code></div>
+      </div>
+    </article>
+
+    <div class="row">
+      <div class="seg" role="group" aria-label="mode">
+        <button aria-pressed="true" aria-controls="m-pkg"><i data-ic="package" class="ic--sm"></i><span data-en="Whole package">整包</span></button>
+        <button aria-pressed="false" aria-controls="m-one"><i data-ic="bolt" class="ic--sm"></i><span data-en="One partition">单个分区</span></button>
+        <button aria-pressed="false" aria-controls="m-cmd"><i data-ic="terminal" class="ic--sm"></i><span data-en="fastboot commands">fastboot 命令</span></button>
+      </div>
+      <span class="grow"></span>
+      <span class="t-body-small t-muted" data-en="Preview a state:">预览状态:</span>
+      <div class="seg seg--sm" role="group" aria-label="state preview">
+        <button aria-pressed="true" aria-controls="s-check" data-en="Checked">检查完</button>
+        <button aria-pressed="false" aria-controls="s-run" data-en="Running">执行中</button>
+        <button aria-pressed="false" aria-controls="s-fail" data-en="Failed">失败</button>
+      </div>
+    </div>
+
+    <section class="grid" id="m-pkg">
+      <div class="stack span-8">
+        <!-- step 1 -->
+        <article class="card">
+          <div class="card__head"><h2 data-en="1 · Pick a manifest">1 · 选清单</h2><span class="card__sub" data-en="found under flash-images/ in the workspace">在工作区 flash-images/ 下找到</span><div class="src-note"><code>GET /workspace/files?path=flash-images</code></div></div>
+          <ul class="list manifests">
+            <li class="list__item"><span class="list__lead"><input type="radio" name="mf" class="check" checked aria-label="flash_all.txt"></span><span class="list__title mono">flash-images/board-x/flash_all.txt</span><span class="list__trail t-muted num">10-27 18:20</span><span class="list__meta" data-en="31 rows · 18 images · 2.36 GB · vendor format with # comments">31 行 · 18 个镜像 · 2.36 GB · 厂商格式(带 # 注释)</span></li>
+            <li class="list__item"><span class="list__lead"><input type="radio" name="mf" class="check" aria-label="flash_user.txt"></span><span class="list__title mono">flash-images/board-x-user/flash_user.txt</span><span class="list__trail t-muted num">10-20 11:02</span><span class="list__meta" data-en="29 rows · 17 images · 2.21 GB">29 行 · 17 个镜像 · 2.21 GB</span></li>
+          </ul>
+          <div class="banner banner--info"><i data-ic="info"></i><p data-en="Put packages under flash-images/ in the workspace on this Linux host (a symlink to elsewhere is fine). Browser uploads stop at 2 GiB, and a whole package is usually bigger.">整包放在这台 Linux 的工作区 flash-images/ 下(指向别处的软链接也行)。网页上传上限 2 GiB,整包一般更大。</p><div class="banner__actions"><button class="btn btn--text btn--sm" data-toast-zh="已复制工作区路径。" data-toast-en="Workspace path copied." data-en="Copy path">复制路径</button></div></div>
+          <div class="row"><button class="btn btn--filled"><i data-ic="check-circle"></i><span data-en="Check the plan">检查计划</span></button><span class="t-body-small t-muted" data-en="Nothing is written while checking.">检查时不写任何东西。</span></div>
+        </article>
+
+        <!-- step 2 -->
+        <article class="card plan">
+          <div class="card__head"><h2 data-en="2 · Plan">2 · 计划</h2><div class="src-note"><code>POST /api/flash/plan</code></div></div>
+          <div class="plan-sum"><span class="pill">31 <span data-en="rows">行</span></span><span class="pill pill--info">28 <span data-en="to run">执行</span></span><span class="pill">3 <span data-en="skipped">跳过</span></span><span class="pill">2.36 GB</span><span class="pill mono" title="fingerprint"># 0361bb78</span></div>
+          <div class="banner banner--error" id="s-check-problem"><i data-ic="error"></i><p data-en="1 problem, so no row will run: userdata (line 27) is not on board-a's flash list. Untick that row, or add it to flash_partitions.board-a in the bench agent.conf.">1 个问题,一行都不会执行:userdata(第 27 行)不在 board-a 的烧录名单里。在下面勾掉这一行,或在台架 agent.conf 的 flash_partitions.board-a 里加上。</p><div class="banner__actions"><button class="btn btn--text btn--sm" data-en="Untick it">勾掉这一行</button></div></div>
+          <div class="well table-wrap">
+            <table class="table table--dense">
+              <thead><tr><th><span class="visually-hidden">run</span></th><th class="num" data-en="Line">行</th><th data-en="Action">动作</th><th data-en="Partition / check">分区 / 检查</th><th data-en="Image">镜像</th><th class="num" data-en="Size">大小</th><th>sha256</th><th data-en="List">名单</th></tr></thead>
+              <tbody>
+                <tr><td><input type="checkbox" class="check" checked aria-label="run line 3"></td><td class="num mono">3</td><td>getvar</td><td class="mono">product = board_x</td><td></td><td></td><td></td><td><span class="pill pill--ok" data-en="check">检查</span></td></tr>
+                <tr class="is-skip"><td><input type="checkbox" class="check" aria-label="run line 5"></td><td class="num mono">5</td><td>flash</td><td class="mono">abl_a</td><td class="mono">abl.elf</td><td class="num mono">1.2 MB</td><td class="mono">7c19a0e2</td><td><span class="pill" data-en="skipped">跳过</span></td></tr>
+                <tr class="is-skip"><td><input type="checkbox" class="check" aria-label="run line 6"></td><td class="num mono">6</td><td>flash</td><td class="mono">abl_b</td><td class="mono">abl.elf</td><td class="num mono">1.2 MB</td><td class="mono">7c19a0e2</td><td><span class="pill" data-en="skipped">跳过</span></td></tr>
+                <tr><td><input type="checkbox" class="check" checked aria-label="run line 13"></td><td class="num mono">13</td><td>flash</td><td class="mono">boot_a</td><td class="mono">boot.img</td><td class="num mono">96 MB</td><td class="mono">314f71f4</td><td><span class="pill pill--ok">✓</span></td></tr>
+                <tr><td><input type="checkbox" class="check" checked aria-label="run line 21"></td><td class="num mono">21</td><td>flash</td><td class="mono">vendor_boot_a</td><td class="mono">vendor_boot.img</td><td class="num mono">64 MB</td><td class="mono">a0be9d11</td><td><span class="pill pill--ok">✓</span></td></tr>
+                <tr><td><input type="checkbox" class="check" checked aria-label="run line 23"></td><td class="num mono">23</td><td>flash</td><td class="mono">super</td><td class="mono">super.img</td><td class="num mono">2.24 GB</td><td class="mono">9c02e1aa</td><td><span class="pill pill--ok">✓</span></td></tr>
+                <tr><td><input type="checkbox" class="check" checked aria-label="run line 25"></td><td class="num mono">25</td><td>oem</td><td class="mono">at-unlock-vboot</td><td></td><td></td><td></td><td><span class="pill pill--ok" data-en="allowed">允许</span></td></tr>
+                <tr class="is-problem"><td><input type="checkbox" class="check" checked aria-label="run line 27"></td><td class="num mono">27</td><td>erase</td><td class="mono">userdata</td><td></td><td></td><td></td><td><span class="pill pill--bad" data-en="not listed">不在名单</span></td></tr>
+                <tr><td><input type="checkbox" class="check" checked aria-label="run line 30"></td><td class="num mono">30</td><td>reboot</td><td></td><td></td><td></td><td></td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="t-body-small t-muted" style="margin:0" data-en="Unticking a row re-checks the plan and gives a new fingerprint; only the plan you confirm is run.">勾掉或勾上一行会重新检查,得到新的指纹;执行的永远是你确认的那一份。</p>
+        </article>
+
+        <!-- step 3: three previewable states -->
+        <article class="card" id="s-check">
+          <div class="card__head"><h2 data-en="3 · Run">3 · 执行</h2><div class="src-note"><code>POST /api/flash/plan/run</code></div></div>
+          <div class="confirm">
+            <i data-ic="alert"></i>
+            <p data-en="This writes to board-a. Its product is read again right before the first write and must be board_x. 28 rows run, userdata included, and cannot be undone from here.">会写到 board-a。第一次写入前会再读一次 product,必须是 board_x。执行 28 行,包括 userdata,在这里撤不回。</p>
+            <div class="confirm__actions"><button class="btn btn--danger" aria-disabled="true" title="先解决上面的问题 / fix the problem first"><i data-ic="package"></i><span data-en="Flash package">烧整包</span></button></div>
+          </div>
+          <p class="t-body-small t-muted" style="margin:0" data-en="You can close this page while it runs; the job keeps going and its result shows up here and under Recent jobs.">执行时可以关掉页面,作业会继续跑;回来在这里和「最近作业」里都能看到结果。</p>
+        </article>
+        <article class="card" id="s-run" hidden>
+          <div class="card__head"><h2 data-en="3 · Running">3 · 执行中</h2><span class="pill pill--info"><span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span data-en="row 14 of 28">第 14 / 28 行</span></span></div>
+          <div class="run-head"><span><b class="mono">flash super ← super.img</b> <span class="t-muted">1.21 / 2.24 GB · 41 MB/s</span></span><span class="t-muted num" data-en="about 1 min 10 s left">约剩 1 分 10 秒</span><div class="progress"><span style="width:54%"></span></div></div>
+          <ul class="list">
+            <li class="list__item"><span class="list__lead"><span class="rowstate rowstate--ok"><i data-ic="check" class="ic--sm"></i></span></span><span class="list__title mono">13 flash boot_a</span><span class="list__trail mono t-muted">3.1 s</span><span class="list__meta">OKAY</span></li>
+            <li class="list__item"><span class="list__lead"><span class="rowstate rowstate--ok"><i data-ic="check" class="ic--sm"></i></span></span><span class="list__title mono">21 flash vendor_boot_a</span><span class="list__trail mono t-muted">2.0 s</span><span class="list__meta">OKAY</span></li>
+            <li class="list__item"><span class="list__lead"><span class="rowstate rowstate--run"><span class="spinner" style="width:16px;height:16px"></span></span></span><span class="list__title mono">23 flash super</span><span class="list__trail mono t-muted">28 s</span><span class="list__meta" data-en="sending sparse chunk 3/5">发送稀疏块 3/5</span></li>
+            <li class="list__item"><span class="list__lead"><span class="rowstate rowstate--wait"><i data-ic="clock" class="ic--sm"></i></span></span><span class="list__title mono">25 oem at-unlock-vboot</span><span class="list__trail"></span><span class="list__meta" data-en="waiting">等待</span></li>
+          </ul>
+          <div class="banner"><i data-ic="info"></i><p data-en="The job holds the flash lock until it ends, so no other write can slip in between rows.">作业结束前一直占着烧录锁,其他写入插不进来。</p></div>
+        </article>
+        <article class="card" id="s-fail" hidden>
+          <div class="card__head"><h2 data-en="3 · Stopped at line 23">3 · 停在第 23 行</h2></div>
+          <div class="banner banner--error"><i data-ic="error"></i><p><b>FLASH_WRITE_FAILED</b> · <span class="mono">FAILED (remote: 'Partition should be flashed in fastbootd')</span><br><span data-en="super is a logical partition here; reboot to fastbootd and run the rest. 13 rows done, 15 not run.">这块板的 super 要在 fastbootd 里刷:重启到 fastbootd 后继续执行剩下的行。已完成 13 行,15 行未执行。</span></p><div class="banner__actions"><button class="btn btn--text btn--sm" data-en="Reboot to fastbootd">重启到 fastbootd</button><button class="btn btn--text btn--sm" data-en="Run the rest">继续剩下的</button></div></div>
+          <a class="btn btn--tonal btn--sm" href="webui-preview-v3-timeline.html" style="align-self:flex-start"><i data-ic="timeline" class="ic--sm"></i><span data-en="See job and serial output on the timeline">在时间轴上看作业和串口输出</span></a>
+        </article>
+      </div>
+
+      <div class="stack span-4">
+        <article class="card">
+          <div class="card__head"><h2 data-en="Job and serial, one clock">作业和串口</h2><span class="card__sub" data-en="last 8 lines">最后 8 行</span><div class="src-note"><code>timeline.jsonl</code></div></div>
+          <pre class="term" style="font-size:12px;height:220px"><span class="d">+0.00</span> <span class="a">job</span> plan flash_all · 28 rows
+<span class="d">+0.41</span> <span class="a">job</span> getvar product: board_x
+<span class="d">+0.52</span> <span class="a">job</span> flash boot_a (96 MB)
+<span class="d">+3.63</span> <span class="a">job</span> OKAY
+<span class="d">+3.70</span> uart  mmc0: writing boot_a
+<span class="d">+5.71</span> <span class="a">job</span> flash vendor_boot_a OKAY
+<span class="d">+5.80</span> <span class="a">job</span> flash super (2.24 GB)
+<span class="d">+33.9</span> uart  sparse: chunk 3/5</pre>
+        </article>
+        <article class="card">
+          <div class="card__head"><h2 data-en="Recent jobs">最近作业</h2><span class="card__sub" data-en="kept after a reload">刷新页面后仍在</span><div class="src-note"><span class="new" data-en="new: GET /api/flash/jobs">新:GET /api/flash/jobs</span></div></div>
+          <ul class="list">
+            <li class="list__item"><span class="list__lead mono t-muted">09:40</span><span class="list__title mono">flash boot_a</span><span class="list__trail"><span class="pill pill--ok">ok</span></span><span class="list__meta">3.1 s</span></li>
+            <li class="list__item"><span class="list__lead mono t-muted">09:12</span><span class="list__title mono">plan flash_all</span><span class="list__trail"><span class="pill pill--bad" data-en="line 23">第 23 行</span></span><span class="list__meta">FLASH_WRITE_FAILED</span></li>
+            <li class="list__item"><span class="list__lead mono t-muted" data-en="Tue">周二</span><span class="list__title mono">oem at-lock-vboot</span><span class="list__trail"><span class="pill pill--ok">ok</span></span><span class="list__meta">0.4 s</span></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- one partition -->
+    <section class="grid" id="m-one" hidden>
+      <article class="card span-8">
+        <div class="card__head"><h2 data-en="Write one partition">写一个分区</h2><div class="src-note"><code>POST /api/flash/flash</code></div></div>
+        <div class="form-grid">
+          <label class="field"><span class="field__label" data-en="Partition (board-a's list)">分区(board-a 的名单)</span><select class="select"><option>boot_a</option><option>boot_b</option><option>vendor_boot_a</option><option>dtbo_a</option><option>vbmeta_a</option></select></label>
+          <label class="field"><span class="field__label" data-en="Image in the workspace">工作区里的镜像</span><select class="select"><option>flash-images/board-x/boot.img · 96 MB</option><option>uploads/boot-test.img · 96 MB</option></select></label>
+        </div>
+        <div class="dropzone"><i data-ic="upload" class="ic--lg"></i><span data-en="Or drop an image here (up to 2 GiB)">或把镜像拖到这里(不超过 2 GiB)</span></div>
+        <div class="confirm"><i data-ic="alert"></i><p data-en="Write boot.img to boot_a on board-a. A wrong partition cannot be undone from here.">把 boot.img 写到 board-a 的 boot_a。写错分区在这里撤不回。</p><div class="confirm__actions"><button class="btn btn--danger" data-toast-zh="设计稿:不会真的写。" data-toast-en="Draft: nothing was written."><i data-ic="bolt"></i><span data-en="Write">写入</span></button></div></div>
+      </article>
+    </section>
+
+    <!-- fastboot commands -->
+    <section class="grid" id="m-cmd" hidden>
+      <article class="card span-8">
+        <div class="card__head"><h2 data-en="fastboot commands">fastboot 命令</h2><span class="card__sub" data-en="only what the bench agent's operation table allows">只能用台架 agent 操作表里有的</span></div>
+        <div class="form-grid">
+          <label class="field"><span class="field__label">getvar</span><div class="row"><input class="input grow" value="all" aria-label="getvar name"><button class="btn btn--tonal btn--sm" data-en="Read">读取</button></div></label>
+          <label class="field"><span class="field__label">oem</span><div class="row"><select class="select grow"><option>at-unlock-vboot</option><option>at-lock-vboot</option></select><button class="btn btn--outlined btn--sm" data-en="Run">执行</button></div></label>
+          <label class="field"><span class="field__label">set_active</span><div class="row"><select class="select grow"><option>a</option><option>b</option></select><button class="btn btn--outlined btn--sm" data-en="Set">设置</button></div></label>
+          <label class="field"><span class="field__label">reboot</span><div class="row"><select class="select grow"><option data-en="Android">系统</option><option>bootloader</option><option>fastbootd</option><option>recovery</option></select><button class="btn btn--outlined btn--sm" data-en="Reboot">重启</button></div></label>
+        </div>
+        <pre class="term" style="height:180px"><span class="d">$</span> fastboot getvar all
+(bootloader) product:board_x
+(bootloader) current-slot:a
+(bootloader) unlocked:yes
+(bootloader) max-download-size:0x20000000
+all: Done!!</pre>
+      </article>
+    </section>
+  </div>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+</body>
+</html>

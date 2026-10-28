@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 日志 Logs · v3</title>
+<!-- Web UI v3 design baseline (Material 3): logs. Sample data only. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="logs">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Device · board-a">设备 · board-a</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Logs">日志</h1>
+      <p data-en="Live logcat, kernel messages and the serial console, plus search across everything already recorded.">实时 logcat、内核日志、串口输出,以及在所有已录的日志里搜索。</p>
+    </div>
+    <div class="page-head__actions">
+      <button class="btn btn--outlined" data-toast-zh="已暂停,新日志先缓存。" data-toast-en="Paused; new lines are buffered."><i data-ic="pause"></i><span data-en="Pause">暂停</span></button>
+      <button class="btn btn--outlined" data-toast-zh="设计稿:已存到工作区 logs/。" data-toast-en="Draft: saved to workspace logs/."><i data-ic="download"></i><span data-en="Save">保存</span></button>
+      <a class="btn btn--tonal" href="webui-preview-v3-timeline.html"><i data-ic="timeline"></i><span data-en="Open in timeline">在时间轴中看</span></a>
+    </div>
+  </div>
+
+  <article class="card card--flush">
+    <div class="tabs" role="tablist" aria-label="log sources">
+      <button class="tab" role="tab" aria-selected="true" aria-controls="p-logcat"><i data-ic="logs" class="ic--sm"></i>logcat<span class="dot dot--live"></span></button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="p-dmesg"><i data-ic="cpu" class="ic--sm"></i>dmesg</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="p-uart"><i data-ic="plug" class="ic--sm"></i><span data-en="Serial">串口</span></button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="p-search"><i data-ic="search" class="ic--sm"></i><span data-en="Search all recordings">搜索全部记录</span></button>
+    </div>
+
+    <!-- logcat -->
+    <div id="p-logcat" role="tabpanel">
+      <div style="padding:14px 16px 8px" class="stack">
+        <div class="log-tools">
+          <label class="visually-hidden" for="buf">buffer</label>
+          <select class="select" id="buf" style="width:auto"><option>main + system + crash</option><option>events</option><option>radio</option><option>all</option></select>
+          <div class="seg seg--sm" data-multi role="group" aria-label="levels">
+            <button aria-pressed="false">V</button><button aria-pressed="false">D</button><button aria-pressed="true">I</button><button aria-pressed="true">W</button><button aria-pressed="true">E</button><button aria-pressed="true">F</button>
+          </div>
+          <label class="input--search"><i data-ic="search" class="ic--sm"></i><input id="q" placeholder="搜索内容;tag:Sensor* pid:1234 pkg:com.example" data-en-ph="Search text; tag:Sensor* pid:1234 pkg:com.example"><button class="chip chip--sm" aria-pressed="false" title="正则 / regex">.*</button></label>
+          <button class="chip" aria-pressed="true"><i data-ic="filter" class="ic--sm"></i>tag: Sensor*</button>
+          <button class="chip" aria-pressed="true"><i data-ic="apps" class="ic--sm"></i>com.example.camera</button>
+          <button class="chip" aria-pressed="false"><span data-en="Wrap lines">自动换行</span></button>
+          <button class="chip" aria-pressed="true"><span data-en="Follow">跟随最新</span></button>
+        </div>
+        <div>
+          <div class="row row--between t-body-small t-muted"><span data-en="Lines per second, last 5 minutes">每秒行数,最近 5 分钟</span><span class="legend"><span style="--src:var(--alb-color-log-e)"><i></i>E/F</span><span style="--src:var(--alb-color-log-w)"><i></i>W</span><span style="--src:var(--alb-color-log-i)"><i></i>I</span><span style="--src:var(--alb-color-log-d)"><i></i>D/V</span></span></div>
+          <svg class="histo" id="histo" role="img" aria-label="lines per second"></svg>
+        </div>
+        <div class="src-note"><code>WS /logcat/stream?device=&amp;filter=</code></div>
+      </div>
+      <div class="logs log-pane" id="logcat"></div>
+      <div class="log-status"><span><span class="dot dot--live" style="display:inline-block;margin-right:6px"></span><span data-en="Live · 1,240 lines/min">实时 · 每分钟 1,240 行</span></span><span data-en="Showing 2,000 of 18,412 lines · 16,412 hidden by filters">显示 2,000 / 18,412 行 · 过滤掉 16,412 行</span><span data-en="Selected: 1 line">已选 1 行</span></div>
+    </div>
+
+    <!-- dmesg -->
+    <div id="p-dmesg" role="tabpanel" hidden>
+      <div style="padding:14px 16px" class="log-tools">
+        <label class="input--search"><i data-ic="search" class="ic--sm"></i><input placeholder="搜索内核日志" data-en-ph="Search kernel messages"></label>
+        <button class="chip" aria-pressed="true"><span data-en="Errors and warnings">错误和警告</span></button>
+        <button class="chip" aria-pressed="false">avc</button>
+        <button class="chip" aria-pressed="false"><span data-en="Wall clock time">换算成墙上时间</span></button>
+        <button class="btn btn--text btn--sm" data-toast-zh="设计稿:重新读一次 dmesg。" data-toast-en="Draft: reads dmesg again."><i data-ic="refresh" class="ic--sm"></i><span data-en="Read again">重新读取</span></button>
+        <div class="src-note"><code>GET /api/log/dmesg</code></div>
+      </div>
+      <div class="logs log-pane" style="--log-cols: 120px 22px minmax(0,1fr); height:420px">
+        <div class="log"><span class="log__t">[ 4519.002113]</span><span class="lvl lvl--I">I</span><span class="log__msg">binder: 1123:1123 transaction failed 29189/-22, size 0-0 line 3062</span></div>
+        <div class="log log--W"><span class="log__t">[ 4521.307102]</span><span class="lvl lvl--W">W</span><span class="log__msg">audit: type=1400 avc: denied { read } for comm="sensors" name="iio:device0" dev="tmpfs"</span></div>
+        <div class="log log--E"><span class="log__t">[ 4521.307714]</span><span class="lvl lvl--F">F</span><span class="log__msg">Unable to handle kernel NULL pointer dereference at virtual address 0000000000000008</span></div>
+        <div class="log log--E"><span class="log__t">[ 4521.307740]</span><span class="lvl lvl--E">E</span><span class="log__msg">pc : sensors_poll+0x4c/0x1a0</span></div>
+      </div>
+    </div>
+
+    <!-- serial -->
+    <div id="p-uart" role="tabpanel" hidden>
+      <div style="padding:14px 16px" class="log-tools">
+        <span class="chip"><span class="dot dot--ok"></span><b>COM7</b><span>115200 8N1</span></span>
+        <span class="t-body-small t-muted" data-en="2 readers share the port: this page and a capture">2 个读者共用这个口:本页和一个抓取</span>
+        <span class="grow"></span>
+        <button class="btn btn--outlined btn--sm" data-toast-zh="设计稿:开始抓 60 秒,存到工作区。" data-toast-en="Draft: captures 60 s to the workspace."><i data-ic="record" class="ic--sm"></i><span data-en="Capture 60 s">抓取 60 秒</span></button>
+        <a class="btn btn--tonal btn--sm" href="webui-preview-v3-console.html"><i data-ic="terminal" class="ic--sm"></i><span data-en="Type into it">打开控制台输入</span></a>
+        <div class="src-note"><code>WS /uart/stream</code><code>POST /uart/capture</code></div>
+      </div>
+      <pre class="term" style="margin:0 16px 16px;height:380px"><span class="d">09:31:04.219</span> Kernel panic - not syncing: Oops: Fatal exception
+<span class="d">09:31:04.220</span> SMP: stopping secondary CPUs
+<span class="d">09:31:04.231</span> Kernel Offset: 0x2a6e800000 from 0xffffffc008000000
+<span class="d">09:31:04.232</span> <span class="w">Rebooting in 3 seconds..</span>
+<span class="d">09:31:07.431</span> <span class="a">U-Boot SPL board init</span>
+<span class="d">09:31:07.502</span> DDR 4096 MiB, 1560 MHz
+<span class="d">09:31:08.910</span> Hit any key to stop autoboot:  1
+<span class="d">09:31:09.912</span> Starting kernel ...</pre>
+    </div>
+
+    <!-- search -->
+    <div id="p-search" role="tabpanel" hidden>
+      <div style="padding:14px 16px" class="stack">
+        <div class="log-tools">
+          <label class="input--search" style="flex:1 1 320px"><i data-ic="search" class="ic--sm"></i><input value="Unable to handle kernel" aria-label="search"></label>
+          <select class="select" style="width:auto" aria-label="range"><option data-en="Last 7 days">最近 7 天</option><option data-en="All">全部</option></select>
+          <button class="btn btn--filled btn--sm"><i data-ic="search" class="ic--sm"></i><span data-en="Search">搜索</span></button>
+          <div class="src-note"><code>GET /api/log/search</code></div>
+        </div>
+        <div class="t-body-small t-muted" data-en="3 hits in 2 recordings and 1 serial capture">3 处命中:2 段时间轴录制、1 份串口抓取</div>
+        <ul class="list">
+          <li class="list__item"><span class="list__lead"><span class="src-tag src--kernel">dmesg</span></span><span class="list__title mono">Unable to handle kernel NULL pointer dereference at …0008</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">timeline 10-28 09:30:58 · +63.22 s</span></li>
+          <li class="list__item"><span class="list__lead"><span class="src-tag src--uart" data-en="serial">串口</span></span><span class="list__title mono">Unable to handle kernel NULL pointer dereference at …0008</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">uart-2026-10-27T21-03.log · line 1,882</span></li>
+          <li class="list__item"><span class="list__lead"><span class="src-tag src--kernel">dmesg</span></span><span class="list__title mono">Unable to handle kernel paging request at …0040</span><span class="list__trail"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a></span><span class="list__meta mono">timeline 10-27 21:03:11 · +12.08 s</span></li>
+        </ul>
+      </div>
+    </div>
+  </article>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+<script>
+(function () {
+  "use strict";
+  var a = window.alb;
+  var rows = [
+    ["09:31:03.880", "1123", "I", "SensorService", "nuplugin: 4 sensors registered"],
+    ["09:31:03.902", "1123", "I", "SensorService", "Sensor accel-0 activated, rate 200 Hz"],
+    ["09:31:04.012", "2207", "W", "CameraService", "Camera 0: torch mode unavailable while sensor HAL restarts"],
+    ["09:31:04.102", "1123", "I", "SensorService", "nuplugin: opening /dev/iio:device0"],
+    ["09:31:04.121", "1188", "E", "SensorsHal", "open /dev/iio:device0 failed: Permission denied (13)"],
+    ["09:31:04.122", "1188", "E", "SensorsHal", "poll thread exits, 0 sensors active"],
+    ["09:31:04.130", "2207", "W", "CameraService", "Camera 0: orientation sensor missing, using default 0"],
+    ["09:31:04.161", "3011", "I", "ActivityManager", "Start proc 3011:com.example.camera/u0a112 for top-activity"],
+    ["09:31:04.190", "3011", "F", "libc", "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid 3044 (SensorThread)"],
+    ["09:31:04.191", "3011", "F", "DEBUG", "*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***"],
+    ["09:31:04.192", "3011", "F", "DEBUG", "pid: 3011, tid: 3044, name: SensorThread  >>> com.example.camera <<<"]
+  ];
+  function render() {
+    var box = document.getElementById("logcat"), h = "";
+    rows.forEach(function (r, i) {
+      var sel = i === 8;
+      h += '<div class="log log--' + r[2] + '"' + (sel ? ' aria-selected="true"' : "") + '><span class="log__t">' + r[0] + '</span><span class="log__pid t-muted">' + r[1] + '</span><span class="lvl lvl--' + r[2] + '">' + r[2] + '</span><span class="log__tag">' + r[3] + '</span><span class="log__msg">' + r[4].replace("Sensor", "<mark>Sensor</mark>") + "</span></div>";
+      if (sel) h += '<div class="log-detail">backtrace:\n  #00 pc 0000000000012a4c  /vendor/lib64/libsensors.so (SensorThread::poll()+76)\n  #01 pc 00000000000c1f8c  /apex/com.android.runtime/lib64/bionic/libc.so (__pthread_start+40)' +
+        '<div class="row"><button class="btn btn--tonal btn--sm" data-assist="日志 · SIGSEGV in SensorThread" data-assist-en="Log · SIGSEGV in SensorThread">' + a.icon("spark", "ic--sm") + "<span>" + a.t("问助手", "Ask the assistant") + '</span></button><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html">' + a.t("在时间轴中看", "Open in timeline") + '</a><button class="btn btn--text btn--sm" data-toast-zh="已复制。" data-toast-en="Copied.">' + a.t("复制", "Copy") + "</button></div></div>";
+    });
+    box.innerHTML = h;
+    var svg = document.getElementById("histo"), N = 150, r = a.rng(5);
+    svg.setAttribute("viewBox", "0 0 1000 56"); svg.setAttribute("preserveAspectRatio", "none");
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var cs = getComputedStyle(document.documentElement), w = 1000 / N;
+    for (var i = 0; i < N; i++) {
+      var d = 12 + r() * 14, ii = 6 + r() * 8, ww = r() * 3 + (i > 120 && i < 128 ? 14 : 0), e = i === 124 || i === 125 ? 12 : (r() > .93 ? 2 : 0);
+      var y = 56;
+      [[d, "--alb-color-log-d"], [ii, "--alb-color-log-i"], [ww, "--alb-color-log-w"], [e, "--alb-color-log-e"]].forEach(function (p) {
+        var hh = p[0] / 60 * 54; y -= hh;
+        if (hh > 0) svg.appendChild(a.svgEl("rect", { x: (i * w + .5).toFixed(1), width: (w - 1).toFixed(1), y: y.toFixed(1), height: hh.toFixed(1), fill: cs.getPropertyValue(p[1]).trim() }));
+      });
+    }
+  }
+  document.addEventListener("alb:lang", render);
+  new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  render();
+})();
+</script>
+</body>
+</html>

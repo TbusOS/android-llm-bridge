@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 控制台 Console · v3</title>
+<!-- Web UI v3 design baseline (Material 3): adb shell and serial console. Sample data only. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="console">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Device · board-a">设备 · board-a</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Console">控制台</h1>
+      <p data-en="adb shell and the serial console in the browser. Every command lands in the audit log.">浏览器里的 adb shell 和串口控制台。每条命令都记进操作记录。</p>
+    </div>
+    <div class="page-head__actions">
+      <span class="menu-anchor">
+        <button class="btn btn--filled" data-menu="new-menu" aria-haspopup="menu" aria-expanded="false"><i data-ic="plus"></i><span data-en="New terminal">新建终端</span><i data-ic="chevron-down" class="ic--sm"></i></button>
+        <div class="menu menu--end" id="new-menu" role="menu" hidden>
+          <button class="menu__item" role="menuitem"><i data-ic="terminal"></i><span>adb shell</span><span></span><span class="menu__desc" data-en="needs adb; root on this board">需要 adb;这块板是 root</span></button>
+          <button class="menu__item" role="menuitem"><i data-ic="plug"></i><span data-en="Serial console">串口控制台</span><span></span><span class="menu__desc" data-en="works in the bootloader and when adb is down">bootloader 里、adb 不通时都能用</span></button>
+        </div>
+      </span>
+    </div>
+  </div>
+
+  <section class="grid">
+    <article class="card card--flush span-8 console">
+      <div class="tabs" role="tablist" aria-label="terminals">
+        <button class="tab" role="tab" aria-selected="true" aria-controls="t-adb"><i data-ic="terminal" class="ic--sm"></i>adb shell · board-a</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="t-uart"><i data-ic="plug" class="ic--sm"></i><span data-en="Serial · COM7">串口 · COM7</span></button>
+      </div>
+      <div id="t-adb" role="tabpanel" style="display:contents">
+        <div class="console__bar"><span class="dot dot--ok"></span><span data-en="connected · root · board_x:/ #">已连接 · root · board_x:/ #</span><span class="src-note"><code>WS /terminal/ws</code></span>
+          <span class="row"><button class="icon-btn icon-btn--sm" aria-label="清屏" data-en-label="Clear"><i data-ic="close" class="ic--sm"></i></button><button class="icon-btn icon-btn--sm" aria-label="复制" data-en-label="Copy"><i data-ic="copy" class="ic--sm"></i></button><button class="icon-btn icon-btn--sm" aria-label="下载记录" data-en-label="Download transcript"><i data-ic="download" class="ic--sm"></i></button></span></div>
+<pre class="term"><span class="p">board_x:/ #</span> getprop ro.build.fingerprint
+vendor/board_x/board_x:14/UP1A.231005.007/eng.1027:userdebug/test-keys
+<span class="p">board_x:/ #</span> getenforce
+Enforcing
+<span class="p">board_x:/ #</span> ls -l /dev/iio:device0
+crw-rw---- 1 system system <span class="a">u:object_r:iio_device:s0</span> 241, 0 2026-10-28 06:31 /dev/iio:device0
+<span class="p">board_x:/ #</span> dmesg | grep -c 'avc: denied'
+14
+<span class="p">board_x:/ #</span> logcat -b crash -d | tail -3
+<span class="e">F libc    : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid 3044 (SensorThread)</span>
+<span class="e">F DEBUG   : pid: 3011, tid: 3044, name: SensorThread  &gt;&gt;&gt; com.example.camera &lt;&lt;&lt;</span>
+<span class="e">F DEBUG   : backtrace: #00 pc 0000000000012a4c  /vendor/lib64/libsensors.so</span>
+<span class="p">board_x:/ #</span> <span class="caret"></span></pre>
+      </div>
+      <div id="t-uart" role="tabpanel" hidden style="display:contents">
+        <div class="console__bar"><span class="dot dot--ok"></span><span data-en="COM7 · 115200 8N1 · 2 readers">COM7 · 115200 8N1 · 2 个读者</span><span class="src-note"><code>WS /uart/stream</code><span class="new" data-en="new: POST /api/serial/break-in">新:POST /api/serial/break-in</span></span>
+          <span class="row"><button class="btn btn--text btn--sm" data-en="Send Ctrl+C">发送 Ctrl+C</button><button class="btn btn--tonal btn--sm" data-toast-zh="设计稿:重启并在倒计时里按键,先出确认。" data-toast-en="Draft: reboots and catches the countdown, after a confirm."><i data-ic="stop" class="ic--sm"></i><span data-en="Stop in bootloader">停在 bootloader</span></button></span></div>
+<pre class="term"><span class="d">09:31:07.431</span> U-Boot SPL board init
+<span class="d">09:31:08.910</span> Hit any key to stop autoboot:  0
+<span class="a">=&gt;</span> printenv bootcmd
+bootcmd=run distro_bootcmd
+<span class="a">=&gt;</span> <span class="caret"></span></pre>
+      </div>
+    </article>
+
+    <div class="stack span-4">
+      <article class="card">
+        <div class="card__head"><h2 data-en="Saved commands">常用命令</h2><div class="card__actions"><button class="icon-btn icon-btn--sm" aria-label="添加" data-en-label="Add"><i data-ic="plus" class="ic--sm"></i></button></div></div>
+        <ul class="list snips">
+          <li class="list__item"><span class="list__lead"><i data-ic="terminal" class="ic--sm"></i></span><code class="list__title">getprop ro.build.fingerprint</code><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Run">运行</button></span><span class="list__meta" data-en="read-only">只读</span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="terminal" class="ic--sm"></i></span><code class="list__title">dumpsys battery</code><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Run">运行</button></span><span class="list__meta" data-en="read-only">只读</span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="terminal" class="ic--sm"></i></span><code class="list__title">logcat -b crash -d</code><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Run">运行</button></span><span class="list__meta" data-en="read-only">只读</span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="alert" class="ic--sm"></i></span><code class="list__title">setenforce 0</code><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Run">运行</button></span><span class="list__meta"><span class="pill pill--warn" data-en="changes the board until reboot">改动板子,重启恢复</span></span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="alert" class="ic--sm"></i></span><code class="list__title">adb remount</code><span class="list__trail"><button class="btn btn--text btn--sm" data-en="Run">运行</button></span><span class="list__meta"><span class="pill pill--warn" data-en="changes the board">改动板子</span> <span class="src-note"><span class="new" data-en="new: POST /api/adb/remount">新:POST /api/adb/remount</span></span></span></li>
+        </ul>
+      </article>
+      <article class="card">
+        <div class="card__head"><h2 data-en="Recent commands">最近命令</h2><div class="src-note"><code>GET /audit</code></div></div>
+        <ul class="list">
+          <li class="list__item"><span class="list__lead mono t-muted">09:33</span><code class="list__title">logcat -b crash -d | tail -3</code><span class="list__trail"><span class="pill pill--ok">exit 0</span></span><span class="list__meta" data-en="web · adb shell">网页 · adb shell</span></li>
+          <li class="list__item"><span class="list__lead mono t-muted">09:31</span><code class="list__title">setprop persist.vendor.sensors.debug 1</code><span class="list__trail"><span class="pill pill--ok">exit 0</span></span><span class="list__meta" data-en="CLI · alb shell">命令行 · alb shell</span></li>
+          <li class="list__item"><span class="list__lead mono t-muted">09:02</span><code class="list__title">cat /sys/fs/pstore/console-ramoops-0</code><span class="list__trail"><span class="pill pill--bad">exit 1</span></span><span class="list__meta" data-en="Permission denied · needs root">Permission denied · 需要 root</span></li>
+        </ul>
+      </article>
+      <div class="banner"><i data-ic="info"></i><p data-en="Commands on the board are not blocked or confirmed here; think twice before ones you cannot undo. Windows-side actions only run through the bench operation table.">板子上的命令这里不拦、不弹确认,撤不回的命令请先想清楚。Windows 那边的操作只能走台架操作表。</p></div>
+    </div>
+  </section>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+</body>
+</html>

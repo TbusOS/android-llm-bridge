@@ -1,0 +1,1738 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Web UI v3 design baseline (draft): app shell + device overview.
+     Sample data only. No external resources: fonts fall back to the
+     local stack until the UI bundles its own. -->
+<title>alb Console v3</title>
+<style>
+/* Layout: sticky status bar (which board, which channels are alive) over a
+   left rail grouped by job — device / flash / bench / assistant / system —
+   and a 12-column content grid that puts the summary row first. */
+:root {
+  --bg: #F3F5F8;
+  --surface: #FFFFFF;
+  --surface-2: #EDF0F4;
+  --surface-3: #E3E7ED;
+  --line: #DCE1E7;
+  --line-strong: #BFC6CF;
+  --fg: #191C20;
+  --fg-2: #434A52;
+  --fg-3: #5F6770;
+  --accent: #0B57D0;
+  --accent-hover: #0A4AB2;
+  --on-accent: #FFFFFF;
+  --accent-soft: #DCE7FC;
+  --on-accent-soft: #0B2E6B;
+  --ok: #146C2E;
+  --ok-soft: #D5F0DC;
+  --warn: #8A5300;
+  --warn-soft: #FDEBC4;
+  --bad: #B3261E;
+  --bad-soft: #FADCD9;
+  --idle: #8A919A;
+  --src-uart: #00768A;
+  --src-kernel: #6750A4;
+  --src-logcat: #0B57D0;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .07);
+  --pop-shadow: 0 8px 28px rgba(16, 24, 40, .16);
+  --font-ui: "Roboto Flex", "Roboto", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "Roboto Mono", "JetBrains Mono", Consolas, ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --rail-w: 220px;
+  --font-display: var(--font-ui);
+  --wall: none;
+  --panel-bg: var(--surface);
+  --panel-line: var(--line);
+  --panel-shadow: none;
+  --panel-blur: none;
+  --bar-bg: var(--surface);
+  --bar-blur: none;
+  --shell-bg: transparent;
+  --shell-line: transparent;
+  --shell-blur: none;
+  --shell-r: 0px;
+  --well-shadow: none;
+  --raise-sm: none;
+  --accent-fill: var(--accent);
+  --brand-ink: var(--on-accent);
+  --icon-bg: var(--accent-soft);
+  --icon-ink: var(--on-accent-soft);
+  --anc-bg: #211C1A; --anc-fg: #F7EFE9; --anc-fg2: #D9CFC8; --anc-fg3: #ABA19A;
+  --anc-line: #3A322E; --anc-well: #2E2623; --anc-ok: #7DD99B; --anc-ok-soft: #173A24; --anc-accent: #F59BC2;
+  --assist-w: 420px;
+  --lg-bg: rgba(255, 255, 255, .52);
+  --lg-bg-strong: rgba(255, 255, 255, .80);
+  --lg-edge: rgba(255, 255, 255, .75);
+  --lg-hi: rgba(255, 255, 255, .95);
+  --lg-lo: rgba(255, 255, 255, .25);
+  --lg-sheen: rgba(255, 255, 255, .55);
+  --lg-shadow: 0 10px 30px rgba(20, 30, 60, .14);
+  --lg-blur: blur(18px) saturate(1.8);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1013; --surface: #16191D; --surface-2: #1D2126; --surface-3: #262B31;
+    --line: #2A2F36; --line-strong: #3B424B;
+    --fg: #E3E5E9; --fg-2: #BCC2CA; --fg-3: #959CA5;
+    --accent: #A8C7FA; --accent-hover: #C4D8FB; --on-accent: #062E6F;
+    --accent-soft: #19355F; --on-accent-soft: #D6E3FC;
+    --ok: #7DD99B; --ok-soft: #133A21; --warn: #F2C46D; --warn-soft: #3A2A07;
+    --bad: #F4A9A3; --bad-soft: #4A1815; --idle: #7B828B;
+    --src-uart: #5CD3E3; --src-kernel: #CBBEFF; --src-logcat: #A8C7FA;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .45);
+    --pop-shadow: 0 10px 30px rgba(0, 0, 0, .55);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1013; --surface: #16191D; --surface-2: #1D2126; --surface-3: #262B31;
+  --line: #2A2F36; --line-strong: #3B424B;
+  --fg: #E3E5E9; --fg-2: #BCC2CA; --fg-3: #959CA5;
+  --accent: #A8C7FA; --accent-hover: #C4D8FB; --on-accent: #062E6F;
+  --accent-soft: #19355F; --on-accent-soft: #D6E3FC;
+  --ok: #7DD99B; --ok-soft: #133A21; --warn: #F2C46D; --warn-soft: #3A2A07;
+  --bad: #F4A9A3; --bad-soft: #4A1815; --idle: #7B828B;
+  --src-uart: #5CD3E3; --src-kernel: #CBBEFF; --src-logcat: #A8C7FA;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .45);
+  --pop-shadow: 0 10px 30px rgba(0, 0, 0, .55);
+  color-scheme: dark;
+}
+
+/* ================= style skins (design comparison) =================
+   Same page, same tokens; each skin only redefines tokens plus a few
+   material rules below. neutral = no data-skin attribute. */
+:root[data-skin="apple"] {
+  --bg: #F5F5F7; --surface: #FFFFFF; --surface-2: #F5F5F7; --surface-3: #E8E8ED;
+  --line: #D2D2D7; --line-strong: #B0B0B8;
+  --fg: #1D1D1F; --fg-2: #424245; --fg-3: #6E6E73;
+  --accent: #0066CC; --accent-hover: #0071E3; --on-accent: #FFFFFF; --accent-soft: #E5F0FB; --on-accent-soft: #00427F;
+  --ok: #1E7B34; --ok-soft: #DDF3E2; --warn: #9A4700; --warn-soft: #FFEBD3; --bad: #C4161C; --bad-soft: #FDE2E1; --idle: #8E8E93;
+  --src-uart: #0A7385; --src-kernel: #6E4BB8; --src-logcat: #0066CC;
+  --panel-line: transparent; --panel-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 6px 20px rgba(0, 0, 0, .05);
+  --bar-bg: rgba(251, 251, 253, .82); --bar-blur: saturate(1.8) blur(20px);
+  --r-md: 12px; --r-lg: 18px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root[data-skin="apple"]:not([data-theme="light"]) {
+  --bg: #000000; --surface: #1C1C1E; --surface-2: #2C2C2E; --surface-3: #3A3A3C; --line: #38383A; --line-strong: #48484A;
+  --fg: #F5F5F7; --fg-2: #D1D1D6; --fg-3: #98989D;
+  --accent: #2997FF; --accent-hover: #47A5FF; --on-accent: #000000; --accent-soft: #0B2A4A; --on-accent-soft: #CFE5FF;
+  --ok: #30D158; --ok-soft: #0E3318; --warn: #FF9F0A; --warn-soft: #3A2600; --bad: #FF6961; --bad-soft: #3F1412; --idle: #8E8E93;
+  --src-uart: #64D2FF; --src-kernel: #BF9BFF; --src-logcat: #2997FF;
+  --panel-shadow: none; --bar-bg: rgba(22, 22, 23, .82);
+  color-scheme: dark;
+} }
+:root[data-skin="apple"][data-theme="dark"] {
+  --bg: #000000; --surface: #1C1C1E; --surface-2: #2C2C2E; --surface-3: #3A3A3C; --line: #38383A; --line-strong: #48484A;
+  --fg: #F5F5F7; --fg-2: #D1D1D6; --fg-3: #98989D;
+  --accent: #2997FF; --accent-hover: #47A5FF; --on-accent: #000000; --accent-soft: #0B2A4A; --on-accent-soft: #CFE5FF;
+  --ok: #30D158; --ok-soft: #0E3318; --warn: #FF9F0A; --warn-soft: #3A2600; --bad: #FF6961; --bad-soft: #3F1412; --idle: #8E8E93;
+  --src-uart: #64D2FF; --src-kernel: #BF9BFF; --src-logcat: #2997FF;
+  --panel-shadow: none; --bar-bg: rgba(22, 22, 23, .82);
+  color-scheme: dark;
+}
+
+:root[data-skin="atelier"] {
+  --bg: #E9C3A8;
+  --wall: radial-gradient(60% 55% at 8% 4%, #E8AE86 0%, transparent 70%), radial-gradient(50% 60% at 96% 18%, #E39BA8 0%, transparent 70%), radial-gradient(60% 50% at 55% 100%, #FAEEDD 0%, transparent 70%), radial-gradient(40% 40% at 0% 100%, #D9A285 0%, transparent 70%);
+  --surface: #FFFBF7; --surface-2: #F6ECE5; --surface-3: #EEDFD5;
+  --line: rgba(88, 62, 50, .12); --line-strong: rgba(88, 62, 50, .24);
+  --fg: #2C2723; --fg-2: #463E39; --fg-3: #564D47;
+  --accent: #B4306C; --accent-hover: #9A275B; --on-accent: #FFFFFF; --accent-soft: #FBE1EC; --on-accent-soft: #7A1C47;
+  --ok: #1F6B36; --ok-soft: #D9F0DF; --warn: #8A4B00; --warn-soft: #FCE6C8; --bad: #B42318; --bad-soft: #FADBD7; --idle: #9A8F88;
+  --src-uart: #1F7A80; --src-kernel: #8A3FA0; --src-logcat: #A8431A;
+  --panel-bg: rgba(255, 254, 252, .80); --panel-line: rgba(255, 255, 255, .85);
+  --panel-shadow: 0 12px 32px -14px rgba(120, 60, 30, .30); --panel-blur: blur(16px) saturate(1.15);
+  --bar-bg: rgba(255, 250, 244, .55); --bar-blur: blur(20px) saturate(1.2);
+  --shell-bg: rgba(255, 250, 244, .45); --shell-line: rgba(255, 252, 248, .65); --shell-blur: blur(28px); --shell-r: 28px;
+  --accent-fill: linear-gradient(158deg, #F5854F 0%, #DD4F92 100%); --brand-ink: #FFFFFF;
+  --icon-bg: linear-gradient(158deg, #F5854F 0%, #DD4F92 100%); --icon-ink: #FFFFFF;
+  --shadow: 0 1px 2px rgba(88, 62, 50, .08); --pop-shadow: 0 14px 36px rgba(88, 62, 50, .22);
+  --r-md: 14px; --r-lg: 22px;
+  --font-ui: "Plus Jakarta Sans", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root[data-skin="atelier"]:not([data-theme="light"]) {
+  --bg: #2A1D18;
+  --wall: radial-gradient(60% 55% at 8% 4%, #4A2A20 0%, transparent 70%), radial-gradient(50% 60% at 96% 18%, #57293A 0%, transparent 70%), radial-gradient(60% 50% at 55% 100%, #2A1B17 0%, transparent 70%), radial-gradient(40% 40% at 0% 100%, #6B3A2A 0%, transparent 70%);
+  --surface: #2E211D; --surface-2: #3A2A25; --surface-3: #46332D;
+  --line: rgba(255, 224, 208, .12); --line-strong: rgba(255, 224, 208, .22);
+  --fg: #F8EFE9; --fg-2: #CFC1B8; --fg-3: #BCACA3;
+  --accent: #F59BC2; --accent-hover: #F8B5D2; --on-accent: #3A0F22; --accent-soft: #4E2234; --on-accent-soft: #FBD3E4;
+  --ok: #86E0A4; --ok-soft: #1B3A25; --warn: #F7C27A; --warn-soft: #3F2C10; --bad: #F7A29A; --bad-soft: #4A1C17; --idle: #8F8079;
+  --src-uart: #5FD0D6; --src-kernel: #D7A6F0; --src-logcat: #F5A07A;
+  --panel-bg: rgba(56, 38, 33, .66); --panel-line: rgba(255, 224, 208, .12); --panel-shadow: 0 12px 32px -14px rgba(0, 0, 0, .6);
+  --bar-bg: rgba(40, 27, 24, .6); --shell-bg: rgba(40, 27, 24, .35); --shell-line: rgba(255, 224, 208, .10);
+  --pop-shadow: 0 14px 36px rgba(0, 0, 0, .55);
+  --anc-bg: #F7EFE9; --anc-fg: #241A17; --anc-fg2: #4A3F3A; --anc-fg3: #62564F;
+  --anc-line: #E3D6CD; --anc-well: #EFE4DC; --anc-ok: #1F6B36; --anc-ok-soft: #D5EEDB; --anc-accent: #B4306C;
+  color-scheme: dark;
+} }
+:root[data-skin="atelier"][data-theme="dark"] {
+  --bg: #2A1D18;
+  --wall: radial-gradient(60% 55% at 8% 4%, #4A2A20 0%, transparent 70%), radial-gradient(50% 60% at 96% 18%, #57293A 0%, transparent 70%), radial-gradient(60% 50% at 55% 100%, #2A1B17 0%, transparent 70%), radial-gradient(40% 40% at 0% 100%, #6B3A2A 0%, transparent 70%);
+  --surface: #2E211D; --surface-2: #3A2A25; --surface-3: #46332D;
+  --line: rgba(255, 224, 208, .12); --line-strong: rgba(255, 224, 208, .22);
+  --fg: #F8EFE9; --fg-2: #CFC1B8; --fg-3: #BCACA3;
+  --accent: #F59BC2; --accent-hover: #F8B5D2; --on-accent: #3A0F22; --accent-soft: #4E2234; --on-accent-soft: #FBD3E4;
+  --ok: #86E0A4; --ok-soft: #1B3A25; --warn: #F7C27A; --warn-soft: #3F2C10; --bad: #F7A29A; --bad-soft: #4A1C17; --idle: #8F8079;
+  --src-uart: #5FD0D6; --src-kernel: #D7A6F0; --src-logcat: #F5A07A;
+  --panel-bg: rgba(56, 38, 33, .66); --panel-line: rgba(255, 224, 208, .12); --panel-shadow: 0 12px 32px -14px rgba(0, 0, 0, .6);
+  --bar-bg: rgba(40, 27, 24, .6); --shell-bg: rgba(40, 27, 24, .35); --shell-line: rgba(255, 224, 208, .10);
+  --pop-shadow: 0 14px 36px rgba(0, 0, 0, .55);
+  --anc-bg: #F7EFE9; --anc-fg: #241A17; --anc-fg2: #4A3F3A; --anc-fg3: #62564F;
+  --anc-line: #E3D6CD; --anc-well: #EFE4DC; --anc-ok: #1F6B36; --anc-ok-soft: #D5EEDB; --anc-accent: #B4306C;
+  color-scheme: dark;
+}
+
+:root[data-skin="glass"] {
+  --bg: #F2F5FA;
+  --wall: radial-gradient(45% 50% at 12% 6%, rgba(34, 211, 238, .22) 0%, transparent 70%), radial-gradient(40% 45% at 90% 12%, rgba(167, 139, 250, .18) 0%, transparent 70%), radial-gradient(50% 55% at 60% 100%, rgba(79, 70, 229, .12) 0%, transparent 70%);
+  --surface: #FFFFFF; --surface-2: #EAF0F8; --surface-3: #DEE6F2;
+  --line: rgba(13, 18, 32, .10); --line-strong: rgba(13, 18, 32, .22);
+  --fg: #0D1220; --fg-2: #3A4255; --fg-3: #545D72;
+  --accent: #0C6478; --accent-hover: #0A5263; --on-accent: #FFFFFF; --accent-soft: #D3F4F9; --on-accent-soft: #063F4B;
+  --ok: #11733A; --ok-soft: #D5F3E0; --warn: #8A5100; --warn-soft: #FCEBC7; --bad: #B4232F; --bad-soft: #FBDDE1; --idle: #8A93A6;
+  --src-uart: #0C6478; --src-kernel: #6D28D9; --src-logcat: #2554C7;
+  --panel-bg: rgba(255, 255, 255, .62); --panel-line: rgba(13, 18, 32, .10);
+  --panel-shadow: 0 18px 40px -20px rgba(15, 30, 70, .25); --panel-blur: blur(18px) saturate(1.3);
+  --bar-bg: rgba(255, 255, 255, .7); --bar-blur: blur(20px) saturate(1.3);
+  --shell-bg: rgba(255, 255, 255, .30); --shell-line: rgba(13, 18, 32, .06); --shell-r: 24px;
+  --accent-fill: linear-gradient(135deg, #22D3EE 0%, #4F46E5 100%); --brand-ink: #FFFFFF;
+  --icon-bg: #D3F4F9; --icon-ink: #063F4B;
+  --r-md: 12px; --r-lg: 20px;
+  --font-ui: "Inter", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Inter", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root[data-skin="glass"]:not([data-theme="light"]) {
+  --bg: #0B1020;
+  --wall: radial-gradient(45% 50% at 12% 6%, rgba(34, 211, 238, .20) 0%, transparent 70%), radial-gradient(40% 45% at 90% 12%, rgba(167, 139, 250, .18) 0%, transparent 70%), radial-gradient(50% 55% at 60% 100%, rgba(79, 70, 229, .24) 0%, transparent 70%);
+  --surface: #121A33; --surface-2: #18213D; --surface-3: #212B4B;
+  --line: rgba(255, 255, 255, .10); --line-strong: rgba(255, 255, 255, .22);
+  --fg: #F4F7FF; --fg-2: #C9D2E6; --fg-3: #97A3BD;
+  --accent: #22D3EE; --accent-hover: #5BE0F2; --on-accent: #062A33; --accent-soft: #12304A; --on-accent-soft: #A5F0FA;
+  --ok: #4ADE80; --ok-soft: #0F2E25; --warn: #FBBF24; --warn-soft: #33280B; --bad: #FB7185; --bad-soft: #3A1424; --idle: #6B7690;
+  --src-uart: #22D3EE; --src-kernel: #A78BFA; --src-logcat: #60A5FA;
+  --panel-bg: rgba(255, 255, 255, .06); --panel-line: rgba(255, 255, 255, .13); --panel-shadow: 0 24px 48px -16px rgba(2, 6, 18, .55);
+  --bar-bg: rgba(11, 16, 32, .65); --shell-bg: rgba(255, 255, 255, .025); --shell-line: rgba(255, 255, 255, .08);
+  --icon-bg: #12304A; --icon-ink: #A5F0FA;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5); --pop-shadow: 0 16px 40px rgba(2, 6, 18, .7);
+  color-scheme: dark;
+} }
+:root[data-skin="glass"][data-theme="dark"] {
+  --bg: #0B1020;
+  --wall: radial-gradient(45% 50% at 12% 6%, rgba(34, 211, 238, .20) 0%, transparent 70%), radial-gradient(40% 45% at 90% 12%, rgba(167, 139, 250, .18) 0%, transparent 70%), radial-gradient(50% 55% at 60% 100%, rgba(79, 70, 229, .24) 0%, transparent 70%);
+  --surface: #121A33; --surface-2: #18213D; --surface-3: #212B4B;
+  --line: rgba(255, 255, 255, .10); --line-strong: rgba(255, 255, 255, .22);
+  --fg: #F4F7FF; --fg-2: #C9D2E6; --fg-3: #97A3BD;
+  --accent: #22D3EE; --accent-hover: #5BE0F2; --on-accent: #062A33; --accent-soft: #12304A; --on-accent-soft: #A5F0FA;
+  --ok: #4ADE80; --ok-soft: #0F2E25; --warn: #FBBF24; --warn-soft: #33280B; --bad: #FB7185; --bad-soft: #3A1424; --idle: #6B7690;
+  --src-uart: #22D3EE; --src-kernel: #A78BFA; --src-logcat: #60A5FA;
+  --panel-bg: rgba(255, 255, 255, .06); --panel-line: rgba(255, 255, 255, .13); --panel-shadow: 0 24px 48px -16px rgba(2, 6, 18, .55);
+  --bar-bg: rgba(11, 16, 32, .65); --shell-bg: rgba(255, 255, 255, .025); --shell-line: rgba(255, 255, 255, .08);
+  --icon-bg: #12304A; --icon-ink: #A5F0FA;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5); --pop-shadow: 0 16px 40px rgba(2, 6, 18, .7);
+  color-scheme: dark;
+}
+
+:root[data-skin="relief"] {
+  --bg: #E3E6EA; --surface: #E3E6EA; --surface-2: #E3E6EA; --surface-3: #D6DAE0;
+  --line: #CDD2D9; --line-strong: #B6BCC7;
+  --fg: #333A45; --fg-2: #444C58; --fg-3: #59616E;
+  --accent: #2C4470; --accent-hover: #1B2C4E; --on-accent: #FFFFFF; --accent-soft: #D3DBE9; --on-accent-soft: #1B2C4E;
+  --ok: #1E6B3A; --ok-soft: #CFE3D6; --warn: #8F3D0B; --warn-soft: #F1DCCB; --bad: #A3241D; --bad-soft: #F0D3D0; --idle: #8A919C;
+  --src-uart: #1D6F7A; --src-kernel: #5B4A9A; --src-logcat: #2C4470;
+  --panel-bg: #E3E6EA; --panel-line: transparent;
+  --panel-shadow: 8px 8px 18px #B6BCC7, -8px -8px 18px #FFFFFF;
+  --well-shadow: inset 3px 3px 7px #B6BCC7, inset -3px -3px 7px #FFFFFF;
+  --raise-sm: 4px 4px 9px #B6BCC7, -4px -4px 9px #FFFFFF;
+  --bar-bg: #E3E6EA;
+  --accent-fill: linear-gradient(145deg, #F2842A 0%, #DE7620 100%); --brand-ink: #3A1E06;
+  --icon-bg: #E3E6EA; --icon-ink: #2C4470;
+  --pop-shadow: 10px 10px 24px #B6BCC7, -6px -6px 18px #FFFFFF;
+  --r-md: 12px; --r-lg: 18px;
+  --font-ui: "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root[data-skin="relief"]:not([data-theme="light"]) {
+  --bg: #1B1E23; --surface: #1B1E23; --surface-2: #1B1E23; --surface-3: #23272D;
+  --line: #3B424C; --line-strong: #4A525E;
+  --fg: #D3D9E2; --fg-2: #B5BCC7; --fg-3: #8E98A8;
+  --accent: #7EA6E6; --accent-hover: #A8C3EE; --on-accent: #0D0F12; --accent-soft: #26324A; --on-accent-soft: #C9D9F4;
+  --ok: #7DD99B; --ok-soft: #16301F; --warn: #EF9A70; --warn-soft: #3A2416; --bad: #F4A9A3; --bad-soft: #3E1A18; --idle: #6B7380;
+  --src-uart: #5CC8D6; --src-kernel: #B9A7F0; --src-logcat: #7EA6E6;
+  --panel-bg: #1B1E23;
+  --panel-shadow: 10px 10px 22px #0D0F12, -8px -8px 20px #282D34;
+  --well-shadow: inset 3px 3px 8px #0D0F12, inset -3px -3px 8px #282D34;
+  --raise-sm: 4px 4px 10px #0D0F12, -3px -3px 9px #282D34;
+  --bar-bg: #1B1E23;
+  --accent-fill: linear-gradient(145deg, #E08B30 0%, #CC7524 100%); --brand-ink: #241202;
+  --icon-bg: #1B1E23; --icon-ink: #7EA6E6;
+  --pop-shadow: 12px 12px 28px #0D0F12, -6px -6px 18px #282D34;
+  color-scheme: dark;
+} }
+:root[data-skin="relief"][data-theme="dark"] {
+  --bg: #1B1E23; --surface: #1B1E23; --surface-2: #1B1E23; --surface-3: #23272D;
+  --line: #3B424C; --line-strong: #4A525E;
+  --fg: #D3D9E2; --fg-2: #B5BCC7; --fg-3: #8E98A8;
+  --accent: #7EA6E6; --accent-hover: #A8C3EE; --on-accent: #0D0F12; --accent-soft: #26324A; --on-accent-soft: #C9D9F4;
+  --ok: #7DD99B; --ok-soft: #16301F; --warn: #EF9A70; --warn-soft: #3A2416; --bad: #F4A9A3; --bad-soft: #3E1A18; --idle: #6B7380;
+  --src-uart: #5CC8D6; --src-kernel: #B9A7F0; --src-logcat: #7EA6E6;
+  --panel-bg: #1B1E23;
+  --panel-shadow: 10px 10px 22px #0D0F12, -8px -8px 20px #282D34;
+  --well-shadow: inset 3px 3px 8px #0D0F12, inset -3px -3px 8px #282D34;
+  --raise-sm: 4px 4px 10px #0D0F12, -3px -3px 9px #282D34;
+  --bar-bg: #1B1E23;
+  --accent-fill: linear-gradient(145deg, #E08B30 0%, #CC7524 100%); --brand-ink: #241202;
+  --icon-bg: #1B1E23; --icon-ink: #7EA6E6;
+  --pop-shadow: 12px 12px 28px #0D0F12, -6px -6px 18px #282D34;
+  color-scheme: dark;
+}
+/* recommended blend: light = neutral (no overrides), dark = Glass navy + cyan,
+   solid panels (no per-panel blur: the page streams logs and redraws charts) */
+@media (prefers-color-scheme: dark) { :root[data-skin="blend"]:not([data-theme="light"]) {
+  --bg: #0B1020;
+  --wall: radial-gradient(45% 50% at 12% 6%, rgba(34, 211, 238, .10) 0%, transparent 70%), radial-gradient(40% 45% at 90% 12%, rgba(167, 139, 250, .09) 0%, transparent 70%), radial-gradient(50% 55% at 60% 100%, rgba(79, 70, 229, .12) 0%, transparent 70%);
+  --surface: #121A30; --surface-2: #18213A; --surface-3: #212B48;
+  --line: rgba(255, 255, 255, .09); --line-strong: rgba(255, 255, 255, .20);
+  --fg: #EEF2FA; --fg-2: #C5CDDE; --fg-3: #95A1B9;
+  --accent: #22D3EE; --accent-hover: #5BE0F2; --on-accent: #062A33; --accent-soft: #12304A; --on-accent-soft: #A5F0FA;
+  --ok: #4ADE80; --ok-soft: #0F2E25; --warn: #FBBF24; --warn-soft: #33280B; --bad: #FB7185; --bad-soft: #3A1424; --idle: #6B7690;
+  --src-uart: #22D3EE; --src-kernel: #A78BFA; --src-logcat: #60A5FA;
+  --panel-bg: rgba(18, 26, 48, .88); --panel-line: rgba(255, 255, 255, .09);
+  --bar-bg: rgba(11, 16, 32, .80); --bar-blur: blur(16px);
+  --accent-fill: linear-gradient(135deg, #22D3EE 0%, #4F46E5 100%); --brand-ink: #FFFFFF;
+  --icon-bg: #12304A; --icon-ink: #A5F0FA;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5); --pop-shadow: 0 16px 40px rgba(2, 6, 18, .7);
+  color-scheme: dark;
+} }
+:root[data-skin="blend"][data-theme="dark"] {
+  --bg: #0B1020;
+  --wall: radial-gradient(45% 50% at 12% 6%, rgba(34, 211, 238, .10) 0%, transparent 70%), radial-gradient(40% 45% at 90% 12%, rgba(167, 139, 250, .09) 0%, transparent 70%), radial-gradient(50% 55% at 60% 100%, rgba(79, 70, 229, .12) 0%, transparent 70%);
+  --surface: #121A30; --surface-2: #18213A; --surface-3: #212B48;
+  --line: rgba(255, 255, 255, .09); --line-strong: rgba(255, 255, 255, .20);
+  --fg: #EEF2FA; --fg-2: #C5CDDE; --fg-3: #95A1B9;
+  --accent: #22D3EE; --accent-hover: #5BE0F2; --on-accent: #062A33; --accent-soft: #12304A; --on-accent-soft: #A5F0FA;
+  --ok: #4ADE80; --ok-soft: #0F2E25; --warn: #FBBF24; --warn-soft: #33280B; --bad: #FB7185; --bad-soft: #3A1424; --idle: #6B7690;
+  --src-uart: #22D3EE; --src-kernel: #A78BFA; --src-logcat: #60A5FA;
+  --panel-bg: rgba(18, 26, 48, .88); --panel-line: rgba(255, 255, 255, .09);
+  --bar-bg: rgba(11, 16, 32, .80); --bar-blur: blur(16px);
+  --accent-fill: linear-gradient(135deg, #22D3EE 0%, #4F46E5 100%); --brand-ink: #FFFFFF;
+  --icon-bg: #12304A; --icon-ink: #A5F0FA;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5); --pop-shadow: 0 16px 40px rgba(2, 6, 18, .7);
+  color-scheme: dark;
+}
+/* Apple Liquid Glass reading: glass only on the layer that floats over
+   content (bar, sidebar, buttons, menus, sheet); content stays solid. */
+:root[data-skin="liquid"] {
+  --bg: #EDF0F5;
+  --wall: radial-gradient(70% 60% at 8% 0%, #CDE1FF 0%, transparent 62%), radial-gradient(55% 60% at 100% 8%, #E4D8FF 0%, transparent 62%), radial-gradient(70% 60% at 45% 100%, #D2F1EA 0%, transparent 62%);
+  --surface: #FFFFFF; --surface-2: #F2F3F7; --surface-3: #E6E8EE;
+  --line: #E1E4EA; --line-strong: #C7CBD3;
+  --fg: #1D1D1F; --fg-2: #3C3C43; --fg-3: #636368;
+  --accent: #0066CC; --accent-hover: #0058B0; --on-accent: #FFFFFF; --accent-soft: #E3EEFC; --on-accent-soft: #00427F;
+  --ok: #1E7B34; --ok-soft: #DDF3E2; --warn: #9A4700; --warn-soft: #FFEBD3; --bad: #C4161C; --bad-soft: #FDE2E1; --idle: #8E8E93;
+  --src-uart: #0A7385; --src-kernel: #6E4BB8; --src-logcat: #0066CC;
+  --panel-bg: #FFFFFF; --panel-line: transparent;
+  --panel-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 10px 28px rgba(30, 40, 70, .07);
+  --r-sm: 10px; --r-md: 14px; --r-lg: 22px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root[data-skin="liquid"]:not([data-theme="light"]) {
+  --bg: #0E1014;
+  --wall: radial-gradient(70% 60% at 8% 0%, #1B2E52 0%, transparent 62%), radial-gradient(55% 60% at 100% 8%, #2B2049 0%, transparent 62%), radial-gradient(70% 60% at 45% 100%, #0F3A38 0%, transparent 62%);
+  --surface: #1C1C1E; --surface-2: #2A2A2E; --surface-3: #36363A;
+  --line: #303035; --line-strong: #45454B;
+  --fg: #F5F5F7; --fg-2: #D1D1D6; --fg-3: #9C9CA1;
+  --accent: #2997FF; --accent-hover: #47A5FF; --on-accent: #000000; --accent-soft: #0B2A4A; --on-accent-soft: #CFE5FF;
+  --ok: #30D158; --ok-soft: #0E3318; --warn: #FF9F0A; --warn-soft: #3A2600; --bad: #FF6961; --bad-soft: #3F1412; --idle: #8E8E93;
+  --src-uart: #64D2FF; --src-kernel: #BF9BFF; --src-logcat: #2997FF;
+  --panel-bg: #1C1C1E; --panel-shadow: 0 10px 28px rgba(0, 0, 0, .35);
+  --lg-bg: rgba(44, 44, 50, .50); --lg-bg-strong: rgba(36, 36, 40, .86);
+  --lg-edge: rgba(255, 255, 255, .16); --lg-hi: rgba(255, 255, 255, .30); --lg-lo: rgba(255, 255, 255, .06);
+  --lg-sheen: rgba(255, 255, 255, .10); --lg-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+  --pop-shadow: 0 16px 40px rgba(0, 0, 0, .6);
+  color-scheme: dark;
+} }
+:root[data-skin="liquid"][data-theme="dark"] {
+  --bg: #0E1014;
+  --wall: radial-gradient(70% 60% at 8% 0%, #1B2E52 0%, transparent 62%), radial-gradient(55% 60% at 100% 8%, #2B2049 0%, transparent 62%), radial-gradient(70% 60% at 45% 100%, #0F3A38 0%, transparent 62%);
+  --surface: #1C1C1E; --surface-2: #2A2A2E; --surface-3: #36363A;
+  --line: #303035; --line-strong: #45454B;
+  --fg: #F5F5F7; --fg-2: #D1D1D6; --fg-3: #9C9CA1;
+  --accent: #2997FF; --accent-hover: #47A5FF; --on-accent: #000000; --accent-soft: #0B2A4A; --on-accent-soft: #CFE5FF;
+  --ok: #30D158; --ok-soft: #0E3318; --warn: #FF9F0A; --warn-soft: #3A2600; --bad: #FF6961; --bad-soft: #3F1412; --idle: #8E8E93;
+  --src-uart: #64D2FF; --src-kernel: #BF9BFF; --src-logcat: #2997FF;
+  --panel-bg: #1C1C1E; --panel-shadow: 0 10px 28px rgba(0, 0, 0, .35);
+  --lg-bg: rgba(44, 44, 50, .50); --lg-bg-strong: rgba(36, 36, 40, .86);
+  --lg-edge: rgba(255, 255, 255, .16); --lg-hi: rgba(255, 255, 255, .30); --lg-lo: rgba(255, 255, 255, .06);
+  --lg-sheen: rgba(255, 255, 255, .10); --lg-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+  --pop-shadow: 0 16px 40px rgba(0, 0, 0, .6);
+  color-scheme: dark;
+}
+/* Material Design 3 (Google's own system): colour roles, tonal surfaces
+   instead of borders, M3 shape and type scale. */
+:root[data-skin="m3"] {
+  --bg: #F8FAFD; --surface: #FFFFFF; --surface-2: #F0F4F9; --surface-3: #E9EEF6;
+  --line: #E1E3E1; --line-strong: #C4C7C5;
+  --fg: #1F1F1F; --fg-2: #444746; --fg-3: #5C5F61;
+  --accent: #0B57D0; --accent-hover: #0A4CB6; --on-accent: #FFFFFF; --accent-soft: #D3E3FD; --on-accent-soft: #041E49;
+  --ok: #146C2E; --ok-soft: #C4EED0; --warn: #7A4F00; --warn-soft: #FFE7AE; --bad: #B3261E; --bad-soft: #F9DEDC; --idle: #747775;
+  --src-uart: #006A6A; --src-kernel: #6750A4; --src-logcat: #0B57D0;
+  --panel-bg: #FFFFFF; --panel-line: transparent; --panel-shadow: none;
+  --bar-bg: #F8FAFD;
+  --icon-bg: #D3E3FD; --icon-ink: #041E49;
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 1px 3px 1px rgba(0, 0, 0, .15);
+  --pop-shadow: 0 2px 6px 2px rgba(0, 0, 0, .15), 0 1px 2px rgba(0, 0, 0, .3);
+  --font-ui: "Roboto Flex", "Roboto", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-display: "Roboto Flex", "Roboto", "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "Roboto Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root[data-skin="m3"]:not([data-theme="light"]) {
+  --bg: #131314; --surface: #1E1F20; --surface-2: #282A2C; --surface-3: #333537;
+  --line: #333537; --line-strong: #444746;
+  --fg: #E3E3E3; --fg-2: #C4C7C5; --fg-3: #A9ACAA;
+  --accent: #A8C7FA; --accent-hover: #C2D7FB; --on-accent: #062E6F; --accent-soft: #0842A0; --on-accent-soft: #D3E3FD;
+  --ok: #6DD58C; --ok-soft: #0F5223; --warn: #FFBA44; --warn-soft: #3D2E00; --bad: #F2B8B5; --bad-soft: #8C1D18; --idle: #8E918F;
+  --src-uart: #4FD8EB; --src-kernel: #D0BCFF; --src-logcat: #A8C7FA;
+  --panel-bg: #1E1F20; --bar-bg: #131314;
+  --icon-bg: #0842A0; --icon-ink: #D3E3FD;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 1px 3px 1px rgba(0, 0, 0, .15);
+  --pop-shadow: 0 2px 6px 2px rgba(0, 0, 0, .3), 0 1px 2px rgba(0, 0, 0, .5);
+  color-scheme: dark;
+} }
+:root[data-skin="m3"][data-theme="dark"] {
+  --bg: #131314; --surface: #1E1F20; --surface-2: #282A2C; --surface-3: #333537;
+  --line: #333537; --line-strong: #444746;
+  --fg: #E3E3E3; --fg-2: #C4C7C5; --fg-3: #A9ACAA;
+  --accent: #A8C7FA; --accent-hover: #C2D7FB; --on-accent: #062E6F; --accent-soft: #0842A0; --on-accent-soft: #D3E3FD;
+  --ok: #6DD58C; --ok-soft: #0F5223; --warn: #FFBA44; --warn-soft: #3D2E00; --bad: #F2B8B5; --bad-soft: #8C1D18; --idle: #8E918F;
+  --src-uart: #4FD8EB; --src-kernel: #D0BCFF; --src-logcat: #A8C7FA;
+  --panel-bg: #1E1F20; --bar-bg: #131314;
+  --icon-bg: #0842A0; --icon-ink: #D3E3FD;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 1px 3px 1px rgba(0, 0, 0, .15);
+  --pop-shadow: 0 2px 6px 2px rgba(0, 0, 0, .3), 0 1px 2px rgba(0, 0, 0, .5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background-color: var(--bg); color: var(--fg); }
+body { background-image: var(--wall); background-attachment: fixed; }
+body {
+  margin: 0;
+  font: 400 14px/1.5 var(--font-ui);
+  font-variation-settings: "wdth" 100;
+  -webkit-font-smoothing: antialiased;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--surface);
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.mono { font-family: var(--font-mono); font-size: 12.5px; }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  background: var(--bar-bg); border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: var(--bar-blur); backdrop-filter: var(--bar-blur);
+}
+.topbar__in {
+  max-width: 1680px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 8px;
+  display: flex; align-items: center; gap: 12px; min-height: 56px;
+}
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--fg); flex: none; }
+.brand__mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent-fill); color: var(--brand-ink); display: grid; place-items: center; }
+.brand__mark svg { width: 20px; height: 20px; }
+.brand__name { font-weight: 650; font-variation-settings: "wdth" 112, "opsz" 24; letter-spacing: .01em; }
+.brand__sub { color: var(--fg-3); font-size: 12px; }
+.divider-v { width: 1px; align-self: stretch; background: var(--line); margin-block: 6px; flex: none; }
+
+.board-switch {
+  display: flex; align-items: center; gap: 10px; padding: 5px 10px 5px 8px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  position: relative; flex: none;
+}
+.board-switch:hover { border-color: var(--line-strong); }
+.board-switch__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.board-switch__name { font-weight: 600; white-space: nowrap; }
+.board-switch__meta { color: var(--fg-3); font-size: 12px; white-space: nowrap; }
+
+.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.chips::-webkit-scrollbar { display: none; }
+.chan {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 4px 10px; border-radius: 999px; font-size: 12.5px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg-2);
+}
+.chan b { font-weight: 600; color: var(--fg); }
+.chan__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); }
+.chan[data-state="ok"] .chan__dot { background: var(--ok); }
+.chan[data-state="warn"] .chan__dot { background: var(--warn); }
+.chan[data-state="bad"] .chan__dot { background: var(--bad); }
+.chan[data-state="idle"] { color: var(--fg-3); }
+.topbar__spacer { flex: 1; }
+.tool-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px;
+  border-radius: var(--r-sm); border: 1px solid transparent; background: transparent; color: var(--fg-2);
+  white-space: nowrap;
+}
+.tool-btn:hover { background: var(--surface-2); color: var(--fg); }
+.tool-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--on-accent-soft); }
+.search {
+  display: flex; align-items: center; gap: 8px; height: 34px; width: 210px; padding: 0 10px; white-space: nowrap; flex: none;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--fg-3);
+}
+.search kbd { margin-left: auto; font: 500 11px var(--font-mono); padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--fg-3); }
+
+/* ---------- layout ---------- */
+.layout {
+  max-width: 1680px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 56px;
+  display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); gap: 28px; align-items: start;
+}
+.layout {
+  background: var(--shell-bg); border: 1px solid var(--shell-line); border-radius: var(--shell-r);
+  -webkit-backdrop-filter: var(--shell-blur); backdrop-filter: var(--shell-blur);
+}
+.rail { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 76px); display: flex; flex-direction: column; gap: 18px; }
+.rail__group { display: flex; flex-direction: column; gap: 2px; }
+.rail__label { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); padding: 0 10px 4px; }
+.rail a {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-sm);
+  color: var(--fg-2); text-decoration: none; white-space: nowrap;
+}
+.rail a:hover { background: var(--surface-3); color: var(--fg); }
+.rail a[aria-current="page"] { background: var(--accent-soft); color: var(--on-accent-soft); font-weight: 600; }
+.rail .badge { margin-left: auto; }
+.badge {
+  display: inline-flex; align-items: center; min-width: 20px; justify-content: center;
+  font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 999px; line-height: 18px;
+  background: var(--bad-soft); color: var(--bad);
+}
+.badge--new { background: var(--accent-soft); color: var(--on-accent-soft); }
+
+/* ---------- page head ---------- */
+.main { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+/* columns follow the width the content actually has (the assistant sheet takes 420px), not the window */
+.main { container-type: inline-size; container-name: main; }
+@container main (max-width: 1060px) {
+  .main .span-8, .main .span-4, .main .span-7, .main .span-5 { grid-column: span 12; }
+}
+@container main (max-width: 960px) {
+  .main .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .main .metric:nth-child(4) { border-left: 0; }
+  .main .metric:nth-child(n+4) { border-top: 1px solid var(--line); }
+  .main .facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.pagehead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.eyebrow { display: flex; align-items: center; gap: 8px; color: var(--fg-3); font-size: 12.5px; }
+.sample { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px dashed var(--line-strong); color: var(--fg-3); }
+h1 { font-family: var(--font-display); margin: 4px 0 2px; font-size: 28px; line-height: 1.2; font-weight: 600; font-variation-settings: "wdth" 115, "opsz" 36; text-wrap: balance; }
+.pagehead p { margin: 0; color: var(--fg-2); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px;
+  border-radius: var(--r-md); border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
+  font-weight: 500; white-space: nowrap; position: relative;
+}
+.btn:hover { background: var(--surface-2); }
+.btn--primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn--danger { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+.btn--ghost { border-color: transparent; background: transparent; color: var(--accent); padding: 0 8px; height: 30px; }
+.btn--ghost:hover { background: var(--accent-soft); }
+
+.arm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--warn); background: var(--warn-soft); color: var(--fg); border-radius: var(--r-md);
+}
+.arm p { margin: 0; flex: 1 1 320px; }
+.arm__btns { display: flex; gap: 8px; }
+
+.menu {
+  position: absolute; z-index: 40; top: calc(100% + 6px); min-width: 260px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: var(--pop-shadow);
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+}
+.menu--right { right: 0; }
+.menu--left { left: 0; }
+.menu button {
+  display: grid; grid-template-columns: 18px 1fr; gap: 2px 10px; align-items: start;
+  padding: 8px 10px; border: 0; background: transparent; border-radius: var(--r-sm); text-align: left; color: var(--fg);
+}
+.menu button:hover { background: var(--surface-2); }
+.menu small { grid-column: 2; color: var(--fg-3); font-size: 12px; }
+.menu .menu__sep { height: 1px; background: var(--line); margin: 4px 6px; }
+
+/* ---------- panels ---------- */
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
+.span-12 { grid-column: span 12; } .span-8 { grid-column: span 8; } .span-7 { grid-column: span 7; }
+.span-5 { grid-column: span 5; } .span-4 { grid-column: span 4; }
+.panel {
+  min-width: 0; background: var(--panel-bg); border: 1px solid var(--panel-line); border-radius: var(--r-lg);
+  box-shadow: var(--panel-shadow); -webkit-backdrop-filter: var(--panel-blur); backdrop-filter: var(--panel-blur);
+  padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 14px;
+}
+.panel__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
+.panel__head h2 { margin: 0; font-size: 15px; font-weight: 600; font-variation-settings: "wdth" 108, "opsz" 18; }
+.panel__head .hint { color: var(--fg-3); font-size: 12.5px; }
+.panel__head .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+/* data-source annotations (design review aid) */
+.src { display: flex; flex-wrap: wrap; gap: 6px; }
+body:not(.show-src) .src { display: none !important; }
+.src code, .src span {
+  font: 500 11px/18px var(--font-mono); padding: 0 6px; border-radius: 4px;
+  background: var(--surface-2); color: var(--fg-2); border: 1px solid var(--line);
+}
+.src .src__new { background: var(--accent-soft); color: var(--on-accent-soft); border-color: transparent; font-family: var(--font-ui); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.pill--ok { background: var(--ok-soft); color: var(--ok); }
+.pill--warn { background: var(--warn-soft); color: var(--warn); }
+.pill--bad { background: var(--bad-soft); color: var(--bad); }
+.pill--idle { background: var(--surface-2); color: var(--fg-3); }
+.pill--info { background: var(--accent-soft); color: var(--on-accent-soft); }
+
+/* board state */
+.state__now { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.state__big { font-size: 22px; font-weight: 600; font-variation-settings: "wdth" 112, "opsz" 28; }
+.state__meta { color: var(--fg-3); flex-basis: 100%; }
+.bootpath { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; counter-reset: st; }
+.bootpath li { position: relative; padding-top: 22px; font-size: 12.5px; color: var(--fg-3); min-width: 0; }
+.bootpath li::before {
+  content: ""; position: absolute; top: 4px; left: 0; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--line-strong); z-index: 1;
+}
+.bootpath li::after { content: ""; position: absolute; top: 9px; left: 14px; right: 2px; height: 2px; background: var(--line); }
+.bootpath li:last-child::after { display: none; }
+.bootpath li.done { color: var(--fg-2); }
+.bootpath li.done::before { background: var(--ok); border-color: var(--ok); }
+.bootpath li.done::after { background: var(--ok); }
+.bootpath li.now { color: var(--fg); font-weight: 600; }
+.bootpath li.now::before { background: var(--ok); border-color: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+.bootpath b { display: block; font-weight: inherit; }
+.bootpath span { display: block; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-3); font-weight: 400; }
+.altmodes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12.5px; color: var(--fg-3); }
+.altmodes .pill { font-weight: 500; }
+.facts { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.facts div { min-width: 0; }
+.facts dt { font-size: 11.5px; color: var(--fg-3); letter-spacing: .02em; }
+.facts dd { margin: 2px 0 0; font-weight: 500; overflow-wrap: anywhere; }
+.facts dd.mono { font-weight: 400; }
+.facts .wide { grid-column: span 2; }
+
+/* connections */
+.conns__list { display: flex; flex-direction: column; }
+.conn { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 2px 10px; padding: 11px 0; border-top: 1px solid var(--line); align-items: center; }
+.conn:first-child { border-top: 0; padding-top: 2px; }
+.conn__icon { grid-row: span 2; align-self: start; margin-top: 1px; color: var(--fg-3); }
+.conn__name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.conn__detail { grid-column: 2; color: var(--fg-3); font-size: 12.5px; overflow-wrap: anywhere; }
+.conn__side { grid-row: span 2; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.conn__side .mono { color: var(--fg-2); }
+.spark-s { width: 84px; height: 22px; display: block; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot--ok { background: var(--ok); } .dot--warn { background: var(--warn); } .dot--bad { background: var(--bad); } .dot--idle { background: var(--idle); }
+
+/* metrics */
+.metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+.metric { padding: 12px 14px 10px; border-left: 1px solid var(--line); min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.metric:first-child { border-left: 0; }
+.metric__label { font-size: 12px; color: var(--fg-3); display: flex; justify-content: space-between; gap: 6px; }
+.metric__value { font-size: 22px; font-weight: 600; font-variation-settings: "wdth" 100, "opsz" 28; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.metric__value small { font-size: 12.5px; font-weight: 500; color: var(--fg-3); margin-left: 3px; }
+.metric__sub { font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.spark { width: 100%; height: 44px; display: block; color: var(--accent); }
+.spark--warn { color: var(--warn); }
+.spark .grid-line { stroke: var(--line); stroke-width: 1; }
+.spark .line2 { stroke: var(--fg-3); }
+.metric__range { display: flex; justify-content: space-between; font: 11px var(--font-mono); color: var(--fg-3); }
+.legend2 { display: flex; gap: 10px; font-size: 11.5px; color: var(--fg-3); }
+.legend2 i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 4px; background: var(--accent); }
+.legend2 i.b { background: var(--fg-3); }
+
+/* boot chart */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--fg-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.c-uart { background: var(--src-uart); } .c-kernel { background: var(--src-kernel); } .c-logcat { background: var(--src-logcat); }
+.boot { display: flex; flex-direction: column; gap: 6px; }
+.boot__row { display: grid; grid-template-columns: 74px minmax(0, 1fr) 60px; gap: 10px; align-items: center; font-size: 12px; color: var(--fg-3); }
+.boot__row .num { text-align: right; color: var(--fg-2); }
+.boot__track { position: relative; height: 26px; background: var(--surface-2); border-radius: 6px; }
+.boot__track--prev { height: 10px; }
+.seg { position: absolute; top: 0; bottom: 0; border-radius: 4px; border: 2px solid var(--surface); }
+.seg__lbl { position: absolute; inset: 0 6px; display: flex; align-items: center; font-size: 11.5px; font-weight: 600; color: var(--surface); white-space: nowrap; overflow: hidden; }
+.boot__track--prev .seg { opacity: .45; border-width: 1px; }
+.axis { position: relative; height: 16px; margin-left: 84px; margin-right: 70px; font: 11px var(--font-mono); color: var(--fg-3); }
+.axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.axis span:first-child { transform: none; }
+.axis span:last-child { transform: translateX(-100%); }
+.mile-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th { text-align: left; font-weight: 600; color: var(--fg-3); font-size: 11.5px; letter-spacing: .02em; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; }
+.delta-up { color: var(--bad); } .delta-dn { color: var(--ok); } .delta-0 { color: var(--fg-3); }
+.srctag { font: 500 11px var(--font-mono); padding: 0 6px; border-radius: 4px; color: var(--surface); white-space: nowrap; }
+.note { margin: 0; font-size: 12.5px; color: var(--fg-2); }
+.note b { color: var(--fg); }
+
+/* problems */
+.issues { display: flex; flex-direction: column; gap: 10px; }
+.issue { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 4px 12px; padding: 12px; border-radius: var(--r-md); background: var(--surface-2); }
+.issue__ic { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; grid-row: span 3; }
+.issue[data-sev="bad"] .issue__ic { background: var(--bad-soft); color: var(--bad); }
+.issue[data-sev="warn"] .issue__ic { background: var(--warn-soft); color: var(--warn); }
+.issue__title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-weight: 600; }
+.issue__body { font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); overflow-wrap: anywhere; }
+.issue__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12px; color: var(--fg-3); }
+.issue__meta .acts { margin-left: auto; display: flex; gap: 2px; }
+
+/* activity */
+.acts-list { list-style: none; margin: 0; padding: 0; }
+.acts-list li { display: grid; grid-template-columns: 50px 22px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.acts-list li:first-child { border-top: 0; padding-top: 0; }
+.acts-list time { font: 12px var(--font-mono); color: var(--fg-3); }
+.acts-list .what { min-width: 0; overflow-wrap: anywhere; }
+.acts-list .what small { display: block; color: var(--fg-3); font-size: 12px; }
+.acts-list svg { color: var(--fg-3); }
+
+/* quick actions */
+.quick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.qa {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 0 10px; align-items: center; text-align: left;
+  padding: 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--fg);
+}
+.qa:hover { border-color: var(--accent); background: var(--surface-2); }
+.qa__ic { width: 36px; height: 36px; border-radius: 9px; background: var(--icon-bg); color: var(--icon-ink); display: grid; place-items: center; grid-row: span 2; }
+.qa b { font-weight: 600; font-size: 13.5px; }
+.qa small { color: var(--fg-3); font-size: 12px; overflow-wrap: anywhere; }
+
+.toast {
+  position: fixed; z-index: 60; left: 50%; transform: translateX(-50%);
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: var(--r-md); box-shadow: var(--pop-shadow);
+  max-width: min(520px, calc(100vw - 32px)); font-size: 13px;
+}
+
+/* ---------- skin material rules (tokens only, no literal colours) ---------- */
+:root[data-skin="atelier"] .layout, :root[data-skin="glass"] .layout {
+  margin-block: 16px 24px; width: min(1680px, calc(100% - 24px));
+}
+:root[data-skin="atelier"] .panel--anchor {
+  --fg: var(--anc-fg); --fg-2: var(--anc-fg2); --fg-3: var(--anc-fg3); --line: var(--anc-line);
+  --surface-2: var(--anc-well); --ok: var(--anc-ok); --ok-soft: var(--anc-ok-soft); --accent: var(--anc-accent); --accent-soft: var(--anc-well);
+  background: var(--anc-bg); border-color: transparent; color: var(--anc-fg);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+:root[data-skin="relief"] .topbar { border-bottom-color: transparent; box-shadow: var(--raise-sm); }
+:root[data-skin="relief"] .metrics, :root[data-skin="relief"] .mile-wrap, :root[data-skin="relief"] .boot__track,
+:root[data-skin="relief"] .issue, :root[data-skin="relief"] .search, :root[data-skin="relief"] .board-switch,
+:root[data-skin="relief"] .assist__agent, :root[data-skin="relief"] .assist__input textarea {
+  box-shadow: var(--well-shadow); border-color: transparent;
+}
+:root[data-skin="relief"] .btn, :root[data-skin="relief"] .qa, :root[data-skin="relief"] .chan,
+:root[data-skin="relief"] .qa__ic, :root[data-skin="relief"] .skin-select, :root[data-skin="relief"] .assist__src button {
+  box-shadow: var(--raise-sm); border-color: transparent;
+}
+:root[data-skin="relief"] .btn--ghost { box-shadow: none; }
+:root[data-skin="relief"] th { background: transparent; }
+:root[data-skin="apple"] .metrics, :root[data-skin="apple"] .mile-wrap { border-color: var(--surface-3); }
+
+/* ---------- liquid glass: the floating layer ---------- */
+:root[data-skin="liquid"] .topbar, :root[data-skin="liquid"] .rail, :root[data-skin="liquid"] .chan,
+:root[data-skin="liquid"] .board-switch, :root[data-skin="liquid"] .search, :root[data-skin="liquid"] .skin-select,
+:root[data-skin="liquid"] .pagehead .btn:not(.btn--primary) {
+  background: linear-gradient(180deg, var(--lg-sheen) 0%, transparent 46%), var(--lg-bg);
+  border: 1px solid var(--lg-edge);
+  box-shadow: inset 0 1px 0 var(--lg-hi), inset 0 -1px 0 var(--lg-lo), var(--lg-shadow);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
+}
+:root[data-skin="liquid"] .topbar {
+  top: calc(env(safe-area-inset-top, 0px) + 10px); margin: 10px 12px 0; border-radius: 24px;
+}
+:root[data-skin="liquid"] .chan, :root[data-skin="liquid"] .board-switch, :root[data-skin="liquid"] .search,
+:root[data-skin="liquid"] .skin-select { box-shadow: inset 0 1px 0 var(--lg-hi), inset 0 -1px 0 var(--lg-lo); border-radius: 999px; }
+:root[data-skin="liquid"] .rail { top: calc(env(safe-area-inset-top, 0px) + 92px); padding: 12px 8px; border-radius: 24px; }
+:root[data-skin="liquid"] .rail a { border-radius: 12px; }
+:root[data-skin="liquid"] .btn { border-radius: 999px; }
+:root[data-skin="liquid"] .btn--primary { box-shadow: inset 0 1px 0 var(--lg-hi), 0 6px 16px -6px var(--accent); }
+:root[data-skin="liquid"] .tool-btn { border-radius: 999px; }
+:root[data-skin="liquid"] .menu, :root[data-skin="liquid"] .assist {
+  background: linear-gradient(180deg, var(--lg-sheen) 0%, transparent 30%), var(--lg-bg-strong);
+  border: 1px solid var(--lg-edge);
+  box-shadow: inset 0 1px 0 var(--lg-hi), var(--pop-shadow);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
+}
+:root[data-skin="liquid"] .menu { border-radius: 18px; }
+:root[data-skin="liquid"] .assist {
+  top: calc(env(safe-area-inset-top, 0px) + 10px); right: calc(env(safe-area-inset-right, 0px) + 10px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); width: min(var(--assist-w), calc(100vw - 20px));
+  border-radius: 26px; padding: 0; overflow: hidden;
+}
+:root[data-skin="liquid"] .assist__src button, :root[data-skin="liquid"] .assist__agent { background: transparent; }
+@media (min-width: 1400px) {
+  :root[data-skin="liquid"] body.assist-open { padding-right: calc(var(--assist-w) + 20px); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-skin="liquid"] { --lg-bg: var(--surface); --lg-bg-strong: var(--surface); --lg-blur: none; }
+}
+
+/* ---------- Material 3 components ---------- */
+:root[data-skin="m3"] .topbar { border-bottom-color: transparent; }
+:root[data-skin="m3"] h1 { font-weight: 400; font-size: 32px; line-height: 40px; font-variation-settings: "wdth" 100, "opsz" 32; }
+:root[data-skin="m3"] .panel__head h2 { font-size: 16px; font-weight: 500; line-height: 24px; font-variation-settings: normal; }
+:root[data-skin="m3"] .state__big { font-weight: 400; font-size: 24px; font-variation-settings: normal; }
+:root[data-skin="m3"] .metric__value { font-weight: 400; font-size: 24px; }
+/* navigation drawer: sentence-case headings, pill items, active indicator */
+:root[data-skin="m3"] .rail__label { text-transform: none; letter-spacing: .01em; font-size: 13px; font-weight: 500; padding: 8px 16px 6px; }
+:root[data-skin="m3"] .rail a { border-radius: 999px; padding: 9px 16px; font-weight: 500; }
+:root[data-skin="m3"] .rail a[aria-current="page"] { font-weight: 600; }
+/* common buttons: 40px, full radius, filled / outlined / text */
+:root[data-skin="m3"] .btn { height: 40px; border-radius: 999px; padding: 0 20px 0 16px; border-color: var(--idle); color: var(--accent); background: transparent; }
+:root[data-skin="m3"] .btn:hover { background: var(--surface-2); }
+:root[data-skin="m3"] .btn--primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); box-shadow: none; }
+:root[data-skin="m3"] .btn--primary:hover { background: var(--accent-hover); box-shadow: var(--shadow); }
+:root[data-skin="m3"] .btn--danger { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+:root[data-skin="m3"] .btn--ghost { border-color: transparent; padding: 0 12px; height: 36px; }
+:root[data-skin="m3"] .menu .btn, :root[data-skin="m3"] .arm .btn:not(.btn--danger) { color: var(--fg); }
+/* search bar and chips */
+:root[data-skin="m3"] .search { height: 44px; border-radius: 999px; border-color: transparent; background: var(--surface-3); padding: 0 16px; }
+:root[data-skin="m3"] .chan { height: 32px; border-radius: 8px; border-color: var(--line-strong); background: transparent; }
+:root[data-skin="m3"] .board-switch { border-radius: 8px; height: 32px; padding: 0 10px 0 8px; background: var(--accent-soft); color: var(--on-accent-soft); border-color: transparent; }
+:root[data-skin="m3"] .board-switch__meta { color: var(--on-accent-soft); }
+:root[data-skin="m3"] .skin-select { border-radius: 8px; }
+/* tonal containers instead of outlines */
+:root[data-skin="m3"] .metrics, :root[data-skin="m3"] .mile-wrap { border-color: transparent; background: var(--surface-2); }
+:root[data-skin="m3"] .metric { border-left-color: var(--surface); }
+:root[data-skin="m3"] th { background: var(--surface-3); border-bottom-color: transparent; }
+:root[data-skin="m3"] td { border-bottom-color: var(--surface); }
+:root[data-skin="m3"] .qa { border-color: transparent; background: var(--surface-2); border-radius: 16px; }
+:root[data-skin="m3"] .qa:hover { background: var(--surface-3); border-color: transparent; }
+:root[data-skin="m3"] .issue { border-radius: 12px; }
+:root[data-skin="m3"] .menu { border-color: transparent; background: var(--surface-2); border-radius: 8px; box-shadow: var(--pop-shadow); }
+:root[data-skin="m3"] .assist { border-left-color: transparent; background: var(--surface-2); border-radius: 16px 0 0 16px; }
+:root[data-skin="m3"] .assist__src button { border-radius: 12px; }
+:root[data-skin="m3"] .toast { border-radius: 8px; left: calc(24px + env(safe-area-inset-left, 0px)); transform: none; }
+
+/* ---------- review controls ---------- */
+.skin-select {
+  height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--fg); font-size: 13px; flex: none;
+}
+
+/* ---------- assistant side sheet ---------- */
+body.assist-open .assist-btn { background: var(--accent-soft); color: var(--on-accent-soft); }
+.assist {
+  position: fixed; z-index: 50; top: 0; right: 0; bottom: 0; width: min(var(--assist-w), 100vw);
+  display: flex; flex-direction: column; background: var(--surface); color: var(--fg);
+  border-left: 1px solid var(--line); box-shadow: var(--pop-shadow);
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+.assist__head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.assist__head b { font-size: 15px; font-family: var(--font-display); }
+.assist__head .tool-btn { margin-left: auto; }
+.assist__src { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 12px 14px 0; }
+.assist__src button {
+  display: flex; flex-direction: column; gap: 1px; text-align: left; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); font-weight: 600; font-size: 13px; min-width: 0;
+}
+.assist__src button small { font-weight: 400; font-size: 11.5px; color: var(--fg-3); overflow-wrap: anywhere; }
+.assist__src button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--on-accent-soft); }
+.assist__src button[aria-selected="true"] small { color: var(--on-accent-soft); }
+.assist__agent {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 10px; align-items: start;
+  margin: 10px 14px 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font-size: 13px;
+}
+.assist__agent input { margin: 3px 0 0; accent-color: var(--accent); }
+.assist__agent small { grid-column: 2; color: var(--fg-3); font-size: 12px; }
+.assist__body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.msg { font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.msg p { margin: 0 0 6px; }
+.msg p:last-child { margin-bottom: 0; }
+.msg--user { align-self: flex-end; max-width: 88%; background: var(--accent); color: var(--on-accent); padding: 8px 12px; border-radius: 14px 14px 4px 14px; }
+.msg__who { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-3); margin-bottom: 4px; }
+.ctxchip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 8px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--fg-2); white-space: nowrap;
+}
+.msg--user .ctxchip { background: transparent; border-color: currentColor; color: inherit; }
+.tool {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font-size: 12.5px;
+}
+.tool code { font-family: var(--font-mono); font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.tool small { grid-column: 2 / -1; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-3); overflow-wrap: anywhere; }
+.tool svg { color: var(--ok); }
+.cite { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); border-bottom: 1px dotted currentColor; cursor: pointer; white-space: nowrap; }
+.propose { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--r-md); font-size: 13px; }
+.propose code { font-family: var(--font-mono); font-size: 12px; }
+.propose .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.propose .btn { height: 30px; padding: 0 12px; }
+.ondev { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.ondev h3 { margin: 0; font-size: 15px; font-family: var(--font-display); }
+.ondev p { margin: 0; color: var(--fg-2); }
+.ondev ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--r-md); }
+.ondev li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 9px 12px; border-top: 1px solid var(--line); }
+.ondev li:first-child { border-top: 0; }
+.ondev li small { grid-column: 1; color: var(--fg-3); font-size: 12px; font-family: var(--font-mono); }
+.ondev li .pill { grid-row: span 2; align-self: center; }
+.assist__input { border-top: 1px solid var(--line); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.assist__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.assist__chips button { font: inherit; }
+.assist__input textarea {
+  width: 100%; resize: none; border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  padding: 8px 10px; background: var(--surface); color: var(--fg); font: 13.5px/1.5 var(--font-ui);
+}
+.assist__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--fg-3); }
+@media (min-width: 1400px) {
+  body.assist-open { padding-right: var(--assist-w); }
+  body.assist-open .assist { box-shadow: none; }
+}
+@media (max-width: 1600px) {
+  .brand__sub, #src-btn .lbl, #lang-btn .lbl, #theme-btn .lbl { display: none; }
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 1280px) {
+  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .metric:nth-child(4) { border-left: 0; }
+  .metric:nth-child(n+4) { border-top: 1px solid var(--line); }
+  .facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1600px) {
+  .search { width: auto; }
+  .search > span { display: none; }
+}
+@media (max-width: 1500px) {
+  .board-switch__meta { display: none; }
+}
+@media (max-width: 1100px) {
+  .span-8, .span-4, .span-7, .span-5 { grid-column: span 12; }
+  .search { width: 160px; }
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .rail { position: static; flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 4px; scrollbar-width: thin; }
+  .rail__group { flex-direction: row; gap: 2px; }
+  .rail__group + .rail__group { padding-left: 6px; border-left: 1px solid var(--line); }
+  .rail__label { display: none; }
+  .rail .badge { margin-left: 2px; }
+  .topbar__in { flex-wrap: wrap; }
+  .chips { order: 10; flex-basis: 100%; }
+  .search { display: none; }
+  .divider-v { display: none; }
+  .brand__sub { display: none; }
+}
+@media (max-width: 640px) {
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric:nth-child(odd) { border-left: 0; }
+  .metric:nth-child(4) { border-left: 1px solid var(--line); }
+  .metric:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bootpath { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .bootpath span { display: none; }
+  .quick { grid-template-columns: minmax(0, 1fr); }
+  .board-switch__meta { display: none; }
+  .tool-btn .lbl { display: none; }
+  .boot__row { grid-template-columns: 56px minmax(0, 1fr) 46px; gap: 6px; }
+  .axis { margin-left: 62px; margin-right: 52px; }
+  .seg__lbl { display: none; }
+  h1 { font-size: 24px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .btn, .qa, .rail a, .tool-btn { transition: background-color .15s, border-color .15s, color .15s; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-overview" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12.5 15H17"/></symbol>
+    <symbol id="i-logs" viewBox="0 0 24 24"><path d="M4 6h16M4 10h11M4 14h16M4 18h8"/></symbol>
+    <symbol id="i-timeline" viewBox="0 0 24 24"><path d="M3 6h7M13 6h8M3 12h4M10 12h11M3 18h11M17 18h4"/><circle cx="11.5" cy="6" r="1.5"/><circle cx="8.5" cy="12" r="1.5"/><circle cx="15.5" cy="18" r="1.5"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 20h18M5 16l4-5 4 3 6-8"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-apps" viewBox="0 0 24 24"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></symbol>
+    <symbol id="i-bug" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="13" rx="5"/><path d="M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 8l3 2M20 8l-3 2M4 19l3-2M20 19l-3-2M12 11v9"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-package" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-usb" viewBox="0 0 24 24"><path d="M12 3v15M12 3l-2.5 3h5zM12 14l-4-3V8M12 12l4-3V7"/><circle cx="12" cy="19.5" r="1.8"/><rect x="14.8" y="5" width="2.4" height="2.4"/><circle cx="8" cy="7" r="1.2"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7 15h10"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M10 9v6M14 9v6"/></symbol>
+    <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3c.6 4.2 2.8 6.4 7 7-4.2.6-6.4 2.8-7 7-.6-4.2-2.8-6.4-7-7 4.2-.6 6.4-2.8 7-7z"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
+    <symbol id="i-lang" viewBox="0 0 24 24"><path d="M4 5h9M8.5 3v2M6 5c.5 3.5 2.5 6 6 7.5M11 5c-.8 4-3.2 6.8-7 8.5M13 21l4-9 4 9M14.4 18h5.2"/></symbol>
+    <symbol id="i-bridge" viewBox="0 0 24 24"><path d="M2 17h20M5 17V9M19 17V9M2 9c3 0 6-3 10-3s7 3 10 3M9 17v-4.5M15 17v-4.5M12 17v-5"/></symbol>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="topbar__in">
+    <a class="brand" href="#overview" aria-label="alb home">
+      <span class="brand__mark"><svg class="i"><use href="#i-bridge"/></svg></span>
+      <span><span class="brand__name">alb</span> <span class="brand__sub">android-llm-bridge</span></span>
+    </a>
+    <span class="divider-v"></span>
+    <div style="position:relative">
+      <button class="board-switch" id="board-btn" aria-haspopup="menu" aria-expanded="false">
+        <span class="board-switch__dot"></span>
+        <span class="board-switch__name">board-a</span>
+        <span class="board-switch__meta mono">board_x · userdebug</span>
+        <svg class="i"><use href="#i-down"/></svg>
+      </button>
+      <div class="menu menu--left" id="board-menu" role="menu" hidden>
+        <button role="menuitem" data-board="board-a"><span class="dot dot--ok" style="margin-top:6px"></span><span>board-a <span class="mono" style="color:var(--fg-3)">· COM7</span></span><small data-en="adb · serial · in Android">adb · 串口 · 已进系统</small></button>
+        <button role="menuitem" data-board="board-b"><span class="dot dot--warn" style="margin-top:6px"></span><span>board-b <span class="mono" style="color:var(--fg-3)">· COM9</span></span><small data-en="serial only · in bootloader">只有串口 · 停在 bootloader</small></button>
+        <button role="menuitem" data-board="board-c"><span class="dot dot--idle" style="margin-top:6px"></span><span>board-c <span class="mono" style="color:var(--fg-3)">· COM12</span></span><small data-en="no signal for 2 days">两天没有信号</small></button>
+        <div class="menu__sep"></div>
+        <button role="menuitem" data-toast="Board table lives on the bench page.|板子表在「台架」页维护。"><svg class="i"><use href="#i-sliders"/></svg><span data-en="Manage boards">管理板子表</span><small data-en="COM port, baud, fastboot product, flash list per board">每块板的串口、波特率、fastboot product、烧录名单</small></button>
+      </div>
+    </div>
+    <div class="chips" aria-label="channels">
+      <span class="chan" data-state="ok" title="adb over the bench tunnel"><span class="chan__dot"></span><b>adb</b> <span data-en="root · 89 ms">root · 89 ms</span></span>
+      <span class="chan" data-state="ok" title="serial console"><span class="chan__dot"></span><b data-en="serial">串口</b> <span class="mono">COM7 115200</span></span>
+      <span class="chan" data-state="idle" title="fastboot"><span class="chan__dot"></span><b>fastboot</b> <span data-en="not listed">未出现</span></span>
+      <span class="chan" data-state="ok" title="bench agent"><span class="chan__dot"></span><b data-en="bench">台架</b> <span>bench-01</span></span>
+    </div>
+    <span class="topbar__spacer"></span>
+    <label class="search" for="cmd"><svg class="i"><use href="#i-search"/></svg><span data-en="Search or run…">搜索或执行命令</span><kbd>⌘K</kbd><input id="cmd" type="hidden"></label>
+    <select class="skin-select" id="skin" aria-label="Style" title="设计风格对比">
+      <option value="m3" data-en="Style: Material 3 (recommended)">风格:Material 3(推荐)</option>
+      <option value="blend" data-en="Style: Neutral + Glass dark">风格:中性 + 深色用 Glass</option>
+      <option value="neutral" data-en="Style: Neutral">风格:中性(Android)</option>
+      <option value="liquid" data-en="Style: Liquid Glass">风格:Apple 液态玻璃</option>
+      <option value="apple" data-en="Style: Apple">风格:Apple 克制</option>
+      <option value="atelier" data-en="Style: Atelier">风格:Atelier 暖玻璃</option>
+      <option value="glass" data-en="Style: Glass">风格:Glass 极光</option>
+      <option value="relief" data-en="Style: Relief">风格:Relief 新拟态</option>
+    </select>
+    <button class="tool-btn assist-btn" id="assist-btn" aria-controls="assist" aria-expanded="false" title="Assistant"><svg class="i"><use href="#i-spark"/></svg><span class="lbl" data-en="Assistant">助手</span></button>
+    <button class="tool-btn" id="src-btn" aria-pressed="false" title="Show where each panel's data comes from"><svg class="i"><use href="#i-code"/></svg><span class="lbl" data-en="Data sources">数据来源</span></button>
+    <button class="tool-btn" id="lang-btn" title="Language"><svg class="i"><use href="#i-lang"/></svg><span class="lbl" id="lang-lbl">EN</span></button>
+    <button class="tool-btn" id="theme-btn" title="Theme"><svg class="i" id="theme-ic"><use href="#i-monitor"/></svg><span class="lbl" id="theme-lbl" data-en="System">跟随系统</span></button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="rail" aria-label="Sections">
+    <div class="rail__group">
+      <div class="rail__label" data-en="Device">设备</div>
+      <a href="#overview" aria-current="page"><svg class="i"><use href="#i-overview"/></svg><span data-en="Overview">总览</span></a>
+      <a href="#console"><svg class="i"><use href="#i-terminal"/></svg><span data-en="Console">控制台</span></a>
+      <a href="#logs"><svg class="i"><use href="#i-logs"/></svg><span data-en="Logs">日志</span></a>
+      <a href="#timeline"><svg class="i"><use href="#i-timeline"/></svg><span data-en="Timeline">时间轴</span><span class="badge badge--new" data-en="new">新</span></a>
+      <a href="#perf"><svg class="i"><use href="#i-chart"/></svg><span data-en="Performance">性能</span></a>
+      <a href="#files"><svg class="i"><use href="#i-folder"/></svg><span data-en="Files">文件</span></a>
+      <a href="#apps"><svg class="i"><use href="#i-apps"/></svg><span data-en="Apps">应用</span></a>
+      <a href="#screen"><svg class="i"><use href="#i-phone"/></svg><span data-en="Screen">屏幕</span></a>
+      <a href="#diag"><svg class="i"><use href="#i-bug"/></svg><span data-en="Problems">问题</span><span class="badge">4</span></a>
+    </div>
+    <div class="rail__group">
+      <div class="rail__label" data-en="Flash">烧录</div>
+      <a href="#fastboot"><svg class="i"><use href="#i-bolt"/></svg><span>fastboot</span></a>
+      <a href="#package"><svg class="i"><use href="#i-package"/></svg><span data-en="Full package">整包</span></a>
+      <a href="#board-config"><svg class="i"><use href="#i-sliders"/></svg><span data-en="Board config">配置分区</span></a>
+    </div>
+    <div class="rail__group">
+      <div class="rail__label" data-en="Bench">台架</div>
+      <a href="#bench-usb"><svg class="i"><use href="#i-usb"/></svg><span data-en="USB &amp; boards">USB 与板子</span></a>
+      <a href="#agent"><svg class="i"><use href="#i-server"/></svg><span data-en="Agent">台架 agent</span></a>
+    </div>
+    <div class="rail__group">
+      <div class="rail__label" data-en="Assistant">助手</div>
+      <a href="#chat"><svg class="i"><use href="#i-chat"/></svg><span data-en="Chat">对话</span></a>
+      <a href="#playground"><svg class="i"><use href="#i-flask"/></svg><span data-en="Playground">模型试验</span></a>
+      <a href="#sessions"><svg class="i"><use href="#i-history"/></svg><span data-en="Sessions">会话记录</span></a>
+    </div>
+    <div class="rail__group">
+      <div class="rail__label" data-en="System">系统</div>
+      <a href="#doctor"><svg class="i"><use href="#i-check"/></svg><span data-en="Health check">环境检查</span></a>
+      <a href="#audit"><svg class="i"><use href="#i-shield"/></svg><span data-en="Audit log">操作记录</span></a>
+      <a href="#settings"><svg class="i"><use href="#i-gear"/></svg><span data-en="Settings">设置</span></a>
+    </div>
+  </nav>
+
+  <main class="main" id="main">
+    <div class="pagehead">
+      <div>
+        <div class="eyebrow"><span data-en="Device · board-a on bench-01">设备 · bench-01 上的 board-a</span><span class="sample" data-en="Design draft · sample data">设计稿 · 示例数据</span></div>
+        <h1 data-en="Overview">总览</h1>
+        <p><span data-en="Everything the board, the bench and the logs say right now.">板子、台架和日志此刻的状态,一屏看全。</span> <span class="num" id="updated" style="color:var(--fg-3)"></span></p>
+      </div>
+      <div class="actions">
+        <div style="position:relative">
+          <button class="btn" id="reboot-btn" aria-haspopup="menu" aria-expanded="false"><svg class="i"><use href="#i-power"/></svg><span data-en="Reboot">重启</span><svg class="i"><use href="#i-down"/></svg></button>
+          <div class="menu menu--right" id="reboot-menu" role="menu" hidden>
+            <button role="menuitem" data-reboot="system"><svg class="i"><use href="#i-power"/></svg><span data-en="To Android">重启到系统</span><small data-en="adb reboot; falls back to the serial console if adb is gone">adb reboot;adb 不在时改走串口</small></button>
+            <button role="menuitem" data-reboot="bootloader"><svg class="i"><use href="#i-bolt"/></svg><span data-en="To bootloader (fastboot)">重启到 bootloader(fastboot)</span><small data-en="adb drops off; fastboot appears on the bench">adb 会断开,台架上出现 fastboot</small></button>
+            <button role="menuitem" data-reboot="recovery"><svg class="i"><use href="#i-shield"/></svg><span data-en="To recovery">重启到 recovery</span><small data-en="adb sideload becomes available">可以用 adb sideload</small></button>
+            <button role="menuitem" data-reboot="fastboot"><svg class="i"><use href="#i-package"/></svg><span data-en="To fastbootd">重启到 fastbootd</span><small data-en="userspace fastboot; needed for logical partitions">用户态 fastboot,刷逻辑分区要用它</small></button>
+          </div>
+        </div>
+        <button class="btn" id="breakin-btn"><svg class="i"><use href="#i-stop"/></svg><span data-en="Stop in bootloader">停在 bootloader</span></button>
+        <button class="btn btn--primary" id="cap-btn"><svg class="i"><use href="#i-record"/></svg><span data-en="Record a boot">录一次开机</span></button>
+      </div>
+    </div>
+
+    <div class="arm" id="arm" hidden role="alert">
+      <svg class="i" style="color:var(--warn)"><use href="#i-alert"/></svg>
+      <p id="arm-text"></p>
+      <div class="arm__btns"><button class="btn btn--danger" id="arm-go"></button><button class="btn" id="arm-cancel" data-en="Cancel">取消</button></div>
+    </div>
+
+    <section class="grid">
+      <!-- board state -->
+      <article class="panel span-8">
+        <div class="panel__head">
+          <h2 data-en="Board state">板子状态</h2>
+          <span class="hint" data-en="where it is in the boot path, read from serial, adb and the bench USB">它走到开机的哪一步 —— 从串口、adb、台架 USB 三处合起来判断</span>
+          <div class="src right"><code>GET /devices/{serial}/details</code><code>GET /api/info/{panel}</code><span class="src__new" data-en="new: mode from serial prompt + USB">新:串口提示符 + USB 判模式</span></div>
+        </div>
+        <div class="state__now">
+          <span class="pill pill--ok"><span class="dot dot--ok"></span><span data-en="Booted">已开机</span></span>
+          <span class="state__big">Android 14 · <span data-en="boot completed">开机完成</span></span>
+          <span class="state__meta mono"><span>sys.boot_completed=1</span> · <span data-en="up 4 h 12 m">已运行 4 小时 12 分</span> · <span data-en="last reboot 06:31 (adb reboot)">上次重启 06:31(adb reboot)</span></span>
+        </div>
+        <ol class="bootpath" aria-label="boot path">
+          <li class="done"><b data-en="Power on">上电</b><span>ROM / SPL</span></li>
+          <li class="done"><b>Bootloader</b><span>3.1 s</span></li>
+          <li class="done"><b data-en="Kernel">内核</b><span>+2.7 s</span></li>
+          <li class="done"><b data-en="Android start">Android 启动</b><span>+13.2 s</span></li>
+          <li class="now"><b data-en="Booted">开机完成</b><span>24.6 s</span></li>
+        </ol>
+        <div class="altmodes">
+          <span data-en="Other modes this view can tell apart:">这里还能认出的其他状态:</span>
+          <span class="pill pill--idle">fastboot</span><span class="pill pill--idle">fastbootd</span><span class="pill pill--idle">recovery</span><span class="pill pill--idle" data-en="download mode">下载模式</span><span class="pill pill--idle" data-en="kernel panic">内核崩溃</span><span class="pill pill--idle" data-en="no power / no signal">没电 / 没信号</span>
+        </div>
+        <dl class="facts">
+          <div><dt data-en="Product">型号</dt><dd class="mono">board_x</dd></div>
+          <div><dt data-en="Build">构建</dt><dd class="mono">UP1A.231005.007</dd></div>
+          <div><dt data-en="Type">类型</dt><dd>userdebug · test-keys</dd></div>
+          <div><dt data-en="Security patch">安全补丁</dt><dd class="num">2026-09-05</dd></div>
+          <div class="wide"><dt data-en="Kernel">内核</dt><dd class="mono">6.1.43-android14-11 · aarch64 · SMP PREEMPT</dd></div>
+          <div><dt data-en="Active slot">当前槽位</dt><dd class="mono">_a <span style="color:var(--fg-3)">(_b bootable)</span></dd></div>
+          <div><dt>SELinux</dt><dd>Enforcing</dd></div>
+          <div><dt>adbd</dt><dd>root</dd></div>
+          <div><dt data-en="Battery">电池</dt><dd class="num">87% · 31.2 °C · USB</dd></div>
+          <div><dt>userdata</dt><dd class="num">23.1 / 108 GiB</dd></div>
+          <div><dt data-en="Serial number">序列号</dt><dd class="mono">0123456789ABCDEF</dd></div>
+        </dl>
+      </article>
+
+      <!-- connections -->
+      <article class="panel span-4 panel--anchor">
+        <div class="panel__head">
+          <h2 data-en="Connections">连接</h2>
+          <span class="hint" data-en="the four ways to reach this board">能够着这块板子的四条路</span>
+          <div class="src"><code>GET /agent/status</code><code>GET /api/bench/board</code><code>GET /api/flash/status</code></div>
+        </div>
+        <div class="conns__list">
+          <div class="conn">
+            <svg class="i conn__icon"><use href="#i-terminal"/></svg>
+            <span class="conn__name"><span class="dot dot--ok"></span>adb</span>
+            <span class="conn__side"><svg class="spark-s" id="sp-adb"></svg><span class="mono num" id="adb-rtt">89 ms</span></span>
+            <span class="conn__detail" data-en="through the bench tunnel · root · device 0123456789ABCDEF">经台架隧道 · root · 设备 0123456789ABCDEF</span>
+          </div>
+          <div class="conn">
+            <svg class="i conn__icon"><use href="#i-plug"/></svg>
+            <span class="conn__name"><span class="dot dot--ok"></span><span data-en="Serial console">串口控制台</span></span>
+            <span class="conn__side"><svg class="spark-s" id="sp-uart"></svg><span class="mono num" id="uart-rate">1.8 KB/s</span></span>
+            <span class="conn__detail" data-en="COM7 · 115200 8N1 · 2 readers (capture, web console)">COM7 · 115200 8N1 · 2 个读者(抓取、网页控制台)</span>
+          </div>
+          <div class="conn">
+            <svg class="i conn__icon"><use href="#i-bolt"/></svg>
+            <span class="conn__name"><span class="dot dot--idle"></span>fastboot</span>
+            <span class="conn__side"><button class="btn btn--ghost" data-reboot="bootloader" data-en="Go there">切过去</button></span>
+            <span class="conn__detail" data-en="not listed on the bench (the board is in Android) · flash list: 24 partitions">台架上没有(板子在系统里)· 烧录名单 24 个分区</span>
+          </div>
+          <div class="conn">
+            <svg class="i conn__icon"><use href="#i-server"/></svg>
+            <span class="conn__name"><span class="dot dot--ok"></span><span data-en="Bench agent">台架 agent</span></span>
+            <span class="conn__side"><span class="pill pill--ok" data-en="up 5 d">在线 5 天</span></span>
+            <span class="conn__detail mono">bench-01 · build a1b2c3d4e5f6 · Windows 11</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- performance -->
+      <article class="panel span-12">
+        <div class="panel__head">
+          <h2 data-en="Performance">性能</h2>
+          <span class="hint" data-en="last 5 minutes, sampled every 2 s">最近 5 分钟,每 2 秒一个点</span>
+          <div class="src"><code>WS /metrics/stream</code><code>GET /metrics/summary</code></div>
+          <div class="right"><a class="btn btn--ghost" href="#perf" data-en="Open charts">看大图</a></div>
+        </div>
+        <div class="metrics" id="metrics"></div>
+      </article>
+
+      <!-- last boot -->
+      <article class="panel span-7">
+        <div class="panel__head">
+          <h2 data-en="Last boot">上次开机</h2>
+          <span class="hint" data-en="serial, dmesg and logcat on one clock">串口、dmesg、logcat 放在同一个时钟上</span>
+          <div class="src"><code>alb timeline</code><span class="src__new" data-en="new: GET /api/timeline/boots">新:GET /api/timeline/boots</span></div>
+        </div>
+        <div class="legend">
+          <span><i class="c-uart"></i><span data-en="serial (bootloader)">串口(bootloader)</span></span>
+          <span><i class="c-kernel"></i>dmesg <span data-en="(kernel)">(内核)</span></span>
+          <span><i class="c-logcat"></i>logcat <span data-en="(Android)">(Android)</span></span>
+        </div>
+        <div class="boot" id="boot"></div>
+        <div class="axis" id="axis"></div>
+        <p class="note" data-en="This boot took 24.6 s, 1.3 s longer than the one before. Most of it is system_server: boot_progress_system_run to ams_ready grew from 6.4 s to 7.6 s.">这次开机 24.6 秒,比上次多 1.3 秒。多出来的主要在 system_server:从 boot_progress_system_run 到 ams_ready,由 6.4 秒变成 7.6 秒。</p>
+        <div class="mile-wrap">
+          <table>
+            <thead><tr><th data-en="Milestone">节点</th><th data-en="Source">来源</th><th class="num" data-en="At">时刻</th><th class="num" data-en="vs previous">比上次</th></tr></thead>
+            <tbody id="miles"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <!-- problems -->
+      <article class="panel span-5">
+        <div class="panel__head">
+          <h2 data-en="Problems">问题</h2>
+          <span class="hint" data-en="since the last boot, plus what the previous boot left behind">本次开机以来,以及上一次开机留下的</span>
+          <div class="src"><code>GET /api/diag/anr</code><code>GET /api/diag/tombstone</code><span class="src__new" data-en="new: pstore, avc count">新:pstore、avc 计数</span></div>
+        </div>
+        <div class="issues">
+          <div class="issue" data-sev="bad">
+            <span class="issue__ic"><svg class="i"><use href="#i-alert"/></svg></span>
+            <div class="issue__title"><span data-en="Kernel panic">内核崩溃</span><span class="pill pill--bad" data-en="previous boot">上一次开机</span></div>
+            <div class="issue__body">Unable to handle kernel NULL pointer dereference at virtual address 0000000000000008 · pc : sensors_poll+0x4c</div>
+            <div class="issue__meta"><span>pstore · console-ramoops-0</span><span class="num">10-27 21:04</span><span class="acts"><button class="btn btn--ghost" data-en="Open">打开</button><button class="btn btn--ghost explain"><svg class="i"><use href="#i-spark"/></svg><span data-en="Explain">解释</span></button></span></div>
+          </div>
+          <div class="issue" data-sev="bad">
+            <span class="issue__ic"><svg class="i"><use href="#i-bug"/></svg></span>
+            <div class="issue__title"><span data-en="Native crash">原生进程崩溃</span><span class="pill pill--bad">SIGSEGV</span></div>
+            <div class="issue__body">/vendor/bin/hw/android.hardware.sensors-service · fault addr 0x0 · tombstone_03</div>
+            <div class="issue__meta"><span>tombstone</span><span class="num">10-28 08:57</span><span class="acts"><button class="btn btn--ghost" data-en="Open">打开</button><button class="btn btn--ghost explain"><svg class="i"><use href="#i-spark"/></svg><span data-en="Explain">解释</span></button></span></div>
+          </div>
+          <div class="issue" data-sev="warn">
+            <span class="issue__ic"><svg class="i"><use href="#i-history"/></svg></span>
+            <div class="issue__title">ANR<span class="pill pill--warn">com.example.camera</span></div>
+            <div class="issue__body">Input dispatching timed out (Waited 5003ms for FocusEvent)</div>
+            <div class="issue__meta"><span>/data/anr</span><span class="num">10-28 09:12</span><span class="acts"><button class="btn btn--ghost" data-en="Open">打开</button><button class="btn btn--ghost explain"><svg class="i"><use href="#i-spark"/></svg><span data-en="Explain">解释</span></button></span></div>
+          </div>
+          <div class="issue" data-sev="warn">
+            <span class="issue__ic"><svg class="i"><use href="#i-shield"/></svg></span>
+            <div class="issue__title"><span data-en="SELinux denials">SELinux 拒绝</span><span class="pill pill--warn" data-en="14 in the last hour">最近 1 小时 14 条</span></div>
+            <div class="issue__body">avc: denied { read } for comm="sensors" name="iio:device0" scontext=u:r:hal_sensors_default:s0</div>
+            <div class="issue__meta"><span>dmesg / logcat</span><span class="num">10-28 09:31</span><span class="acts"><button class="btn btn--ghost" data-en="Open">打开</button><button class="btn btn--ghost explain"><svg class="i"><use href="#i-spark"/></svg><span data-en="Explain">解释</span></button></span></div>
+          </div>
+        </div>
+      </article>
+
+      <!-- activity -->
+      <article class="panel span-7">
+        <div class="panel__head">
+          <h2 data-en="Recent activity">最近操作</h2>
+          <span class="hint" data-en="from the web, the CLI and AI sessions">来自网页、命令行和 AI 会话</span>
+          <div class="src"><code>WS /audit/stream</code></div>
+          <div class="right"><a class="btn btn--ghost" href="#audit" data-en="All">全部</a></div>
+        </div>
+        <ul class="acts-list">
+          <li><time>09:40</time><svg class="i"><use href="#i-bolt"/></svg><span class="what"><span data-en="Flashed boot_a ← boot.img (96 MiB)">烧写 boot_a ← boot.img(96 MiB)</span><small data-en="web · checked product board_x first · 3.1 s">网页 · 先核对了 product board_x · 3.1 秒</small></span><span class="pill pill--ok">ok</span></li>
+          <li><time>09:36</time><svg class="i"><use href="#i-plug"/></svg><span class="what"><span data-en="Serial capture, 30 s, 412 lines">串口抓取 30 秒,412 行</span><small>uart-2026-10-28T09-36.log</small></span><span class="pill pill--ok">ok</span></li>
+          <li><time>09:31</time><svg class="i"><use href="#i-terminal"/></svg><span class="what"><span class="mono">setprop persist.vendor.sensors.debug 1</span><small data-en="CLI · alb shell">命令行 · alb shell</small></span><span class="pill pill--ok">exit 0</span></li>
+          <li><time>09:12</time><svg class="i"><use href="#i-spark"/></svg><span class="what"><span data-en="AI session asked for the last tombstone">AI 会话读取了最近一个 tombstone</span><small data-en="MCP · alb_tombstone_pull">MCP · alb_tombstone_pull</small></span><span class="pill pill--ok">ok</span></li>
+          <li><time>08:58</time><svg class="i"><use href="#i-camera"/></svg><span class="what"><span data-en="Screenshot 1080 × 2400">截屏 1080 × 2400</span><small>screenshot-0858.png</small></span><span class="pill pill--ok">ok</span></li>
+        </ul>
+      </article>
+
+      <!-- quick actions -->
+      <article class="panel span-5">
+        <div class="panel__head">
+          <h2 data-en="Common tasks">常用操作</h2>
+          <span class="hint" data-en="each opens its page with this board selected">每项打开对应页面,已选好这块板</span>
+        </div>
+        <div class="quick">
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-terminal"/></svg></span><b data-en="adb shell">adb shell</b><small data-en="terminal in the browser">浏览器里的终端</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-plug"/></svg></span><b data-en="Serial console">串口控制台</b><small data-en="works when adb is down">adb 不通时也能用</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-logs"/></svg></span><b data-en="Live logcat">实时 logcat</b><small data-en="filter by tag, level, pid">按 tag / 级别 / pid 过滤</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-timeline"/></svg></span><b data-en="Record a timeline">录时间轴</b><small data-en="logcat + dmesg + serial">logcat + dmesg + 串口</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-camera"/></svg></span><b data-en="Screenshot">截屏</b><small data-en="saved to the workspace">存到工作区</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-bug"/></svg></span><b>bugreport</b><small data-en="zip, about 2 minutes">zip,约 2 分钟</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-package"/></svg></span><b data-en="Flash a package">烧整包</b><small data-en="checked plan, then run">先检查计划,再执行</small></button>
+          <button class="qa"><span class="qa__ic"><svg class="i"><use href="#i-sliders"/></svg></span><b data-en="Board config">配置分区</b><small data-en="read back KEY=VALUE">读回 KEY=VALUE</small></button>
+        </div>
+      </article>
+    </section>
+  </main>
+</div>
+
+<aside class="assist" id="assist" aria-label="Assistant" hidden>
+  <div class="assist__head">
+    <svg class="i" style="color:var(--accent)"><use href="#i-spark"/></svg><b data-en="Assistant">助手</b>
+    <span class="pill pill--info">board-a</span>
+    <button class="tool-btn" id="assist-close" aria-label="Close" data-en="Close">关闭</button>
+  </div>
+  <div class="assist__src" role="tablist" aria-label="Model">
+    <button role="tab" aria-selected="true" data-msrc="host"><span data-en="Host model">本机模型</span><small>ollama · qwen2.5:7b</small></button>
+    <button role="tab" aria-selected="false" data-msrc="api"><span data-en="Cloud API">云端 API</span><small data-en="OpenAI-compatible">OpenAI 兼容</small></button>
+    <button role="tab" aria-selected="false" data-msrc="board"><span data-en="On the board">板上模型</span><small data-en="not connected">未连接</small></button>
+  </div>
+  <label class="assist__agent" for="agent-mode">
+    <input type="checkbox" id="agent-mode" checked>
+    <span data-en="Agent mode: may use alb tools">Agent 模式:允许调用 alb 工具</span>
+    <small data-en="Read-only tools run straight away; anything that changes the board asks you first.">只读的工具直接跑;会改动板子的先问你。</small>
+  </label>
+
+  <div class="assist__body" id="assist-chat">
+    <div class="msg msg--user">
+      <p><span class="ctxchip" id="ctx-in-msg" data-en="@ Problem · kernel panic (pstore)">@ 问题 · 内核崩溃(pstore)</span></p>
+      <p data-en="What caused the kernel panic on the previous boot?">上一次开机的内核崩溃是怎么回事?</p>
+    </div>
+    <div class="tool">
+      <svg class="i"><use href="#i-check"/></svg><code>alb_diag_pstore</code><span class="pill pill--idle" data-en="read-only · 0.4 s">只读 · 0.4 s</span>
+      <small>console-ramoops-0 · 2 records · last 40 lines read</small>
+    </div>
+    <div class="tool">
+      <svg class="i"><use href="#i-check"/></svg><code>alb_log_search "sensors_poll|iio:device0"</code><span class="pill pill--idle" data-en="read-only · 1.1 s">只读 · 1.1 s</span>
+      <small>dmesg 9 · logcat 31 · timeline 09:30–09:32</small>
+    </div>
+    <div class="msg">
+      <div class="msg__who"><svg class="i"><use href="#i-spark"/></svg>qwen2.5:7b · <span data-en="host">本机</span></div>
+      <p data-en="The crash is in the sensor driver at sensors_poll+0x4c, reading address 0x8: a null pointer plus an 8-byte offset, which usually means a struct pointer was used before it was set up.">崩溃点在传感器驱动 sensors_poll+0x4c,访问的地址是 0x8:空指针再加 8 字节偏移,通常是结构体指针还没建好就去取了里面的字段。</p>
+      <p data-en="In the same second there are 14 SELinux denials: hal_sensors_default cannot read iio:device0. Likely order: the HAL fails to open the device, the driver never fills its private data, and poll then dereferences it. This is an inference, not yet confirmed.">同一秒内有 14 条 SELinux 拒绝:hal_sensors_default 读不了 iio:device0。推测顺序:HAL 打开设备失败 → 驱动的私有数据没建起来 → poll 时用到空指针。这一步是推测,还没验证。</p>
+      <p><span data-en="Evidence:">依据:</span> <span class="cite">pstore:112</span> · <span class="cite">dmesg 09:31:04.218</span> · <span class="cite">logcat 09:31:04.226</span></p>
+    </div>
+    <div class="propose">
+      <span data-en="To check this, reproduce once with SELinux permissive. This changes the board until the next reboot.">要验证,可以临时放开 SELinux 再复现一次。这会改变板子状态,重启后恢复。</span>
+      <code>adb shell setenforce 0</code>
+      <div class="row"><button class="btn btn--primary" id="propose-run" data-en="Run it">执行</button><button class="btn" id="propose-skip" data-en="Not now">先不用</button></div>
+    </div>
+  </div>
+
+  <div class="assist__body ondev" id="assist-board" hidden>
+    <h3 data-en="Talk to a model running on the board">和板子上跑的模型对话</h3>
+    <p data-en="For trying on-device inference: quality, first-token latency, tokens per second. alb reaches the board's local server through the device port channel, so the bench agent does not change.">用来试端侧推理:效果、首字延迟、每秒 token 数。alb 经设备端口通道连到板上的推理服务,台架 agent 不用改。</p>
+    <ul>
+      <li><span>llama.cpp server</span><small>tcp:8080 · /v1/chat/completions</small><span class="pill pill--idle" data-en="not found">未发现</span></li>
+      <li><span>Android AICore (Gemini Nano)</span><small data-en="needs a small bridge app on the board">需要板上装一个桥接应用</small><span class="pill pill--idle" data-en="not found">未发现</span></li>
+      <li><span data-en="Custom OpenAI-compatible server">自定义 OpenAI 兼容服务</span><small data-en="enter the port on the board">填板上的端口</small><span class="pill pill--idle">—</span></li>
+    </ul>
+    <p data-en="Once found, its first-token latency and tokens per second are shown next to the host model for the same prompt.">找到之后,同一个问题在板上和主机上各跑一次,首字延迟和每秒 token 数并排显示。</p>
+    <div><button class="btn" id="probe-btn"><svg class="i"><use href="#i-search"/></svg><span data-en="Look for a server on the board">探测板上服务</span></button></div>
+  </div>
+
+  <form class="assist__input" id="assist-form">
+    <div class="assist__chips">
+      <span class="ctxchip" id="ctx-chip" data-en="@ Problem · kernel panic">@ 问题 · 内核崩溃</span>
+      <button type="button" class="ctxchip" id="ctx-add" data-en="+ this page">+ 当前页面</button>
+      <button type="button" class="ctxchip" data-en="+ last 5 min of logs">+ 最近 5 分钟日志</button>
+    </div>
+    <label for="assist-q" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Message</label>
+    <textarea id="assist-q" rows="2" placeholder="问这块板子…用 @ 引用日志、问题或一段时间" data-en-ph="Ask about this board… use @ to cite logs, a problem or a time range"></textarea>
+    <div class="assist__foot"><span class="mono" id="assist-meta" data-en="qwen2.5:7b · host · context 6.2k / 32k">qwen2.5:7b · 本机 · 上下文 6.2k / 32k</span><button class="btn btn--primary" type="submit" data-en="Send">发送</button></div>
+  </form>
+</aside>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(function () {
+  "use strict";
+  var root = document.documentElement;
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* no storage */ } }
+  };
+
+  /* ---------- language: Chinese in the markup, English in data-en ---------- */
+  var lang = store.get("alb-v3-lang") || "zh";
+  function applyLang() {
+    document.querySelectorAll("[data-en]").forEach(function (el) {
+      if (el.dataset.zh === undefined) el.dataset.zh = el.innerHTML;
+      el.innerHTML = lang === "en" ? el.dataset.en : el.dataset.zh;
+    });
+    document.querySelectorAll("[data-en-ph]").forEach(function (el) {
+      if (el.dataset.zhPh === undefined) el.dataset.zhPh = el.placeholder;
+      el.placeholder = lang === "en" ? el.dataset.enPh : el.dataset.zhPh;
+    });
+    root.lang = lang === "en" ? "en" : "zh-CN";
+    document.getElementById("lang-lbl").textContent = lang === "en" ? "中文" : "EN";
+    renderBoot();
+    tick(true);
+  }
+  document.getElementById("lang-btn").addEventListener("click", function () {
+    lang = lang === "en" ? "zh" : "en";
+    store.set("alb-v3-lang", lang);
+    applyLang();
+  });
+  function t(zh, en) { return lang === "en" ? en : zh; }
+
+  /* ---------- theme: system -> light -> dark ---------- */
+  var themes = ["system", "light", "dark"];
+  var theme = store.get("alb-v3-theme") || "system";
+  function applyTheme() {
+    if (theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme);
+    var ic = { system: "#i-monitor", light: "#i-sun", dark: "#i-moon" }[theme];
+    document.querySelector("#theme-ic use").setAttribute("href", ic);
+    var lbl = document.getElementById("theme-lbl");
+    lbl.dataset.zh = { system: "跟随系统", light: "浅色", dark: "深色" }[theme];
+    lbl.dataset.en = { system: "System", light: "Light", dark: "Dark" }[theme];
+    lbl.innerHTML = lang === "en" ? lbl.dataset.en : lbl.dataset.zh;
+  }
+  document.getElementById("theme-btn").addEventListener("click", function () {
+    theme = themes[(themes.indexOf(theme) + 1) % themes.length];
+    store.set("alb-v3-theme", theme);
+    applyTheme();
+  });
+
+  /* ---------- data-source annotations ---------- */
+  var srcBtn = document.getElementById("src-btn");
+  srcBtn.addEventListener("click", function () {
+    var on = !document.body.classList.contains("show-src");
+    document.body.classList.toggle("show-src", on);
+    srcBtn.setAttribute("aria-pressed", String(on));
+  });
+
+  /* ---------- toast ---------- */
+  var toastEl = document.getElementById("toast"), toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg; toastEl.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { toastEl.hidden = true; }, 2600);
+  }
+
+  /* ---------- menus ---------- */
+  function wireMenu(btnId, menuId) {
+    var btn = document.getElementById(btnId), menu = document.getElementById(menuId);
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var open = menu.hidden;
+      closeMenus();
+      menu.hidden = !open; btn.setAttribute("aria-expanded", String(open));
+    });
+    return menu;
+  }
+  var menus = [wireMenu("board-btn", "board-menu"), wireMenu("reboot-btn", "reboot-menu")];
+  function closeMenus() {
+    menus.forEach(function (m) { m.hidden = true; });
+    document.querySelectorAll("[aria-haspopup]").forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+  }
+  document.addEventListener("click", closeMenus);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closeMenus(); hideArm(); if (!document.getElementById("assist").hidden) { document.body.classList.remove("assist-open"); document.getElementById("assist").hidden = true; } } });
+
+  document.querySelectorAll("[data-board]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      toast(t("设计稿:这里会把串口指向 " + b.dataset.board + ",不用重启 hub。", "Draft: this would point the serial console at " + b.dataset.board + " without restarting the hub."));
+    });
+  });
+  document.querySelectorAll("[data-toast]").forEach(function (b) {
+    b.addEventListener("click", function () { var p = b.dataset.toast.split("|"); toast(t(p[1], p[0])); });
+  });
+
+  /* ---------- two-step confirm for anything that changes the board ---------- */
+  var arm = document.getElementById("arm"), armText = document.getElementById("arm-text"), armGo = document.getElementById("arm-go");
+  var pending = null;
+  var rebootCopy = {
+    system: ["重启 board-a 回到系统。大约 25 秒后 adb 回来。", "Reboot board-a into Android. adb returns in about 25 s.", "重启", "Reboot"],
+    bootloader: ["重启 board-a 到 bootloader。adb 会断开,串口照常可用;fastboot 出现后烧录页可用。", "Reboot board-a into its bootloader. adb drops off, the serial console stays; flashing becomes available once fastboot appears.", "重启到 bootloader", "Reboot to bootloader"],
+    recovery: ["重启 board-a 到 recovery。", "Reboot board-a into recovery.", "重启到 recovery", "Reboot to recovery"],
+    fastboot: ["重启 board-a 到 fastbootd(用户态 fastboot)。", "Reboot board-a into fastbootd (userspace fastboot).", "重启到 fastbootd", "Reboot to fastbootd"],
+    breakin: ["重启 board-a,并在 bootloader 倒计时里按键停下。之后从串口控制台操作 bootloader 命令行。", "Reboot board-a and press a key during the bootloader countdown. You then work in the bootloader prompt from the serial console.", "重启并停下", "Reboot and stop"]
+  };
+  function showArm(kind) {
+    pending = kind;
+    var c = rebootCopy[kind];
+    armText.textContent = t(c[0], c[1]);
+    armGo.textContent = t(c[2], c[3]);
+    arm.hidden = false;
+    armGo.focus();
+  }
+  function hideArm() { arm.hidden = true; pending = null; }
+  document.querySelectorAll("[data-reboot]").forEach(function (b) {
+    b.addEventListener("click", function (e) { e.stopPropagation(); closeMenus(); showArm(b.dataset.reboot); });
+  });
+  document.getElementById("breakin-btn").addEventListener("click", function () { showArm("breakin"); });
+  document.getElementById("arm-cancel").addEventListener("click", hideArm);
+  armGo.addEventListener("click", function () {
+    toast(t("设计稿:不会真的发命令(" + pending + ")。", "Draft: no command was sent (" + pending + ")."));
+    hideArm();
+  });
+  document.getElementById("cap-btn").addEventListener("click", function () {
+    toast(t("设计稿:会重启并同时录串口、dmesg、logcat,结果出现在「上次开机」和时间轴。", "Draft: reboots while recording serial, dmesg and logcat; the result lands in Last boot and the timeline."));
+  });
+  /* ---------- assistant side sheet ---------- */
+  var assist = document.getElementById("assist"), assistBtn = document.getElementById("assist-btn");
+  function setAssist(open) {
+    assist.hidden = !open;
+    document.body.classList.toggle("assist-open", open);
+    assistBtn.setAttribute("aria-expanded", String(open));
+    if (open) document.getElementById("assist-q").focus({ preventScroll: true });
+  }
+  assistBtn.addEventListener("click", function () { setAssist(assist.hidden); });
+  document.getElementById("assist-close").addEventListener("click", function () { setAssist(false); });
+  document.querySelectorAll(".explain").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var title = b.closest(".issue").querySelector(".issue__title > span").textContent;
+      var chip = document.getElementById("ctx-chip");
+      chip.dataset.zh = "@ 问题 · " + title; chip.dataset.en = "@ Problem · " + title;
+      chip.textContent = "@ " + t("问题", "Problem") + " · " + title;
+      setAssist(true);
+    });
+  });
+  var metaText = {
+    host: ["qwen2.5:7b · 本机 · 上下文 6.2k / 32k", "qwen2.5:7b · host · context 6.2k / 32k"],
+    api: ["openai 兼容 · 云端 · 发送前会提示哪些日志要出本机", "OpenAI-compatible · cloud · warns which logs would leave this host"],
+    board: ["板上模型 · 未连接", "on-board model · not connected"]
+  };
+  document.querySelectorAll("[data-msrc]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-msrc]").forEach(function (x) { x.setAttribute("aria-selected", String(x === b)); });
+      var board = b.dataset.msrc === "board";
+      document.getElementById("assist-chat").hidden = board;
+      document.getElementById("assist-board").hidden = !board;
+      var m = document.getElementById("assist-meta"), mt = metaText[b.dataset.msrc];
+      m.dataset.zh = mt[0]; m.dataset.en = mt[1]; m.textContent = t(mt[0], mt[1]);
+    });
+  });
+  document.getElementById("agent-mode").addEventListener("change", function (e) {
+    toast(e.target.checked ? t("Agent 模式开:模型可以调用 alb 工具。", "Agent mode on: the model may call alb tools.") : t("Agent 模式关:只聊天,不调用工具。", "Agent mode off: chat only, no tools."));
+  });
+  document.getElementById("assist-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var q = document.getElementById("assist-q");
+    if (!q.value.trim()) return;
+    var m = document.createElement("div"); m.className = "msg msg--user"; m.textContent = q.value.trim();
+    var chat = document.getElementById("assist-chat"); chat.appendChild(m); chat.scrollTop = chat.scrollHeight;
+    q.value = "";
+    toast(t("设计稿:不会真的发给模型。", "Draft: nothing is sent to a model."));
+  });
+  document.getElementById("propose-run").addEventListener("click", function () { toast(t("设计稿:这里会先出确认条,再执行 setenforce 0。", "Draft: a confirm bar would appear before running setenforce 0.")); });
+  document.getElementById("propose-skip").addEventListener("click", function () { toast(t("已跳过,对话里会记下这一条没执行。", "Skipped; the chat records that it was not run.")); });
+  document.getElementById("probe-btn").addEventListener("click", function () { toast(t("设计稿:会经 alb port 依次试 8080 等端口。", "Draft: would try port 8080 and others through alb port.")); });
+  document.getElementById("ctx-add").addEventListener("click", function () { toast(t("设计稿:会把当前页面的摘要加进上下文。", "Draft: adds a summary of this page to the context.")); });
+
+  /* ---------- style skins (design comparison) ---------- */
+  var skinSel = document.getElementById("skin");
+  var skin = store.get("alb-v3-skin") || root.getAttribute("data-skin") || "m3";
+  function applySkin() {
+    if (skin === "neutral") root.removeAttribute("data-skin"); else root.setAttribute("data-skin", skin);
+    skinSel.value = skin;
+  }
+  skinSel.addEventListener("change", function () { skin = skinSel.value; store.set("alb-v3-skin", skin); applySkin(); });
+  applySkin();
+  document.querySelectorAll(".qa, .issue .btn--ghost:not(.explain)").forEach(function (b) {
+    b.addEventListener("click", function () { toast(t("设计稿:这里会打开对应页面。", "Draft: this opens the matching page.")); });
+  });
+  document.querySelectorAll(".rail a, .brand").forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      if (a.getAttribute("href") !== "#overview") { e.preventDefault(); toast(t("设计稿:这一页下一轮画。", "Draft: this page comes in the next round.")); }
+    });
+  });
+
+  /* ---------- deterministic sample series ---------- */
+  function rng(seed) { return function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+  function walk(seed, n, start, lo, hi, step) {
+    var r = rng(seed), v = start, out = [];
+    for (var i = 0; i < n; i++) { v += (r() - 0.5) * step; v = Math.max(lo, Math.min(hi, v)); out.push(v); }
+    return out;
+  }
+  var N = 150;
+  var series = {
+    cpu: walk(7, N, 22, 4, 96, 14),
+    mem: walk(11, N, 2.9, 2.6, 3.4, 0.08),
+    temp: walk(13, N, 47, 41, 63, 1.6),
+    gpu: walk(17, N, 12, 0, 70, 10),
+    rx: walk(19, N, 1.1, 0, 4.2, 0.7), tx: walk(23, N, 0.05, 0, 0.6, 0.12),
+    rd: walk(29, N, 3, 0, 28, 6), wr: walk(31, N, 1, 0, 14, 3),
+    rtt: walk(37, 40, 90, 70, 140, 12), uart: walk(41, 40, 1.8, 0.2, 6, 1.2)
+  };
+  var liveR = rng(97);
+  function push(k, lo, hi, step) {
+    var a = series[k], v = a[a.length - 1] + (liveR() - 0.5) * step;
+    a.push(Math.max(lo, Math.min(hi, v))); a.shift();
+  }
+
+  var NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); return e; }
+  function sparkPath(data, w, h, lo, hi, pad) {
+    var span = hi - lo || 1, d = "";
+    for (var i = 0; i < data.length; i++) {
+      var x = (i / (data.length - 1)) * w, y = pad + (1 - (data[i] - lo) / span) * (h - 2 * pad);
+      d += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+    }
+    return d;
+  }
+  function drawSpark(svg, lines, lo, hi, opts) {
+    opts = opts || {};
+    var w = 200, h = opts.h || 44, pad = 3;
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    svg.setAttribute("preserveAspectRatio", "none");
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    if (!opts.small) [0.25, 0.5, 0.75].forEach(function (f) { svg.appendChild(el("line", { x1: 0, x2: w, y1: (h * f).toFixed(1), y2: (h * f).toFixed(1), class: "grid-line", "vector-effect": "non-scaling-stroke" })); });
+    lines.forEach(function (data, idx) {
+      var d = sparkPath(data, w, h, lo, hi, pad);
+      if (idx === 0) svg.appendChild(el("path", { d: d + "L" + w + " " + h + "L0 " + h + "Z", fill: "currentColor", "fill-opacity": "0.12", stroke: "none" }));
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: idx === 0 ? "currentColor" : "", class: idx ? "line2" : "", "stroke-width": "1.6", "stroke-dasharray": idx ? "3 3" : "", "vector-effect": "non-scaling-stroke" }));
+    });
+    var last = lines[0][lines[0].length - 1], span = hi - lo || 1;
+    var cy = pad + (1 - (last - lo) / span) * (h - 2 * pad);
+    svg.appendChild(el("circle", { cx: w - 1, cy: cy.toFixed(1), r: opts.small ? 2.4 : 3, fill: "currentColor" }));
+  }
+  function mn(a) { return Math.min.apply(null, a); } function mx(a) { return Math.max.apply(null, a); }
+
+  var metricDefs = [
+    { id: "cpu", zh: "CPU", en: "CPU", val: function () { return series.cpu[N - 1].toFixed(0); }, unit: "%", sub: function () { return t("8 核 · 最高 2.21 GHz", "8 cores · up to 2.21 GHz"); }, lines: ["cpu"], lo: 0, hi: 100, fmt: function (v) { return v.toFixed(0) + "%"; } },
+    { id: "mem", zh: "内存", en: "Memory", val: function () { return series.mem[N - 1].toFixed(2); }, unit: "/ 7.6 GiB", sub: function () { return t("可用 4.7 GiB · swap 0", "4.7 GiB available · swap 0"); }, lines: ["mem"], lo: 0, hi: 7.6, fmt: function (v) { return v.toFixed(1) + " GiB"; } },
+    { id: "temp", zh: "CPU 温度", en: "CPU temperature", val: function () { return series.temp[N - 1].toFixed(1); }, unit: "°C", sub: function () { return t("电池 31.2 °C · 降频线 85 °C", "battery 31.2 °C · throttles at 85 °C"); }, lines: ["temp"], lo: 30, hi: 90, warn: function () { return series.temp[N - 1] > 60; }, fmt: function (v) { return v.toFixed(0) + " °C"; } },
+    { id: "gpu", zh: "GPU", en: "GPU", val: function () { return series.gpu[N - 1].toFixed(0); }, unit: "%", sub: function () { return t("频率 600 MHz", "at 600 MHz"); }, lines: ["gpu"], lo: 0, hi: 100, fmt: function (v) { return v.toFixed(0) + "%"; } },
+    { id: "net", zh: "网络", en: "Network", val: function () { return series.rx[N - 1].toFixed(2); }, unit: "MB/s ↓", sub: function () { return "↑ " + (series.tx[N - 1] * 1000).toFixed(0) + " KB/s · wlan0"; }, lines: ["rx", "tx"], lo: 0, hi: 4.5, legend: [t("下行", "down"), t("上行", "up")], fmt: function (v) { return v.toFixed(1) + " MB/s"; } },
+    { id: "disk", zh: "磁盘", en: "Disk", val: function () { return series.rd[N - 1].toFixed(1); }, unit: "MB/s " + "r", sub: function () { return "w " + series.wr[N - 1].toFixed(1) + " MB/s · sda"; }, lines: ["rd", "wr"], lo: 0, hi: 30, legend: [t("读", "read"), t("写", "write")], fmt: function (v) { return v.toFixed(0) + " MB/s"; } }
+  ];
+  var metricsEl = document.getElementById("metrics");
+  function renderMetrics() {
+    metricsEl.innerHTML = "";
+    metricDefs.forEach(function (m) {
+      var box = document.createElement("div");
+      box.className = "metric";
+      var first = series[m.lines[0]];
+      var legend = m.legend ? '<span class="legend2"><span><i></i>' + m.legend[0] + '</span><span><i class="b"></i>' + m.legend[1] + "</span></span>" : "";
+      box.innerHTML =
+        '<div class="metric__label"><span>' + t(m.zh, m.en) + "</span>" + legend + "</div>" +
+        '<div class="metric__value">' + m.val() + "<small>" + m.unit + "</small></div>" +
+        '<div class="metric__sub">' + m.sub() + "</div>" +
+        '<svg class="spark' + (m.warn && m.warn() ? " spark--warn" : "") + '" role="img" aria-label="' + t(m.zh, m.en) + '"></svg>' +
+        '<div class="metric__range"><span>' + t("低 ", "min ") + m.fmt(mn(first)) + "</span><span>" + t("高 ", "max ") + m.fmt(mx(first)) + "</span></div>";
+      metricsEl.appendChild(box);
+      drawSpark(box.querySelector("svg"), m.lines.map(function (k) { return series[k]; }), m.lo, m.hi);
+    });
+  }
+
+  /* ---------- boot chart ---------- */
+  var stages = [
+    { zh: "bootloader", en: "bootloader", src: "uart", s: 0, e: 3.1, ps: 0, pe: 3.0 },
+    { zh: "内核", en: "kernel", src: "kernel", s: 3.1, e: 5.8, ps: 3.0, pe: 5.7 },
+    { zh: "init", en: "init", src: "logcat", s: 5.8, e: 8.9, ps: 5.7, pe: 8.7 },
+    { zh: "zygote", en: "zygote", src: "logcat", s: 8.9, e: 11.4, ps: 8.7, pe: 11.1 },
+    { zh: "system_server", en: "system_server", src: "logcat", s: 11.4, e: 19.0, ps: 11.1, pe: 17.5 },
+    { zh: "桌面", en: "launcher", src: "logcat", s: 19.0, e: 24.6, ps: 17.5, pe: 23.3 }
+  ];
+  var miles = [
+    ["Starting kernel ...", "uart", 3.10, 0.10],
+    ["Run /init as init process", "kernel", 5.84, 0.12],
+    ["boot_progress_start", "logcat", 8.92, 0.21],
+    ["boot_progress_preload_end", "logcat", 11.38, 0.27],
+    ["boot_progress_system_run", "logcat", 11.41, 0.28],
+    ["boot_progress_pms_ready", "logcat", 15.02, 0.71],
+    ["boot_progress_ams_ready", "logcat", 18.96, 1.48],
+    ["boot_progress_enable_screen", "logcat", 21.70, 1.33],
+    ["sys.boot_completed=1", "logcat", 24.60, 1.30]
+  ];
+  var MAXS = 25;
+  function renderBoot() {
+    var boot = document.getElementById("boot");
+    function row(label, total, prev) {
+      var r = document.createElement("div"); r.className = "boot__row";
+      var tr = document.createElement("div"); tr.className = "boot__track" + (prev ? " boot__track--prev" : "");
+      stages.forEach(function (s) {
+        var a = prev ? s.ps : s.s, b = prev ? s.pe : s.e;
+        var seg = document.createElement("div"); seg.className = "seg c-" + s.src;
+        seg.style.left = (a / MAXS * 100) + "%"; seg.style.width = ((b - a) / MAXS * 100) + "%";
+        seg.title = t(s.zh, s.en) + " · " + a.toFixed(1) + "–" + b.toFixed(1) + " s";
+        if (!prev) { var l = document.createElement("span"); l.className = "seg__lbl"; l.textContent = t(s.zh, s.en); seg.appendChild(l); }
+        tr.appendChild(seg);
+      });
+      r.innerHTML = "<span>" + label + "</span>";
+      r.appendChild(tr);
+      var n = document.createElement("span"); n.className = "num"; n.textContent = total.toFixed(1) + " s"; r.appendChild(n);
+      boot.appendChild(r);
+    }
+    boot.innerHTML = "";
+    row(t("本次", "this boot"), 24.6, false);
+    row(t("上次", "previous"), 23.3, true);
+    /* a stage name that does not fit its segment is dropped, never clipped: the legend and the table carry it */
+    boot.querySelectorAll(".seg__lbl").forEach(function (l) { if (l.scrollWidth > l.clientWidth + 1) l.remove(); });
+    var axis = document.getElementById("axis"); axis.innerHTML = "";
+    [0, 5, 10, 15, 20, 25].forEach(function (v) {
+      var s = document.createElement("span"); s.style.left = (v / MAXS * 100) + "%"; s.textContent = v + (v === 25 ? " s" : ""); axis.appendChild(s);
+    });
+    var tb = document.getElementById("miles"); tb.innerHTML = "";
+    var srcName = { uart: t("串口", "serial"), kernel: "dmesg", logcat: "logcat" };
+    miles.forEach(function (m) {
+      var tr = document.createElement("tr");
+      var cls = m[3] > 0.5 ? "delta-up" : (m[3] > 0 ? "delta-0" : "delta-dn");
+      tr.innerHTML = '<td class="mono">' + m[0] + '</td><td><span class="srctag c-' + m[1] + '">' + srcName[m[1]] + '</span></td><td class="num mono">' + m[2].toFixed(2) + ' s</td><td class="num mono ' + cls + '">+' + m[3].toFixed(2) + " s</td>";
+      tb.appendChild(tr);
+    });
+  }
+
+  /* ---------- live tick ---------- */
+  var since = 0;
+  function tick(redrawOnly) {
+    if (!redrawOnly) {
+      push("cpu", 4, 96, 14); push("mem", 2.6, 3.4, 0.08); push("temp", 41, 63, 1.6); push("gpu", 0, 70, 10);
+      push("rx", 0, 4.2, 0.7); push("tx", 0, 0.6, 0.12); push("rd", 0, 28, 6); push("wr", 0, 14, 3);
+      series.rtt.push(Math.max(60, Math.min(160, series.rtt[series.rtt.length - 1] + (liveR() - 0.5) * 12))); series.rtt.shift();
+      series.uart.push(Math.max(0.1, Math.min(6, series.uart[series.uart.length - 1] + (liveR() - 0.5) * 1.2))); series.uart.shift();
+      since = 0;
+    }
+    renderMetrics();
+    var s1 = document.getElementById("sp-adb"), s2 = document.getElementById("sp-uart");
+    s1.style.color = "var(--accent)"; s2.style.color = "var(--src-uart)";
+    drawSpark(s1, [series.rtt], 50, 170, { h: 22, small: true });
+    drawSpark(s2, [series.uart], 0, 6.5, { h: 22, small: true });
+    document.getElementById("adb-rtt").textContent = series.rtt[series.rtt.length - 1].toFixed(0) + " ms";
+    document.getElementById("uart-rate").textContent = series.uart[series.uart.length - 1].toFixed(1) + " KB/s";
+    document.getElementById("updated").textContent = "· " + t("刚刚更新", "updated just now");
+  }
+
+  applyTheme();
+  applyLang();
+  setInterval(function () { tick(false); }, 2000);
+})();
+</script>
+</body>
+</html>

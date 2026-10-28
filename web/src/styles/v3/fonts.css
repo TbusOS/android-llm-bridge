@@ -1,0 +1,27 @@
+/*
+ * Bundled fonts (no network at runtime). Built by web/scripts/build_v3_fonts.py
+ * from the SIL OFL sources in google/fonts; licences sit next to the files.
+ * Roboto Flex keeps its weight / width / optical-size axes.
+ */
+@font-face {
+  font-family: "Roboto Flex";
+  src: url("./fonts/RobotoFlex-v3.woff2") format("woff2");
+  font-weight: 100 1000;
+  font-stretch: 25% 151%;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Roboto Mono";
+  src: url("./fonts/RobotoMono-v3.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("./fonts/NotoSansSC-v3.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 总览 Overview · v3</title>
+<!-- Web UI v3 design baseline (Material 3): device overview. Sample data only.
+     Styles, fonts and icons are generated copies of web/src (sync_v3_assets.mjs). -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="overview">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Device · board-a on bench-01">设备 · bench-01 上的 board-a</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Overview">总览</h1>
+      <p data-en="Where the board is, which channels reach it, and what went wrong lately.">板子现在在哪一步、哪几条通道能连上、最近出了什么问题。</p>
+    </div>
+    <div class="page-head__actions">
+      <span class="menu-anchor">
+        <button class="btn btn--outlined" data-menu="reboot-menu" aria-haspopup="menu" aria-expanded="false"><i data-ic="power"></i><span data-en="Reboot">重启</span><i data-ic="chevron-down" class="ic--sm"></i></button>
+        <div class="menu menu--end" id="reboot-menu" role="menu" hidden>
+          <button class="menu__item" role="menuitem" data-confirm="confirm-reboot"><i data-ic="power"></i><span data-en="To Android">重启到系统</span><span></span><span class="menu__desc" data-en="adb reboot; uses the serial console when adb is gone">adb reboot;adb 不在时改走串口</span></button>
+          <button class="menu__item" role="menuitem" data-confirm="confirm-reboot"><i data-ic="bolt"></i><span data-en="To bootloader (fastboot)">重启到 bootloader(fastboot)</span><span></span><span class="menu__desc" data-en="adb drops off; fastboot appears on the bench">adb 会断开,台架上出现 fastboot</span></button>
+          <button class="menu__item" role="menuitem" data-confirm="confirm-reboot"><i data-ic="shield"></i><span data-en="To recovery">重启到 recovery</span><span></span><span class="menu__desc" data-en="adb sideload becomes available">可以用 adb sideload</span></button>
+          <button class="menu__item" role="menuitem" data-confirm="confirm-reboot"><i data-ic="package"></i><span data-en="To fastbootd">重启到 fastbootd</span><span></span><span class="menu__desc" data-en="userspace fastboot, for logical partitions">用户态 fastboot,刷逻辑分区用</span></button>
+        </div>
+      </span>
+      <button class="btn btn--outlined" data-confirm="confirm-breakin"><i data-ic="stop"></i><span data-en="Stop in bootloader">停在 bootloader</span></button>
+      <a class="btn btn--filled" href="webui-preview-v3-timeline.html"><i data-ic="record"></i><span data-en="Record a boot">录一次开机</span></a>
+    </div>
+  </div>
+
+  <div class="confirm" id="confirm-reboot" role="alert" hidden style="margin-bottom:16px">
+    <i data-ic="alert"></i>
+    <p data-en="Reboot board-a into its bootloader. adb drops off; the serial console stays. The Flash page becomes ready once fastboot appears.">把 board-a 重启到 bootloader。adb 会断开,串口照常可用;fastboot 出现后烧录页就能用。</p>
+    <div class="confirm__actions"><button class="btn btn--danger btn--sm" data-toast-zh="设计稿:不会真的重启。" data-toast-en="Draft: nothing was sent." data-en="Reboot">重启</button><button class="btn btn--text btn--sm" data-confirm-cancel data-en="Cancel">取消</button></div>
+  </div>
+  <div class="confirm" id="confirm-breakin" role="alert" hidden style="margin-bottom:16px">
+    <i data-ic="alert"></i>
+    <p data-en="Reboot board-a and press a key during the bootloader countdown. You then work in the bootloader prompt from the serial console.">重启 board-a,在 bootloader 倒计时里按键停下,之后在串口控制台里操作 bootloader 命令行。</p>
+    <div class="confirm__actions"><button class="btn btn--danger btn--sm" data-toast-zh="设计稿:不会真的重启。" data-toast-en="Draft: nothing was sent." data-en="Reboot and stop">重启并停下</button><button class="btn btn--text btn--sm" data-confirm-cancel data-en="Cancel">取消</button></div>
+  </div>
+
+  <section class="grid">
+    <!-- board state -->
+    <article class="card span-8">
+      <div class="card__head">
+        <h2 data-en="Board state">板子状态</h2>
+        <span class="card__sub" data-en="read from serial, adb and the bench USB together">由串口、adb、台架 USB 三处合起来判断</span>
+        <div class="src-note card__actions"><code>GET /devices/{serial}/details</code><code>GET /api/bench/ops/usb-list</code></div>
+      </div>
+      <div class="state">
+        <span class="pill pill--ok"><span class="dot dot--ok"></span><span data-en="Booted">已开机</span></span>
+        <span class="state__big">Android 14 · <span data-en="boot completed">开机完成</span></span>
+        <span class="state__meta mono"><span>sys.boot_completed=1</span> · <span data-en="up 4 h 12 m">已运行 4 小时 12 分</span> · <span data-en="last reboot 06:31 (adb reboot)">上次重启 06:31(adb reboot)</span></span>
+      </div>
+      <ol class="steps" aria-label="boot path">
+        <li class="is-done"><b data-en="Power on">上电</b><span>ROM / SPL</span></li>
+        <li class="is-done"><b>Bootloader</b><span>3.1 s</span></li>
+        <li class="is-done"><b data-en="Kernel">内核</b><span>+2.7 s</span></li>
+        <li class="is-done"><b data-en="Android start">Android 启动</b><span>+13.2 s</span></li>
+        <li class="is-now"><b data-en="Booted">开机完成</b><span>24.6 s</span></li>
+      </ol>
+      <div class="modes"><span data-en="Other states this view tells apart:">这里还能认出的其他状态:</span><span class="pill">fastboot</span><span class="pill">fastbootd</span><span class="pill">recovery</span><span class="pill" data-en="download mode">下载模式</span><span class="pill" data-en="kernel panic">内核崩溃</span><span class="pill" data-en="no power / no signal">没电 / 没信号</span></div>
+      <dl class="kv facts">
+        <div><dt data-en="Product">型号</dt><dd class="mono">board_x</dd></div>
+        <div><dt data-en="Build">构建</dt><dd class="mono">UP1A.231005.007</dd></div>
+        <div><dt data-en="Type">类型</dt><dd>userdebug · test-keys</dd></div>
+        <div><dt data-en="Security patch">安全补丁</dt><dd class="num">2026-09-05</dd></div>
+        <div class="kv--wide"><dt data-en="Kernel">内核</dt><dd class="mono">6.1.43-android14-11 · aarch64</dd></div>
+        <div><dt data-en="Active slot">当前槽位</dt><dd class="mono">_a</dd></div>
+        <div><dt>SELinux</dt><dd>Enforcing</dd></div>
+        <div><dt>adbd</dt><dd>root</dd></div>
+        <div><dt data-en="Battery">电池</dt><dd class="num">87% · 31.2 °C</dd></div>
+        <div><dt>userdata</dt><dd class="num">23.1 / 108 GiB</dd></div>
+        <div><dt data-en="Serial number">序列号</dt><dd class="mono">0123456789ABCDEF</dd></div>
+      </dl>
+    </article>
+
+    <!-- connections -->
+    <article class="card span-4">
+      <div class="card__head">
+        <h2 data-en="Connections">连接</h2>
+        <span class="card__sub" data-en="four ways to reach this board">能连上这块板子的四条路</span>
+        <div class="src-note"><code>GET /agent/status</code><code>GET /api/bench/board</code><code>GET /api/flash/status</code></div>
+      </div>
+      <ul class="list">
+        <li class="list__item"><span class="list__lead"><i data-ic="terminal"></i></span><span class="list__title"><span class="dot dot--ok" style="display:inline-block;margin-right:6px"></span>adb</span><span class="list__trail"><svg class="spark spark--sm" id="sp-adb"></svg><span class="mono num" id="adb-rtt">89 ms</span></span><span class="list__meta" data-en="through the bench tunnel · root">经台架隧道 · root</span></li>
+        <li class="list__item"><span class="list__lead"><i data-ic="plug"></i></span><span class="list__title"><span class="dot dot--ok" style="display:inline-block;margin-right:6px"></span><span data-en="Serial console">串口控制台</span></span><span class="list__trail"><svg class="spark spark--sm" id="sp-uart" style="color:var(--alb-color-src-uart)"></svg><span class="mono num">1.8 KB/s</span></span><span class="list__meta" data-en="COM7 · 115200 8N1 · 2 readers">COM7 · 115200 8N1 · 2 个读者</span></li>
+        <li class="list__item"><span class="list__lead"><i data-ic="bolt"></i></span><span class="list__title"><span class="dot" style="display:inline-block;margin-right:6px"></span>fastboot</span><span class="list__trail"><button class="btn btn--text btn--sm" data-confirm="confirm-reboot" data-en="Go there">切过去</button></span><span class="list__meta" data-en="not listed (board in Android) · flash list 24 partitions">没出现(板子在系统里)· 烧录名单 24 个分区</span></li>
+        <li class="list__item"><span class="list__lead"><i data-ic="server"></i></span><span class="list__title"><span class="dot dot--ok" style="display:inline-block;margin-right:6px"></span><span data-en="Bench agent">台架 agent</span></span><span class="list__trail"><span class="pill pill--ok" data-en="up 5 d">在线 5 天</span></span><span class="list__meta mono">bench-01 · a1b2c3d4e5f6</span></li>
+      </ul>
+    </article>
+
+    <!-- performance -->
+    <article class="card span-12">
+      <div class="card__head">
+        <h2 data-en="Performance">性能</h2>
+        <span class="card__sub" data-en="last 5 minutes, a point every 2 s">最近 5 分钟,每 2 秒一个点</span>
+        <div class="src-note"><code>WS /metrics/stream</code></div>
+        <div class="card__actions"><a class="btn btn--text btn--sm" href="#" data-toast-zh="设计稿:打开性能页。" data-toast-en="Draft: opens Performance." data-en="Open charts">看大图</a></div>
+      </div>
+      <div class="metrics" id="metrics"></div>
+    </article>
+
+    <!-- last boot -->
+    <article class="card span-7">
+      <div class="card__head">
+        <h2 data-en="Last boot">上次开机</h2>
+        <span class="card__sub" data-en="serial, dmesg and logcat on one clock">串口、dmesg、logcat 放在同一个时钟上</span>
+        <div class="src-note"><span class="new" data-en="new: GET /api/timeline/captures/{name}/boot">新:GET /api/timeline/captures/{name}/boot</span></div>
+        <div class="card__actions"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open timeline">打开时间轴</a></div>
+      </div>
+      <div class="legend"><span class="src--uart"><i></i><span data-en="serial (bootloader)">串口(bootloader)</span></span><span class="src--kernel"><i></i>dmesg <span data-en="(kernel)">(内核)</span></span><span class="src--logcat"><i></i>logcat <span data-en="(Android)">(Android)</span></span></div>
+      <div class="boot" id="boot"></div>
+      <div class="axis" id="axis"></div>
+      <p style="margin:0" data-en="This boot took 24.6 s, 1.3 s more than the previous one. Most of it is in system_server: boot_progress_system_run to ams_ready grew from 6.4 s to 7.6 s.">这次开机 24.6 秒,比上次多 1.3 秒。多出来的主要在 system_server:从 boot_progress_system_run 到 ams_ready,由 6.4 秒变成 7.6 秒。</p>
+      <div class="well table-wrap">
+        <table class="table table--dense">
+          <thead><tr><th data-en="Milestone">节点</th><th data-en="Source">来源</th><th class="num" data-en="At">时刻</th><th class="num" data-en="vs previous">比上次</th></tr></thead>
+          <tbody id="miles"></tbody>
+        </table>
+      </div>
+    </article>
+
+    <!-- problems -->
+    <article class="card span-5">
+      <div class="card__head">
+        <h2 data-en="Problems">问题</h2>
+        <span class="card__sub" data-en="since this boot, plus what the last one left">本次开机以来,加上上一次留下的</span>
+        <div class="src-note"><code>GET /api/diag/artifacts</code><span class="new" data-en="new: POST /api/diag/pstore">新:POST /api/diag/pstore</span></div>
+      </div>
+      <div class="issues">
+        <div class="issue issue--bad">
+          <span class="issue__ic"><i data-ic="alert"></i></span>
+          <div class="issue__title"><span data-en="Kernel panic">内核崩溃</span><span class="pill pill--bad" data-en="previous boot">上一次开机</span></div>
+          <div class="issue__body">Unable to handle kernel NULL pointer dereference at virtual address 0000000000000008 · pc : sensors_poll+0x4c</div>
+          <div class="issue__meta"><span>pstore · console-ramoops-0</span><span class="num">10-27 21:04</span><span class="row"><a class="btn btn--text btn--sm" href="webui-preview-v3-timeline.html" data-en="Open">打开</a><button class="btn btn--text btn--sm" data-assist="问题 · 内核崩溃" data-assist-en="Problem · kernel panic"><i data-ic="spark" class="ic--sm"></i><span data-en="Explain">解释</span></button></span></div>
+        </div>
+        <div class="issue issue--bad">
+          <span class="issue__ic"><i data-ic="bug"></i></span>
+          <div class="issue__title"><span data-en="Native crash">原生进程崩溃</span><span class="pill pill--bad">SIGSEGV</span></div>
+          <div class="issue__body">/vendor/bin/hw/android.hardware.sensors-service · fault addr 0x0</div>
+          <div class="issue__meta"><span>tombstone_03</span><span class="num">10-28 08:57</span><span class="row"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:打开问题页。" data-toast-en="Draft: opens Problems." data-en="Open">打开</button><button class="btn btn--text btn--sm" data-assist="问题 · 原生进程崩溃" data-assist-en="Problem · native crash"><i data-ic="spark" class="ic--sm"></i><span data-en="Explain">解释</span></button></span></div>
+        </div>
+        <div class="issue issue--warn">
+          <span class="issue__ic"><i data-ic="clock"></i></span>
+          <div class="issue__title">ANR<span class="pill pill--warn">com.example.camera</span></div>
+          <div class="issue__body">Input dispatching timed out (Waited 5003ms for FocusEvent)</div>
+          <div class="issue__meta"><span>/data/anr</span><span class="num">10-28 09:12</span><span class="row"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:打开问题页。" data-toast-en="Draft: opens Problems." data-en="Open">打开</button><button class="btn btn--text btn--sm" data-assist="问题 · ANR" data-assist-en="Problem · ANR"><i data-ic="spark" class="ic--sm"></i><span data-en="Explain">解释</span></button></span></div>
+        </div>
+        <div class="issue issue--warn">
+          <span class="issue__ic"><i data-ic="shield"></i></span>
+          <div class="issue__title"><span data-en="SELinux denials">SELinux 拒绝</span><span class="pill pill--warn" data-en="14 in the last hour">最近 1 小时 14 条</span></div>
+          <div class="issue__body">avc: denied { read } for comm="sensors" name="iio:device0"</div>
+          <div class="issue__meta"><span>dmesg</span><span class="num">10-28 09:31</span><span class="row"><a class="btn btn--text btn--sm" href="webui-preview-v3-logs.html" data-en="Open">打开</a><button class="btn btn--text btn--sm" data-assist="问题 · SELinux 拒绝" data-assist-en="Problem · SELinux denials"><i data-ic="spark" class="ic--sm"></i><span data-en="Explain">解释</span></button></span></div>
+        </div>
+      </div>
+    </article>
+
+    <!-- activity -->
+    <article class="card span-7">
+      <div class="card__head">
+        <h2 data-en="Recent activity">最近操作</h2>
+        <span class="card__sub" data-en="from the web, the CLI and AI sessions">来自网页、命令行和 AI 会话</span>
+        <div class="src-note"><code>WS /audit/stream</code></div>
+        <div class="card__actions"><a class="btn btn--text btn--sm" href="#" data-toast-zh="设计稿:打开操作记录。" data-toast-en="Draft: opens the audit log." data-en="All">全部</a></div>
+      </div>
+      <ul class="list">
+        <li class="list__item"><span class="list__lead mono">09:40</span><span class="list__title" data-en="Flashed boot_a ← boot.img (96 MiB)">烧写 boot_a ← boot.img(96 MiB)</span><span class="list__trail"><span class="pill pill--ok">ok</span></span><span class="list__meta" data-en="web · checked product board_x first · 3.1 s">网页 · 先核对了 product board_x · 3.1 秒</span></li>
+        <li class="list__item"><span class="list__lead mono">09:36</span><span class="list__title" data-en="Serial capture, 30 s, 412 lines">串口抓取 30 秒,412 行</span><span class="list__trail"><span class="pill pill--ok">ok</span></span><span class="list__meta mono">uart-2026-10-28T09-36.log</span></li>
+        <li class="list__item"><span class="list__lead mono">09:31</span><span class="list__title mono">setprop persist.vendor.sensors.debug 1</span><span class="list__trail"><span class="pill pill--ok">exit 0</span></span><span class="list__meta" data-en="CLI · alb shell">命令行 · alb shell</span></li>
+        <li class="list__item"><span class="list__lead mono">09:12</span><span class="list__title" data-en="AI session read the latest tombstone">AI 会话读取了最近一个 tombstone</span><span class="list__trail"><span class="pill pill--ok">ok</span></span><span class="list__meta">MCP · alb_tombstone_pull</span></li>
+      </ul>
+    </article>
+
+    <!-- common tasks -->
+    <article class="card span-5">
+      <div class="card__head">
+        <h2 data-en="Common tasks">常用操作</h2>
+        <span class="card__sub" data-en="each opens its page with this board selected">每项打开对应页面,已选好这块板</span>
+      </div>
+      <div class="quick">
+        <a class="qa" href="webui-preview-v3-console.html"><span class="qa__ic"><i data-ic="terminal"></i></span><b>adb shell</b><small data-en="terminal in the browser">浏览器里的终端</small></a>
+        <a class="qa" href="webui-preview-v3-console.html"><span class="qa__ic"><i data-ic="plug"></i></span><b data-en="Serial console">串口控制台</b><small data-en="works when adb is down">adb 不通也能用</small></a>
+        <a class="qa" href="webui-preview-v3-logs.html"><span class="qa__ic"><i data-ic="logs"></i></span><b data-en="Live logcat">实时 logcat</b><small data-en="filter by tag, level, pid">按 tag / 级别 / pid 过滤</small></a>
+        <a class="qa" href="webui-preview-v3-timeline.html"><span class="qa__ic"><i data-ic="timeline"></i></span><b data-en="Record a timeline">录时间轴</b><small data-en="logcat + dmesg + serial">logcat + dmesg + 串口</small></a>
+        <a class="qa" href="webui-preview-v3-flash.html"><span class="qa__ic"><i data-ic="package"></i></span><b data-en="Flash a package">烧整包</b><small data-en="check the plan, then run">先检查计划再执行</small></a>
+        <a class="qa" href="webui-preview-v3-chat.html"><span class="qa__ic"><i data-ic="spark"></i></span><b data-en="Ask the assistant">问助手</b><small data-en="it can read logs and run tools">能读日志、调用工具</small></a>
+      </div>
+    </article>
+  </section>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+<script>
+(function () {
+  "use strict";
+  var a = window.alb, N = 150;
+  var S = {
+    cpu: a.walk(7, N, 22, 4, 96, 14), mem: a.walk(11, N, 2.9, 2.6, 3.4, .08), temp: a.walk(13, N, 47, 41, 63, 1.6),
+    gpu: a.walk(17, N, 12, 0, 70, 10), rx: a.walk(19, N, 1.1, 0, 4.2, .7), tx: a.walk(23, N, .05, 0, .6, .12),
+    rd: a.walk(29, N, 3, 0, 28, 6), wr: a.walk(31, N, 1, 0, 14, 3)
+  };
+  function mn(x) { return Math.min.apply(null, x); } function mx(x) { return Math.max.apply(null, x); }
+  var defs = [
+    ["CPU", "CPU", "cpu", function () { return S.cpu[N - 1].toFixed(0); }, "%", ["8 核 · 最高 2.21 GHz", "8 cores · up to 2.21 GHz"], ["cpu"], 0, 100, function (v) { return v.toFixed(0) + "%"; }],
+    ["内存", "Memory", "mem", function () { return S.mem[N - 1].toFixed(2); }, "/ 7.6 GiB", ["可用 4.7 GiB", "4.7 GiB available"], ["mem"], 0, 7.6, function (v) { return v.toFixed(1) + " GiB"; }],
+    ["CPU 温度", "CPU temp", "temp", function () { return S.temp[N - 1].toFixed(1); }, "°C", ["降频线 85 °C", "throttles at 85 °C"], ["temp"], 30, 90, function (v) { return v.toFixed(0) + " °C"; }],
+    ["GPU", "GPU", "gpu", function () { return S.gpu[N - 1].toFixed(0); }, "%", ["600 MHz", "600 MHz"], ["gpu"], 0, 100, function (v) { return v.toFixed(0) + "%"; }],
+    ["网络", "Network", "net", function () { return S.rx[N - 1].toFixed(2); }, "MB/s ↓", ["↑ 360 KB/s · wlan0", "↑ 360 KB/s · wlan0"], ["rx", "tx"], 0, 4.5, function (v) { return v.toFixed(1) + " MB/s"; }],
+    ["磁盘", "Disk", "disk", function () { return S.rd[N - 1].toFixed(1); }, "MB/s r", ["w 2.9 MB/s · sda", "w 2.9 MB/s · sda"], ["rd", "wr"], 0, 30, function (v) { return v.toFixed(0) + " MB/s"; }]
+  ];
+  function metrics() {
+    var box = document.getElementById("metrics"); box.innerHTML = "";
+    defs.forEach(function (d) {
+      var el = document.createElement("div"); el.className = "metric";
+      var first = S[d[6][0]];
+      el.innerHTML = '<div class="metric__label"><span>' + a.t(d[0], d[1]) + '</span></div><div class="metric__value">' + d[3]() + "<small>" + d[4] + '</small></div><div class="metric__sub">' + a.t(d[5][0], d[5][1]) +
+        '</div><svg class="spark' + (d[2] === "temp" && S.temp[N - 1] > 60 ? " spark--warn" : "") + '" role="img" aria-label="' + d[1] + '"></svg><div class="metric__range"><span>' + a.t("低 ", "min ") + d[9](mn(first)) + "</span><span>" + a.t("高 ", "max ") + d[9](mx(first)) + "</span></div>";
+      box.appendChild(el);
+      a.spark(el.querySelector("svg"), d[6].map(function (k) { return S[k]; }), d[7], d[8]);
+    });
+  }
+  var stages = [["bootloader", "bootloader", "uart", 0, 3.1, 0, 3.0], ["内核", "kernel", "kernel", 3.1, 5.8, 3.0, 5.7], ["init", "init", "logcat", 5.8, 8.9, 5.7, 8.7],
+    ["zygote", "zygote", "logcat", 8.9, 11.4, 8.7, 11.1], ["system_server", "system_server", "logcat", 11.4, 19.0, 11.1, 17.5], ["桌面", "launcher", "logcat", 19.0, 24.6, 17.5, 23.3]];
+  var miles = [["Starting kernel ...", "uart", 3.10, .10], ["Run /init as init process", "kernel", 5.84, .12], ["boot_progress_start", "logcat", 8.92, .21],
+    ["boot_progress_system_run", "logcat", 11.41, .28], ["boot_progress_ams_ready", "logcat", 18.96, 1.48], ["boot_progress_enable_screen", "logcat", 21.70, 1.33], ["sys.boot_completed=1", "logcat", 24.60, 1.30]];
+  function boot() {
+    var M = 25, box = document.getElementById("boot"); box.innerHTML = "";
+    [[a.t("本次", "this"), 24.6, false], [a.t("上次", "previous"), 23.3, true]].forEach(function (r) {
+      var row = document.createElement("div"); row.className = "boot__row";
+      var tr = document.createElement("div"); tr.className = "boot__track" + (r[2] ? " boot__track--prev" : "");
+      stages.forEach(function (s) {
+        var x0 = r[2] ? s[5] : s[3], x1 = r[2] ? s[6] : s[4];
+        var b = document.createElement("div"); b.className = "seg-bar src--" + s[2];
+        b.style.left = (x0 / M * 100) + "%"; b.style.width = ((x1 - x0) / M * 100) + "%"; b.title = a.t(s[0], s[1]) + " " + x0 + "–" + x1 + " s";
+        if (!r[2]) { var l = document.createElement("span"); l.textContent = a.t(s[0], s[1]); b.appendChild(l); }
+        tr.appendChild(b);
+      });
+      row.innerHTML = "<span>" + r[0] + "</span>"; row.appendChild(tr);
+      var n = document.createElement("span"); n.className = "num"; n.textContent = r[1].toFixed(1) + " s"; row.appendChild(n);
+      box.appendChild(row);
+    });
+    box.querySelectorAll(".seg-bar span").forEach(function (l) { if (l.scrollWidth > l.clientWidth + 1) l.remove(); });
+    var ax = document.getElementById("axis"); ax.innerHTML = "";
+    [0, 5, 10, 15, 20, 25].forEach(function (v) { var s = document.createElement("span"); s.style.left = (v / M * 100) + "%"; s.textContent = v + (v === 25 ? " s" : ""); ax.appendChild(s); });
+    var src = { uart: a.t("串口", "serial"), kernel: "dmesg", logcat: "logcat" }, tb = document.getElementById("miles"); tb.innerHTML = "";
+    miles.forEach(function (m) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = '<td class="mono">' + m[0] + '</td><td><span class="src-tag src--' + m[1] + '">' + src[m[1]] + '</span></td><td class="num mono">' + m[2].toFixed(2) + ' s</td><td class="num mono ' + (m[3] > .5 ? "delta-up" : "delta-flat") + '">+' + m[3].toFixed(2) + " s</td>";
+      tb.appendChild(tr);
+    });
+  }
+  function conn() {
+    a.spark(document.getElementById("sp-adb"), [a.walk(37, 40, 90, 70, 140, 12)], 50, 170, { h: 24, small: true });
+    a.spark(document.getElementById("sp-uart"), [a.walk(41, 40, 1.8, .2, 6, 1.2)], 0, 6.5, { h: 24, small: true });
+  }
+  function all() { metrics(); boot(); conn(); }
+  document.addEventListener("alb:lang", all);
+  all();
+})();
+</script>
+</body>
+</html>

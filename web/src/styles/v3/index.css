@@ -1,0 +1,8 @@
+/* v3 stylesheet entry. Order matters; web/scripts/sync_v3_assets.mjs
+   concatenates the same list for the static design mockups in docs/. */
+@import "./fonts.css";
+@import "./tokens.css";
+@import "./base.css";
+@import "./shell.css";
+@import "./components.css";
+@import "./pages.css";

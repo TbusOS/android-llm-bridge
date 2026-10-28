@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 时间轴 Timeline · v3</title>
+<!-- Web UI v3 design baseline (Material 3): timeline. Sample data only. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="timeline">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Device · board-a">设备 · board-a</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Timeline">时间轴</h1>
+      <p data-en="Serial, dmesg, logcat and flash jobs on one clock, so you can see what happened first.">串口、dmesg、logcat 和烧录作业放在同一个时钟上,一眼看出谁先谁后。</p>
+    </div>
+    <div class="page-head__actions">
+      <span class="menu-anchor">
+        <button class="btn btn--tonal" data-menu="rec-menu" aria-haspopup="menu" aria-expanded="false"><i data-ic="record"></i><span data-en="Record">录一段</span><i data-ic="chevron-down" class="ic--sm"></i></button>
+        <div class="menu menu--end" id="rec-menu" role="menu" hidden>
+          <button class="menu__item" role="menuitem" data-toast-zh="设计稿:开始录 30 秒。" data-toast-en="Draft: recording 30 s."><i data-ic="clock"></i><span data-en="30 seconds">30 秒</span><span></span></button>
+          <button class="menu__item" role="menuitem" data-toast-zh="设计稿:开始录 1 分钟。" data-toast-en="Draft: recording 1 min."><i data-ic="clock"></i><span data-en="1 minute">1 分钟</span><span></span></button>
+          <button class="menu__item" role="menuitem" data-toast-zh="设计稿:开始录 5 分钟。" data-toast-en="Draft: recording 5 min."><i data-ic="clock"></i><span data-en="5 minutes">5 分钟</span><span></span></button>
+          <button class="menu__item" role="menuitem" data-toast-zh="设计稿:一直录到按停止,最长 10 分钟。" data-toast-en="Draft: records until you stop, at most 10 min."><i data-ic="stop"></i><span data-en="Until I stop it">录到我按停止</span><span></span><span class="menu__desc" data-en="at most 10 minutes">最长 10 分钟</span></button>
+        </div>
+      </span>
+      <button class="btn btn--filled" data-confirm="confirm-boot"><i data-ic="power"></i><span data-en="Record a boot">录一次开机</span></button>
+    </div>
+  </div>
+
+  <div class="confirm" id="confirm-boot" role="alert" hidden style="margin-bottom:16px">
+    <i data-ic="alert"></i>
+    <p data-en="Start recording, then reboot board-a. Recording runs 60 s so the bootloader lines on the serial console are caught too.">先开始录,再重启 board-a。录 60 秒,串口上的 bootloader 输出也能录进来。</p>
+    <div class="confirm__actions"><button class="btn btn--danger btn--sm" data-toast-zh="设计稿:不会真的重启。" data-toast-en="Draft: nothing was sent." data-en="Reboot and record">重启并录制</button><button class="btn btn--text btn--sm" data-confirm-cancel data-en="Cancel">取消</button></div>
+  </div>
+
+  <div class="stack">
+    <!-- capture picker + filters -->
+    <article class="card">
+      <div class="tl-bar">
+        <label class="visually-hidden" for="cap">Recording</label>
+        <select class="select" id="cap">
+          <option>10-28 09:30:58 · 90 s · 4,812 · boot</option>
+          <option>10-28 09:12:40 · 60 s · 2,207</option>
+          <option>10-27 21:03:11 · 120 s · 9,940 · boot</option>
+        </select>
+        <div class="seg seg--sm" data-multi role="group" aria-label="sources">
+          <button aria-pressed="true"><span class="src-tag src--uart" data-en="serial">串口</span></button>
+          <button aria-pressed="true"><span class="src-tag src--kernel">dmesg</span></button>
+          <button aria-pressed="true"><span class="src-tag src--logcat">logcat</span></button>
+          <button aria-pressed="true"><span class="src-tag src--job" data-en="flash">烧录</span></button>
+        </div>
+        <label class="input--search"><i data-ic="search" class="ic--sm"></i><input id="grep" value="sensors" placeholder="在这段里搜索(支持正则)" data-en-ph="Search this recording (regex)"></label>
+        <button class="chip" aria-pressed="true"><span data-en="Problems only">只看问题</span></button>
+        <div class="row" style="gap:0">
+          <button class="icon-btn" aria-label="缩小" data-en-label="Zoom out"><i data-ic="zoom-out"></i></button>
+          <button class="icon-btn" aria-label="放大" data-en-label="Zoom in"><i data-ic="zoom-in"></i></button>
+        </div>
+        <div class="src-note"><span class="new" data-en="new: GET /api/timeline/captures">新:GET /api/timeline/captures</span></div>
+      </div>
+    </article>
+
+    <!-- tracks -->
+    <article class="card">
+      <div class="card__head">
+        <h2 data-en="09:31:00 – 09:31:10, 10 s of 90 s">09:31:00 – 09:31:10,共 90 秒中的 10 秒</h2>
+        <span class="card__sub" data-en="drag on the overview to pick a range; click a mark to jump to its line">在概览条上拖动选范围,点标记跳到那一行</span>
+        <div class="src-note"><span class="new" data-en="new: GET /api/timeline/captures/{name}/density">新:…/density</span></div>
+        <div class="card__actions"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:跳到第一个问题。" data-toast-en="Draft: jumps to the first problem."><i data-ic="alert" class="ic--sm"></i><span data-en="First problem">第一个问题</span></button></div>
+      </div>
+      <div class="tracks">
+        <div class="track track--overview"><div class="track__label"><span data-en="Whole recording">整段</span></div><div class="track__lane" id="lane-ov"></div></div>
+        <div class="track track--axis"><div></div><div class="track__lane tl-axis" id="axis"></div></div>
+        <div class="tracks__body" id="body">
+          <div class="track"><div class="track__label"><span class="src-tag src--uart" data-en="serial">串口</span><small class="num">412</small></div><div class="track__lane" id="lane-uart"></div></div>
+          <div class="track"><div class="track__label"><span class="src-tag src--kernel">dmesg</span><small class="num">1,206</small></div><div class="track__lane" id="lane-kernel"></div></div>
+          <div class="track" style="min-height:64px"><div class="track__label"><span class="src-tag src--logcat">logcat</span><small class="num">3,087</small></div><div class="track__lane" id="lane-logcat"></div></div>
+          <div class="track"><div class="track__label"><span class="src-tag src--job" data-en="flash">烧录</span><small data-en="no job">无作业</small></div><div class="track__lane" id="lane-job"></div></div>
+          <div class="track"><div class="track__label"><span data-en="Marks">标记</span><small class="num">17</small></div><div class="track__lane" id="lane-marks"></div></div>
+          <div class="tl-cursor" id="cursor"><span>09:31:04.218</span></div>
+        </div>
+      </div>
+      <div class="legend">
+        <span class="src--logcat" style="--src:var(--alb-color-log-e)"><i></i>logcat E/F</span>
+        <span style="--src:var(--alb-color-log-w)"><i></i>W</span>
+        <span style="--src:var(--alb-color-log-i)"><i></i>I</span>
+        <span style="--src:var(--alb-color-log-d)"><i></i>D/V</span>
+        <span><i class="marker marker--panic" style="position:static;margin:0;width:10px;height:10px"></i><span data-en="panic / crash">崩溃</span></span>
+        <span><i class="marker marker--avc" style="position:static;margin:0;width:10px;height:10px"></i><span data-en="ANR / SELinux">ANR / SELinux</span></span>
+        <span><i class="marker marker--boot" style="position:static;margin:0;width:10px;height:10px"></i><span data-en="boot milestone">开机节点</span></span>
+      </div>
+    </article>
+
+    <!-- merged lines + detail -->
+    <section class="grid tl-split">
+      <article class="card card--flush span-8">
+        <div class="card__head">
+          <h2 data-en="Lines in this range">这段时间的日志</h2>
+          <span class="card__sub" data-en="58 lines match “sensors”; 4 shown around the selection">58 行含 “sensors”,下面是选中位置前后的几行</span>
+          <div class="src-note"><span class="new" data-en="new: …/lines?t0=&amp;t1=&amp;grep=">新:…/lines?t0=&amp;t1=&amp;grep=</span></div>
+        </div>
+        <div class="logs" style="--log-cols: 112px 58px 22px 128px minmax(0, 1fr)">
+          <div class="log"><span class="log__t">09:31:04.102</span><span class="src-tag src--logcat">logcat</span><span class="lvl lvl--I">I</span><span class="log__tag">SensorService</span><span class="log__msg">nuplugin: opening /dev/iio:device0</span></div>
+          <div class="log log--W"><span class="log__t">09:31:04.118</span><span class="src-tag src--kernel">dmesg</span><span class="lvl lvl--W">W</span><span class="log__tag">audit</span><span class="log__msg">avc: denied { read } for comm="<mark>sensors</mark>" name="iio:device0" dev="tmpfs" scontext=u:r:hal_sensors_default:s0 tcontext=u:object_r:iio_device:s0 tclass=chr_file permissive=0</span></div>
+          <div class="log log--E"><span class="log__t">09:31:04.121</span><span class="src-tag src--logcat">logcat</span><span class="lvl lvl--E">E</span><span class="log__tag">SensorsHal</span><span class="log__msg">open /dev/iio:device0 failed: Permission denied (13)</span></div>
+          <div class="log log--E" aria-selected="true"><span class="log__t">09:31:04.218</span><span class="src-tag src--kernel">dmesg</span><span class="lvl lvl--F">F</span><span class="log__tag">kernel</span><span class="log__msg">Unable to handle kernel NULL pointer dereference at virtual address 0000000000000008 · pc : <mark>sensors</mark>_poll+0x4c/0x1a0</span></div>
+          <div class="log log--E"><span class="log__t">09:31:04.219</span><span class="src-tag src--uart" data-en="serial">串口</span><span class="lvl lvl--F">F</span><span class="log__tag">console</span><span class="log__msg">Kernel panic - not syncing: Oops: Fatal exception</span></div>
+          <div class="log"><span class="log__t">09:31:04.220</span><span class="src-tag src--uart" data-en="serial">串口</span><span class="lvl lvl--I">I</span><span class="log__tag">console</span><span class="log__msg">[alb] serial: 3.2 s of silence, then the bootloader banner</span></div>
+          <div class="log"><span class="log__t">09:31:07.431</span><span class="src-tag src--uart" data-en="serial">串口</span><span class="lvl lvl--I">I</span><span class="log__tag">console</span><span class="log__msg">U-Boot SPL board init · DDR 4096 MiB</span></div>
+        </div>
+      </article>
+      <article class="card span-4">
+        <div class="card__head"><h2 data-en="Selected line">选中的这一行</h2></div>
+        <dl class="detail-kv">
+          <dt data-en="Time">时刻</dt><dd class="mono">09:31:04.218 <span class="t-muted" data-en="(+63.22 s into the recording)">(录制开始后 63.22 秒)</span></dd>
+          <dt data-en="Source">来源</dt><dd><span class="src-tag src--kernel">dmesg</span> <span class="mono">[ 4521.307714]</span></dd>
+          <dt data-en="Before it">前 1 秒</dt><dd data-en="14 SELinux denials, 2 HAL open errors">14 条 SELinux 拒绝、2 条 HAL 打开失败</dd>
+          <dt data-en="After it">之后</dt><dd data-en="panic on serial, 3.2 s silence, board reboots">串口打出 panic,静默 3.2 秒,板子重启</dd>
+        </dl>
+        <div class="row">
+          <button class="btn btn--tonal btn--sm" data-assist="时间轴 · 09:31:03–09:31:05" data-assist-en="Timeline · 09:31:03–09:31:05"><i data-ic="spark" class="ic--sm"></i><span data-en="Ask about these 2 s">问助手这 2 秒</span></button>
+          <a class="btn btn--text btn--sm" href="webui-preview-v3-logs.html" data-en="Open in Logs">在日志页打开</a>
+          <button class="icon-btn icon-btn--sm" aria-label="复制" data-en-label="Copy" data-toast-zh="已复制这一行。" data-toast-en="Line copied."><i data-ic="copy" class="ic--sm"></i></button>
+        </div>
+        <div class="divider"></div>
+        <div class="card__head"><h3 data-en="Marks in this range">这段里的标记</h3></div>
+        <ul class="list">
+          <li class="list__item"><span class="list__lead"><i class="marker marker--avc" style="position:static;margin:0"></i></span><span class="list__title" data-en="SELinux denials ×14">SELinux 拒绝 ×14</span><span class="list__trail mono t-muted">09:31:03.9</span><span class="list__meta">hal_sensors_default → iio_device</span></li>
+          <li class="list__item"><span class="list__lead"><i class="marker marker--panic" style="position:static;margin:0"></i></span><span class="list__title" data-en="Kernel panic">内核崩溃</span><span class="list__trail mono t-muted">09:31:04.2</span><span class="list__meta">sensors_poll+0x4c</span></li>
+          <li class="list__item"><span class="list__lead"><i class="marker marker--boot" style="position:static;margin:0"></i></span><span class="list__title" data-en="Bootloader banner">bootloader 起来</span><span class="list__trail mono t-muted">09:31:07.4</span><span class="list__meta" data-en="board rebooted itself">板子自己重启了</span></li>
+        </ul>
+      </article>
+    </section>
+  </div>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+<script>
+(function () {
+  "use strict";
+  var a = window.alb, NS = "http://www.w3.org/2000/svg";
+  var T0 = 0, T1 = 10, BUCKETS = 100;
+  function lane(id, h) {
+    var host = document.getElementById(id); host.innerHTML = "";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 1000 " + h); svg.setAttribute("preserveAspectRatio", "none");
+    host.appendChild(svg); return svg;
+  }
+  function bars(svg, vals, h, color, base) {
+    var w = 1000 / vals.length, max = 1;
+    vals.forEach(function (v) { max = Math.max(max, v + (base ? base[vals.indexOf(v)] || 0 : 0)); });
+    return function (arr, col, under) {
+      arr.forEach(function (v, i) {
+        if (!v) return;
+        var y0 = under ? under[i] : 0, hh = v / max * (h - 2);
+        svg.appendChild(a.svgEl("rect", { x: (i * w + .6).toFixed(1), width: (w - 1.2).toFixed(1), y: (h - y0 / max * (h - 2) - hh).toFixed(1), height: hh.toFixed(1), fill: col }));
+      });
+    };
+  }
+  function series(seed, base, spikes) {
+    var r = a.rng(seed), out = [];
+    for (var i = 0; i < BUCKETS; i++) { var v = base * (0.4 + r()); spikes.forEach(function (s) { if (Math.abs(i - s[0]) <= s[1]) v += s[2] * (1 - Math.abs(i - s[0]) / (s[1] + 1)); }); out.push(Math.round(v)); }
+    return out;
+  }
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  function draw() {
+    var uart = series(3, 3, [[42, 0, 30], [74, 6, 14]]); uart.fill(0, 43, 74);
+    var kern = series(5, 6, [[39, 2, 40], [42, 0, 20]]); kern.fill(0, 43, 76);
+    var V = series(7, 10, []), I = series(9, 8, [[40, 2, 10]]), W = series(11, 2, [[39, 2, 12]]), E = series(13, .4, [[41, 1, 9]]);
+    [V, I, W, E].forEach(function (s) { s.fill(0, 43, 85); });
+    var h = 36, s1 = lane("lane-uart", h); bars(s1, uart, h)(uart, cssVar("--alb-color-src-uart"));
+    var s2 = lane("lane-kernel", h); bars(s2, kern, h)(kern, cssVar("--alb-color-src-kernel"));
+    var h3 = 56, s3 = lane("lane-logcat", h3), tot = V.map(function (v, i) { return v + I[i] + W[i] + E[i]; });
+    var put = bars(s3, tot, h3), acc = V.map(function () { return 0; });
+    [[V, "--alb-color-log-d"], [I, "--alb-color-log-i"], [W, "--alb-color-log-w"], [E, "--alb-color-log-e"]].forEach(function (p) {
+      put(p[0], cssVar(p[1]), acc.slice()); p[0].forEach(function (v, i) { acc[i] += v; });
+    });
+    lane("lane-job", h);
+    var marks = document.getElementById("lane-marks"); marks.innerHTML = "";
+    [[39.2, "avc"], [39.6, "avc"], [40.1, "avc"], [42.18, "panic"], [74.3, "boot"], [86, "boot"]].forEach(function (m) {
+      var d = document.createElement("i"); d.className = "marker marker--" + m[1]; d.style.left = m[0] + "%"; d.title = m[1]; marks.appendChild(d);
+    });
+    var ov = lane("lane-ov", 28), full = series(17, 10, [[38, 3, 30], [47, 1, 8], [80, 5, 20]]);
+    bars(ov, full, 28)(full, cssVar("--md-sys-color-outline"));
+    var brush = document.createElement("div"); brush.className = "tl-brush"; brush.style.left = "33.3%"; brush.style.width = "11.1%";
+    document.getElementById("lane-ov").appendChild(brush);
+    var ax = document.getElementById("axis"); ax.innerHTML = "";
+    for (var s = 0; s <= 10; s += 2) { var sp = document.createElement("span"); sp.style.left = (s * 10) + "%"; sp.textContent = "09:31:" + ("0" + s).slice(-2); if (s === 10) sp.style.transform = "translateX(-100%)"; if (s === 0) sp.style.transform = "none"; ax.appendChild(sp); }
+    var cur = document.getElementById("cursor"), lab = document.querySelector(".track__label").offsetWidth;
+    cur.style.left = "calc(" + lab + "px + (100% - " + lab + "px) * 0.4218)";
+  }
+  document.addEventListener("alb:lang", draw);
+  window.addEventListener("resize", draw);
+  var mq = window.matchMedia("(prefers-color-scheme: dark)"); if (mq.addEventListener) mq.addEventListener("change", draw);
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  draw();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 对话 Chat · v3</title>
+<!-- Web UI v3 design baseline (Material 3): assistant chat, full screen. Sample data only. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="chat">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Assistant">助手</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Chat">对话</h1>
+      <p data-en="Ask about the board in plain words. With agent mode on, the model reads logs and runs alb tools; anything that changes the board waits for you.">用大白话问板子的事。开了 Agent 模式,模型会自己读日志、调用 alb 工具;会改动板子的操作等你点头。</p>
+    </div>
+    <div class="page-head__actions"><button class="btn btn--filled"><i data-ic="plus"></i><span data-en="New chat">新对话</span></button></div>
+  </div>
+
+  <div class="chat">
+    <!-- conversations -->
+    <article class="card chat__list" style="padding:8px">
+      <label class="input--search" style="margin:4px"><i data-ic="search" class="ic--sm"></i><input placeholder="搜索对话" data-en-ph="Search chats"></label>
+      <div class="chat__day" data-en="Today">今天</div>
+      <ul class="list">
+        <li class="list__item list__item--action" aria-current="true"><span class="list__lead"><i data-ic="chat"></i></span><span class="list__title" data-en="Kernel panic on the previous boot">上一次开机的内核崩溃</span><span class="list__trail"></span><span class="list__meta" data-en="web · qwen2.5:7b · 4 tools">网页 · qwen2.5:7b · 4 次工具</span></li>
+        <li class="list__item list__item--action"><span class="list__lead"><i data-ic="robot"></i></span><span class="list__title" data-en="Read the latest tombstone">读取最近的 tombstone</span><span class="list__trail"></span><span class="list__meta" data-en="external agent via MCP">外部 agent · MCP</span></li>
+      </ul>
+      <div class="chat__day" data-en="Yesterday">昨天</div>
+      <ul class="list">
+        <li class="list__item list__item--action"><span class="list__lead"><i data-ic="chat"></i></span><span class="list__title" data-en="Why boot got 1.3 s slower">开机为什么慢了 1.3 秒</span><span class="list__trail"></span><span class="list__meta" data-en="web · cloud API">网页 · 云端 API</span></li>
+        <li class="list__item list__item--action"><span class="list__lead"><i data-ic="chip"></i></span><span class="list__title" data-en="On-board model speed test">板上模型测速</span><span class="list__trail"></span><span class="list__meta" data-en="on the board · not connected">板上 · 未连接</span></li>
+      </ul>
+      <div class="src-note" style="padding:8px"><code>GET /sessions</code></div>
+    </article>
+
+    <!-- thread -->
+    <article class="card chat__thread">
+      <div class="card__head">
+        <h2 data-en="Kernel panic on the previous boot">上一次开机的内核崩溃</h2>
+        <span class="pill pill--info">board-a</span><span class="pill">qwen2.5:7b · <span data-en="host">本机</span></span>
+        <div class="src-note"><code>WS /chat/ws</code></div>
+        <div class="card__actions"><button class="icon-btn icon-btn--sm" aria-label="更多" data-en-label="More"><i data-ic="more" class="ic--sm"></i></button></div>
+      </div>
+      <div class="convo">
+        <div class="msg msg--user"><span class="ctx" data-en="@ Problem · kernel panic (pstore)">@ 问题 · 内核崩溃(pstore)</span><p data-en="What caused the kernel panic on the previous boot? Check the logs around it too.">上一次开机的内核崩溃是怎么回事?把前后的日志也看一下。</p></div>
+        <div class="tool"><i data-ic="check-circle" class="ic--sm"></i><code>alb_diag_pstore</code><span class="pill" data-en="read-only · 0.4 s">只读 · 0.4 s</span><small>console-ramoops-0 · 2 records · 40 lines read</small>
+          <details><summary data-en="Show output">看输出</summary><pre class="term">Unable to handle kernel NULL pointer dereference at virtual address 0000000000000008
+pc : sensors_poll+0x4c/0x1a0
+lr : sensors_poll+0x30/0x1a0
+Kernel panic - not syncing: Oops: Fatal exception</pre></details></div>
+        <div class="tool"><i data-ic="check-circle" class="ic--sm"></i><code>alb_log_search "sensors_poll|iio:device0"</code><span class="pill" data-en="read-only · 1.1 s">只读 · 1.1 s</span><small>dmesg 9 · logcat 31 · timeline 09:30–09:32</small></div>
+        <div class="tool"><i data-ic="check-circle" class="ic--sm"></i><code>alb_shell "ls -lZ /dev/iio:device0"</code><span class="pill" data-en="read-only · 0.2 s">只读 · 0.2 s</span><small>crw-rw---- system system u:object_r:iio_device:s0</small></div>
+        <div class="msg msg--ai">
+          <div class="msg__who"><i data-ic="robot" class="ic--sm"></i>qwen2.5:7b · <span data-en="host">本机</span> · 6.1 s</div>
+          <p data-en="The panic is in the sensor driver, at sensors_poll+0x4c, reading address 0x8. That is a null pointer plus an 8-byte offset: a struct pointer used before it was set up.">崩溃点在传感器驱动的 sensors_poll+0x4c,读的地址是 0x8。这是空指针再加 8 字节偏移:结构体指针还没建好就被用了。</p>
+          <p data-en="Right before it, 14 SELinux denials stop hal_sensors_default from reading iio:device0, and the HAL logs “open failed: Permission denied”. Likely order: open fails, the driver never fills its private data, poll dereferences it. This order is an inference from timing; it is not confirmed yet.">就在它之前,14 条 SELinux 拒绝让 hal_sensors_default 读不了 iio:device0,HAL 也打出 “open failed: Permission denied”。推测顺序:打开失败 → 驱动私有数据没建 → poll 用到空指针。这个顺序是按时间推出来的,还没验证。</p>
+          <p class="cites"><span data-en="Evidence">依据</span><a class="cite" href="webui-preview-v3-timeline.html">pstore:112</a><a class="cite" href="webui-preview-v3-timeline.html">dmesg 09:31:04.218</a><a class="cite" href="webui-preview-v3-timeline.html">logcat 09:31:04.121</a></p>
+        </div>
+        <div class="confirm confirm--inline"><i data-ic="alert"></i><p data-en="Next step needs your OK: reproduce once with SELinux permissive. This changes the board until the next reboot.">下一步要你同意:临时放开 SELinux 复现一次。会改变板子状态,下次重启恢复。</p><code class="mono">alb_shell "setenforce 0"</code><div class="confirm__actions"><button class="btn btn--sm btn--filled" data-toast-zh="设计稿:不会真的执行。" data-toast-en="Draft: nothing runs." data-en="Run">执行</button><button class="btn btn--sm btn--text" data-en="Not now">先不用</button></div></div>
+      </div>
+      <form class="chat__composer composer" onsubmit="return false">
+        <div class="row"><span class="ctx">@ board-a</span><span class="ctx" data-en="@ Timeline · 09:30:58">@ 时间轴 · 09:30:58</span><button type="button" class="ctx ctx--add" data-en="+ add context">+ 添加上下文</button></div>
+        <label class="visually-hidden" for="q">Message</label>
+        <textarea class="textarea" id="q" rows="3" placeholder="问这块板子…用 @ 引用日志、问题或一段时间" data-en-ph="Ask about this board… use @ to cite logs, a problem or a time range"></textarea>
+        <div class="row row--between"><div class="row"><button type="button" class="icon-btn icon-btn--sm" aria-label="附件" data-en-label="Attach"><i data-ic="attach" class="ic--sm"></i></button><span class="t-body-small t-muted mono" data-en="6.2k / 32k tokens">6.2k / 32k tokens</span></div><button class="btn btn--filled" type="submit"><i data-ic="send" class="ic--sm"></i><span data-en="Send">发送</span></button></div>
+      </form>
+    </article>
+
+    <!-- side -->
+    <div class="stack chat__side">
+      <article class="card">
+        <div class="card__head"><h2 data-en="Model">模型</h2><div class="src-note"><code>GET /playground/backends</code></div></div>
+        <div class="seg seg--sm" role="group" aria-label="source"><button aria-pressed="true" data-en="Host">本机</button><button aria-pressed="false" data-en="Cloud API">云端 API</button><button aria-pressed="false" data-en="On board">板上</button></div>
+        <label class="field"><span class="field__label" data-en="Model">模型</span><select class="select"><option>qwen2.5:7b · ollama</option><option>gemma3:4b · ollama</option></select></label>
+        <div><div class="row row--between t-body-small"><span data-en="Context used">已用上下文</span><span class="mono">6.2k / 32k</span></div><div class="progress" style="margin-top:6px"><span style="width:19%"></span></div></div>
+        <p class="t-body-small t-muted" style="margin:0" data-en="With a cloud API, you are shown which logs would leave this host before anything is sent.">用云端 API 时,发送前会列出哪些日志要传出本机。</p>
+      </article>
+      <article class="card">
+        <div class="card__head"><h2 data-en="Tools">工具</h2><span class="card__sub" data-en="agent mode">Agent 模式</span><div class="card__actions"><input type="checkbox" class="switch" checked aria-label="agent mode"></div></div>
+        <ul class="list tools-list">
+          <li class="list__item"><span class="list__lead"><i data-ic="logs" class="ic--sm"></i></span><code class="list__title">alb_logcat · alb_log_search</code><span class="list__trail"><span class="pill pill--ok" data-en="runs">直接跑</span></span><span class="list__meta" data-en="read-only">只读</span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="bug" class="ic--sm"></i></span><code class="list__title">alb_diag_* · alb_tombstone_pull</code><span class="list__trail"><span class="pill pill--ok" data-en="runs">直接跑</span></span><span class="list__meta" data-en="read-only">只读</span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="terminal" class="ic--sm"></i></span><code class="list__title">alb_shell</code><span class="list__trail"><span class="pill pill--warn" data-en="asks">先问</span></span><span class="list__meta" data-en="read-only commands run; others ask">只读命令直接跑,其余先问</span></li>
+          <li class="list__item"><span class="list__lead"><i data-ic="power" class="ic--sm"></i></span><code class="list__title">alb_reboot · alb_app_*</code><span class="list__trail"><span class="pill pill--warn" data-en="asks">先问</span></span><span class="list__meta" data-en="changes the board">改动板子</span></li>
+        </ul>
+      </article>
+      <article class="card">
+        <div class="card__head"><h2 data-en="On-board model">板上模型</h2><span class="pill" data-en="not connected">未连接</span><div class="src-note"><span class="new" data-en="new: POST /api/assistant/ondevice/probe">新:POST /api/assistant/ondevice/probe</span></div></div>
+        <p class="t-body-small" style="margin:0" data-en="Same question on the board and on the host, side by side:">同一个问题在板上和主机上各跑一次,并排比较:</p>
+        <div class="well table-wrap compare">
+          <table class="table table--dense">
+            <thead><tr><th></th><th class="num" data-en="Host">主机</th><th class="num" data-en="Board">板上</th></tr></thead>
+            <tbody>
+              <tr><td data-en="First token">首字延迟</td><td class="num mono">0.42 s</td><td class="num mono">—</td></tr>
+              <tr><td data-en="Tokens / s">每秒 token</td><td class="num mono">38.0</td><td class="num mono">—</td></tr>
+              <tr><td data-en="Memory">占用内存</td><td class="num mono">5.1 GB</td><td class="num mono">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <button class="btn btn--tonal btn--sm" style="align-self:flex-start" data-toast-zh="设计稿:经 alb port 试 8080、8000、11434。" data-toast-en="Draft: tries 8080, 8000 and 11434 through alb port."><i data-ic="search" class="ic--sm"></i><span data-en="Look for a server on the board">探测板上服务</span></button>
+      </article>
+    </div>
+  </div>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+</body>
+</html>

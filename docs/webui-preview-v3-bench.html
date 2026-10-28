@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>alb · 台架 Bench · v3</title>
+<!-- Web UI v3 design baseline (Material 3): bench host, boards, USB. Sample data only. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script src="assets/v3/icons.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-page="bench">
+<main class="content" id="main">
+
+  <div class="page-head">
+    <div>
+      <div class="page-head__eyebrow"><span data-en="Bench · bench-01">台架 · bench-01</span><span class="sample-tag" data-en="design draft · sample data">设计稿 · 示例数据</span></div>
+      <h1 data-en="Bench">台架</h1>
+      <p data-en="The Windows machine the boards are plugged into: which board is on which serial port, what it sees on USB, and the agent that runs there.">板子插着的那台 Windows:哪块板接哪个串口、USB 上看到了什么、那边跑着的 agent。</p>
+    </div>
+    <div class="page-head__actions">
+      <button class="btn btn--outlined" data-toast-zh="设计稿:重新列 USB(不占烧录锁)。" data-toast-en="Draft: lists USB again (no flash lock)."><i data-ic="refresh"></i><span data-en="List USB again">重新列 USB</span></button>
+      <button class="btn btn--tonal" data-confirm="confirm-update"><i data-ic="upload"></i><span data-en="Update agent">更新 agent</span></button>
+    </div>
+  </div>
+
+  <div class="confirm" id="confirm-update" role="alert" hidden style="margin-bottom:16px">
+    <i data-ic="alert"></i>
+    <p data-en="Send this hub's agent files to bench-01. It restarts on them; if the new version has not connected back within 60 s, it rolls back to the old one by itself.">把这台 hub 上的 agent 文件推到 bench-01,它换新版重启;60 秒内没连回来,会自己退回旧版。</p>
+    <div class="confirm__actions"><button class="btn btn--danger btn--sm" data-toast-zh="设计稿:不会真的推送。" data-toast-en="Draft: nothing was sent." data-en="Update">更新</button><button class="btn btn--text btn--sm" data-confirm-cancel data-en="Cancel">取消</button></div>
+  </div>
+
+  <section class="grid">
+    <!-- boards -->
+    <article class="card card--flush span-12">
+      <div class="card__head"><h2 data-en="Boards">板子</h2><span class="card__sub" data-en="switching moves the serial console; no hub restart">切换只是把串口指过去,不用重启 hub</span><div class="src-note"><code>GET /api/bench/board</code><code>POST /api/bench/board</code></div></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th data-en="Board">板子</th><th data-en="Serial port">串口</th><th>fastboot product</th><th data-en="Flash list">烧录名单</th><th data-en="Now">现在</th><th></th></tr></thead>
+          <tbody>
+            <tr aria-selected="true"><td><b>board-a</b> <span class="pill pill--info" data-en="current">当前</span></td><td class="mono">COM7 · 115200</td><td class="mono">board_x</td><td><span data-en="24 partitions">24 个分区</span></td><td><span class="pill pill--ok"><span class="dot dot--ok"></span><span data-en="adb + serial · Android">adb + 串口 · 系统</span></span></td><td class="num"><button class="btn btn--text btn--sm" disabled data-en="Current">已选中</button></td></tr>
+            <tr><td><b>board-b</b></td><td class="mono">COM9 · 1500000</td><td class="t-muted" data-en="not set">未配置</td><td class="t-muted" data-en="none">没有</td><td><span class="pill pill--warn"><span class="dot dot--warn"></span><span data-en="serial only · bootloader">只有串口 · bootloader</span></span></td><td class="num"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:串口切到 board-b;另一个读者会被断开,先问你。" data-toast-en="Draft: serial moves to board-b; another reader would be cut off, so it asks first." data-en="Switch here">切到这块</button></td></tr>
+            <tr><td><b>board-c</b></td><td class="mono">COM12 · 115200</td><td class="mono">board_y</td><td><span data-en="18 partitions">18 个分区</span></td><td><span class="pill"><span class="dot"></span><span data-en="no signal for 2 days">两天没有信号</span></span></td><td class="num"><button class="btn btn--text btn--sm" data-en="Switch here">切到这块</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="banner" style="margin:4px 16px 16px"><i data-ic="info"></i><p data-en="The table itself lives in the hub's ALB_BENCH_BOARDS setting and each board's flash list in the bench agent.conf; this page shows them and switches between them.">板子表本身在 hub 的 ALB_BENCH_BOARDS 设置里,每块板的烧录名单在台架 agent.conf 里;这一页负责查看和切换。</p></div>
+    </article>
+
+    <!-- USB -->
+    <article class="card span-7">
+      <div class="card__head"><h2 data-en="What the bench sees on USB">台架 USB 上看到的</h2><span class="card__sub" data-en="7 devices · 1 needs a driver">7 个设备 · 1 个缺驱动</span><div class="src-note"><code>POST /api/bench/ops/usb-list</code></div></div>
+      <div class="usb">
+        <div class="usb__row usb__row--bad">
+          <span class="usb__mode">fastboot</span><span class="usb__id">18d1:d00d · serial 0123456789ABCDEF · Android</span><span class="pill pill--bad" data-en="no driver">没装驱动</span>
+          <span class="usb__hint" data-en="A board is in fastboot but no driver is bound on the bench. Install the Android bootloader (WinUSB) driver there; fastboot cannot see it until then.">有块板子在 fastboot,但台架上没绑驱动。在那台机器上装 Android bootloader(WinUSB)驱动,装好之前 fastboot 看不到它。</span>
+        </div>
+        <div class="usb__row"><span class="usb__mode">adb</span><span class="usb__id">18d1:4ee7 · serial 89ABCDEF01234567</span><span class="pill pill--ok" data-en="driver ok">驱动正常</span></div>
+        <div class="usb__row"><span class="usb__mode" data-en="download (EDL)">下载模式(EDL)</span><span class="usb__id">05c6:9008 · <span data-en="Windows-made id, not a board serial">Windows 自编号,不是板子序列号</span></span><span class="pill pill--warn" data-en="driver problem">驱动有问题</span>
+          <span class="usb__hint" data-en="Code 28: the drivers for this device are not installed. Download-mode flashing comes later and needs the vendor's command-line tool.">错误码 28:这个设备的驱动没装。下载模式烧录是后续功能,需要厂家的命令行工具。</span></div>
+        <div class="usb__row"><span class="usb__mode" data-en="serial adapter">串口转接器</span><span class="usb__id">0403:6001 · COM7</span><span class="pill pill--ok" data-en="driver ok">驱动正常</span></div>
+      </div>
+      <button class="btn btn--text btn--sm" style="align-self:flex-start" data-en="Show 3 other devices (hub, keyboard, mouse)">显示另外 3 个设备(集线器、键盘、鼠标)</button>
+    </article>
+
+    <!-- agent -->
+    <article class="card span-5">
+      <div class="card__head"><h2 data-en="Bench agent">台架 agent</h2><span class="pill pill--ok"><span class="dot dot--ok"></span><span data-en="connected">已连接</span></span><div class="src-note"><code>GET /agent/status</code></div></div>
+      <dl class="kv">
+        <div><dt data-en="Name">名字</dt><dd>bench-01</dd></div>
+        <div><dt data-en="System">系统</dt><dd>Windows 11</dd></div>
+        <div><dt data-en="Version">版本</dt><dd class="mono">a1b2c3d4e5f6</dd></div>
+        <div><dt data-en="Connected for">已连接</dt><dd data-en="5 d 3 h">5 天 3 小时</dd></div>
+        <div><dt data-en="Last update">上次更新</dt><dd><span class="pill pill--ok" data-en="10-23 · updated">10-23 · 成功</span></dd></div>
+        <div><dt data-en="Operations">操作表</dt><dd data-en="11 operations">11 项</dd></div>
+      </dl>
+      <div class="row">
+        <button class="btn btn--tonal btn--sm" data-confirm="confirm-update"><i data-ic="upload" class="ic--sm"></i><span data-en="Update">更新</span></button>
+        <button class="btn btn--outlined btn--sm" data-toast-zh="设计稿:agent 不在线时经 ssh 拉起。" data-toast-en="Draft: starts the agent over ssh when it is not connected."><i data-ic="play" class="ic--sm"></i><span data-en="Start remotely">远程拉起</span></button>
+      </div>
+      <p class="t-body-small t-muted" style="margin:0" data-en="Only the operations in its table can run on Windows; commands on the board itself are not restricted.">Windows 上只能执行操作表里的操作;板子上的命令不受限制。</p>
+    </article>
+
+    <!-- bench logs -->
+    <article class="card span-12">
+      <div class="card__head"><h2 data-en="Bench logs">台架日志</h2><div class="src-note"><code>POST /api/bench/ops/log-tail</code></div></div>
+      <div class="log-tools">
+        <div class="seg seg--sm" role="group" aria-label="log source"><button aria-pressed="true" data-en="Agent log">agent 日志</button><button aria-pressed="false" data-en="USB driver log">USB 驱动日志</button></div>
+        <label class="input--search"><i data-ic="search" class="ic--sm"></i><input value="error" aria-label="keyword"></label>
+        <select class="select" style="width:auto" aria-label="lines"><option data-en="last 200 lines">最后 200 行</option><option data-en="last 1000 lines">最后 1000 行</option></select>
+      </div>
+      <pre class="term" style="height:200px;font-size:12px"><span class="d">2026-10-28 09:12:40</span> job 41: flash super ← super.img
+<span class="d">2026-10-28 09:13:11</span> <span class="e">job 41: fastboot exit 1: FAILED (remote: 'Partition should be flashed in fastbootd')</span>
+<span class="d">2026-10-28 09:13:11</span> job 41: lock released after 31.2 s
+<span class="d">2026-10-28 09:20:02</span> usb-list: 7 devices, 1 without driver (18d1:d00d)</pre>
+    </article>
+
+    <!-- op table -->
+    <article class="card card--flush span-12">
+      <div class="card__head"><h2 data-en="Operation table">操作表</h2><span class="card__sub" data-en="what may run on the Windows side; argv is built there, never sent">Windows 上允许执行的操作;命令行在那边拼,不从这边传</span><div class="src-note"><code>GET /api/bench/ops</code></div></div>
+      <div class="table-wrap">
+        <table class="table table--dense">
+          <thead><tr><th data-en="Operation">操作</th><th data-en="What it does">做什么</th><th data-en="Changes the board">改动板子</th><th data-en="Needs fastboot">需要 fastboot</th><th data-en="Takes an image">收镜像</th><th class="num" data-en="Timeout">超时</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">devices</td><td>fastboot devices</td><td>—</td><td>—</td><td>—</td><td class="num mono">10 s</td></tr>
+            <tr><td class="mono">getvar</td><td>fastboot getvar &lt;name&gt;</td><td>—</td><td>✓</td><td>—</td><td class="num mono">15 s</td></tr>
+            <tr><td class="mono">flash</td><td>fastboot flash &lt;partition&gt;</td><td><span class="pill pill--warn">✓</span></td><td>✓</td><td>✓</td><td class="num mono">30 min</td></tr>
+            <tr><td class="mono">erase</td><td>fastboot erase &lt;partition&gt;</td><td><span class="pill pill--warn">✓</span></td><td>✓</td><td>—</td><td class="num mono">5 min</td></tr>
+            <tr><td class="mono">set-active</td><td>fastboot set_active &lt;slot&gt;</td><td><span class="pill pill--warn">✓</span></td><td>✓</td><td>—</td><td class="num mono">15 s</td></tr>
+            <tr><td class="mono">usb-list</td><td data-en="USB devices on this host">本机 USB 设备</td><td>—</td><td>—</td><td>—</td><td class="num mono">30 s</td></tr>
+            <tr><td class="mono">log-tail</td><td data-en="tail of a named log">按名字读日志尾部</td><td>—</td><td>—</td><td>—</td><td class="num mono">15 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+</main>
+</div>
+<script src="assets/v3/mock.js"></script>
+</body>
+</html>
