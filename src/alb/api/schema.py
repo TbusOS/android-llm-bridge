@@ -299,6 +299,12 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "with the previous boot of the same device for comparison",
     },
     {
+        "method": "POST",
+        "path": "/api/serial/break-in",
+        "description": "Stop the board in its bootloader via the UART autoboot "
+        "countdown, optionally rebooting it first (NDJSON: ready, then done)",
+    },
+    {
         "method": "GET",
         "path": "/api/power/battery",
         "description": "Parsed dumpsys battery snapshot",
