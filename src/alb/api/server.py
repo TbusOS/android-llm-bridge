@@ -23,6 +23,7 @@ from alb import __version__
 from alb.api.adb_route import router as adb_router
 from alb.api.agent_route import router as agent_router
 from alb.api.app_route import router as app_route_router
+from alb.api.assistant_route import router as assistant_router
 from alb.api.audit_route import router as audit_router
 from alb.api.chat_route import router as chat_router
 from alb.api.devices_route import router as devices_router
@@ -117,6 +118,7 @@ def create_app() -> FastAPI:
 
     app.include_router(adb_router)
     app.include_router(agent_router)
+    app.include_router(assistant_router)
     app.include_router(app_route_router)
     app.include_router(audit_router)
     app.include_router(chat_router)

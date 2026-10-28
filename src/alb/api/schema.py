@@ -315,6 +315,12 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "description": "One recorded flash job: full job.json and its timeline file name",
     },
     {
+        "method": "POST",
+        "path": "/api/assistant/ondevice/probe",
+        "description": "Ask board-local ports whether an OpenAI-compatible or Ollama "
+        "model server answers there (through the adb server, like alb port)",
+    },
+    {
         "method": "GET",
         "path": "/api/power/battery",
         "description": "Parsed dumpsys battery snapshot",
