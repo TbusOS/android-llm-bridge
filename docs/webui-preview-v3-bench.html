@@ -83,13 +83,13 @@
 
     <!-- bench logs -->
     <article class="card span-12">
-      <div class="card__head"><h2 data-en="Bench logs">台架日志</h2><div class="src-note"><code>POST /api/bench/ops/log-tail</code></div></div>
+      <div class="card__head"><h2 data-en="Bench logs">台架日志</h2><span class="card__sub" data-en="Agent log · 4 lines">agent 日志 · 4 行</span><div class="card__actions"><button class="icon-btn" aria-label="Read again" title="重新读取" data-toast-zh="设计稿:重新读一次日志。" data-toast-en="Draft: reads the log again."><i data-ic="refresh"></i></button><button class="btn btn--tonal btn--sm" data-open-dialog="log-dialog"><i data-ic="open-full" class="ic--sm"></i><span data-en="Open large">放大查看</span></button></div><div class="src-note"><code>POST /api/bench/ops/log-tail</code></div></div>
       <div class="log-tools">
         <div class="seg seg--sm" role="group" aria-label="log source"><button aria-pressed="true" data-en="Agent log">agent 日志</button><button aria-pressed="false" data-en="USB driver log">USB 驱动日志</button></div>
         <label class="input--search"><i data-ic="search" class="ic--sm"></i><input value="error" aria-label="keyword"></label>
         <select class="select" style="width:auto" aria-label="lines"><option data-en="last 200 lines">最后 200 行</option><option data-en="last 1000 lines">最后 1000 行</option></select>
       </div>
-      <pre class="term" style="height:200px;font-size:12px"><span class="d">2026-10-28 09:12:40</span> job 41: flash super ← super.img
+      <pre class="term" style="height:280px;font-size:12px" title="双击放大" data-open-dialog-dbl="log-dialog"><span class="d">2026-10-28 09:12:40</span> job 41: flash super ← super.img
 <span class="d">2026-10-28 09:13:11</span> <span class="e">job 41: fastboot exit 1: FAILED (remote: 'Partition should be flashed in fastbootd')</span>
 <span class="d">2026-10-28 09:13:11</span> job 41: lock released after 31.2 s
 <span class="d">2026-10-28 09:20:02</span> usb-list: 7 devices, 1 without driver (18d1:d00d)</pre>
@@ -116,6 +116,61 @@
   </section>
 </main>
 </div>
+<!-- log opened large: same controls as the card, same read -->
+<div class="dialog-scrim" id="log-dialog" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="log-dialog-title">
+    <div class="dialog__head">
+      <div class="dialog__title"><h2 id="log-dialog-title" data-en="Bench logs">台架日志</h2><p data-en='Agent log · last 200 lines · keyword "error"'>agent 日志 · 最后 200 行 · 关键词 "error"</p></div>
+      <button class="icon-btn" aria-label="Read again" title="重新读取" data-toast-zh="设计稿:重新读一次日志。" data-toast-en="Draft: reads the log again."><i data-ic="refresh"></i></button>
+      <button class="icon-btn" aria-pressed="true" aria-label="Wrap lines" title="自动换行" id="log-wrap"><i data-ic="wrap"></i></button>
+      <button class="icon-btn" aria-label="Copy all" title="复制全部" data-toast-zh="设计稿:已复制 32 行。" data-toast-en="Draft: copied 32 lines."><i data-ic="copy"></i></button>
+      <button class="icon-btn" aria-label="Save as file" title="存为文件" data-toast-zh="设计稿:存成 bench-agent.log。" data-toast-en="Draft: saved as bench-agent.log."><i data-ic="download"></i></button>
+      <button class="icon-btn" aria-label="Close" title="关闭(Esc)" data-close-dialog><i data-ic="close"></i></button>
+    </div>
+    <div class="dialog__tools">
+      <form class="log-tools" onsubmit="return false">
+        <div class="seg seg--sm" role="group" aria-label="log source"><button type="button" aria-pressed="true" data-en="Agent log">agent 日志</button><button type="button" aria-pressed="false" data-en="USB driver log">USB 驱动日志</button><button type="button" aria-pressed="false" data-en="Update log">更新日志</button></div>
+        <label class="input--search"><i data-ic="search" class="ic--sm"></i><input value="error" aria-label="keyword"></label>
+        <select class="select" style="width:auto" aria-label="lines"><option data-en="last 200 lines">最后 200 行</option><option data-en="last 1000 lines">最后 1000 行</option><option data-en="last 2000 lines">最后 2000 行</option></select>
+      </form>
+    </div>
+    <div class="dialog__body"><pre class="term term--lines" id="log-lines" tabindex="0" aria-label="bench log"></pre></div>
+    <div class="dialog__foot"><span data-en="32 lines">32 行</span><span data-en='3 lines contain "error"'>含「error」的 3 行</span><span data-en="3 lines look like errors">3 行像错误</span></div>
+  </div>
+</div>
 <script src="assets/v3/mock.js"></script>
+<script>
+(function () {
+  // sample lines for the large view; built here so <pre> gets no stray newlines between rows
+  var rows = [], t0 = Date.UTC(2026, 9, 28, 1, 5, 0);
+  var said = ["ws connected to hub, build 0a1b2c3d4e5f", "serial channel 1f2a: opened COM7 @ 115200", "adb channel 77c1: opened -> 127.0.0.1:5037",
+    "usb-list: 7 devices, 1 without driver (18d1:d00d)", "job 40: getvar product -> board_x", "job 40: lock released after 0.4 s"];
+  for (var i = 0; i < 28; i++) rows.push([t0 + i * 17000, said[i % said.length]]);
+  rows.push([t0 + 600000, "job 41: flash super \u2190 super.img"]);
+  rows.push([t0 + 631000, "job 41: fastboot exit 1: FAILED (remote: 'Partition should be flashed in fastbootd') error"]);
+  rows.push([t0 + 631200, "job 41: error: lock released after 31.2 s"]);
+  rows.push([t0 + 640000, "usb-list: error reading hub port 4 status, retried"]);
+  function stamp(ms) { return new Date(ms).toISOString().replace("T", " ").slice(0, 19); }
+  var pre = document.getElementById("log-lines");
+  pre.style.setProperty("--ln-w", "4ch");
+  pre.innerHTML = rows.map(function (r, n) {
+    var text = stamp(r[0]) + " " + r[1], bad = /\b(error|fail|failed)\b/i.test(text);
+    var html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/error/gi, function (m) { return "<mark>" + m + "</mark>"; });
+    return "<div" + (bad ? ' class="e"' : "") + "><i>" + (n + 1) + "</i><span>" + html + "</span></div>";
+  }).join("");
+  var dlg = document.getElementById("log-dialog"), opener = null;
+  function open(btn) { opener = btn; dlg.hidden = false; document.getElementById("app").setAttribute("inert", ""); dlg.querySelector("[data-close-dialog]").focus(); pre.scrollTop = pre.scrollHeight; }
+  function close() { dlg.hidden = true; document.getElementById("app").removeAttribute("inert"); if (opener) opener.focus(); }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-open-dialog]");
+    if (b) { open(b); return; }
+    if (e.target.closest("[data-close-dialog]") || e.target === dlg) { close(); return; }
+    var w = e.target.closest("#log-wrap");
+    if (w) { var on = w.getAttribute("aria-pressed") !== "true"; w.setAttribute("aria-pressed", String(on)); pre.classList.toggle("term--nowrap", !on); }
+  });
+  document.querySelector("[data-open-dialog-dbl]").addEventListener("dblclick", function (e) { open(e.currentTarget); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !dlg.hidden) close(); });
+})();
+</script>
 </body>
 </html>

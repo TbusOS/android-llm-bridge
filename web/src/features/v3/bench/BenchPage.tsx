@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "../../../components/v3/Icon";
+import { LogDialog } from "../../../components/v3/LogDialog";
 import { useAgentStatus, useBenchBoard } from "../../../components/v3/TopBar";
 import { CardHead, Confirm, Dot, Empty, ErrorBanner, PageHead, Pill, toast } from "../../../components/v3/ui";
 import {
@@ -380,6 +381,7 @@ function AgentCard({
   onCloseJob: () => void;
 }) {
   const t = useT();
+  const [jobLarge, setJobLarge] = useState(false);
   const build = opsData?.agent?.build ?? "";
   const bundle = opsData?.bundle_build ?? "";
   const stale = !!build && !!bundle && build !== bundle;
@@ -439,7 +441,24 @@ function AgentCard({
             <div className="banner banner--error" role="alert"><Icon name="error" /><p><b>{doneErr?.code || "FAILED"}</b>{doneErr?.message ? <> · <span className="mono">{doneErr.message}</span></> : null}</p><span /></div>
           )}
           {job.lines.length > 0 ? <pre className="term" style={{ fontSize: 12, maxHeight: 140 }}>{job.lines.join("\n")}</pre> : null}
-          {!job.running ? <button type="button" className="btn btn--text btn--sm" style={{ alignSelf: "flex-start" }} onClick={onCloseJob}>{t("收起", "Dismiss")}</button> : null}
+          <div className="row">
+            {job.lines.length > 0 ? (
+              <button type="button" className="btn btn--text btn--sm" onClick={() => setJobLarge(true)}>
+                <Icon name="open-full" size="sm" />
+                {t("放大查看", "Open large")}
+              </button>
+            ) : null}
+            {!job.running ? <button type="button" className="btn btn--text btn--sm" onClick={onCloseJob}>{t("收起", "Dismiss")}</button> : null}
+          </div>
+          <LogDialog
+            open={jobLarge}
+            onClose={() => setJobLarge(false)}
+            title={job.kind === "update" ? t("agent 更新过程", "Agent update") : t("agent 拉起过程", "Agent start")}
+            sub={job.running ? t("还在进行,新行会继续追加。", "Still running; new lines keep arriving.") : undefined}
+            lines={job.lines}
+            loading={job.running}
+            fileName={`bench-agent-${job.kind}.log`}
+          />
         </div>
       ) : null}
       <p className="t-body-small t-muted" style={{ margin: 0 }}>{t("Windows 上只能执行操作表里的操作;板子上的命令不受限制。", "Only the operations in its table can run on Windows; commands on the board itself are not restricted.")}</p>
@@ -462,7 +481,8 @@ function LogsCard({ ops, connected }: { ops: OpSpecView[] | undefined; connected
   const [source, setSource] = useState("");
   const [grep, setGrep] = useState("");
   const [lines, setLines] = useState(200);
-  const [state, setState] = useState<{ loading: boolean; text: string; error: string | null; note: string }>({ loading: false, text: "", error: null, note: "" });
+  const [state, setState] = useState<{ loading: boolean; text: string; error: string | null; note: string; grep: string }>({ loading: false, text: "", error: null, note: "", grep: "" });
+  const [large, setLarge] = useState(false);
   const seq = useRef(0);
   const src = source && sources.includes(source) ? source : (sources[0] ?? "");
 
@@ -476,13 +496,13 @@ function LogsCard({ ops, connected }: { ops: OpSpecView[] | undefined; connected
         if (my !== seq.current) return;
         if (d.ok) {
           const data = (d.data ?? {}) as { lines?: number; truncated?: boolean };
-          setState({ loading: false, text: String(d.stdout ?? ""), error: null, note: data.truncated ? t("更早的行没有读进来。", "Older lines were not read.") : "" });
+          setState({ loading: false, text: String(d.stdout ?? ""), error: null, note: data.truncated ? t("更早的行没有读进来(agent 每次最多回 2000 行、64 KB)。", "Older lines were not read (the agent returns at most 2000 lines, 64 KB, per read).") : "", grep: g });
         } else {
           const f = errorOf(d);
-          setState({ loading: false, text: "", error: `${f.code || "FAILED"}${f.message ? `: ${f.message}` : ""}`, note: "" });
+          setState({ loading: false, text: "", error: `${f.code || "FAILED"}${f.message ? `: ${f.message}` : ""}`, note: "", grep: g });
         }
       } catch (e) {
-        if (my === seq.current) setState({ loading: false, text: "", error: e instanceof Error ? e.message : String(e), note: "" });
+        if (my === seq.current) setState({ loading: false, text: "", error: e instanceof Error ? e.message : String(e), note: "", grep: g });
       }
     },
     [t],
@@ -494,9 +514,55 @@ function LogsCard({ ops, connected }: { ops: OpSpecView[] | undefined; connected
   }, [src, lines, connected, load]);
 
   const rows = state.text ? state.text.split("\n") : [];
+  const ready = connected && sources.length > 0;
+  const sourceName = (x: string) => (SOURCE_LABEL[x] ? t(SOURCE_LABEL[x][0], SOURCE_LABEL[x][1]) : x);
+  // One set of controls, drawn in the card and again in the dialog; both
+  // are bound to the same state, so a filter set in one shows in the other.
+  const tools = (
+    <form
+      className="log-tools"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void load(src, grep, lines);
+      }}
+    >
+      <div className="seg seg--sm" role="group" aria-label={t("日志来源", "log source")}>
+        {sources.map((s) => (
+          <button key={s} type="button" aria-pressed={src === s} onClick={() => setSource(s)}>
+            {sourceName(s)}
+          </button>
+        ))}
+      </div>
+      <label className="input--search">
+        <Icon name="search" size="sm" />
+        <input value={grep} onChange={(e) => setGrep(e.target.value)} aria-label={t("关键词", "keyword")} placeholder={t("关键词(回车筛选)", "keyword (Enter to filter)")} />
+      </label>
+      <select className="select" style={{ width: "auto" }} aria-label={t("行数", "lines")} value={lines} onChange={(e) => setLines(Number(e.target.value))}>
+        <option value={200}>{t("最后 200 行", "last 200 lines")}</option>
+        <option value={1000}>{t("最后 1000 行", "last 1000 lines")}</option>
+        <option value={2000}>{t("最后 2000 行", "last 2000 lines")}</option>
+      </select>
+    </form>
+  );
   return (
     <article className="card span-12">
-      <CardHead title={t("台架日志", "Bench logs")} />
+      <CardHead
+        title={t("台架日志", "Bench logs")}
+        sub={ready && rows.length > 0 ? t(`${sourceName(src)} · ${rows.length} 行`, `${sourceName(src)} · ${rows.length} lines`) : undefined}
+        actions={
+          ready ? (
+            <>
+              <button type="button" className="icon-btn" onClick={() => void load(src, grep, lines)} disabled={state.loading} aria-label={t("重新读取", "Read again")} title={t("重新读取", "Read again")}>
+                <Icon name="refresh" />
+              </button>
+              <button type="button" className="btn btn--tonal btn--sm" onClick={() => setLarge(true)}>
+                <Icon name="open-full" size="sm" />
+                {t("放大查看", "Open large")}
+              </button>
+            </>
+          ) : undefined
+        }
+      />
       {!connected ? (
         <Empty icon="logs" title={t("agent 没连上,读不了台架日志", "The agent is not connected, so its logs cannot be read")} />
       ) : sources.length === 0 ? (
@@ -505,37 +571,29 @@ function LogsCard({ ops, connected }: { ops: OpSpecView[] | undefined; connected
         </Empty>
       ) : (
         <>
-          <form
-            className="log-tools"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void load(src, grep, lines);
-            }}
-          >
-            <div className="seg seg--sm" role="group" aria-label={t("日志来源", "log source")}>
-              {sources.map((s) => (
-                <button key={s} type="button" aria-pressed={src === s} onClick={() => setSource(s)}>
-                  {SOURCE_LABEL[s] ? t(SOURCE_LABEL[s][0], SOURCE_LABEL[s][1]) : s}
-                </button>
-              ))}
-            </div>
-            <label className="input--search">
-              <Icon name="search" size="sm" />
-              <input value={grep} onChange={(e) => setGrep(e.target.value)} aria-label={t("关键词", "keyword")} placeholder={t("关键词(回车筛选)", "keyword (Enter to filter)")} />
-            </label>
-            <select className="select" style={{ width: "auto" }} aria-label={t("行数", "lines")} value={lines} onChange={(e) => setLines(Number(e.target.value))}>
-              <option value={200}>{t("最后 200 行", "last 200 lines")}</option>
-              <option value={1000}>{t("最后 1000 行", "last 1000 lines")}</option>
-              <option value={2000}>{t("最后 2000 行", "last 2000 lines")}</option>
-            </select>
-          </form>
+          {large ? null : tools}
           {state.error ? <ErrorBanner>{state.error}</ErrorBanner> : null}
-          <pre className="term" style={{ height: 200, fontSize: 12 }} aria-label={t("台架日志内容", "bench log")}>
+          <pre className="term" style={{ height: 280, fontSize: 12 }} aria-label={t("台架日志内容", "bench log")} onDoubleClick={() => setLarge(true)} title={t("双击放大", "Double-click to open large")}>
             {state.loading && rows.length === 0 ? t("读取中…", "Reading…") : rows.length === 0 && !state.error ? t("没有匹配的行。", "No matching lines.") : rows.map((r, i) => (
               <div key={i} className={/\b(error|fail|failed)\b/i.test(r) ? "e" : undefined}>{r}</div>
             ))}
           </pre>
           {state.note ? <p className="t-body-small t-muted" style={{ margin: 0 }}>{state.note}</p> : null}
+          <LogDialog
+            open={large}
+            onClose={() => setLarge(false)}
+            title={t("台架日志", "Bench logs")}
+            sub={`${sourceName(src)} · ${t(`最后 ${lines} 行`, `last ${lines} lines`)}${state.grep ? ` · ${t("关键词", "keyword")} "${state.grep}"` : ""}`}
+            tools={tools}
+            lines={rows}
+            loading={state.loading}
+            error={state.error}
+            note={state.note}
+            highlight={state.grep}
+            fileName={`bench-${src}.log`}
+            onRefresh={() => void load(src, grep, lines)}
+            emptyText={t("没有匹配的行。", "No matching lines.")}
+          />
         </>
       )}
     </article>

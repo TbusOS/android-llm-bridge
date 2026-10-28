@@ -217,6 +217,26 @@ describe("Bench page", () => {
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/bench/ops/log-tail").pop()?.body).toMatchObject({ params: { source: "setupapi" } }));
   });
 
+  it("bench logs open large: same read, numbered lines, the same controls, Esc closes", async () => {
+    mock();
+    renderPage();
+    await screen.findByText(/fastboot exit 1: FAILED/);
+    fireEvent.click(screen.getByRole("button", { name: "Open large" }));
+    const dialog = screen.getByRole("dialog", { name: "Bench logs" });
+    const rows = dialog.querySelectorAll(".term--lines > div");
+    expect(rows.length).toBe(2);
+    expect(rows[1]?.className).toBe("e");
+    // the card's controls moved into the dialog: exactly one keyword box on screen
+    expect(screen.getAllByLabelText("keyword").length).toBe(1);
+    expect(within(dialog).getByLabelText("keyword")).toBeInTheDocument();
+    const before = calls.filter((c) => c.url === "/api/bench/ops/log-tail").length;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Read again" }));
+    await waitFor(() => expect(calls.filter((c) => c.url === "/api/bench/ops/log-tail").length).toBe(before + 1));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByLabelText("keyword")).toBeInTheDocument();
+  });
+
   it("operation table lists the agent's operations with timeouts", async () => {
     mock();
     renderPage();
