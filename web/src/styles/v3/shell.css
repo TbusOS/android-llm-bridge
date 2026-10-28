@@ -77,6 +77,21 @@ body::before {
   flex: none;
 }
 .board-switch__meta { font-weight: 400; font-size: 12px; opacity: .9; }
+.board-switch__meta--warn { font-weight: 600; opacity: 1; }
+
+/* board / device menu: moves with the arrow keys, so focus is drawn
+   inside the item (the scroller would clip an outside ring) */
+.board-menu { max-height: min(70vh, 560px); overflow-y: auto; }
+.board-menu .menu__item:focus-visible { outline-offset: -2px; }
+.board-menu .menu__item:focus-visible::after { opacity: var(--md-sys-state-focus-opacity); }
+/* rows that explain (loading, why the list is empty) are not actions;
+   .menu prefix: components.css loads after this file */
+.menu .menu__item--info { cursor: default; }
+.menu .menu__item--info:hover::after,
+.menu .menu__item--info:active::after { opacity: 0; }
+.menu .menu__item--error > svg,
+.menu .menu__item--error > span:nth-child(2) { color: var(--md-sys-color-error); }
+.menu .menu__item--error > span:nth-child(2) { font-weight: 500; }
 
 .chans {
   display: flex;

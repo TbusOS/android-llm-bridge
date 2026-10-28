@@ -46,12 +46,36 @@
   </div>
 
   <section class="grid">
+    <!-- devices: only when more than one device is listed, or the chosen one dropped out
+         (then it stays chosen and shows as a .dev--gone tile in front of the others) -->
+    <article class="card span-12">
+      <div class="card__head">
+        <h2 data-en="Devices">设备</h2>
+        <span class="card__sub" data-en="2 online · 0 not reachable · via adb">2 台在线 · 0 台连不上 · 经 adb</span>
+        <div class="src-note"><code>GET /devices</code><code>GET /devices/{serial}/details</code></div>
+        <div class="card__actions"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:重新读取设备列表。" data-toast-en="Draft: reads the device list again."><i data-ic="refresh" class="ic--sm"></i><span data-en="Refresh">刷新</span></button></div>
+      </div>
+      <div class="devs">
+        <button class="dev" aria-pressed="true">
+          <span class="dev__head"><span class="dot dot--ok"></span><b class="mono">0123456789ABCDEF</b><span class="pill pill--info" data-en="selected">已选</span></span>
+          <span class="dev__sub">Example board_x</span>
+          <span class="dev__facts"><span><small data-en="SoC">芯片</small><span class="num">soc-x1</span></span><span><small data-en="Memory">内存</small><span class="num">38% · 7.6 GiB</span></span><span><small data-en="Battery">电池</small><span class="num">87%</span></span><span><small data-en="Temp">温度</small><span class="num">31.2 °C</span></span></span>
+        </button>
+        <button class="dev" aria-pressed="false" data-toast-zh="设计稿:切到 FEDCBA9876543210。" data-toast-en="Draft: switches to FEDCBA9876543210.">
+          <span class="dev__head"><span class="dot dot--ok"></span><b class="mono">FEDCBA9876543210</b></span>
+          <span class="dev__sub">Example board_y</span>
+          <span class="dev__facts"><span><small data-en="SoC">芯片</small><span class="num">soc-y2</span></span><span><small data-en="Memory">内存</small><span class="num">71% · 3.8 GiB</span></span><span><small data-en="Battery">电池</small><span class="num">—</span></span><span><small data-en="Temp">温度</small><span class="num">52.0 °C</span></span></span>
+        </button>
+      </div>
+    </article>
+
     <!-- board state -->
     <article class="card span-8">
       <div class="card__head">
         <h2 data-en="Board state">板子状态</h2>
         <span class="card__sub" data-en="read from serial, adb and the bench USB together">由串口、adb、台架 USB 三处合起来判断</span>
         <div class="src-note card__actions"><code>GET /devices/{serial}/details</code><code>GET /api/bench/ops/usb-list</code></div>
+        <div class="card__actions"><button class="btn btn--text btn--sm" data-toast-zh="设计稿:重新读取设备和板子信息。" data-toast-en="Draft: reads the devices and board details again."><i data-ic="refresh" class="ic--sm"></i><span data-en="Refresh">刷新</span></button></div>
       </div>
       <div class="state">
         <span class="pill pill--ok"><span class="dot dot--ok"></span><span data-en="Booted">已开机</span></span>
@@ -168,7 +192,7 @@
         <h2 data-en="Recent activity">最近操作</h2>
         <span class="card__sub" data-en="from the web, the CLI and AI sessions">来自网页、命令行和 AI 会话</span>
         <div class="src-note"><code>WS /audit/stream</code></div>
-        <div class="card__actions"><a class="btn btn--text btn--sm" href="#" data-toast-zh="设计稿:打开操作记录。" data-toast-en="Draft: opens the audit log." data-en="All">全部</a></div>
+        <div class="card__actions"><span class="pill pill--ok" data-en="live">实时</span><button class="btn btn--text btn--sm" data-toast-zh="设计稿:暂停推送,列表停在这里。" data-toast-en="Draft: pauses the push; the list stays put."><i data-ic="pause" class="ic--sm"></i><span data-en="Pause">暂停</span></button><a class="btn btn--text btn--sm" href="#" data-toast-zh="设计稿:打开操作记录。" data-toast-en="Draft: opens the audit log." data-en="All">全部</a></div>
       </div>
       <ul class="list">
         <li class="list__item"><span class="list__lead mono">09:40</span><span class="list__title" data-en="Flashed boot_a ← boot.img (96 MiB)">烧写 boot_a ← boot.img(96 MiB)</span><span class="list__trail"><span class="pill pill--ok">ok</span></span><span class="list__meta" data-en="web · checked product board_x first · 3.1 s">网页 · 先核对了 product board_x · 3.1 秒</span></li>
@@ -190,7 +214,58 @@
         <a class="qa" href="webui-preview-v3-logs.html"><span class="qa__ic"><i data-ic="logs"></i></span><b data-en="Live logcat">实时 logcat</b><small data-en="filter by tag, level, pid">按 tag / 级别 / pid 过滤</small></a>
         <a class="qa" href="webui-preview-v3-timeline.html"><span class="qa__ic"><i data-ic="timeline"></i></span><b data-en="Record a timeline">录时间轴</b><small data-en="logcat + dmesg + serial">logcat + dmesg + 串口</small></a>
         <a class="qa" href="webui-preview-v3-flash.html"><span class="qa__ic"><i data-ic="package"></i></span><b data-en="Flash a package">烧整包</b><small data-en="check the plan, then run">先检查计划再执行</small></a>
+        <a class="qa" href="#" data-toast-zh="设计稿:打开屏幕页。" data-toast-en="Draft: opens Screen."><span class="qa__ic"><i data-ic="camera"></i></span><b data-en="Take a screenshot">截屏</b><small data-en="screenshot and UI tree">截图和界面树</small></a>
+        <a class="qa" href="#" data-toast-zh="设计稿:打开环境检查。" data-toast-en="Draft: opens Health check."><span class="qa__ic"><i data-ic="check-circle"></i></span><b data-en="Health check">环境检查</b><small data-en="env, adb, serial and ssh, layer by layer">环境、adb、串口、ssh 逐层查</small></a>
+        <a class="qa" href="#" data-toast-zh="设计稿:打开连接中心。" data-toast-en="Draft: opens the connection center."><span class="qa__ic"><i data-ic="link"></i></span><b data-en="Connection center">连接中心</b><small data-en="bench agents dialed in, adb / serial forwards">连进来的台架 agent 和 adb / 串口转发</small></a>
         <a class="qa" href="webui-preview-v3-chat.html"><span class="qa__ic"><i data-ic="spark"></i></span><b data-en="Ask the assistant">问助手</b><small data-en="it can read logs and run tools">能读日志、调用工具</small></a>
+      </div>
+    </article>
+
+    <!-- live agent session: its own audit socket with tps_sample, so pausing the activity list does not freeze it -->
+    <article class="card span-7" aria-live="polite">
+      <div class="card__head">
+        <h2 data-en="Agent session">AI 会话</h2>
+        <span class="card__sub" data-en="running now, from the chat page or the CLI">正在跑,来自对话页或命令行</span>
+        <div class="src-note"><code>WS /audit/stream · include_metrics</code></div>
+        <div class="card__actions"><a class="btn btn--text btn--sm" href="webui-preview-v3-chat.html" data-en="Open chat">打开对话</a></div>
+      </div>
+      <div class="live__head"><span class="dot dot--live"></span><b data-en="turn 2">第 2 轮</b><span data-en="1 min 12 s">1 分 12 秒</span><span class="mono">abcdef12</span></div>
+      <p class="live__prompt" data-en="Why did the sensor service crash after the last boot?">上一次开机后传感器服务为什么崩了?</p>
+      <ul class="live__tools" aria-label="tool calls">
+        <li class="live__tool live__tool--done"><i data-ic="check-circle" class="ic--sm"></i><code>alb_tombstone_pull</code><span class="num">1.4 s</span></li>
+        <li class="live__tool live__tool--done"><i data-ic="check-circle" class="ic--sm"></i><code>alb_log_search</code><span class="num">0.9 s</span></li>
+        <li class="live__tool live__tool--running"><span class="spinner" style="width:14px;height:14px;border-width:2px"></span><code>alb_dmesg</code><span class="num" data-en="running 3 s">进行中 3 s</span></li>
+      </ul>
+      <div class="live__tps"><div class="metric__value">18<small data-en="tok/s now">tok/s · 当前</small></div><svg class="spark" id="sp-tps" role="img" aria-label="tokens per second, last 60 s"></svg><span class="live__meta mono">qwen2.5:7b<br>1240 tok</span></div>
+    </article>
+
+    <!-- LLM backends -->
+    <article class="card span-5">
+      <div class="card__head">
+        <h2 data-en="LLM backends">模型后端</h2>
+        <span class="card__sub" data-en="1 reachable · 3 registered, 1 planned">1 个可达 · 共 3 个,1 个计划中</span>
+        <div class="src-note"><code>GET /playground/backends</code><code>GET /playground/backends/{name}/health</code><code>GET /metrics/summary?group_by=backend</code></div>
+        <div class="card__actions"><a class="btn btn--text btn--sm" href="#" data-toast-zh="设计稿:打开模型试验。" data-toast-en="Draft: opens Playground." data-en="Try one">去试一下</a></div>
+      </div>
+      <ul class="list">
+        <li class="list__item"><span class="list__lead"><i data-ic="robot"></i></span><span class="list__title"><span class="dot dot--ok" style="display:inline-block;margin-right:6px"></span>ollama</span><span class="list__trail"><svg class="spark spark--sm" id="sp-be"></svg><span class="mono num">42 ms</span></span><span class="list__meta">qwen2.5:7b · remote</span></li>
+        <li class="list__item"><span class="list__lead"><i data-ic="robot"></i></span><span class="list__title"><span class="dot dot--bad" style="display:inline-block;margin-right:6px"></span>openai-compat</span><span class="list__trail"><span class="pill pill--bad" data-en="down · probe_timeout">连不上 · probe_timeout</span></span><span class="list__meta">timed out after 3 s · remote</span></li>
+        <li class="list__item"><span class="list__lead"><i data-ic="robot"></i></span><span class="list__title"><span class="dot" style="display:inline-block;margin-right:6px"></span>llama-cpp</span><span class="list__trail"><span class="pill" data-en="planned, not built yet">计划中,还没实现</span></span><span class="list__meta">llama.cpp server · cpu</span></li>
+      </ul>
+    </article>
+
+    <!-- service at a glance -->
+    <article class="card span-12">
+      <div class="card__head">
+        <h2 data-en="Service at a glance">服务概况</h2>
+        <span class="card__sub" data-en="the whole alb service, not just this board">整个 alb 服务,不只这块板子</span>
+        <div class="src-note"><code>GET /devices</code><code>GET /sessions</code><code>GET /tools</code><code>GET /metrics/summary</code></div>
+      </div>
+      <div class="metrics metrics--4">
+        <div class="metric"><div class="metric__label"><span data-en="Devices online">设备在线</span></div><div class="metric__value">2<small>/ 2</small></div><div class="metric__sub" data-en="via adb">经 adb</div></div>
+        <div class="metric"><div class="metric__label"><span data-en="Agent sessions">AI 会话</span></div><div class="metric__value">14</div><div class="metric__sub" data-en="1 running">1 个正在跑</div></div>
+        <div class="metric"><div class="metric__label"><span data-en="MCP tools">MCP 工具</span></div><div class="metric__value">46</div><div class="metric__sub" data-en="9 groups">9 类</div></div>
+        <div class="metric"><div class="metric__label"><span data-en="LLM throughput">模型吞吐</span></div><div class="metric__value">16.4<small>tok/s</small></div><div class="metric__sub" data-en="5-min average · 212 samples">5 分钟平均 · 212 个采样</div></div>
       </div>
     </article>
   </section>
@@ -259,8 +334,35 @@
   function conn() {
     a.spark(document.getElementById("sp-adb"), [a.walk(37, 40, 90, 70, 140, 12)], 50, 170, { h: 24, small: true });
     a.spark(document.getElementById("sp-uart"), [a.walk(41, 40, 1.8, .2, 6, 1.2)], 0, 6.5, { h: 24, small: true });
+    a.spark(document.getElementById("sp-tps"), [a.walk(43, 60, 18, 6, 26, 3)], 0, 30);
+    a.spark(document.getElementById("sp-be"), [a.walk(47, 15, 14, 2, 24, 5)], 0, 30, { h: 24, small: true });
   }
   function all() { metrics(); boot(); conn(); }
+
+  // Top bar additions on this page: the model chip, device rows in the
+  // board menu (real transport label, product and model), and the menu
+  // scrolling within the window. data-zh is set up front so the language
+  // switch in mock.js keeps both texts.
+  function bi(zh, en) { return ' data-zh="' + zh + '" data-en="' + en + '">' + a.t(zh, en); }
+  var chans = document.querySelector(".topbar .chans");
+  if (chans) {
+    var chip = document.createElement("span");
+    chip.className = "chip chip--sm";
+    chip.title = "ollama · reachable · 42 ms\nopenai-compat · down\nllama-cpp · planned";
+    chip.innerHTML = '<span class="dot dot--ok"></span><b' + bi("模型", "LLM") + "</b><span>ollama 42 ms</span>";
+    chans.appendChild(chip);
+  }
+  var menu = document.getElementById("board-menu");
+  if (menu) {
+    menu.classList.add("board-menu");
+    var manage = menu.querySelector(".menu__sep");
+    var rows = document.createElement("div");
+    rows.style.display = "contents";
+    rows.innerHTML = '<div class="menu__sep"></div>' +
+      '<button class="menu__item" role="menuitem" data-selected="true">' + a.icon("phone") + '<span class="mono">0123456789ABCDEF</span><span class="pill pill--info"' + bi("已选", "selected") + '</span><span class="menu__desc">adb · device · board_x</span></button>' +
+      '<button class="menu__item" role="menuitem" data-toast-zh="设计稿:切到 FEDCBA9876543210。" data-toast-en="Draft: switches to FEDCBA9876543210.">' + a.icon("phone") + '<span class="mono">FEDCBA9876543210</span><span></span><span class="menu__desc">adb · device · board_y</span></button>';
+    if (manage) menu.insertBefore(rows, manage);
+  }
   document.addEventListener("alb:lang", all);
   all();
 })();

@@ -1,6 +1,8 @@
 /**
  * Overview (v3): where the board is, which channels reach it, how it is
- * doing, how the last boot went, what broke, what happened lately.
+ * doing, how the last boot went, what broke, what happened lately; then
+ * the assistant side (live agent session, LLM backends, service counts).
+ * Board cards come first: that is what a person debugging a board needs.
  * Baseline: docs/webui-preview-v3.html.
  */
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -8,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Icon } from "../../../components/v3/Icon";
 import { useAgentStatus, useBenchBoard, useFlashStatusQuery } from "../../../components/v3/TopBar";
-import { CardHead, Confirm, Dot, Empty, Menu, PageHead, Pill, Spark, toast } from "../../../components/v3/ui";
+import { CardHead, Confirm, Dot, Empty, ErrorBanner, Menu, PageHead, Pill, Spark, toast } from "../../../components/v3/ui";
 import {
   type AuditResponse,
   type DeviceDetailsResponse,
@@ -21,11 +23,15 @@ import {
 } from "../../../lib/api";
 import { type BootView, breakIn, captureBoot, listCaptures, pullPstore, type PstoreRecord } from "../../../lib/api3";
 import { useDashboardQuery } from "../../../lib/dashboardQuery";
+import { useAuditStream } from "../../../lib/hooks/useAuditStream";
 import { useDevices } from "../../../lib/hooks/useDevices";
 import { duration, useT } from "../../../lib/i18n";
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
 import { type MetricSample, useMetricsStream } from "../../inspect/useMetricsStream";
+import { BackendsCard, LiveSessionCard, SummaryCard } from "./AssistantCards";
+import { deviceListCopy, deviceListState, transportLabel } from "../../../lib/overviewData";
+import { DevicesCard, showDeviceStrip, useRefreshDevices } from "./DevicesCard";
 
 type RebootKind = RebootRequest["mode"] | "breakin";
 
@@ -33,6 +39,7 @@ export function OverviewPage() {
   const t = useT();
   const device = useApp((s) => s.device);
   const navigate = useNavigate();
+  const { devices } = useDevices();
   const [pending, setPending] = useState<RebootKind | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -114,6 +121,7 @@ export function OverviewPage() {
         </div>
       ) : null}
       <section className="grid">
+        {showDeviceStrip(devices, device) ? <DevicesCard /> : null}
         <BoardStateCard onBootloader={() => setPending("bootloader")} />
         <ConnectionsCard onBootloader={() => setPending("bootloader")} />
         <PerfCard />
@@ -121,6 +129,9 @@ export function OverviewPage() {
         <ProblemsCard />
         <ActivityCard />
         <QuickCard />
+        <LiveSessionCard />
+        <BackendsCard />
+        <SummaryCard />
       </section>
     </>
   );
@@ -132,7 +143,12 @@ function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
   const t = useT();
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
-  const { devices } = useDevices();
+  const list = useDevices();
+  const { devices } = list;
+  const refresh = useRefreshDevices();
+  const listState = deviceListState(list);
+  const tl = transportLabel(list.transportName);
+  const listBroken = listState.kind === "fetch" || listState.kind === "transport";
   const current = devices.find((d) => d.serial === device);
   const details = useDashboardQuery<DeviceDetailsResponse>({
     queryKey: ["device-details", device],
@@ -149,21 +165,59 @@ function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
 
   return (
     <article className="card span-8">
-      <CardHead title={t("板子状态", "Board state")} sub={t("由 adb、串口、台架 USB 三处合起来判断", "read from adb, serial and the bench USB together")} />
-      {!device ? (
-        <Empty icon="phone" title={t("还没有设备", "No device yet")} action={<Link className="btn btn--tonal btn--sm" to="/bench">{t("去台架页看看", "Check the bench")}</Link>}>
-          {t("adb 里没有设备。板子可能停在 bootloader、在 fastboot、或者没上电;去台架页看 USB 和串口。", "adb lists no device. The board may be in its bootloader, in fastboot, or off; the Bench page shows USB and serial.")}
+      <CardHead
+        title={t("板子状态", "Board state")}
+        sub={t("由 adb、串口、台架 USB 三处合起来判断", "read from adb, serial and the bench USB together")}
+        actions={
+          <button type="button" className="btn btn--text btn--sm" onClick={refresh}>
+            <Icon name="refresh" size="sm" />
+            {t("刷新", "Refresh")}
+          </button>
+        }
+      />
+      {!device && listState.kind === "loading" ? (
+        <div className="skeleton" style={{ height: 160 }} />
+      ) : !device && listBroken ? (
+        <Empty
+          icon="error"
+          title={deviceListCopy(t, listState, tl).title}
+          action={
+            <div className="row">
+              <button type="button" className="btn btn--tonal btn--sm" onClick={refresh}><Icon name="refresh" size="sm" />{t("重新读取", "Read again")}</button>
+              <Link className="btn btn--text btn--sm" to="/bench">{t("去台架页看看", "Check the bench")}</Link>
+            </div>
+          }
+        >
+          {deviceListCopy(t, listState, tl).body}
+        </Empty>
+      ) : !device ? (
+        <Empty
+          icon="phone"
+          title={t("还没有设备", "No device yet")}
+          action={
+            <div className="row">
+              <Link className="btn btn--tonal btn--sm" to="/bench">{t("去台架页看看", "Check the bench")}</Link>
+              <button type="button" className="btn btn--text btn--sm" onClick={refresh}><Icon name="refresh" size="sm" />{t("重新读取", "Read again")}</button>
+            </div>
+          }
+        >
+          {t(
+            `${tl} 里没有设备。板子可能停在 bootloader、在 fastboot,或者没上电;也可能是台架电脑上的 adb 没启动,或者台架隧道断了。去台架页看 USB 和串口。`,
+            `${tl} lists no device. The board may be in its bootloader, in fastboot, or off; or adb is not running on the bench computer, or the bench tunnel is down. The Bench page shows USB and serial.`,
+          )}
         </Empty>
       ) : (
         <>
           <div className="state">
             {online ? (
               <Pill tone="ok"><Dot tone="ok" />{t("已开机", "Booted")}</Pill>
+            ) : listState.kind === "loading" ? (
+              <Pill><Dot />{t("读取中", "reading")}</Pill>
             ) : (
               <Pill tone="warn"><Dot tone="warn" />{current?.state ?? t("离线", "offline")}</Pill>
             )}
             <span className="state__big">
-              {d ? `Android ${d.release} · ${t("开机完成", "boot completed")}` : online ? t("读取中…", "Reading…") : t("adb 不可用", "adb not available")}
+              {d ? `Android ${d.release} · ${t("开机完成", "boot completed")}` : online || listState.kind === "loading" ? t("读取中…", "Reading…") : t(`${tl} 不可用`, `${tl} not available`)}
             </span>
             {d ? (
               <span className="state__meta mono">
@@ -179,10 +233,21 @@ function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
               </li>
             ))}
           </ol>
-          {!online ? (
+          {listBroken ? (
+            <ErrorBanner action={<button type="button" className="btn btn--text btn--sm" onClick={refresh}>{t("重新读取", "Read again")}</button>}>
+              <b>{deviceListCopy(t, listState, tl).title}</b> {deviceListCopy(t, listState, tl).body}
+            </ErrorBanner>
+          ) : !online && listState.kind !== "loading" ? (
             <div className="banner banner--warn">
               <Icon name="alert" />
-              <p>{t("adb 看不到这块板子。它可能在 bootloader、fastboot、recovery,或者卡死了;串口控制台通常还能用。", "adb cannot see the board. It may be in the bootloader, fastboot or recovery, or hung; the serial console usually still works.")}</p>
+              <p>
+                {current
+                  ? t("adb 看不到这块板子。它可能在 bootloader、fastboot、recovery,或者卡死了;串口控制台通常还能用。", "adb cannot see the board. It may be in the bootloader, fastboot or recovery, or hung; the serial console usually still works.")
+                  : t(
+                      `选中的 ${device} 不在 ${tl} 设备列表里:可能在重启,或者线被拔了。选择会一直保留,回来后自动接上;要换板子用顶栏的菜单。串口控制台通常还能用。`,
+                      `The selected ${device} is not in the ${tl} device list: rebooting, or unplugged? The choice is kept and reconnects when it comes back; switch boards from the top bar menu. The serial console usually still works.`,
+                    )}
+              </p>
               <div className="banner__actions">
                 <Link className="btn btn--text btn--sm" to="/console">{t("打开串口", "Open serial")}</Link>
                 <button type="button" className="btn btn--text btn--sm" onClick={onBootloader}>{t("重启到 bootloader", "To bootloader")}</button>
@@ -523,15 +588,45 @@ function ProblemsCard() {
 
 /* ---------------- activity ---------------- */
 
+const ACTIVITY_MINUTES = 240;
+
 function ActivityCard() {
   const t = useT();
-  const audit = useDashboardQuery<AuditResponse>({ queryKey: ["audit-recent"], queryFn: ({ signal }) => fetchAudit(240, 8, signal), refetchMs: 15_000 });
-  const events = [...(audit.data?.events ?? [])].reverse().slice(0, 6);
+  // Pushed live over WS /audit/stream; the server stops pushing to this
+  // socket while paused. While the socket is not open (first connect, a
+  // proxy that drops WebSockets, a reconnect) GET /audit fills in.
+  const stream = useAuditStream({ minutes: ACTIVITY_MINUTES });
+  const live = stream.status === "open";
+  const poll = useDashboardQuery<AuditResponse>({
+    queryKey: ["audit-recent"],
+    queryFn: ({ signal }) => fetchAudit(ACTIVITY_MINUTES, 8, signal),
+    refetchMs: 15_000,
+    enabled: !live,
+  });
+  const events = live || stream.businessRaw.length ? stream.businessRaw.slice(0, 8) : [...(poll.data?.events ?? [])].reverse().slice(0, 8);
+  const dropped = stream.status === "closed" || stream.status === "error";
   return (
     <article className="card span-7">
-      <CardHead title={t("最近操作", "Recent activity")} sub={t("来自网页、命令行和 AI 会话", "from the web, the CLI and AI sessions")} actions={<Link className="btn btn--text btn--sm" to="/audit">{t("全部", "All")}</Link>} />
-      {audit.isError ? (
-        <div className="banner banner--error"><Icon name="error" /><p>{String(audit.error?.message)}</p><span /></div>
+      <CardHead
+        title={t("最近操作", "Recent activity")}
+        sub={t("来自网页、命令行和 AI 会话", "from the web, the CLI and AI sessions")}
+        actions={
+          <>
+            {live ? (
+              <Pill tone={stream.paused ? "warn" : "ok"}>{stream.paused ? t("已暂停", "paused") : t("实时", "live")}</Pill>
+            ) : dropped ? (
+              <Pill tone="warn" title={t("实时连接断了,正在重连;先每 15 秒读一次", "The live stream dropped and is reconnecting; reading every 15 s meanwhile")}>{t("连接断开", "stream dropped")}</Pill>
+            ) : null}
+            <button type="button" className="btn btn--text btn--sm" disabled={!live} onClick={stream.paused ? stream.resume : stream.pause}>
+              <Icon name={stream.paused ? "play" : "pause"} size="sm" />
+              {stream.paused ? t("继续", "Resume") : t("暂停", "Pause")}
+            </button>
+            <Link className="btn btn--text btn--sm" to="/audit">{t("全部", "All")}</Link>
+          </>
+        }
+      />
+      {poll.isError && !live && events.length === 0 ? (
+        <div className="banner banner--error"><Icon name="error" /><p>{String(poll.error?.message)}</p><span /></div>
       ) : events.length === 0 ? (
         <Empty icon="history" title={t("最近 4 小时没有操作", "Nothing in the last 4 hours")} />
       ) : (
@@ -561,6 +656,9 @@ function QuickCard() {
     ["/logs", "logs", "实时 logcat", "Live logcat", "按 tag / 级别 / pid 过滤", "filter by tag, level, pid"],
     ["/timeline", "timeline", "录时间轴", "Record a timeline", "logcat + dmesg + 串口", "logcat + dmesg + serial"],
     ["/flash", "package", "烧整包", "Flash a package", "先检查计划再执行", "check the plan, then run"],
+    ["/screen", "camera", "截屏", "Take a screenshot", "截图和界面树", "screenshot and UI tree"],
+    ["/doctor", "check-circle", "环境检查", "Health check", "环境、adb、串口、ssh 逐层查", "env, adb, serial and ssh, layer by layer"],
+    ["/connections", "link", "连接中心", "Connection center", "连进来的台架 agent 和 adb / 串口转发", "bench agents dialed in, adb / serial forwards"],
   ];
   return (
     <article className="card span-5">

@@ -179,6 +179,73 @@ body.show-src .src-note { display: flex; }
 .qa small { font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); }
 @container content (max-width: 520px) { .quick { grid-template-columns: minmax(0, 1fr); } }
 
+/* every device on the bench, one tonal tile each; the selected one takes the secondary container */
+.devs { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 8px; }
+.dev {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--alb-color-well);
+  color: var(--md-sys-color-on-surface);
+  text-align: left;
+  font: inherit;
+}
+button.dev:hover { background: var(--md-sys-color-surface-container-high); }
+button.dev[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.dev--gone { background: var(--alb-color-warning-container); color: var(--alb-color-on-warning-container); }
+.dev__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev__head b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev__head .pill { margin-left: auto; }
+.dev__sub { font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); overflow-wrap: anywhere; }
+.dev[aria-pressed="true"] .dev__sub,
+.dev--gone .dev__sub { color: inherit; }
+.dev__facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin-top: 4px; font-size: 12.5px; }
+.dev__facts > span { display: flex; flex-direction: column; min-width: 0; }
+.dev__facts small { font-size: 11px; line-height: 14px; color: var(--alb-color-text-muted); }
+.dev[aria-pressed="true"] .dev__facts small { color: inherit; opacity: .8; }
+/* phones: one row that scrolls sideways, so the strip does not push the board state down */
+@container content (max-width: 560px) {
+  .devs { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(220px, 78%); overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+  .dev { scroll-snap-align: start; }
+}
+
+/* service counts: the performance tiles, four across */
+.metrics--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@container content (max-width: 640px) { .metrics--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* live agent session */
+.live__idle { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--alb-color-text-muted); }
+.live__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+.live__head b { color: var(--md-sys-color-on-surface); font-weight: 500; }
+.live__prompt { margin: 0; font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+.live__tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.live__tool {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--alb-color-well);
+  font-size: 12.5px;
+}
+.live__tool code { font-family: var(--md-ref-typeface-mono); font-size: 12px; overflow-wrap: anywhere; }
+.live__tool--done > svg { color: var(--alb-color-success); }
+.live__tool--err > svg { color: var(--md-sys-color-error); }
+.live__tool--running code { font-weight: 500; }
+.live__tps { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+.live__meta { font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); text-align: right; }
+@container content (max-width: 520px) {
+  .live__tps { grid-template-columns: minmax(0, 1fr) auto; }
+  .live__tps .spark { grid-column: 1 / -1; grid-row: 2; }
+}
+
 /* ================= timeline ================= */
 .tl-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .tl-bar .select { width: auto; min-width: 0; max-width: 100%; }
