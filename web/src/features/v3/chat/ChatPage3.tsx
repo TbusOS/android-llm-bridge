@@ -12,6 +12,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Composer, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
 import { Icon } from "../../../components/v3/Icon";
 import { CardHead, Empty, ErrorBanner, Menu, PageHead, Pill, toast } from "../../../components/v3/ui";
+import { copyText } from "../../../lib/clipboard";
 import {
   fetchBackendModels,
   fetchBackends,
@@ -27,6 +28,8 @@ import { useDashboardQuery } from "../../../lib/dashboardQuery";
 import { useT } from "../../../lib/i18n";
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
+import { ToolCard } from "./ToolCard";
+import { parseResult } from "./toolText";
 import "./chat.css";
 
 const API_BACKENDS = new Set(["openai-compat", "anthropic", "openai"]);
@@ -284,10 +287,7 @@ function LiveThread({ title, onNew }: { title: string; onNew: () => void }) {
   const source = useShell((s) => s.source);
   const copyAll = () => {
     const text = a.turns.map((x) => `${x.role === "user" ? t("用户", "User") : t("助手", "Assistant")}: ${x.content}`).join("\n\n");
-    void navigator.clipboard.writeText(text).then(
-      () => toast(t("已复制对话。", "Conversation copied.")),
-      () => toast(t("浏览器不让复制。", "The browser refused to copy.")),
-    );
+    void copyText(text).then((ok) => toast(ok ? t("已复制对话。", "Conversation copied.") : t("浏览器不让复制。", "The browser refused to copy.")));
   };
   return (
     <article className="card chat__thread">
@@ -410,7 +410,6 @@ function ReadOnlyThread({
 }
 
 function Messages({ messages, model }: { messages: SessionMessage[]; model: string }): ReactNode {
-  const t = useT();
   const results = new Map<string, string>();
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m.content ?? "");
   return messages.map((m, i) => {
@@ -425,23 +424,8 @@ function Messages({ messages, model }: { messages: SessionMessage[]; model: stri
     return (
       <div key={i} className="chat__turn">
         {(m.tool_calls ?? []).map((c, j) => {
-          const args = typeof c.arguments === "string" ? c.arguments : Object.entries(c.arguments ?? {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ");
           const out = c.id ? results.get(c.id) : undefined;
-          return (
-            <div className="tool" key={j}>
-              <Icon name="check-circle" size="sm" />
-              <code>
-                {c.name}
-                {args ? ` ${args}` : ""}
-              </code>
-              {out ? (
-                <details>
-                  <summary>{t("看输出", "Show output")}</summary>
-                  <pre className="term">{out.length > 4000 ? `${out.slice(0, 4000)}\n…` : out}</pre>
-                </details>
-              ) : null}
-            </div>
-          );
+          return <ToolCard key={c.id ?? j} name={c.name ?? "tool"} args={c.arguments} result={out ? parseResult(out) : undefined} />;
         })}
         {m.content?.trim() ? (
           <div className="msg msg--ai">

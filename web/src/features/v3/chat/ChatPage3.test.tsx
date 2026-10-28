@@ -206,6 +206,35 @@ describe("Chat page", () => {
     expect(screen.getByText("Kernel panic - not syncing")).toBeInTheDocument();
   });
 
+  it("read-only tool cards expand to the full arguments and the whole output", async () => {
+    const long = `${Array.from({ length: 400 }, (_, i) => `dmesg line ${i}`).join("\n")}\nLAST-LINE`;
+    mockFetch({
+      detail: (id) =>
+        id === "20261027-bbbb2222"
+          ? Response.json({
+              ...DETAIL[id],
+              messages: [
+                { role: "user", content: "Why is boot slow?" },
+                { role: "assistant", content: "", tool_calls: [{ id: "c9", name: "alb_dmesg", arguments: '{"device":"board-a","since":"boot"}' }] },
+                { role: "tool", tool_call_id: "c9", name: "alb_dmesg", content: JSON.stringify({ ok: true, data: long }) },
+                { role: "assistant", content: "Two services start serially." },
+              ],
+            })
+          : Response.json(DETAIL[id] ?? {}),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Why is boot slow?" }));
+    // the stored JSON argument string is summarised like a live call
+    expect(await screen.findByText("alb_dmesg device=board-a since=boot")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /参数和输出/ }));
+    expect(screen.getByLabelText("alb_dmesg 的参数").textContent).toContain('"since": "boot"');
+    const out = screen.getByLabelText("alb_dmesg 的输出").textContent ?? "";
+    expect(long.length).toBeGreaterThan(4000);
+    expect(out).toBe(long); // the stored JSON is unwrapped to its log text, nothing cut
+    fireEvent.click(screen.getByRole("button", { name: /放大查看/ }));
+    expect(within(screen.getByRole("dialog")).getByText("401 行")).toBeInTheDocument();
+  });
+
   it("an unreadable session says so with a retry", async () => {
     mockFetch({ detail: (id) => (id === "20261010-cccc3333" ? new Response("x", { status: 500 }) : Response.json(DETAIL[id] ?? {})) });
     renderPage();

@@ -4,10 +4,13 @@
  * blocks. Model source "host" and "api" talk through /chat/ws; "board"
  * shows the on-device entry instead of a chat (no on-board backend yet).
  */
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, type ReactNode, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatTurn, ToolCallEntry } from "../../features/chat/types";
 import { useChatStream, type UseChatStreamResult } from "../../features/chat/useChatStream";
+import { ArtifactRow } from "../../features/v3/chat/Artifacts";
+import { ToolCard } from "../../features/v3/chat/ToolCard";
+import { shortId } from "../../features/v3/chat/toolText";
 import { type OnDeviceProbe, probeOnDevice } from "../../lib/api3";
 import { useT } from "../../lib/i18n";
 import { useApp } from "../../stores/app";
@@ -81,33 +84,14 @@ function Paragraphs({ text }: { text: string }) {
   );
 }
 
-function ToolCard({ call }: { call: ToolCallEntry }) {
-  const t = useT();
-  const running = call.status === "running";
+function LiveToolCard({ call }: { call: ToolCallEntry }) {
   const secs = call.endedAt ? ((call.endedAt - call.startedAt) / 1000).toFixed(1) : null;
-  const args = Object.entries(call.arguments ?? {})
-    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
-    .join(" ");
-  const result = call.result === undefined ? "" : typeof call.result === "string" ? call.result : JSON.stringify(call.result, null, 2);
-  return (
-    <div className="tool">
-      {running ? <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : <Icon name="check-circle" size="sm" />}
-      <code>
-        {call.name}
-        {args ? ` ${args}` : ""}
-      </code>
-      <span className="pill">{running ? t("运行中", "running") : `${secs ?? "—"} s`}</span>
-      {result ? (
-        <details>
-          <summary>{t("看输出", "Show output")}</summary>
-          <pre className="term">{result.length > 4000 ? `${result.slice(0, 4000)}\n…` : result}</pre>
-        </details>
-      ) : null}
-    </div>
-  );
+  return <ToolCard name={call.name} args={call.arguments} result={call.result} running={call.status === "running"} secs={secs} />;
 }
 
-function Turn({ turn }: { turn: ChatTurn }) {
+// memo: useChatStream only replaces the turn being streamed into, so settled
+// turns (and their possibly large tool results) skip re-rendering per token.
+const Turn = memo(function Turn({ turn, onRetry }: { turn: ChatTurn; onRetry?: () => void }) {
   const t = useT();
   if (turn.role === "user") {
     return (
@@ -116,10 +100,20 @@ function Turn({ turn }: { turn: ChatTurn }) {
       </div>
     );
   }
+  const retryAction = onRetry ? (
+    <div className="banner__actions">
+      <button type="button" className="btn btn--text btn--sm" onClick={onRetry} title={t("把上一条消息再发一次", "Send the last message again")}>
+        <Icon name="refresh" size="sm" />
+        {t("重试", "Retry")}
+      </button>
+    </div>
+  ) : (
+    <span />
+  );
   return (
     <>
       {turn.toolCalls.map((c) => (
-        <ToolCard key={c.id} call={c} />
+        <LiveToolCard key={c.id} call={c} />
       ))}
       {turn.status === "pending" && !turn.content ? (
         <div className="msg msg--ai">
@@ -129,7 +123,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
           </div>
         </div>
       ) : null}
-      {turn.content || turn.error ? (
+      {turn.content || turn.error || turn.artifacts.length ? (
         <div className="msg msg--ai">
           <div className="msg__who">
             <Icon name="robot" size="sm" />
@@ -137,25 +131,42 @@ function Turn({ turn }: { turn: ChatTurn }) {
             {turn.timingMs ? ` · ${(turn.timingMs / 1000).toFixed(1)} s` : ""}
           </div>
           {turn.content ? <Paragraphs text={turn.content} /> : null}
-          {turn.error ? (
-            <div className="banner banner--error">
+          {turn.artifacts.length ? <ArtifactRow paths={turn.artifacts} /> : null}
+          {turn.status === "cancelled" ? (
+            // Stopped by the user: not a failure, so no error colour or code.
+            // biome-ignore lint/a11y/useSemanticElements: a banner, not a form result; <output> would read oddly
+            <div className="banner chat__stopped" role="status">
+              <Icon name="stop" />
+              <p>{turn.content ? t("已停止,这次回答没有说完。", "Stopped; this answer is incomplete.") : t("已停止,模型还没开始回答。", "Stopped before the model answered.")}</p>
+              {retryAction}
+            </div>
+          ) : turn.error ? (
+            <div className="banner banner--error" role="alert">
               <Icon name="error" />
               <p>
                 <b>{turn.error.code}</b> {turn.error.message}
-                {turn.error.suggestion ? <><br />{turn.error.suggestion}</> : null}
+                {turn.error.suggestion ? (
+                  <>
+                    <br />
+                    {t("提示:", "Hint: ")}
+                    {turn.error.suggestion}
+                  </>
+                ) : null}
               </p>
-              <span />
+              {retryAction}
             </div>
           ) : null}
         </div>
       ) : null}
     </>
   );
-}
+});
 
 export function Conversation({ className }: { className?: string }) {
-  const { turns } = useAssistant();
+  const { turns, isStreaming, retry } = useAssistant();
   const t = useT();
+  const last = turns[turns.length - 1];
+  const canRetry = !isStreaming && last?.role === "assistant" && (last.status === "error" || last.status === "cancelled");
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: "end" });
@@ -174,32 +185,77 @@ export function Conversation({ className }: { className?: string }) {
           </p>
         </div>
       ) : (
-        turns.map((turn) => <Turn key={turn.id} turn={turn} />)
+        // Only the last turn gets the (per-render) retry callback, so the
+        // memoised earlier turns keep equal props.
+        turns.map((turn, i) => <Turn key={turn.id} turn={turn} onRetry={canRetry && i === turns.length - 1 ? retry : undefined} />)
       )}
       <div ref={end} />
     </div>
   );
 }
 
+/** The composer grows with its text up to this height, then scrolls. */
+export const COMPOSER_MAX_PX = 220;
+
 export function Composer({ rows = 2, className }: { rows?: number; className?: string }) {
   const t = useT();
-  const { ask, isStreaming, cancel, backend, reset, turns } = useAssistant();
+  const { ask, isStreaming, cancel, backend, reset, turns, sessionId } = useAssistant();
   const model = useApp((s) => s.model);
   const context = useShell((s) => s.context);
   const clearContext = useShell((s) => s.clearContext);
   const [text, setText] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+  const wasStreaming = useRef(isStreaming);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the text is the trigger; the height is read from the DOM
+  useLayoutEffect(() => {
+    const el = areaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    // scrollHeight is 0 while hidden (and in jsdom): leave the rows height
+    if (el.scrollHeight === 0) {
+      el.style.height = "";
+      return;
+    }
+    const borders = el.offsetHeight - el.clientHeight;
+    el.style.height = `${Math.min(el.scrollHeight + borders, COMPOSER_MAX_PX)}px`;
+  }, [text]);
+
+  // Focus comes back when an answer finishes, unless the user has moved to
+  // another field meanwhile.
+  useEffect(() => {
+    if (wasStreaming.current && !isStreaming) {
+      const active = document.activeElement;
+      if (!active || active === document.body || formRef.current?.contains(active)) areaRef.current?.focus();
+    }
+    wasStreaming.current = isStreaming;
+  }, [isStreaming]);
+
   const submit = () => {
     const v = text.trim();
     if (!v || isStreaming) return;
     ask(v);
     setText("");
+    // keep focus here (the Send button turns into Stop) so Esc can stop it
+    areaRef.current?.focus();
   };
   return (
     <form
+      ref={formRef}
       className={`composer ${className ?? ""}`}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
+      }}
+      onKeyDown={(e) => {
+        // Esc stops a reply first. Only when nothing is generating does it
+        // reach the shell, which closes the sheet.
+        if (e.key === "Escape" && isStreaming && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          e.stopPropagation();
+          cancel();
+        }
       }}
     >
       {context ? (
@@ -213,11 +269,16 @@ export function Composer({ rows = 2, className }: { rows?: number; className?: s
         {t("消息", "Message")}
       </label>
       <textarea
+        ref={areaRef}
         id="assist-q"
         className="textarea"
         rows={rows}
         value={text}
-        placeholder={t("问这块板子…Enter 发送,Shift+Enter 换行", "Ask about this board… Enter sends, Shift+Enter adds a line")}
+        placeholder={
+          isStreaming
+            ? t("正在回答…按 Esc 或「停止」中断", "Answering… press Esc or Stop to interrupt")
+            : t("问这块板子…Enter 发送,Shift+Enter 换行", "Ask about this board… Enter sends, Shift+Enter adds a line")
+        }
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -227,8 +288,9 @@ export function Composer({ rows = 2, className }: { rows?: number; className?: s
         }}
       />
       <div className="row row--between">
-        <span className="t-body-small t-muted mono">
+        <span className="t-body-small t-muted mono" title={sessionId ? t(`会话 ${sessionId}`, `session ${sessionId}`) : undefined}>
           {model ?? backend} · {backend}
+          {sessionId ? ` · ${t("会话", "session")} ${shortId(sessionId)}` : ""}
         </span>
         <div className="row">
           {turns.length ? (
