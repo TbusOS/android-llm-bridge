@@ -101,28 +101,28 @@ hub 上一样。完整链路与逐跳排障：[docs/dial-home-runbook.md](./docs
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  接入层（壳）                                            │
-│  ├─ CLI (typer)          给人 / LLM 直接用              │
-│  ├─ MCP Server           给 Claude/Cursor/Codex 调用    │
-│  ├─ Web API (FastAPI)    给 Web UI / 外部集成           │
-│  └─ Web UI (Material 3)  板子状态/日志/时间轴/烧录/助手 │
+│  接入层（壳）                                          │
+│  ├─ CLI (typer)          给人 / LLM 直接用             │
+│  ├─ MCP Server           给 Claude/Cursor/Codex 调用   │
+│  ├─ Web API (FastAPI)    给 Web UI / 外部集成          │
+│  └─ Web UI (Material 3)  板子/日志/时间轴/烧录/助手    │
 ├────────────────────────────────────────────────────────┤
-│  业务能力层 Capabilities（M1 六个）                      │
+│  业务能力层 Capabilities（M1 六个）                    │
 │  shell │ logging │ filesync │ diagnose │ power │ app   │
 ├────────────────────────────────────────────────────────┤
-│  ⭐ 传输抽象层 Transport                                 │
-│  interface: shell / stream_read / push / pull /         │
-│             forward / reboot / check_permissions        │
-│  ├─ AdbTransport       (方案 A / B)                     │
-│  ├─ SshTransport       (方案 C / D / F)                 │
-│  ├─ SerialTransport    (方案 G)                         │
-│  └─ HybridTransport    (智能路由：按命令类型选通道)       │
+│  ⭐ 传输抽象层 Transport                               │
+│  interface: shell / stream_read / push / pull /        │
+│             forward / reboot / check_permissions       │
+│  ├─ AdbTransport       (方案 A / B)                    │
+│  ├─ SshTransport       (方案 C / D / F)                │
+│  ├─ SerialTransport    (方案 G)                        │
+│  └─ HybridTransport    (智能路由：按命令类型选通道)    │
 ├────────────────────────────────────────────────────────┤
-│  底层驱动 Drivers                                       │
-│  adb · ssh · scp · rsync · pyserial · socat · 隧道管理  │
+│  底层驱动 Drivers                                      │
+│  adb · ssh · scp · rsync · pyserial · socat · 隧道管理 │
 ├────────────────────────────────────────────────────────┤
-│  基础设施 Infra                                         │
-│  config · workspace · profile · permissions · errors    │
+│  基础设施 Infra                                        │
+│  config · workspace · profile · permissions · errors   │
 │  event-bus · prompt-builder · memory (M2+)             │
 └────────────────────────────────────────────────────────┘
 ```
@@ -244,10 +244,10 @@ uv run alb serial shell "dmesg | tail"
 
 | 里程碑 | 交付内容 | 状态 |
 |-------|---------|-----|
-| **M0** | 仓库骨架 + 完整技术方案文档 + 架构图 + 里程碑规划 | ✅ 当前 |
-| **M1** | 四种传输（A/B/C/G）+ 六能力（shell/logging/filesync/diagnose/power/app）+ 权限系统 + CLI + MCP 骨架 | 🚧 进行中 |
-| **M2** | Web API + 长任务框架（流式 logcat / 大文件传输）+ 子 Agent 并行 + 性能能力（perf）+ 跑分（benchmark） | 📋 规划中 |
-| **M3** | Web UI（设备看板 / 实时日志 / 性能曲线）+ LLM-assisted 日志分析 + 方案 D/E/F | 📋 规划中 |
+| **M0** | 仓库骨架 + 完整技术方案文档 + 架构图 + 里程碑规划 | ✅ 完成 |
+| **M1** | 四种传输（A/B/C/G）+ 六能力（shell/logging/filesync/diagnose/power/app）+ 权限系统 + CLI + MCP 骨架 | ✅ 完成 |
+| **M2** | Web API ✅ + 长任务框架（流式 logcat ✅ / 大文件传输 ✅）+ 子 Agent 并行 📋 + 性能能力（perf）📋 + 跑分（benchmark）📋 | 🚧 部分完成 |
+| **M3** | Web UI v3（Material 3：板子总览 / 控制台 / 日志 / 时间轴 / 烧录 / 台架 / 助手 / 性能曲线）✅ + LLM-assisted 日志分析（助手调用 alb 工具）✅ + 方案 D/E/F 📋 | 🚧 部分完成 |
 
 详见 [`docs/project-plan.md`](./docs/project-plan.md)。
 

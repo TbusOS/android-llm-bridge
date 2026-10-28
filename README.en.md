@@ -90,29 +90,29 @@ troubleshooting: [docs/dial-home-runbook.md](./docs/dial-home-runbook.md).
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  Interface layer                                        │
+│  Interface layer                                       │
 │  ├─ CLI (typer)          human or LLM direct use       │
 │  ├─ MCP server           Claude Code / Cursor / Codex  │
 │  ├─ Web API (FastAPI)    UI / external integrations    │
-│  └─ Web UI (later)       visualization                 │
+│  └─ Web UI (Material 3)  board/logs/timeline/flash/AI  │
 ├────────────────────────────────────────────────────────┤
 │  Capabilities (M1 ships 6)                             │
 │  shell │ logging │ filesync │ diagnose │ power │ app   │
 ├────────────────────────────────────────────────────────┤
-│  ⭐ Transport abstraction                               │
-│  shell / stream_read / push / pull /                    │
-│  forward / reboot / check_permissions                   │
+│  ⭐ Transport abstraction                              │
+│  shell / stream_read / push / pull /                   │
+│  forward / reboot / check_permissions                  │
 │  ├─ AdbTransport       (A / B)                         │
 │  ├─ SshTransport       (C / D / F)                     │
 │  ├─ SerialTransport    (G)                             │
 │  └─ HybridTransport    (smart routing)                 │
 ├────────────────────────────────────────────────────────┤
-│  Drivers                                                │
-│  adb · ssh · scp · rsync · pyserial · socat · tunnels   │
+│  Drivers                                               │
+│  adb · ssh · scp · rsync · pyserial · socat · tunnels  │
 ├────────────────────────────────────────────────────────┤
-│  Infra                                                  │
-│  config · workspace · profile · permissions · errors    │
-│  event-bus · prompt-builder · memory (M2+)              │
+│  Infra                                                 │
+│  config · workspace · profile · permissions · errors   │
+│  event-bus · prompt-builder · memory (M2+)             │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -188,10 +188,10 @@ uv run alb setup wifi        # Method B
 
 | Milestone | Deliverables | Status |
 |-----------|--------------|--------|
-| **M0** | Skeleton + complete design docs + architecture + roadmap | ✅ current |
-| **M1** | 4 transports (A/B/C/G) + 6 capabilities + permissions + CLI + MCP skeleton | 🚧 in progress |
-| **M2** | Web API + streaming / long-task framework + sub-agent parallel + perf + benchmark | 📋 planned |
-| **M3** | Web UI + LLM-assisted log analysis + methods D/E/F | 📋 planned |
+| **M0** | Skeleton + complete design docs + architecture + roadmap | ✅ done |
+| **M1** | 4 transports (A/B/C/G) + 6 capabilities + permissions + CLI + MCP skeleton | ✅ done |
+| **M2** | Web API ✅ + streaming / long-task framework (streaming logcat ✅ / large file transfer ✅) + sub-agent parallel 📋 + perf 📋 + benchmark 📋 | 🚧 partly done |
+| **M3** | Web UI v3 (Material 3: board overview / console / logs / timeline / flash / bench / assistant / perf charts) ✅ + LLM-assisted log analysis (the assistant runs alb tools) ✅ + methods D/E/F 📋 | 🚧 partly done |
 
 ---
 

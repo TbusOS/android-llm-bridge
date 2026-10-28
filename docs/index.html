@@ -82,7 +82,7 @@
           <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
           <a href="on-device-agent.html" data-i18n="nav.onDevice">On-device Agent</a>
           <a href="on-device-model-selection.html"><span class="lang-en">Model selection</span><span class="lang-zh">模型选型</span></a>
-          <a href="webui-preview.html"><span class="lang-en">Web UI Preview</span><span class="lang-zh">Web UI 预览</span></a>
+          <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">Web 界面</span></a>
           <a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们如何 ship</span></a>
         </nav>
         <div style="display:flex; align-items:center; gap:var(--space-3);">
@@ -96,8 +96,8 @@
       <div class="anth-container" style="padding-top:var(--space-5);">
         <div class="anth-banner">
           <span class="anth-badge" style="background:var(--anth-orange); color:#ffffff;" data-i18n="banner.badge">New</span>
-          <span data-i18n="banner.text">M2 Agent is live — <code>alb chat</code> REPL, streaming WebSocket, and Ollama / local-LLM backends.</span>
-          <a class="anth-link" href="#roadmap" style="margin-left:auto;" data-i18n="banner.link">See what's next</a>
+          <span data-i18n="banner.text">Web UI v3 is live — board overview, console, logs, timeline, flashing and the bench in the browser, built on Material 3.</span>
+          <a class="anth-link" href="webui-preview.html" style="margin-left:auto;" data-i18n="banner.link">See the web UI →</a>
         </div>
       </div>
 
@@ -304,7 +304,7 @@
         <div class="anth-container anth-container--wide">
           <div style="text-align:center; max-width:720px; margin:0 auto var(--space-6);">
             <h2 data-i18n="arch.title">Three integration tiers, one business layer.</h2>
-            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="arch.subtitle">MCP for chat-based agents. CLI for humans and shell scripts. Web API (POST + WebSocket) for the browser UI we're building. All share the same capability functions, transports, and permission system.</p>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="arch.subtitle">MCP for chat-based agents. CLI for humans and shell scripts. Web API (POST + WebSocket) for the browser UI the hub serves at /app/. All share the same capability functions, transports, and permission system.</p>
           </div>
 
           <figure style="margin:var(--space-6) auto 0; max-width:1200px;">
@@ -339,7 +339,7 @@
               <g>
                 <rect x="170" y="260" width="230" height="100" rx="18" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
                 <text x="285" y="300" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#141413">MCP server</text>
-                <text x="285" y="328" text-anchor="middle" font-family="Poppins" font-size="14" fill="#6b6a5f">28 tools · stdio / WebSocket</text>
+                <text x="285" y="328" text-anchor="middle" font-family="Poppins" font-size="14" fill="#6b6a5f">36 tools · stdio / WebSocket</text>
 
                 <rect x="485" y="260" width="230" height="100" rx="18" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
                 <text x="600" y="300" text-anchor="middle" font-family="Poppins" font-size="18" font-weight="600" fill="#141413">CLI (alb)</text>
@@ -458,7 +458,7 @@ export ALB_OLLAMA_MODEL=gemma4:26b
         <div class="anth-container anth-container--wide">
           <div style="text-align:center; max-width:760px; margin:0 auto var(--space-7);">
             <h2 data-i18n="road.title">Where we are, and where we're going.</h2>
-            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="road.subtitle">M1 transports are stable. M2 agent loop is shipping. M3 unlocks perf and UI. M4+ takes us to on-device agents — the part that changes the game for field debugging.</p>
+            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="road.subtitle">M1 transports are stable. M2 agent loop is shipping. The M3 web UI is live; perf work continues. M4+ takes us to on-device agents — the part that changes the game for field debugging.</p>
           </div>
 
           <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-5);">
@@ -466,12 +466,13 @@ export ALB_OLLAMA_MODEL=gemma4:26b
               <span class="status-pill status-pill--done" data-i18n="road.status.done">Available now</span>
               <h3 style="margin-top:var(--space-3);" data-i18n="road.now.title">M1 · M2 step 3</h3>
               <ul>
-                <li><strong data-i18n="road.now.i1.t">5 transports</strong><span data-i18n="road.now.i1.b">adb USB · adb Wi-Fi · ssh · UART · hybrid router</span></li>
-                <li><strong data-i18n="road.now.i2.t">6 capabilities</strong><span data-i18n="road.now.i2.b">shell · logging (with UART) · filesync · diagnose · power · app</span></li>
-                <li><strong data-i18n="road.now.i3.t">21 MCP tools + 234 tests</strong><span data-i18n="road.now.i3.b">structured errors, permission gate, workspace artifacts</span></li>
+                <li><strong data-i18n="road.now.i1.t">4 transports</strong><span data-i18n="road.now.i1.b">adb (USB · Wi-Fi) · ssh · UART · hybrid router</span></li>
+                <li><strong data-i18n="road.now.i2.t">11 capabilities</strong><span data-i18n="road.now.i2.b">shell · logging (with UART) · filesync · diagnose · power · app · adbd · breakin (stop in the bootloader) · timeline · port · bench</span></li>
+                <li><strong data-i18n="road.now.i3.t">36 MCP tools + 2,908 tests</strong><span data-i18n="road.now.i3.b">2,507 pytest + 401 vitest · structured errors, permission gate, workspace artifacts</span></li>
                 <li><strong data-i18n="road.now.i4.t">Agent loop (M2)</strong><span data-i18n="road.now.i4.b">ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws streaming</span></li>
                 <li><strong data-i18n="road.now.i5.t">Ollama backend</strong><span data-i18n="road.now.i5.b">think-field parser · 5-category error mapping · tool calls · streaming</span></li>
                 <li><strong data-i18n="road.now.i6.t">Config and env</strong><span data-i18n="road.now.i6.b">~/.config/alb/config.toml · .env.local · cross-project MCP export</span></li>
+                <li><strong data-i18n="road.now.i7.t">Web UI v3 (M3)</strong><span data-i18n="road.now.i7.b">Material 3, light and dark, Chinese and English · board overview · console · logs · timeline · flash · bench · assistant · perf curves · file browser · sessions</span></li>
               </ul>
             </div>
 
@@ -480,7 +481,6 @@ export ALB_OLLAMA_MODEL=gemma4:26b
               <h3 style="margin-top:var(--space-3);" data-i18n="road.wip.title">M2 step 4 · M3 opening</h3>
               <ul>
                 <li><strong data-i18n="road.wip.i1.t">OpenAI-compatible backend</strong><span data-i18n="road.wip.i1.b">one backend for GPT · Claude via OpenRouter · vLLM · LM Studio · MLX · DeepSeek</span></li>
-                <li><strong data-i18n="road.wip.i2.t">Web Tier 1 — chat UI</strong><span data-i18n="road.wip.i2.b">browser chat with streaming, device dashboard, live logcat pane, HITL confirms, artifact panel</span></li>
                 <li><strong data-i18n="road.wip.i3.t">Long-task framework</strong><span data-i18n="road.wip.i3.b">SSE / BackgroundTask for perf captures, bugreports, multi-minute agent jobs</span></li>
                 <li><strong data-i18n="road.wip.i4.t">perf · benchmark · network · ui</strong><span data-i18n="road.wip.i4.b">fresh capability families on top of M1 transports</span></li>
                 <li><strong data-i18n="road.wip.i5.t">Undo &amp; snapshots</strong><span data-i18n="road.wip.i5.b">roll back file pushes, app installs, permission changes</span></li>
@@ -492,7 +492,7 @@ export ALB_OLLAMA_MODEL=gemma4:26b
               <h3 style="margin-top:var(--space-3);" data-i18n="road.plan.title">M3 late · M4+ vision</h3>
               <ul>
                 <li><strong data-i18n="road.plan.i1.t">🌟 On-device agent</strong><span data-i18n="road.plan.i1.b">alb-mobile Android app + Gemini Nano / AICore. Host brain, device reflex — jump to the deep dive below.</span></li>
-                <li><strong data-i18n="road.plan.i2.t">Web Tier 2</strong><span data-i18n="road.plan.i2.b">embedded scrcpy · perf curves · ANR timeline · session replay · file browser</span></li>
+                <li><strong data-i18n="road.plan.i2.t">Web Tier 2</strong><span data-i18n="road.plan.i2.b">embedded scrcpy · re-run or fork a past session (read-only today) · assistant asks before changing the board · chat with an on-board model</span></li>
                 <li><strong data-i18n="road.plan.i3.t">More backends</strong><span data-i18n="road.plan.i3.b">llama.cpp native · Anthropic SDK · session auto-summary · known-issues memory</span></li>
                 <li><strong data-i18n="road.plan.i4.t">Web Tier 3</strong><span data-i18n="road.plan.i4.b">multi-user collaboration · workflow builder · webhooks · Slack / Discord bot</span></li>
                 <li><strong data-i18n="road.plan.i5.t">Plugins &amp; bindings</strong><span data-i18n="road.plan.i5.b">third-party capability plugins · multi-language bindings · multi-vendor SoC adapters</span></li>
@@ -634,7 +634,7 @@ export ALB_OLLAMA_MODEL=gemma4:26b
       // ===== i18n dictionary =====
       const I18N = {
         "nav.features":"Features","nav.methods":"Methods","nav.architecture":"Architecture","nav.roadmap":"Roadmap","nav.onDevice":"On-device Agent","nav.cta":"View on GitHub",
-        "banner.badge":"New","banner.text":"M2 Agent is live — alb chat REPL, streaming WebSocket, and Ollama / local-LLM backends.","banner.link":"See what's next →",
+        "banner.badge":"New","banner.text":"Web UI v3 is live — board overview, console, logs, timeline, flashing and the bench in the browser, built on Material 3.","banner.link":"See the web UI →",
         "hero.title":"Let LLM agents debug real Android devices.",
         "hero.subtitle":"One CLI, one MCP server, one Web API — across USB adb, Wi-Fi adb, on-board sshd, and UART serial. Structured outputs, built-in permissions, workspace artifacts. Ready for Claude Code, Cursor, and any agent that speaks tools.",
         "hero.cta1":"Get started","hero.cta2":"View on GitHub →",
@@ -656,29 +656,29 @@ export ALB_OLLAMA_MODEL=gemma4:26b
         "methods.row.g":"Last resort · bring-up · panic",
         "methods.foot":"D USB-tethered IP · E scrcpy mirroring · F frp public relay — reserved for later milestones.",
         "arch.title":"Three integration tiers, one business layer.",
-        "arch.subtitle":"MCP for chat-based agents. CLI for humans and shell scripts. Web API (POST + WebSocket) for the browser UI we're building. All share the same capability functions, transports, and permission system.",
+        "arch.subtitle":"MCP for chat-based agents. CLI for humans and shell scripts. Web API (POST + WebSocket) for the browser UI the hub serves at /app/. All share the same capability functions, transports, and permission system.",
         "arch.caption":"Four layers. Swap any tier without touching the others.",
         "qs.title":"Three steps to your first agent turn.","qs.subtitle":"Install, pick a model, attach a device. That's it.",
         "qs.s1.title":"Install","qs.s2.title":"Point to a model","qs.s3.title":"Chat with your device","qs.more":"Full installation and configuration guide →",
         "road.title":"Where we are, and where we're going.",
-        "road.subtitle":"M1 transports are stable. M2 agent loop is shipping. M3 unlocks perf and UI. M4+ takes us to on-device agents — the part that changes the game for field debugging.",
+        "road.subtitle":"M1 transports are stable. M2 agent loop is shipping. The M3 web UI is live; perf work continues. M4+ takes us to on-device agents — the part that changes the game for field debugging.",
         "road.status.done":"Available now","road.status.wip":"In progress","road.status.plan":"Roadmap",
         "road.now.title":"M1 · M2 step 3",
-        "road.now.i1.t":"5 transports","road.now.i1.b":"adb USB · adb Wi-Fi · ssh · UART · hybrid router",
-        "road.now.i2.t":"6 capabilities","road.now.i2.b":"shell · logging (with UART) · filesync · diagnose · power · app",
-        "road.now.i3.t":"21 MCP tools + 234 tests","road.now.i3.b":"structured errors, permission gate, workspace artifacts",
+        "road.now.i1.t":"4 transports","road.now.i1.b":"adb (USB · Wi-Fi) · ssh · UART · hybrid router",
+        "road.now.i2.t":"11 capabilities","road.now.i2.b":"shell · logging (with UART) · filesync · diagnose · power · app · adbd · breakin (stop in the bootloader) · timeline · port · bench",
+        "road.now.i3.t":"36 MCP tools + 2,908 tests","road.now.i3.b":"2,507 pytest + 401 vitest · structured errors, permission gate, workspace artifacts",
         "road.now.i4.t":"Agent loop (M2)","road.now.i4.b":"ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws streaming",
         "road.now.i5.t":"Ollama backend","road.now.i5.b":"think-field parser · 5-category error mapping · tool calls · streaming",
         "road.now.i6.t":"Config and env","road.now.i6.b":"~/.config/alb/config.toml · .env.local · cross-project MCP export",
+        "road.now.i7.t":"Web UI v3 (M3)","road.now.i7.b":"Material 3, light and dark, Chinese and English · board overview · console · logs · timeline · flash · bench · assistant · perf curves · file browser · sessions",
         "road.wip.title":"M2 step 4 · M3 opening",
         "road.wip.i1.t":"OpenAI-compatible backend","road.wip.i1.b":"one backend for GPT · Claude via OpenRouter · vLLM · LM Studio · MLX · DeepSeek",
-        "road.wip.i2.t":"Web Tier 1 — chat UI","road.wip.i2.b":"browser chat with streaming, device dashboard, live logcat pane, HITL confirms, artifact panel",
         "road.wip.i3.t":"Long-task framework","road.wip.i3.b":"SSE / BackgroundTask for perf captures, bugreports, multi-minute agent jobs",
         "road.wip.i4.t":"perf · benchmark · network · ui","road.wip.i4.b":"fresh capability families on top of M1 transports",
         "road.wip.i5.t":"Undo & snapshots","road.wip.i5.b":"roll back file pushes, app installs, permission changes",
         "road.plan.title":"M3 late · M4+ vision",
         "road.plan.i1.t":"🌟 On-device agent","road.plan.i1.b":"alb-mobile Android app + Gemini Nano / AICore. Host brain, device reflex — jump to the deep dive below.",
-        "road.plan.i2.t":"Web Tier 2","road.plan.i2.b":"embedded scrcpy · perf curves · ANR timeline · session replay · file browser",
+        "road.plan.i2.t":"Web Tier 2","road.plan.i2.b":"embedded scrcpy · re-run or fork a past session (read-only today) · assistant asks before changing the board · chat with an on-board model",
         "road.plan.i3.t":"More backends","road.plan.i3.b":"llama.cpp native · Anthropic SDK · session auto-summary · known-issues memory",
         "road.plan.i4.t":"Web Tier 3","road.plan.i4.b":"multi-user collaboration · workflow builder · webhooks · Slack / Discord bot",
         "road.plan.i5.t":"Plugins & bindings","road.plan.i5.b":"third-party capability plugins · multi-language bindings · multi-vendor SoC adapters",
@@ -699,7 +699,7 @@ export ALB_OLLAMA_MODEL=gemma4:26b
 
       const ZH = {
         "nav.features":"特性","nav.methods":"方案","nav.architecture":"架构","nav.roadmap":"路线图","nav.onDevice":"设备端 Agent","nav.cta":"GitHub",
-        "banner.badge":"新","banner.text":"M2 Agent 已上线 —— alb chat REPL、WebSocket 流式、Ollama 本地 LLM 全打通。","banner.link":"看下一步 →",
+        "banner.badge":"新","banner.text":"Web 界面 v3 上线 —— 板子总览、控制台、日志、时间轴、烧录和台架都能在浏览器里操作，按 Material 3 规范做。","banner.link":"看看 Web 界面 →",
         "hero.title":"让 LLM Agent 在线调试真实安卓设备。",
         "hero.subtitle":"一套 CLI、一个 MCP server、一个 Web API —— 打通 USB adb / Wi-Fi adb / 板子 sshd / UART 串口。结构化输出、内置权限系统、产物落盘。开箱适配 Claude Code、Cursor 以及任何懂 tool call 的 agent。",
         "hero.cta1":"开始使用","hero.cta2":"在 GitHub 查看 →",
@@ -721,29 +721,29 @@ export ALB_OLLAMA_MODEL=gemma4:26b
         "methods.row.g":"最后底牌 · bring-up · panic 救援",
         "methods.foot":"D USB 网络共享 · E scrcpy 屏幕镜像 · F frp 公网中转 —— 后续里程碑实现。",
         "arch.title":"三层接入，一套业务层。",
-        "arch.subtitle":"MCP 面向聊天 agent、CLI 面向人类和 shell 脚本、Web API（POST + WebSocket）面向正在建设的浏览器 UI。三层共享同一套能力函数、传输层和权限系统。",
+        "arch.subtitle":"MCP 面向聊天 agent、CLI 面向人类和 shell 脚本、Web API（POST + WebSocket）面向 hub 在 /app/ 提供的浏览器界面。三层共享同一套能力函数、传输层和权限系统。",
         "arch.caption":"四层解耦。任何一层替换都不影响其他层。",
         "qs.title":"三步启动你的第一次 agent turn。","qs.subtitle":"装好、指一个模型、接一台设备，就这么简单。",
         "qs.s1.title":"安装","qs.s2.title":"指向一个模型","qs.s3.title":"跟设备对话","qs.more":"完整安装与配置指南 →",
         "road.title":"我们到了哪，接下来去哪。",
-        "road.subtitle":"M1 传输层稳定。M2 agent loop 正在落地。M3 解锁性能 + UI。M4+ 迈向设备端 agent —— 这一步才真正改变现场调试的形态。",
+        "road.subtitle":"M1 传输层稳定。M2 agent loop 正在落地。M3 的 Web 界面已上线，性能部分还在做。M4+ 迈向设备端 agent —— 这一步才真正改变现场调试的形态。",
         "road.status.done":"已可用","road.status.wip":"开发中","road.status.plan":"规划中",
         "road.now.title":"M1 · M2 step 3",
-        "road.now.i1.t":"5 种传输","road.now.i1.b":"adb USB · adb Wi-Fi · ssh · UART · hybrid 路由",
-        "road.now.i2.t":"6 类能力","road.now.i2.b":"shell · logging（含 UART）· filesync · diagnose · power · app",
-        "road.now.i3.t":"21 个 MCP tool + 234 条测试","road.now.i3.b":"结构化错误、权限闸门、产物落盘",
+        "road.now.i1.t":"4 种传输","road.now.i1.b":"adb（USB · Wi-Fi）· ssh · UART · hybrid 路由",
+        "road.now.i2.t":"11 类能力","road.now.i2.b":"shell · logging（含 UART）· filesync · diagnose · power · app · adbd · breakin（停在 bootloader）· timeline · port · bench",
+        "road.now.i3.t":"36 个 MCP tool + 2908 条测试","road.now.i3.b":"pytest 2507 条 + vitest 401 条 · 结构化错误、权限闸门、产物落盘",
         "road.now.i4.t":"Agent loop（M2）","road.now.i4.b":"ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws 流式",
         "road.now.i5.t":"Ollama 后端","road.now.i5.b":"think 字段解析 · 5 种错误映射 · tool call · 流式",
         "road.now.i6.t":"配置 + 环境","road.now.i6.b":"~/.config/alb/config.toml · .env.local · 跨项目 MCP 导出",
+        "road.now.i7.t":"Web 界面 v3（M3）","road.now.i7.b":"Material 3，浅色 / 深色，中文 / 英文 · 板子总览 · 控制台 · 日志 · 时间轴 · 烧录 · 台架 · 助手 · 性能曲线 · 文件浏览 · 会话记录",
         "road.wip.title":"M2 step 4 · M3 起步",
         "road.wip.i1.t":"OpenAI 兼容后端","road.wip.i1.b":"一个后端对接 GPT · OpenRouter 上的 Claude · vLLM · LM Studio · MLX · DeepSeek",
-        "road.wip.i2.t":"Web Tier 1 · 浏览器 Chat UI","road.wip.i2.b":"浏览器流式对话、设备看板、实时 logcat、HITL 确认、产物面板",
         "road.wip.i3.t":"长任务框架","road.wip.i3.b":"SSE / BackgroundTask 跑 perf 采集、bugreport、多分钟 agent 任务",
         "road.wip.i4.t":"perf · benchmark · network · ui","road.wip.i4.b":"基于 M1 传输层的新能力族",
         "road.wip.i5.t":"Undo & 快照","road.wip.i5.b":"回滚 push 的文件、装过的 app、改过的权限",
         "road.plan.title":"M3 后期 · M4+ 愿景",
         "road.plan.i1.t":"🌟 设备端 Agent","road.plan.i1.b":"alb-mobile 安卓 app + Gemini Nano / AICore。宿主当大脑、设备当反射 —— 下方详细展开。",
-        "road.plan.i2.t":"Web Tier 2","road.plan.i2.b":"嵌入 scrcpy · perf 曲线 · ANR 时间线 · session 回放 · 文件浏览器",
+        "road.plan.i2.t":"Web Tier 2","road.plan.i2.b":"嵌入 scrcpy · 重跑或分叉历史会话（现在只能查看）· 助手改动板子前先问人 · 和板上模型对话",
         "road.plan.i3.t":"更多后端","road.plan.i3.b":"llama.cpp 原生 · Anthropic SDK · session 自动摘要 · 已知问题记忆库",
         "road.plan.i4.t":"Web Tier 3","road.plan.i4.b":"多人协作 · workflow builder · webhook · Slack / Discord bot",
         "road.plan.i5.t":"插件 & 绑定","road.plan.i5.b":"第三方能力插件 · 多语言 binding · 多 SoC 厂商适配",

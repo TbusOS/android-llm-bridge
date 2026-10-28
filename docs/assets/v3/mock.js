@@ -73,7 +73,9 @@
       ["files", "folder", "文件", "Files", ""],
       ["apps", "apps", "应用", "Apps", ""],
       ["screen", "phone", "屏幕", "Screen", ""],
-      ["problems", "bug", "问题", "Problems", "", "4"]
+      ["problems", "bug", "问题", "Problems", "", "4"],
+      ["info", "info", "系统信息", "System info", ""],
+      ["power", "battery", "电源", "Power", ""]
     ] },
     { zh: "烧录", en: "Flash", items: [
       ["flash", "bolt", "烧录", "Flash", "webui-preview-v3-flash.html"],
@@ -90,7 +92,7 @@
     { zh: "系统", en: "System", items: [
       ["doctor", "check-circle", "环境检查", "Health check", ""],
       ["audit", "shield", "操作记录", "Audit log", ""],
-      ["settings", "gear", "设置", "Settings", ""]
+      ["connections", "link", "连接", "Connections", ""]
     ] }
   ];
 

@@ -1,1140 +1,469 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Web UI Preview — android-llm-bridge</title>
-    <meta name="description" content="Static mockup of the upcoming browser UI for android-llm-bridge: Chat, Terminal, Model Playground, Devices, System Info, and real-time charts. Placeholder data only — click through to decide the scope.">
-    <link rel="stylesheet" href="assets/fonts.css">
-    <link rel="stylesheet" href="assets/anthropic.css">
-    <style>
-      /* ---- Shared mock styles ---- */
-      .lang-toggle{
-        font-family:var(--font-heading); font-size:13px; font-weight:500;
-        color:var(--anth-text-secondary); background:transparent;
-        border:1px solid var(--anth-light-gray); border-radius:var(--radius-pill);
-        padding:6px 14px; cursor:pointer;
-        transition:border-color var(--duration-sm) var(--ease-anth),color var(--duration-sm) var(--ease-anth);
-      }
-      .lang-toggle:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Web 界面 Web UI · android-llm-bridge</title>
+<meta name="description" content="The android-llm-bridge web UI (v3, Material 3): board overview, adb shell and serial console, logs, a shared timeline, fastboot flashing, the bench and an assistant. Screenshots and interactive design pages with sample data. 浏览器里调试安卓板子的网页界面。">
+<!-- Web UI page of the project site. Material 3 styles from assets/v3/alb.css
+     (a generated copy of web/src/styles/v3). Screenshots under assets/v3/shots/
+     are taken from the design pages with sample data, never from a running hub. -->
+<link rel="stylesheet" href="assets/v3/alb.css">
+<script>
+  /* Apply the stored theme before the first paint (same key as the design pages). */
+  (function () {
+    try {
+      var th = localStorage.getItem("alb-v3-theme");
+      if (th === "light" || th === "dark") document.documentElement.setAttribute("data-theme", th);
+    } catch (e) { /* storage blocked */ }
+  })();
+</script>
+<script src="assets/v3/icons.js"></script>
+<style>
+  :root { --wp-max: 1200px; --wp-pad: 24px; }
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  a { text-underline-offset: 2px; }
 
-      html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display:none !important; }
-      html[lang^="zh"] body, html[lang^="zh"] p, html[lang^="zh"] li,
-      html[lang^="zh"] h1, html[lang^="zh"] h2, html[lang^="zh"] h3 {
-        font-family:"Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
-      }
+  /* ---- top app bar ---- */
+  .wp-bar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 4px;
+    height: 64px; padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+    background: var(--md-sys-color-surface);
+    border-bottom: 1px solid var(--alb-color-divider);
+  }
+  .wp-bar .brand { padding-left: 0; }
+  .wp-bar__links { display: flex; align-items: center; gap: 2px; margin-left: 8px; }
+  .wp-bar__links a {
+    padding: 8px 12px; border-radius: var(--md-sys-shape-corner-full);
+    color: var(--md-sys-color-on-surface-variant); text-decoration: none; font-weight: 500;
+  }
+  .wp-bar__links a:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+  .wp-spacer { flex: 1; min-width: 4px; }
+  .wp-lang { color: var(--md-sys-color-on-surface-variant); }
 
-      .status-pill{
-        display:inline-block; font-family:var(--font-heading);
-        font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;
-        padding:3px 10px; border-radius:var(--radius-pill);
-      }
-      .status-pill--done{background:rgba(120,140,93,0.18); color:#5d7043;}
-      .status-pill--wip{background:rgba(217,119,87,0.20); color:#a8502f;}
-      .status-pill--plan{background:var(--anth-light-gray); color:var(--anth-text-secondary);}
+  /* ---- layout ---- */
+  .wp-main { flex: 1; width: 100%; max-width: calc(var(--wp-max) + 2 * var(--wp-pad)); margin: 0 auto; padding: 0 var(--wp-pad) 48px; }
+  .wp-section { margin-top: 56px; scroll-margin-top: 80px; }
+  .wp-section > h2 { font-size: 28px; line-height: 36px; font-weight: 400; }
+  .wp-section > .wp-sub { margin: 6px 0 20px; max-width: 72ch; color: var(--md-sys-color-on-surface-variant); font-size: 16px; line-height: var(--alb-lh-body-large); }
 
-      .need-pill{
-        display:inline-block; font-family:var(--font-mono); font-size:11px;
-        color:var(--anth-text-secondary); background:var(--anth-bg-subtle);
-        border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm);
-        padding:2px 8px; margin:2px 4px 2px 0;
-      }
+  /* ---- hero ---- */
+  .wp-hero { padding: 40px 0 8px; }
+  .wp-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); }
+  .wp-hero h1 { margin-top: 12px; font-size: 45px; line-height: 52px; font-weight: 400; letter-spacing: 0; }
+  .wp-lead { margin: 16px 0 0; max-width: 68ch; font-size: 18px; line-height: 30px; color: var(--md-sys-color-on-surface-variant); }
+  .wp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .wp-note {
+    display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; max-width: 72ch;
+    padding: 12px 16px; border-radius: var(--md-sys-shape-corner-medium);
+    background: var(--alb-color-well); color: var(--md-sys-color-on-surface-variant);
+  }
+  .wp-note svg { margin-top: 1px; color: var(--md-sys-color-primary); }
+  .wp-note p { margin: 0; }
+  .wp-lead code, .wp-note code { font-size: .9em; white-space: nowrap; }
+  .wp-nowrap { white-space: nowrap; }
 
-      .section-head{
-        display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--space-3);
-        margin-bottom:var(--space-2);
-      }
-      .section-head h2{font-size:32px; margin:0;}
-      .section-sub{
-        color:var(--anth-text-secondary); font-size:16px;
-        margin-bottom:var(--space-4);
-      }
-      .need-row{margin-bottom:var(--space-5);}
+  /* ---- gallery ---- */
+  .wp-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .wp-shot { padding: 0; gap: 0; overflow: hidden; }
+  .wp-shot__img { display: block; background: var(--alb-color-well); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+  .wp-shot__img img { display: block; width: 100%; height: auto; aspect-ratio: 1440 / 900; }
+  .wp-shot__img:hover img { opacity: .94; }
+  .wp-shot__body { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 16px; flex: 1; }
+  .wp-shot__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .wp-shot__ic {
+    width: 36px; height: 36px; flex: none; display: grid; place-items: center;
+    border-radius: var(--md-sys-shape-corner-medium);
+    background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);
+  }
+  .wp-shot__head h3 { font-size: 22px; line-height: 28px; font-weight: 400; }
+  .wp-shot p { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+  .wp-shot .wp-caveat { font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); }
+  .wp-shot__link { align-self: flex-start; margin: auto 0 0 -12px; }
+  .wp-shot--feature { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+  .wp-shot--feature .wp-shot__img { border-bottom: 0; border-right: 1px solid var(--md-sys-color-outline-variant); }
+  .wp-shot--feature .wp-shot__body { padding: 28px; justify-content: center; }
+  .wp-shot--feature .wp-shot__head h3 { font-size: 28px; line-height: 36px; }
+  .wp-shot--feature p { font-size: 16px; line-height: var(--alb-lh-body-large); }
+  .wp-shot--feature .wp-shot__link { margin-top: 8px; }
 
-      /* ---- Sticky tab nav ---- */
-      .tab-chips{
-        position:sticky; top:72px; z-index:40;
-        background:var(--anth-bg); padding:var(--space-3) 0;
-        border-bottom:1px solid var(--anth-light-gray);
-        margin-bottom:var(--space-7);
-      }
-      .tab-chips-inner{display:flex; flex-wrap:wrap; gap:var(--space-2);}
-      .tab-chip{
-        font-family:var(--font-heading); font-size:13px; font-weight:500;
-        color:var(--anth-text-secondary);
-        border:1px solid var(--anth-light-gray); background:#ffffff;
-        border-radius:var(--radius-pill); padding:6px 14px;
-        text-decoration:none;
-        transition:border-color var(--duration-sm) var(--ease-anth), color var(--duration-sm) var(--ease-anth);
-      }
-      .tab-chip:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
+  /* language-specific screenshots */
+  html[lang="en"] .wp-zh-only, html:not([lang="en"]) .wp-en-only { display: none; }
 
-      /* ---- Generic card ---- */
-      .mock-card{
-        background:#ffffff; border:1px solid var(--anth-light-gray);
-        border-radius:var(--radius-lg); box-shadow:var(--shadow-card);
-        padding:var(--space-5);
-      }
+  /* ---- common to every page ---- */
+  .wp-common { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .wp-common .card { gap: 8px; }
+  .wp-common h3 { display: flex; align-items: center; gap: 10px; font-size: 16px; line-height: 24px; font-weight: 500; }
+  .wp-common h3 svg { color: var(--md-sys-color-primary); }
+  .wp-common p { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+  .wp-common kbd { font-family: var(--md-ref-typeface-mono); font-size: 12px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--md-sys-color-outline-variant); }
 
-      /* ---- Chat mock ---- */
-      .chat-window{display:flex; flex-direction:column; gap:var(--space-4);}
-      .bubble{
-        max-width:78%; padding:var(--space-3) var(--space-4);
-        border-radius:var(--radius-md); font-size:15px; line-height:1.55;
-      }
-      .bubble--user{
-        align-self:flex-end; background:var(--anth-orange); color:#ffffff;
-      }
-      .bubble--assistant{
-        align-self:flex-start; background:var(--anth-bg-subtle);
-        color:var(--anth-text);
-      }
-      .bubble--assistant code{
-        font-family:var(--font-mono); font-size:13px;
-        background:rgba(20,20,19,0.06); padding:1px 6px; border-radius:4px;
-      }
-      .tool-call{
-        align-self:flex-start; max-width:82%;
-        background:#ffffff; border:1px dashed var(--anth-mid-gray);
-        border-radius:var(--radius-md); padding:var(--space-3) var(--space-4);
-        font-family:var(--font-mono); font-size:13px; color:var(--anth-text);
-      }
-      .tool-call-head{
-        display:flex; align-items:center; gap:var(--space-2);
-        font-weight:600; margin-bottom:var(--space-2);
-      }
-      .tool-call-body{white-space:pre-wrap; color:var(--anth-text-secondary);}
-      .artifact-chip{
-        display:inline-flex; align-items:center; gap:var(--space-2);
-        font-family:var(--font-heading); font-size:12px;
-        background:var(--anth-bg-subtle); border:1px solid var(--anth-light-gray);
-        border-radius:var(--radius-pill); padding:4px 12px;
-        color:var(--anth-text);
-      }
-      .typing-dots span{
-        display:inline-block; width:6px; height:6px; margin:0 1px;
-        background:var(--anth-mid-gray); border-radius:50%;
-        animation:typing 1.2s infinite;
-      }
-      .typing-dots span:nth-child(2){animation-delay:0.2s;}
-      .typing-dots span:nth-child(3){animation-delay:0.4s;}
-      @keyframes typing{
-        0%,80%,100%{opacity:0.3;} 40%{opacity:1;}
-      }
-      .chat-input{
-        display:flex; gap:var(--space-2); margin-top:var(--space-4);
-        padding:var(--space-3);
-        border:1px solid var(--anth-light-gray); border-radius:var(--radius-md);
-        background:var(--anth-bg);
-      }
-      .chat-input input{
-        flex:1; border:none; background:transparent; outline:none;
-        font-family:var(--font-body); font-size:15px; color:var(--anth-text);
-      }
+  .wp-navmap { margin-top: 16px; }
+  .wp-navmap__groups { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px 20px; }
+  .wp-navmap__device { grid-column: span 2; }
+  .wp-navmap .wp-navmap__device ul { display: block; columns: 2; column-gap: 20px; }
+  .wp-navmap .wp-navmap__device li { break-inside: avoid; }
+  .wp-navmap h4 { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: var(--alb-tracking-caps); color: var(--alb-color-text-muted); margin-bottom: 6px; }
+  .wp-navmap ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .wp-navmap li { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; color: var(--md-sys-color-on-surface); }
+  .wp-navmap li svg { margin-top: 2px; color: var(--md-sys-color-on-surface-variant); }
+  .wp-navmap li small { display: block; font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); }
+  .wp-navmap li a { font-weight: 500; }
+  .wp-navmap__foot { margin: 4px 0 0; font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); }
 
-      /* ---- Terminal mock ---- */
-      .term-frame{
-        background:#1e1d1a; border-radius:var(--radius-md);
-        overflow:hidden; border:1px solid #3a3832;
-      }
-      .term-titlebar{
-        display:flex; align-items:center; gap:var(--space-2);
-        background:#2a2825; padding:8px 14px;
-        font-family:var(--font-heading); font-size:12px;
-        color:#c9c6bd;
-        border-bottom:1px solid #3a3832;
-      }
-      .term-dot{width:10px; height:10px; border-radius:50%;}
-      .term-body{
-        padding:var(--space-4); font-family:var(--font-mono); font-size:13px;
-        color:#e8e6dc; line-height:1.55;
-        white-space:pre-wrap;
-        min-height:280px;
-      }
-      .term-prompt{color:#b0c490;}
-      .term-path{color:#6a9bcc;}
-      .term-out{color:#c9c6bd;}
-      .term-err{color:#d97757;}
-      .term-caret{
-        display:inline-block; width:8px; height:14px; background:#e8e6dc;
-        vertical-align:middle; animation:blink 1s steps(2) infinite;
-      }
-      @keyframes blink{50%{opacity:0;}}
+  /* ---- archive ---- */
+  .wp-archive { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .wp-archive a.chip { text-decoration: none; }
 
-      .hitl-banner{
-        margin-top:var(--space-3); padding:var(--space-3) var(--space-4);
-        background:rgba(161,66,56,0.10); border:1px solid var(--anth-danger);
-        border-radius:var(--radius-md); font-size:14px;
-      }
-      .hitl-banner strong{color:var(--anth-danger); font-family:var(--font-heading);}
-      .hitl-actions{margin-top:var(--space-2); display:flex; gap:var(--space-2);}
-      .hitl-btn{
-        font-family:var(--font-heading); font-size:12px; font-weight:600;
-        padding:6px 14px; border-radius:var(--radius-pill); cursor:pointer;
-        border:1px solid var(--anth-light-gray); background:#ffffff;
-      }
-      .hitl-btn--deny{border-color:var(--anth-danger); color:var(--anth-danger);}
-      .hitl-btn--allow{border-color:var(--anth-green); color:var(--anth-green);}
+  /* ---- footer ---- */
+  .wp-foot { border-top: 1px solid var(--alb-color-divider); background: var(--md-sys-color-surface-container); }
+  .wp-foot__in {
+    max-width: calc(var(--wp-max) + 2 * var(--wp-pad)); margin: 0 auto; padding: 20px var(--wp-pad);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; font-size: 13px; color: var(--alb-color-text-muted);
+  }
+  .wp-foot__in a { color: var(--md-sys-color-primary); }
 
-      /* ---- Playground mock ---- */
-      .pg-grid{display:grid; grid-template-columns:320px 1fr; gap:var(--space-5);}
-      @media(max-width:900px){.pg-grid{grid-template-columns:1fr;}}
-      .param-row{
-        display:grid; grid-template-columns:110px 1fr 48px;
-        align-items:center; gap:var(--space-2);
-        padding:var(--space-2) 0;
-        border-bottom:1px dashed var(--anth-light-gray);
-        font-family:var(--font-heading); font-size:13px;
-      }
-      .param-row:last-child{border-bottom:none;}
-      .param-row label{color:var(--anth-text-secondary);}
-      .param-row input[type=range]{
-        -webkit-appearance:none; appearance:none;
-        width:100%; height:4px; background:var(--anth-light-gray);
-        border-radius:var(--radius-pill); outline:none;
-      }
-      .param-row input[type=range]::-webkit-slider-thumb{
-        -webkit-appearance:none; appearance:none;
-        width:14px; height:14px; background:var(--anth-orange);
-        border-radius:50%; cursor:pointer;
-      }
-      .param-row input[type=range]::-moz-range-thumb{
-        width:14px; height:14px; background:var(--anth-orange);
-        border-radius:50%; cursor:pointer; border:none;
-      }
-      .param-row .val{
-        font-family:var(--font-mono); font-size:12px; color:var(--anth-text);
-        text-align:right;
-      }
-      .param-row select, .param-row input[type=number], .param-row input[type=text]{
-        font-family:var(--font-mono); font-size:12px;
-        border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm);
-        padding:4px 8px; background:#ffffff; color:var(--anth-text);
-        width:100%;
-      }
-      .param-group-title{
-        font-family:var(--font-heading); font-size:11px; font-weight:600;
-        text-transform:uppercase; letter-spacing:0.06em;
-        color:var(--anth-text-secondary);
-        margin:var(--space-3) 0 var(--space-2);
-      }
-      .toggle-sw{
-        position:relative; width:34px; height:18px; background:var(--anth-light-gray);
-        border-radius:var(--radius-pill); cursor:pointer;
-      }
-      .toggle-sw::after{
-        content:""; position:absolute; top:2px; left:2px;
-        width:14px; height:14px; background:#ffffff; border-radius:50%;
-        transition:all 0.2s;
-      }
-      .toggle-sw--on{background:var(--anth-orange);}
-      .toggle-sw--on::after{left:18px;}
+  /* ---- narrower windows ---- */
+  @media (max-width: 1000px) {
+    .wp-common { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wp-navmap__groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wp-shot--feature { grid-template-columns: minmax(0, 1fr); }
+    .wp-shot--feature .wp-shot__img { border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+    .wp-shot--feature .wp-shot__body { padding: 16px 20px; }
+  }
+  @media (max-width: 760px) {
+    :root { --wp-pad: 16px; }
+    .wp-bar__links, .wp-bar .brand__sub { display: none; }
+    .wp-gallery, .wp-common { grid-template-columns: minmax(0, 1fr); }
+    .wp-hero { padding-top: 24px; }
+    .wp-hero h1 { font-size: 32px; line-height: 40px; }
+    .wp-lead { font-size: 16px; line-height: var(--alb-lh-body-large); }
+    .wp-section { margin-top: 40px; }
+    .wp-section > h2 { font-size: 24px; line-height: 32px; }
+  }
+  @media (max-width: 420px) {
+    .wp-navmap__groups { grid-template-columns: minmax(0, 1fr); }
+    .wp-navmap__device { grid-column: auto; }
+  }
+</style>
+</head>
+<body>
 
-      .metrics-bar{
-        display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-        gap:var(--space-3);
-        margin-top:var(--space-4); padding:var(--space-3);
-        background:var(--anth-bg-subtle); border-radius:var(--radius-md);
-      }
-      .metric{font-family:var(--font-heading); font-size:12px; color:var(--anth-text-secondary);}
-      .metric strong{
-        display:block; font-family:var(--font-mono); font-size:18px;
-        color:var(--anth-text); font-weight:600;
-      }
+<header class="wp-bar">
+  <a class="brand" href="index.html" aria-label="android-llm-bridge 首页" data-en-label="android-llm-bridge home"><span class="brand__mark"><i data-ic="bridge"></i></span><span class="brand__name">alb</span><span class="brand__sub">android-llm-bridge</span></a>
+  <nav class="wp-bar__links" aria-label="本页" data-en-label="On this page">
+    <a href="#pages" data-en="Pages">页面</a>
+    <a href="#common" data-en="On every page">共同部分</a>
+    <a href="#archive" data-en="Archive">旧设计</a>
+  </nav>
+  <span class="wp-spacer"></span>
+  <button class="btn btn--text wp-lang" id="lang-btn" type="button" lang="en"><i data-ic="lang"></i><span>English</span></button>
+  <button class="icon-btn" id="theme-btn" type="button"></button>
+  <a class="icon-btn" href="https://github.com/TbusOS/android-llm-bridge" aria-label="GitHub 上的源码" data-en-label="Source on GitHub" title="GitHub"><i data-ic="code"></i></a>
+</header>
 
-      /* ---- Devices mock ---- */
-      .dev-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4);}
-      .dev-card{display:flex; flex-direction:column; gap:var(--space-2);}
-      .dev-head{display:flex; align-items:center; gap:var(--space-2);}
-      .dot{width:10px; height:10px; border-radius:50%; display:inline-block;}
-      .dot--green{background:var(--anth-green);}
-      .dot--amber{background:#d9a557;}
-      .dot--red{background:var(--anth-danger);}
-      .dev-name{font-family:var(--font-heading); font-weight:600; font-size:16px;}
-      .dev-transport{
-        display:inline-block; font-family:var(--font-mono); font-size:11px;
-        background:var(--anth-bg-subtle); padding:2px 8px;
-        border-radius:var(--radius-sm); color:var(--anth-text-secondary);
-      }
-      .dev-body{font-size:14px; color:var(--anth-text-secondary); line-height:1.6;}
-      .dev-body code{font-family:var(--font-mono); font-size:12px; color:var(--anth-text);}
-      .dev-recent{
-        margin-top:var(--space-2); padding:var(--space-2);
-        background:var(--anth-bg-subtle); border-radius:var(--radius-sm);
-        font-family:var(--font-mono); font-size:11px; color:var(--anth-text-secondary);
-      }
-      .tunnel-bar{
-        display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-3);
-        margin-top:var(--space-4); padding:var(--space-3);
-        border:1px solid var(--anth-light-gray); border-radius:var(--radius-md);
-        background:var(--anth-bg);
-      }
-      .tunnel-cell{font-family:var(--font-heading); font-size:12px;}
-      .tunnel-cell strong{display:block; font-family:var(--font-mono); font-size:14px; color:var(--anth-text); font-weight:600;}
+<main class="wp-main" id="main">
 
-      /* ---- System info mock ---- */
-      .sys-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:var(--space-4);}
-      .sys-card h3{font-size:15px; margin:0 0 var(--space-3); color:var(--anth-text); font-weight:600;}
-      .sys-kv{display:grid; grid-template-columns:110px 1fr; gap:6px 12px; font-size:13px;}
-      .sys-kv dt{
-        font-family:var(--font-heading); color:var(--anth-text-secondary);
-        font-weight:500;
-      }
-      .sys-kv dd{
-        font-family:var(--font-mono); margin:0; color:var(--anth-text);
-        word-break:break-all;
-      }
-      .part-row{
-        display:grid; grid-template-columns:100px 1fr 70px;
-        align-items:center; gap:var(--space-2);
-        font-size:12px; padding:4px 0;
-        border-bottom:1px dashed var(--anth-light-gray);
-      }
-      .part-row:last-child{border-bottom:none;}
-      .part-bar{
-        height:6px; background:var(--anth-light-gray);
-        border-radius:var(--radius-pill); overflow:hidden;
-      }
-      .part-bar-fill{height:100%; background:var(--anth-orange);}
-      .part-name{font-family:var(--font-mono); color:var(--anth-text);}
-      .part-pct{font-family:var(--font-mono); color:var(--anth-text-secondary); text-align:right; font-size:11px;}
+  <section class="wp-hero">
+    <div class="wp-eyebrow"><a href="index.html" data-en="android-llm-bridge home">android-llm-bridge 首页</a><span aria-hidden="true">/</span><span data-en="Web UI · v3 · Material 3">Web 界面 · v3 · Material 3</span></div>
+    <h1 data-en="Debug a board from the browser">在浏览器里调试板子</h1>
+    <p class="wp-lead" data-en="The hub serves a web UI at <code>/app/</code>: board state, adb shell and serial console, logs, one timeline for every source, fastboot flashing and the bench machine, with an assistant you can pull out on any page. It follows Google&#39;s Material 3, comes in light and dark, and treats Chinese and English as equals.">hub 在 <code>/app/</code> 提供网页界面:看板子状态、开 adb shell 和串口、查日志、把各路日志对到同一条时间轴、用 fastboot 烧录、管理台架电脑,任何页面都能拉出助手。界面按 Google 的 Material 3 规范做,有浅色和深色,中文和英文同等对待。</p>
+    <div class="wp-actions">
+      <a class="btn btn--filled" href="webui-preview-v3.html"><i data-ic="overview"></i><span data-en="Open the overview design">打开总览设计稿</span></a>
+      <a class="btn btn--outlined" href="webui-preview-v3-styles.html"><i data-ic="sliders"></i><span data-en="7 styles compared">7 套风格对比</span></a>
+      <a class="btn btn--text" href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/web-api.md"><i data-ic="code"></i><span data-en="Web API reference">Web API 参考</span></a>
+    </div>
+    <div class="wp-note"><i data-ic="info"></i><p data-en="The screenshots and design pages below use sample data and are not connected to any board. To use the real UI, start <code>alb-api</code> (port 8765 by default) and open <code>http://&amp;lt;host&amp;gt;:8765/app/</code>.">下面的截图和设计稿用的都是示例数据,不连任何板子。要用真正的界面,启动 <code>alb-api</code>(默认端口 8765),再打开 <code>http://&lt;host&gt;:8765/app/</code>。</p></div>
+  </section>
 
-      /* ---- Charts mock ---- */
-      .spark-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4);}
-      .spark-card h3{
-        font-size:13px; font-family:var(--font-heading); font-weight:500;
-        color:var(--anth-text-secondary); margin:0 0 var(--space-2);
-        text-transform:uppercase; letter-spacing:0.04em;
-      }
-      .spark-val{
-        font-family:var(--font-mono); font-size:28px; font-weight:600;
-        color:var(--anth-text);
-      }
-      .spark-unit{
-        font-family:var(--font-heading); font-size:13px;
-        color:var(--anth-text-secondary); margin-left:4px;
-      }
-      .spark-svg{width:100%; height:60px; margin-top:var(--space-2); display:block;}
+  <!-- ================= designed pages ================= -->
+  <section class="wp-section" id="pages">
+    <h2 data-en="Seven designed pages">七张设计稿</h2>
+    <p class="wp-sub" data-en="Each picture links to an interactive design page: menus open, tabs switch, the assistant slides out. The real app builds the same pages with the same stylesheet.">每张图都能点开交互设计稿:菜单能展开、页签能切换、助手能拉出来。真正的界面用同一份样式表做出同样的页面。</p>
 
-      /* ---- Coming next ---- */
-      .next-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:var(--space-4);}
-      .next-card{
-        padding:var(--space-5);
-        background:var(--anth-bg); border:1px dashed var(--anth-mid-gray);
-        border-radius:var(--radius-md);
-      }
-      .next-card h3{font-size:15px; margin:0 0 var(--space-2); font-weight:600;}
-      .next-card p{font-size:13px; color:var(--anth-text-secondary); margin:0;}
-    </style>
-  </head>
-  <body>
-    <header class="anth-nav">
-      <div class="anth-nav-inner">
-        <a href="./" style="font-family:var(--font-heading); font-weight:600; font-size:18px; letter-spacing:-0.01em;">android-llm-bridge</a>
-        <nav aria-label="Primary" style="display:flex; align-items:center;">
-          <a href="./#features"><span class="lang-en">Features</span><span class="lang-zh">特性</span></a>
-          <a href="./#architecture"><span class="lang-en">Architecture</span><span class="lang-zh">架构</span></a>
-          <a href="./#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
-          <a href="on-device-agent.html"><span class="lang-en">On-device Agent</span><span class="lang-zh">设备端 Agent</span></a>
-          <a href="webui-preview.html" style="color:var(--anth-orange);"><span class="lang-en">Web UI Preview</span><span class="lang-zh">Web UI 预览</span></a>
-        </nav>
-        <div style="display:flex; align-items:center; gap:var(--space-3);">
-          <button class="lang-toggle" onclick="toggleLang()" id="langBtn" aria-label="Toggle language">中文</button>
-          <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge"><span class="lang-en">View on GitHub</span><span class="lang-zh">在 GitHub 查看</span></a>
+    <div class="wp-gallery">
+
+      <article class="card card--outlined wp-shot wp-shot--feature">
+        <a class="wp-shot__img" href="webui-preview-v3.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/overview-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="总览设计稿截图:在线设备、板子状态、开机各阶段、四条通道">
+          <img class="wp-en-only" src="assets/v3/shots/overview-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Overview design page: devices online, board state, boot stages, four channels">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="overview"></i></span><h3 data-en="Overview">总览</h3><span class="pill" data-en="Device">设备</span></div>
+          <p data-en="Start here: which devices are online, which boot stage the current board is in, which of the four channels reach it, which part of the last boot was slow, and what crashed lately. Further down is the whole alb service at a glance: which model backends respond and which agent sessions are running.">打开网页先看这里:哪些设备在线、当前板子停在开机的哪一步、四条通道哪几条能连上、上次开机慢在哪一段、最近有哪些崩溃。页面下方是整个 alb 服务的概况:哪些模型后端能用、有没有正在跑的 AI 会话。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article class="card card--outlined wp-shot">
+        <a class="wp-shot__img" href="webui-preview-v3-console.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/console-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="控制台设计稿截图:adb shell 终端和常用命令">
+          <img class="wp-en-only" src="assets/v3/shots/console-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Console design page: adb shell terminal and saved commands">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="terminal"></i></span><h3 data-en="Console">控制台</h3><span class="pill" data-en="Device">设备</span></div>
+          <p data-en="adb shell and the serial console in the browser, one tab each; saved commands run with one click and every command lands in the audit log. On the serial tab a Typing switch keeps stray keys away from the board, so they cannot stop the boot countdown.">在浏览器里开 adb shell 和串口控制台,一个页签一个;常用命令点一下就跑,每条命令都记进操作记录。串口页签有「键盘输入」开关,关着时按键不发给板子,免得误按停住开机倒计时。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-console.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article class="card card--outlined wp-shot">
+        <a class="wp-shot__img" href="webui-preview-v3-logs.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/logs-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="日志设计稿截图:按级别着色的 logcat 和每秒行数柱状图">
+          <img class="wp-en-only" src="assets/v3/shots/logs-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Logs design page: logcat coloured by level, with a lines-per-second bar chart">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="logs"></i></span><h3 data-en="Logs">日志</h3><span class="pill" data-en="Device">设备</span></div>
+          <p data-en="Live logcat, kernel messages and serial output, filtered by level, tag or keyword, plus search across everything already recorded. Serial output can be captured to a file and the captures are listed for opening or deleting; from any line, jump to the timeline to see what happened around it.">实时看 logcat、内核日志和串口输出,按级别、tag、关键字过滤,也能在所有已录下的日志里搜。串口输出可以抓一段存成文件,抓过的文件列在页面上,能打开也能删;看中某一行,可以跳到时间轴看它前后发生了什么。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-logs.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article class="card card--outlined wp-shot">
+        <a class="wp-shot__img" href="webui-preview-v3-timeline.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/timeline-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="时间轴设计稿截图:串口、dmesg、logcat、烧录四条轨道对在同一个时钟上">
+          <img class="wp-en-only" src="assets/v3/shots/timeline-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Timeline design page: serial, dmesg, logcat and flash tracks on one clock">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="timeline"></i></span><h3 data-en="Timeline">时间轴</h3><span class="pill" data-en="Device">设备</span></div>
+          <p data-en="Serial, dmesg, logcat and flash jobs on one clock. When a boot is slow or crashes, this is where you see what went wrong first; one button jumps to the first problem.">串口、dmesg、logcat 和烧录作业放在同一个时钟上。板子开机变慢或崩溃时,在这里看谁先出事,一个按钮跳到第一个问题。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-timeline.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article class="card card--outlined wp-shot">
+        <a class="wp-shot__img" href="webui-preview-v3-flash.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/flash-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="烧录设计稿截图:选清单、检查计划、执行三步和作业日志">
+          <img class="wp-en-only" src="assets/v3/shots/flash-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Flash design page: pick a manifest, check the plan, run it, with the job log">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="bolt"></i></span><h3 data-en="Flash">烧录</h3><span class="pill" data-en="Flash">烧录</span></div>
+          <p data-en="Flash a whole package or one partition with fastboot, or type fastboot commands. A whole package becomes a plan first: untick the rows you don&#39;t want, then run it. The board is identified before anything is written, and the serial console is recorded throughout.">用 fastboot 烧整包、烧单个分区,或者直接敲 fastboot 命令。整包先出计划,在表格里勾掉不烧的行再执行;写之前先核对板子是谁,全程同时录串口。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-flash.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article class="card card--outlined wp-shot">
+        <a class="wp-shot__img" href="webui-preview-v3-bench.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/bench-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="台架设计稿截图:板子和串口对照表、USB 设备与驱动状态、台架 agent">
+          <img class="wp-en-only" src="assets/v3/shots/bench-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Bench design page: boards and serial ports, USB devices with driver state, the bench agent">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="usb"></i></span><h3 data-en="Bench">台架</h3><span class="pill" data-en="Bench">台架</span></div>
+          <p data-en="The Windows machine the boards are plugged into: which board sits on which serial port, which USB devices it sees and whether their drivers are installed. Update or start its agent remotely, and read the bench logs in a large view.">板子插着的那台 Windows 电脑:哪块板接在哪个串口、USB 上看到哪些设备、驱动装好没有。那边的 agent 可以远程更新和启动,台架日志可以放大到整屏看。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-bench.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article class="card card--outlined wp-shot">
+        <a class="wp-shot__img" href="webui-preview-v3-chat.html" tabindex="-1">
+          <img class="wp-zh-only" src="assets/v3/shots/chat-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="对话设计稿截图:助手调用 alb 工具分析一次内核崩溃,工具卡展开显示参数和输出">
+          <img class="wp-en-only" src="assets/v3/shots/chat-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Chat design page: the assistant calls alb tools to look into a kernel panic, with a tool card expanded to show arguments and output">
+        </a>
+        <div class="wp-shot__body">
+          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="chat"></i></span><h3 data-en="Chat">对话</h3><span class="pill" data-en="Assistant">助手</span></div>
+          <p data-en="Ask about the board in plain words and cite a log, a problem or a time range with @. With agent mode on, the model reads logs and runs alb tools itself; each tool call expands to show its arguments and output, and long output opens in a large view. The model can run on the host, behind a cloud API, or on the board.">用大白话问板子的事,用 @ 引用一段日志、一个问题或一段时间。开了 Agent 模式,模型会自己读日志、调用 alb 工具,每次调用都能展开看参数和输出,长输出可以放大查看;模型可以跑在本机、云端 API 或板子上。</p>
+          <p class="wp-caveat" data-en="Not built yet: the backend does not yet ask before a tool changes the board (the draft shows that step), and the on-board option can only look for an inference service so far.">还没做的:后端还不会在工具改动板子前先问你(设计稿里画了这一步);板上模型目前只能探测板子上有没有推理服务。</p>
+          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-chat.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ================= common to every page ================= -->
+  <section class="wp-section" id="common">
+    <h2 data-en="On every page">每一页都有的</h2>
+    <p class="wp-sub" data-en="The pages share one frame, so the board and its channels stay in view wherever you are.">所有页面共用一个外框,不管在哪一页,当前板子和它的通道状态都在眼前。</p>
+
+    <div class="wp-common">
+      <div class="card card--outlined">
+        <h3><i data-ic="plug"></i><span data-en="Top bar">顶栏</span></h3>
+        <p data-en="Shows the active board and the state of its four channels: adb, serial, fastboot and the bench. Switch boards from the same place.">一直显示当前板子,以及 adb、串口、fastboot、台架四条通道的状态。切换板子也在这里。</p>
+      </div>
+      <div class="card card--outlined">
+        <h3><i data-ic="menu"></i><span data-en="Grouped navigation">分组导航</span></h3>
+        <p data-en="Five groups: Device, Flash, Bench, Assistant, System. <span class=&quot;wp-nowrap&quot;><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd></span> searches the pages; old <code>/inspect/…</code> addresses redirect to the new pages.">分设备、烧录、台架、助手、系统五组。按 <span class="wp-nowrap"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd></span> 搜索页面;旧的 <code>/inspect/…</code> 地址会自动跳到新页面。</p>
+      </div>
+      <div class="card card--outlined">
+        <h3><i data-ic="spark"></i><span data-en="Assistant sheet">助手侧栏</span></h3>
+        <p data-en="Opens from the top bar on any page and shares one conversation with the Chat page. On the overview, logs, timeline and problems pages, a line or a crash can be handed to it with its context.">任何页面都能从顶栏拉出来,和对话页共用同一段对话。总览、日志、时间轴、问题页上的一行日志或一次崩溃,可以带着上下文直接交给它。</p>
+      </div>
+      <div class="card card--outlined">
+        <h3><i data-ic="lang"></i><span data-en="Chinese and English">中文和英文</span></h3>
+        <p data-en="Both are first-class, not one translated from the other. Fonts ship with the page (Roboto Flex, Roboto Mono and a common-character subset of Noto Sans SC); nothing is fetched from the network.">两种语言同等对待,不是一种翻译另一种。字体随页面打包(Roboto Flex、Roboto Mono 和 Noto Sans SC 常用字子集),不从网上加载。</p>
+      </div>
+      <div class="card card--outlined">
+        <h3><i data-ic="moon"></i><span data-en="Light and dark">浅色和深色</span></h3>
+        <p data-en="Follows the system by default, or pin either one. Every colour is an M3 colour role (<code>--md-sys-color-*</code>), so a theme swaps one set of values.">默认跟随系统,也可以固定浅色或深色。颜色都用 M3 的颜色角色(<code>--md-sys-color-*</code>),换主题只换这一组值。</p>
+      </div>
+      <div class="card card--outlined">
+        <h3><i data-ic="phone"></i><span data-en="Works at phone width">手机上也能用</span></h3>
+        <p data-en="A navigation drawer on wide screens, a rail on medium ones, a pop-out menu on phones. Cards stack in one column and wide tables scroll inside their card.">宽屏是导航抽屉,中等宽度变成窄的导航栏,手机上收进菜单按钮。卡片排成一列,宽表格在卡片里横向滚动。</p>
+      </div>
+    </div>
+
+    <div class="card card--outlined wp-navmap">
+      <div class="card__head"><h3 data-en="Every page in the navigation">导航里的全部页面</h3></div>
+      <div class="wp-navmap__groups">
+        <div class="wp-navmap__device">
+          <h4 data-en="Device">设备</h4>
+          <ul>
+            <li><i data-ic="overview" class="ic--sm"></i><a href="webui-preview-v3.html" data-en="Overview">总览</a></li>
+            <li><i data-ic="terminal" class="ic--sm"></i><a href="webui-preview-v3-console.html" data-en="Console">控制台</a></li>
+            <li><i data-ic="logs" class="ic--sm"></i><a href="webui-preview-v3-logs.html" data-en="Logs">日志</a></li>
+            <li><i data-ic="timeline" class="ic--sm"></i><a href="webui-preview-v3-timeline.html" data-en="Timeline">时间轴</a></li>
+            <li><i data-ic="chart" class="ic--sm"></i><span data-en="Performance">性能</span></li>
+            <li><i data-ic="folder" class="ic--sm"></i><span data-en="Files">文件</span></li>
+            <li><i data-ic="apps" class="ic--sm"></i><span data-en="Apps">应用</span></li>
+            <li><i data-ic="phone" class="ic--sm"></i><span><span data-en="Screen">屏幕</span><small data-en="screenshots, UI tree">截图、UI 树</small></span></li>
+            <li><i data-ic="bug" class="ic--sm"></i><span><span data-en="Problems">问题</span><small>pstore · ANR · tombstone · bugreport</small></span></li>
+            <li><i data-ic="info" class="ic--sm"></i><span data-en="System info">系统信息</span></li>
+            <li><i data-ic="battery" class="ic--sm"></i><span data-en="Power">电源</span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 data-en="Flash">烧录</h4>
+          <ul>
+            <li><i data-ic="bolt" class="ic--sm"></i><span><a href="webui-preview-v3-flash.html" data-en="Flash">烧录</a><small data-en="whole package, one partition, fastboot commands">整包、单个分区、fastboot 命令</small></span></li>
+            <li><i data-ic="sliders" class="ic--sm"></i><span data-en="Board config">配置分区</span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 data-en="Bench">台架</h4>
+          <ul>
+            <li><i data-ic="usb" class="ic--sm"></i><span><a href="webui-preview-v3-bench.html" data-en="Bench">台架</a><small data-en="boards, USB, agent, logs, operation table">板子、USB、agent、日志、操作表</small></span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 data-en="Assistant">助手</h4>
+          <ul>
+            <li><i data-ic="chat" class="ic--sm"></i><a href="webui-preview-v3-chat.html" data-en="Chat">对话</a></li>
+            <li><i data-ic="flask" class="ic--sm"></i><span data-en="Playground">模型试验</span></li>
+            <li><i data-ic="history" class="ic--sm"></i><span data-en="Sessions">会话记录</span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 data-en="System">系统</h4>
+          <ul>
+            <li><i data-ic="check-circle" class="ic--sm"></i><span data-en="Health check">环境检查</span></li>
+            <li><i data-ic="shield" class="ic--sm"></i><span data-en="Audit log">操作记录</span></li>
+            <li><i data-ic="link" class="ic--sm"></i><span data-en="Connections">连接</span></li>
+          </ul>
         </div>
       </div>
-    </header>
+      <p class="wp-navmap__foot" data-en="Linked pages have an interactive design. The others keep their existing features and moved into the new style.">带链接的页面有交互设计稿;其余页面保留原来的功能,换成了新样式。</p>
+    </div>
+  </section>
 
-    <main>
-      <div class="anth-container" style="padding-top:var(--space-7); padding-bottom:var(--space-7);">
+  <!-- ================= archive ================= -->
+  <section class="wp-section" id="archive">
+    <h2 data-en="Older designs (archive)">旧设计(存档)</h2>
+    <p class="wp-sub" data-en="The v2 design pages used a different palette and are replaced by v3. They stay here for comparison only.">v2 设计稿用的是另一套配色,已经被 v3 取代,留在这里只做对照。</p>
+    <ul class="wp-archive">
+      <li><a class="chip" href="webui-preview-v2.html" data-en="Dashboard">总览</a></li>
+      <li><a class="chip" href="webui-preview-v2-inspect-console.html" data-en="Consoles">控制台</a></li>
+      <li><a class="chip" href="webui-preview-v2-log-search.html" data-en="Log search">日志搜索</a></li>
+      <li><a class="chip" href="webui-preview-v2-screenshot.html" data-en="Screenshot">截图</a></li>
+      <li><a class="chip" href="webui-preview-v2-files.html" data-en="Files">文件</a></li>
+      <li><a class="chip" href="webui-preview-v2-app.html" data-en="Apps">应用</a></li>
+      <li><a class="chip" href="webui-preview-v2-diag.html" data-en="Diagnostics">诊断</a></li>
+      <li><a class="chip" href="webui-preview-v2-power.html" data-en="Power">电源</a></li>
+      <li><a class="chip" href="webui-preview-v2-flash.html" data-en="Flash">烧录</a></li>
+      <li><a class="chip" href="webui-preview-v2-playground.html" data-en="Playground">模型试验</a></li>
+      <li><a class="chip" href="webui-preview-v2-sessions.html" data-en="Sessions">会话</a></li>
+      <li><a class="chip" href="webui-preview-v2-session-detail.html" data-en="Session detail">会话详情</a></li>
+      <li><a class="chip" href="webui-preview-v2-doctor.html" data-en="Health check">环境检查</a></li>
+      <li><a class="chip" href="webui-preview-v2-audit.html" data-en="Audit">操作记录</a></li>
+      <li><a class="chip" href="webui-preview-v2-connections.html" data-en="Connections">连接</a></li>
+    </ul>
+  </section>
 
-        <!-- Hero -->
-        <div style="max-width:860px; margin-bottom:var(--space-5);">
-          <span class="anth-badge" style="background:var(--anth-orange); color:#ffffff;">
-            <span class="lang-en">Mockup · Placeholder data</span>
-            <span class="lang-zh">设计预览 · 假数据</span>
-          </span>
-          <h1 style="margin-top:var(--space-4);">
-            <span class="lang-en">What the Web UI will look like.</span>
-            <span class="lang-zh">Web UI 会长这样。</span>
-          </h1>
-          <p style="font-size:20px; line-height:1.55; color:var(--anth-text-secondary); margin-top:var(--space-4);">
-            <span class="lang-en">This page is a static preview — every widget is filled with fake data so you can walk through the full scope before we start wiring up the backend. Scroll through the six modules below, tell us what to cut, keep, or add, and the real Web tier ships on top of this shape.</span>
-            <span class="lang-zh">这是一份静态设计稿 —— 所有控件都用占位数据填好，让你在后端动工前先把完整范围过一遍。把下面六个模块翻完，告诉我们要砍什么、留什么、加什么，真实 Web 层就照这个形状来做。</span>
-          </p>
-        </div>
+</main>
 
-        <!-- ============ Per-page design baselines (v2 mockups) ============ -->
-        <section id="baselines" style="margin-bottom:var(--space-7);">
-          <div class="section-head">
-            <h2><span class="lang-en">Per-page design baselines (v2)</span><span class="lang-zh">分页设计基线 (v2)</span></h2>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">Standalone mockup pages — the visual baseline every React tab must mirror (L-001). Open any to see its exact BEM structure and design tokens.</span>
-            <span class="lang-zh">独立 mockup 页 —— 每个 React tab 必须照搬的视觉基线（L-001）。点开可看该页精确的 BEM 结构与设计 token。</span>
-          </p>
-          <div class="tab-chips-inner" style="flex-wrap:wrap; gap:8px;">
-            <a class="tab-chip" href="webui-preview-v2.html"><span class="lang-en">Dashboard</span><span class="lang-zh">总览</span></a>
-            <a class="tab-chip" href="webui-preview-v2-playground.html"><span class="lang-en">Playground</span><span class="lang-zh">调试台</span></a>
-            <a class="tab-chip" href="webui-preview-v2-audit.html"><span class="lang-en">Audit</span><span class="lang-zh">审计</span></a>
-            <a class="tab-chip" href="webui-preview-v2-sessions.html"><span class="lang-en">Sessions</span><span class="lang-zh">会话</span></a>
-            <a class="tab-chip" href="webui-preview-v2-inspect-console.html"><span class="lang-en">Inspect consoles</span><span class="lang-zh">控制台</span></a>
-            <a class="tab-chip" href="webui-preview-v2-screenshot.html"><span class="lang-en">Screenshot</span><span class="lang-zh">截图</span></a>
-            <a class="tab-chip" href="webui-preview-v2-app.html"><span class="lang-en">App</span><span class="lang-zh">应用</span></a>
-            <a class="tab-chip" href="webui-preview-v2-diag.html"><span class="lang-en">Diag</span><span class="lang-zh">诊断</span></a>
-            <a class="tab-chip" href="webui-preview-v2-power.html"><span class="lang-en">Power</span><span class="lang-zh">电源</span></a>
-            <a class="tab-chip" href="webui-preview-v2-log-search.html"><span class="lang-en">Log search</span><span class="lang-zh">日志搜索</span></a>
-            <a class="tab-chip" href="webui-preview-v2-doctor.html"><span class="lang-en">Doctor</span><span class="lang-zh">体检</span></a>
-            <a class="tab-chip" href="webui-preview-v2-session-detail.html"><span class="lang-en">Session detail</span><span class="lang-zh">会话详情</span></a>
-          </div>
-        </section>
+<footer class="wp-foot">
+  <div class="wp-foot__in">
+    <a href="index.html" data-en="← Back to the homepage">← 回到首页</a>
+    <a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
+    <span>© 2026 android-llm-bridge contributors · Apache 2.0</span>
+  </div>
+</footer>
 
-        <!-- Sticky tab nav -->
-        <div class="tab-chips">
-          <div class="tab-chips-inner">
-            <a class="tab-chip" href="#chat"><span class="lang-en">Chat</span><span class="lang-zh">对话</span></a>
-            <a class="tab-chip" href="#terminal"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></a>
-            <a class="tab-chip" href="#playground"><span class="lang-en">Playground</span><span class="lang-zh">模型调试</span></a>
-            <a class="tab-chip" href="#devices"><span class="lang-en">Devices</span><span class="lang-zh">设备</span></a>
-            <a class="tab-chip" href="#system"><span class="lang-en">System Info</span><span class="lang-zh">系统信息</span></a>
-            <a class="tab-chip" href="#charts"><span class="lang-en">Charts</span><span class="lang-zh">实时图表</span></a>
-            <a class="tab-chip" href="#next"><span class="lang-en">Coming next</span><span class="lang-zh">后续批次</span></a>
-          </div>
-        </div>
+<script>
+  /* Language and theme for this page. Same storage keys as the v3 design
+     pages (alb-v3-lang / alb-v3-theme), so a choice made here carries over;
+     the language is also written to the homepage key (alb.lang). */
+  (function () {
+    "use strict";
+    var root = document.documentElement;
+    var ICONS = window.ALB_ICONS || {};
+    var store = {
+      get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+      set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } }
+    };
+    function icon(name, cls) {
+      return '<svg class="ic' + (cls ? " " + cls : "") + '" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
+    }
+    function hydrateIcons() {
+      document.querySelectorAll("i[data-ic]").forEach(function (el) {
+        var tmp = document.createElement("span");
+        tmp.innerHTML = icon(el.dataset.ic, el.className);
+        el.replaceWith(tmp.firstChild);
+      });
+    }
 
-        <!-- ============ 1. CHAT ============ -->
-        <section id="chat" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">1 · Chat (Agent)</span><span class="lang-zh">1 · Chat 对话</span></h2>
-            <span class="status-pill status-pill--wip"><span class="lang-en">Backend ready</span><span class="lang-zh">后端已就位</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">Talk to an LLM that can drive the device. Streaming tokens, expandable tool calls, inline artifacts. Cancel mid-flight, edit and re-run, fork from any turn.</span>
-            <span class="lang-zh">和能操作设备的 LLM 对话。token 流式、tool 调用可折叠、产物内联预览。中途可取消、上条可编辑重跑、任意轮可 fork。</span>
-          </p>
-          <div class="need-row">
-            <span class="need-pill">WS /chat/ws</span>
-            <span class="need-pill">POST /chat</span>
-            <span class="need-pill">ChatSession JSONL</span>
-            <span class="need-pill">artifacts registry</span>
-          </div>
+    var stored = store.get("alb-v3-lang") || store.get("alb.lang");
+    var lang = stored === "en" || stored === "zh" ? stored
+      : ((navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh" : "en");
+    var TITLE = { zh: "Web 界面 · android-llm-bridge", en: "Web UI · android-llm-bridge" };
 
-          <div class="mock-card">
-            <div class="chat-window">
-              <div class="bubble bubble--user">
-                <span class="lang-en">Pull the last boot's logcat errors and tell me what crashed.</span>
-                <span class="lang-zh">把最近一次开机的 logcat 错误拉出来，告诉我什么崩了。</span>
-              </div>
-              <div class="tool-call">
-                <div class="tool-call-head">
-                  <span style="color:var(--anth-orange);">●</span>
-                  <span>alb_logcat</span>
-                  <span style="margin-left:auto; color:var(--anth-text-secondary); font-weight:400;">
-                    <span class="lang-en">completed · 618 lines · 72 KB</span>
-                    <span class="lang-zh">完成 · 618 行 · 72 KB</span>
-                  </span>
-                </div>
-                <div class="tool-call-body">{ level: "E", since: "boot", max_lines: 2000 }
-→ workspace/devices/ABC123/logcat/2026-04-23T10-14-02.log</div>
-              </div>
-              <div class="bubble bubble--assistant">
-                <span class="lang-en">Found <strong>3 distinct crash signatures</strong>. The loudest one (47 hits) is <code>SurfaceFlinger</code> timing out on the HWC composer — first occurrence 4.2 s after boot. Two other signatures look downstream of that. Want me to pull the matching dmesg window and check GPU driver init?</span>
-                <span class="lang-zh">找到 <strong>3 类不同崩溃</strong>。最多的一类（47 次）是 <code>SurfaceFlinger</code> 在 HWC 合成器上超时，第一次出现在开机后 4.2 秒。另外两类看上去是它的下游。要不要我把对应时间窗口的 dmesg 拉出来，顺便看看 GPU 驱动初始化？</span>
-              </div>
-              <div style="align-self:flex-start; display:flex; gap:var(--space-2); flex-wrap:wrap;">
-                <span class="artifact-chip">📄 logcat-errors.log · 72 KB</span>
-                <span class="artifact-chip">📊 crash-summary.json · 1.2 KB</span>
-              </div>
-              <div class="bubble bubble--user">
-                <span class="lang-en">Yes, pull dmesg from 4.0 s to 5.0 s.</span>
-                <span class="lang-zh">好，拉 4.0 秒到 5.0 秒的 dmesg。</span>
-              </div>
-              <div class="tool-call">
-                <div class="tool-call-head">
-                  <span style="color:var(--anth-orange);">●</span>
-                  <span>alb_dmesg</span>
-                  <span style="margin-left:auto; color:var(--anth-text-secondary); font-weight:400;">
-                    <span class="lang-en">running</span><span class="lang-zh">运行中</span>
-                    <span class="typing-dots" style="margin-left:6px;"><span></span><span></span><span></span></span>
-                  </span>
-                </div>
-                <div class="tool-call-body">{ time_range: "4.0s-5.0s" }</div>
-              </div>
-            </div>
-            <div class="chat-input">
-              <input type="text" placeholder="Ask anything about the device…" disabled>
-              <button class="anth-button" style="padding:8px 20px; font-size:13px;" disabled>
-                <span class="lang-en">Send</span><span class="lang-zh">发送</span>
-              </button>
-            </div>
-          </div>
-        </section>
+    function applyLang() {
+      document.querySelectorAll("[data-en]").forEach(function (el) {
+        if (el.dataset.zh === undefined) el.dataset.zh = el.innerHTML;
+        el.innerHTML = lang === "en" ? el.dataset.en : el.dataset.zh;
+      });
+      document.querySelectorAll("[data-en-label]").forEach(function (el) {
+        if (el.dataset.zhLabel === undefined) el.dataset.zhLabel = el.getAttribute("aria-label") || "";
+        el.setAttribute("aria-label", lang === "en" ? el.dataset.enLabel : el.dataset.zhLabel);
+      });
+      root.lang = lang === "en" ? "en" : "zh-CN";
+      document.title = TITLE[lang];
+      var b = document.getElementById("lang-btn");
+      b.setAttribute("lang", lang === "en" ? "zh-CN" : "en");
+      b.innerHTML = icon("lang") + "<span>" + (lang === "en" ? "中文" : "English") + "</span>";
+      b.setAttribute("aria-label", lang === "en" ? "切换到中文" : "Switch to English");
+      hydrateIcons();
+      applyTheme();
+    }
 
-        <!-- ============ 2. TERMINAL ============ -->
-        <section id="terminal" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">2 · Terminal</span><span class="lang-zh">2 · Terminal 终端</span></h2>
-            <span class="status-pill status-pill--plan"><span class="lang-en">New</span><span class="lang-zh">新增</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">Direct adb / serial shell in the browser — xterm.js over a WebSocket PTY. For the times you know exactly what to type. Dangerous commands hit a Human-in-the-Loop modal before they reach the device.</span>
-            <span class="lang-zh">浏览器里直通 adb / 串口 shell —— xterm.js 接 WebSocket PTY。你知道要敲什么时直接敲。危险命令在到达设备前先过一道人工确认。</span>
-          </p>
-          <div class="need-row">
-            <span class="need-pill">WS /terminal/&lt;device&gt;/ws</span>
-            <span class="need-pill">transport.interactive_shell()</span>
-            <span class="need-pill">command denylist matcher</span>
-            <span class="need-pill">session.terminal JSONL</span>
-          </div>
+    var themes = ["system", "light", "dark"];
+    var theme = store.get("alb-v3-theme");
+    if (themes.indexOf(theme) < 0) theme = "system";
+    function applyTheme() {
+      if (theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme);
+      var b = document.getElementById("theme-btn");
+      var zh = { system: "主题:跟随系统", light: "主题:浅色", dark: "主题:深色" }[theme];
+      var en = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" }[theme];
+      b.innerHTML = icon({ system: "monitor", light: "sun", dark: "moon" }[theme]);
+      b.setAttribute("aria-label", lang === "en" ? en : zh);
+      b.title = b.getAttribute("aria-label");
+    }
 
-          <div class="mock-card" style="padding:var(--space-3);">
-            <div class="term-frame">
-              <div class="term-titlebar">
-                <span class="term-dot" style="background:#d97757;"></span>
-                <span class="term-dot" style="background:#d9a557;"></span>
-                <span class="term-dot" style="background:#788c5d;"></span>
-                <span style="margin-left:var(--space-3);">adb shell · device ABC123XYZ · read+write</span>
-                <span style="margin-left:auto; display:flex; align-items:center; gap:var(--space-2);">
-                  <span class="lang-en">Read-only</span><span class="lang-zh">只读</span>
-                  <span class="toggle-sw" aria-label="Read-only toggle"></span>
-                </span>
-              </div>
-              <div class="term-body"><span class="term-prompt">device:/ $</span> <span class="term-out">getprop ro.build.version.release</span>
-<span class="term-out">14</span>
-<span class="term-prompt">device:/ $</span> <span class="term-out">uname -a</span>
-<span class="term-out">Linux localhost 6.1.75-android14 #1 SMP PREEMPT aarch64 Toybox</span>
-<span class="term-prompt">device:/ $</span> <span class="term-out">df -h /data</span>
-<span class="term-out">Filesystem     Size Used Avail Use% Mounted on</span>
-<span class="term-out">/dev/block/dm-6 103G  47G   56G  46% /data</span>
-<span class="term-prompt">device:/ $</span> <span class="term-out">logcat -b crash -d | tail -5</span>
-<span class="term-err">04-23 10:14:06.812 F DEBUG   : *** *** *** *** *** *** ***</span>
-<span class="term-err">04-23 10:14:06.813 F DEBUG   : Build fingerprint: 'Android/aosp/generic:14/UP1A.231005.007'</span>
-<span class="term-err">04-23 10:14:06.813 F DEBUG   : pid: 1142, tid: 1160, name: Binder:1142_2  &gt;&gt;&gt; /system/bin/surfaceflinger</span>
-<span class="term-err">04-23 10:14:06.814 F DEBUG   : signal 6 (SIGABRT), code -1 (SI_QUEUE)</span>
-<span class="term-err">04-23 10:14:06.814 F DEBUG   :     #00 pc 00000000000a0f8c  /apex/com.android.runtime/lib64/bionic/libc.so</span>
-<span class="term-prompt">device:/ $</span> <span class="term-out">rm -rf /system/priv-app/</span><span class="term-caret"></span>
-</div>
-            </div>
+    document.getElementById("lang-btn").addEventListener("click", function () {
+      lang = lang === "en" ? "zh" : "en";
+      store.set("alb-v3-lang", lang);
+      store.set("alb.lang", lang);
+      applyLang();
+    });
+    document.getElementById("theme-btn").addEventListener("click", function () {
+      theme = themes[(themes.indexOf(theme) + 1) % themes.length];
+      store.set("alb-v3-theme", theme);
+      applyTheme();
+    });
 
-            <div class="hitl-banner">
-              <strong>⚠ <span class="lang-en">Human-in-the-Loop required</span><span class="lang-zh">需人工确认</span></strong>
-              <div style="margin-top:4px; font-family:var(--font-mono); font-size:12px; color:var(--anth-text);">
-                rm -rf /system/priv-app/
-              </div>
-              <div style="margin-top:6px; color:var(--anth-text-secondary); font-size:13px;">
-                <span class="lang-en">Pattern matched: <code>rm -rf</code> targeting a system partition. This will brick a verified-boot device and is not auto-allowed.</span>
-                <span class="lang-zh">命中策略：<code>rm -rf</code> 指向系统分区。这会让 verified-boot 设备变砖，不自动放行。</span>
-              </div>
-              <div class="hitl-actions">
-                <button class="hitl-btn hitl-btn--deny"><span class="lang-en">Deny</span><span class="lang-zh">拒绝</span></button>
-                <button class="hitl-btn"><span class="lang-en">Edit & retry</span><span class="lang-zh">编辑后重试</span></button>
-                <button class="hitl-btn hitl-btn--allow"><span class="lang-en">Allow once</span><span class="lang-zh">仅此次放行</span></button>
-              </div>
-            </div>
-          </div>
-
-          <p class="anth-caption" style="margin-top:var(--space-3);">
-            <span class="lang-en">Every command lands in the session JSONL. Select any output block → right-click → “Ask LLM about this” to hand it over to the Chat tab.</span>
-            <span class="lang-zh">每条命令都落到 session JSONL。选中任意输出 → 右键「让 LLM 分析这段」即可丢给 Chat 面板。</span>
-          </p>
-        </section>
-
-        <!-- ============ 3. PLAYGROUND ============ -->
-        <section id="playground" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">3 · Model Playground</span><span class="lang-zh">3 · 模型调试台</span></h2>
-            <span class="status-pill status-pill--plan"><span class="lang-en">New</span><span class="lang-zh">新增</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">Raw chat, bypassing the agent loop. Tune every parameter of a local model — temperature, top-p, top-k, context window, seed, stop sequences, think toggle, system prompt — and watch tokens/second, eval duration, and prompt eval duration in real time. Compare two parameter sets side by side.</span>
-            <span class="lang-zh">绕过 agent loop 的直聊。把本地模型的每个参数调一遍 —— temperature / top-p / top-k / 上下文长度 / seed / stop / think 开关 / system prompt —— 实时看 tokens/s、eval 时长、prompt eval 时长。两套参数可并排对比。</span>
-          </p>
-          <div class="need-row">
-            <span class="need-pill">POST /playground/chat</span>
-            <span class="need-pill">WS /playground/chat/ws</span>
-            <span class="need-pill">GET /backends/&lt;id&gt;/models</span>
-            <span class="need-pill">metrics in stream done event</span>
-          </div>
-
-          <div class="mock-card">
-            <div class="pg-grid">
-              <!-- Param panel -->
-              <div>
-                <div class="param-group-title"><span class="lang-en">Model</span><span class="lang-zh">模型</span></div>
-                <div class="param-row"><label>Backend</label>
-                  <select><option>ollama</option><option>openai-compat</option><option>llama.cpp</option><option>anthropic</option></select>
-                  <span></span>
-                </div>
-                <div class="param-row"><label>Model</label>
-                  <select><option>gemma4:26b</option><option>qwen2.5:7b</option><option>gpt-oss:20b</option></select>
-                  <span></span>
-                </div>
-                <div class="param-row"><label>Endpoint</label>
-                  <input type="text" value="alb-ollama.local:11434">
-                  <span></span>
-                </div>
-
-                <div class="param-group-title"><span class="lang-en">Sampling</span><span class="lang-zh">采样</span></div>
-                <div class="param-row"><label>temperature</label>
-                  <input type="range" min="0" max="2" step="0.01" value="0.7">
-                  <span class="val">0.70</span>
-                </div>
-                <div class="param-row"><label>top_p</label>
-                  <input type="range" min="0" max="1" step="0.01" value="0.9">
-                  <span class="val">0.90</span>
-                </div>
-                <div class="param-row"><label>top_k</label>
-                  <input type="number" value="40" min="0">
-                  <span></span>
-                </div>
-                <div class="param-row"><label>seed</label>
-                  <input type="number" value="-1">
-                  <span class="val" style="color:var(--anth-text-secondary);">rand</span>
-                </div>
-                <div class="param-row"><label>repeat_penalty</label>
-                  <input type="range" min="0.5" max="2" step="0.01" value="1.1">
-                  <span class="val">1.10</span>
-                </div>
-
-                <div class="param-group-title"><span class="lang-en">Context</span><span class="lang-zh">上下文</span></div>
-                <div class="param-row"><label>num_ctx</label>
-                  <input type="number" value="8192">
-                  <span class="val" style="color:var(--anth-text-secondary);">tok</span>
-                </div>
-                <div class="param-row"><label>num_predict</label>
-                  <input type="number" value="-1">
-                  <span class="val" style="color:var(--anth-text-secondary);">∞</span>
-                </div>
-                <div class="param-row"><label>stop</label>
-                  <input type="text" value="&lt;/s&gt;, &lt;|im_end|&gt;">
-                  <span></span>
-                </div>
-
-                <div class="param-group-title"><span class="lang-en">Behavior</span><span class="lang-zh">行为</span></div>
-                <div class="param-row"><label>think</label>
-                  <span></span>
-                  <span class="toggle-sw toggle-sw--on"></span>
-                </div>
-                <div class="param-row"><label>stream</label>
-                  <span></span>
-                  <span class="toggle-sw toggle-sw--on"></span>
-                </div>
-                <div class="param-row"><label>compare</label>
-                  <span></span>
-                  <span class="toggle-sw"></span>
-                </div>
-
-                <div class="param-group-title"><span class="lang-en">System prompt</span><span class="lang-zh">系统提示</span></div>
-                <textarea style="width:100%; min-height:70px; font-family:var(--font-mono); font-size:12px; border:1px solid var(--anth-light-gray); border-radius:var(--radius-sm); padding:8px; background:#ffffff;">You are a senior Android systems engineer. Answer in concise technical terms.</textarea>
-
-                <div style="display:flex; gap:var(--space-2); margin-top:var(--space-3);">
-                  <button class="hitl-btn"><span class="lang-en">Save preset</span><span class="lang-zh">存为预设</span></button>
-                  <button class="hitl-btn"><span class="lang-en">Load</span><span class="lang-zh">加载</span></button>
-                  <button class="hitl-btn" style="border-color:var(--anth-orange); color:var(--anth-orange);"><span class="lang-en">Reset</span><span class="lang-zh">重置</span></button>
-                </div>
-              </div>
-
-              <!-- Chat + metrics -->
-              <div>
-                <div class="chat-window" style="min-height:300px;">
-                  <div class="bubble bubble--user">
-                    <span class="lang-en">Explain dm-verity in three sentences.</span>
-                    <span class="lang-zh">用三句话解释 dm-verity。</span>
-                  </div>
-                  <div class="bubble bubble--assistant">
-                    <span class="lang-en">dm-verity is a device-mapper target that provides transparent integrity checking of a block device using a Merkle hash tree. The bootloader verifies the tree's root hash against a signed vbmeta image, and every read from the verified partition recomputes the block's hash on the fly. A hash mismatch triggers either a panic or a read error depending on the configured mode (<code>enforcing</code>, <code>logging</code>, or <code>ignore_zero_blocks</code>).</span>
-                    <span class="lang-zh">dm-verity 是一个 device-mapper target，用一棵 Merkle hash 树给块设备做透明完整性校验。bootloader 拿树的 root hash 去对签过名的 vbmeta 映像做验证，之后每次从这个分区读数据都会现算块的哈希。哈希不匹配时，按配置的模式触发 panic 或返回读错误（<code>enforcing</code> / <code>logging</code> / <code>ignore_zero_blocks</code>）。</span>
-                  </div>
-                </div>
-
-                <div class="metrics-bar">
-                  <div class="metric"><span class="lang-en">throughput</span><span class="lang-zh">吞吐</span>
-                    <strong>142 <span style="font-size:12px; font-weight:400;">tok/s</span></strong></div>
-                  <div class="metric"><span class="lang-en">eval duration</span><span class="lang-zh">生成时长</span>
-                    <strong>3.24 <span style="font-size:12px; font-weight:400;">s</span></strong></div>
-                  <div class="metric"><span class="lang-en">prompt eval</span><span class="lang-zh">prompt 处理</span>
-                    <strong>0.41 <span style="font-size:12px; font-weight:400;">s</span></strong></div>
-                  <div class="metric"><span class="lang-en">total</span><span class="lang-zh">总计</span>
-                    <strong>4.13 <span style="font-size:12px; font-weight:400;">s</span></strong></div>
-                  <div class="metric"><span class="lang-en">ctx used</span><span class="lang-zh">上下文用量</span>
-                    <strong>2341/8192</strong></div>
-                  <div class="metric"><span class="lang-en">tokens out</span><span class="lang-zh">输出 token</span>
-                    <strong>460</strong></div>
-                </div>
-
-                <div class="chat-input">
-                  <input type="text" placeholder="Ask the raw model anything…" disabled>
-                  <button class="anth-button" style="padding:8px 20px; font-size:13px;" disabled>
-                    <span class="lang-en">Send</span><span class="lang-zh">发送</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============ 4. DEVICES ============ -->
-        <section id="devices" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">4 · Devices Dashboard</span><span class="lang-zh">4 · 设备看板</span></h2>
-            <span class="status-pill status-pill--wip"><span class="lang-en">Partial backend</span><span class="lang-zh">后端部分就位</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">Every connected device at a glance — adb USB, adb over Wi-Fi, UART bridge. Tunnel status lights, live Windows probe output for COM ports and USB PID/VID.</span>
-            <span class="lang-zh">所有连上的设备一眼看完 —— USB adb、Wi-Fi adb、UART 桥。隧道状态灯 + Windows 探针实时上报 COM 口和 USB PID/VID。</span>
-          </p>
-          <div class="need-row">
-            <span class="need-pill">GET /devices</span>
-            <span class="need-pill">WS /devices/live</span>
-            <span class="need-pill">GET /tunnels</span>
-            <span class="need-pill">alb-probe-win (reverse tunnel)</span>
-          </div>
-
-          <div class="mock-card">
-            <div class="dev-grid">
-              <!-- Device A: adb USB -->
-              <div class="dev-card">
-                <div class="dev-head">
-                  <span class="dot dot--green"></span>
-                  <span class="dev-name">ABC123XYZ</span>
-                  <span class="dev-transport" style="margin-left:auto;">adb · usb</span>
-                </div>
-                <div class="dev-body">
-                  <span class="lang-en">Android 14 · userdebug · Cortex-A76/A55</span>
-                  <span class="lang-zh">Android 14 · userdebug · Cortex-A76/A55</span><br>
-                  <code>8G LPDDR5 · 128G UFS 3.1</code>
-                </div>
-                <div class="dev-recent">last: 2 s ago · logcat 618 E/min · batt 74% · 38.2°C</div>
-                <div style="display:flex; gap:var(--space-2);">
-                  <button class="hitl-btn"><span class="lang-en">Open chat</span><span class="lang-zh">打开对话</span></button>
-                  <button class="hitl-btn"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></button>
-                </div>
-              </div>
-
-              <!-- Device B: adb wifi -->
-              <div class="dev-card">
-                <div class="dev-head">
-                  <span class="dot dot--amber"></span>
-                  <span class="dev-name">DEF456UVW</span>
-                  <span class="dev-transport" style="margin-left:auto;">adb · wifi</span>
-                </div>
-                <div class="dev-body">
-                  <span class="lang-en">Android 13 · user · Cortex-A78</span>
-                  <span class="lang-zh">Android 13 · user · Cortex-A78</span><br>
-                  <code>board.lan:5555 · RTT 18 ms</code>
-                </div>
-                <div class="dev-recent">last: 12 s ago · idle · batt 92% · charging</div>
-                <div style="display:flex; gap:var(--space-2);">
-                  <button class="hitl-btn"><span class="lang-en">Open chat</span><span class="lang-zh">打开对话</span></button>
-                  <button class="hitl-btn"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></button>
-                </div>
-              </div>
-
-              <!-- Device C: serial -->
-              <div class="dev-card">
-                <div class="dev-head">
-                  <span class="dot dot--green"></span>
-                  <span class="dev-name"><span class="lang-en">UART bridge</span><span class="lang-zh">UART 桥</span></span>
-                  <span class="dev-transport" style="margin-left:auto;">serial</span>
-                </div>
-                <div class="dev-body">
-                  <span class="lang-en">1 500 000 baud · shell_root</span>
-                  <span class="lang-zh">1 500 000 波特率 · shell_root</span><br>
-                  <code>COM27 → localhost:19001</code>
-                </div>
-                <div class="dev-recent">last: 1 s ago · prompt stable · 0 printk since probe</div>
-                <div style="display:flex; gap:var(--space-2);">
-                  <button class="hitl-btn"><span class="lang-en">Capture</span><span class="lang-zh">抓日志</span></button>
-                  <button class="hitl-btn"><span class="lang-en">Terminal</span><span class="lang-zh">终端</span></button>
-                </div>
-              </div>
-            </div>
-
-            <div class="tunnel-bar">
-              <div class="tunnel-cell">
-                <span class="dot dot--green" style="margin-right:6px;"></span>
-                <span class="lang-en">adb tunnel 5037</span><span class="lang-zh">adb 隧道 5037</span>
-                <strong>12.4 MB ↓ · 0.3 MB ↑</strong>
-              </div>
-              <div class="tunnel-cell">
-                <span class="dot dot--green" style="margin-right:6px;"></span>
-                <span class="lang-en">UART bridge 19001</span><span class="lang-zh">UART 桥 19001</span>
-                <strong>3.1 MB ↓ · 120 B ↑</strong>
-              </div>
-              <div class="tunnel-cell">
-                <span class="dot dot--amber" style="margin-right:6px;"></span>
-                <span class="lang-en">Windows probe 19002</span><span class="lang-zh">Windows 探针 19002</span>
-                <strong><span class="lang-en">waiting reconnect…</span><span class="lang-zh">等待重连…</span></strong>
-              </div>
-            </div>
-
-            <div style="margin-top:var(--space-4); padding:var(--space-3); background:var(--anth-bg); border:1px solid var(--anth-light-gray); border-radius:var(--radius-md); font-family:var(--font-mono); font-size:12px;">
-              <div style="font-family:var(--font-heading); font-weight:600; font-size:12px; color:var(--anth-text-secondary); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:var(--space-2);">
-                <span class="lang-en">Windows probe snapshot · 2 s ago</span>
-                <span class="lang-zh">Windows 探针快照 · 2 秒前</span>
-              </div>
-              <div>COM27 · 1500000 baud · in use by alb-serial-bridge.py (pid 14820)</div>
-              <div>COM4  · free</div>
-              <div>USB   · VID 18d1 · PID 4ee7 · “Android Composite ADB Interface” → ABC123XYZ</div>
-              <div>USB   · VID 0403 · PID 6001 · “USB Serial Converter”</div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============ 5. SYSTEM INFO ============ -->
-        <section id="system" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">5 · System Info</span><span class="lang-zh">5 · 系统信息</span></h2>
-            <span class="status-pill status-pill--plan"><span class="lang-en">New capability</span><span class="lang-zh">新能力</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">One screen, full picture. Eleven panels cover everything from Android build fingerprint down to DDR type, partition usage, SELinux state, and Verified Boot chain — sourced from <code>getprop</code>, <code>/proc</code>, <code>/sys</code>, and <code>dumpsys</code>.</span>
-            <span class="lang-zh">一屏看完整机软硬件。11 个面板覆盖从 Android 构建指纹到 DDR 类型、分区用量、SELinux 状态、Verified Boot 链 —— 数据来自 <code>getprop</code> / <code>/proc</code> / <code>/sys</code> / <code>dumpsys</code>。</span>
-          </p>
-          <div class="need-row">
-            <span class="need-pill">alb info system</span>
-            <span class="need-pill">alb info cpu --watch</span>
-            <span class="need-pill">alb info storage</span>
-            <span class="need-pill">alb info battery</span>
-            <span class="need-pill">alb info security</span>
-            <span class="need-pill">+6 more</span>
-          </div>
-
-          <div class="sys-grid">
-            <!-- Overview -->
-            <div class="mock-card sys-card">
-              <h3>🔭 <span class="lang-en">Overview</span><span class="lang-zh">总览</span></h3>
-              <dl class="sys-kv">
-                <dt>Android</dt><dd>14 · API 34</dd>
-                <dt><span class="lang-en">Build</span><span class="lang-zh">构建</span></dt><dd>userdebug · keys=test</dd>
-                <dt><span class="lang-en">Fingerprint</span><span class="lang-zh">指纹</span></dt><dd>Android/aosp/generic:14/UP1A.231005.007/eng</dd>
-                <dt><span class="lang-en">Security patch</span><span class="lang-zh">安全补丁</span></dt><dd>2026-03-05</dd>
-                <dt><span class="lang-en">Root</span><span class="lang-zh">Root</span></dt><dd>adbd with root</dd>
-              </dl>
-            </div>
-
-            <!-- Kernel -->
-            <div class="mock-card sys-card">
-              <h3>⚙ <span class="lang-en">Kernel &amp; Bootloader</span><span class="lang-zh">内核 &amp; Bootloader</span></h3>
-              <dl class="sys-kv">
-                <dt>Kernel</dt><dd>6.1.75-android14-11-g3a8f0e</dd>
-                <dt>Arch</dt><dd>aarch64 · armv8.2-A</dd>
-                <dt>SELinux</dt><dd style="color:var(--anth-green);">enforcing</dd>
-                <dt>Bootloader</dt><dd>u-boot 2023.10-genericboard</dd>
-                <dt>Baseband</dt><dd>N/A</dd>
-                <dt>Slot</dt><dd>_a · success</dd>
-              </dl>
-            </div>
-
-            <!-- CPU -->
-            <div class="mock-card sys-card">
-              <h3>🧠 CPU</h3>
-              <dl class="sys-kv">
-                <dt>SoC</dt><dd><span class="lang-en">Generic Octa-core ARM</span><span class="lang-zh">通用 8 核 ARM</span></dd>
-                <dt>Config</dt><dd>4× A76 @ 2.2 GHz + 4× A55 @ 1.8 GHz</dd>
-                <dt>Governor</dt><dd>schedutil</dd>
-                <dt><span class="lang-en">Current</span><span class="lang-zh">当前频率</span></dt><dd>2.2 / 2.2 / 2.2 / 2.2 / 1.8 / 1.8 / 1.8 / 1.8</dd>
-                <dt><span class="lang-en">Thermal</span><span class="lang-zh">温度</span></dt><dd>52.1°C cpu-big · 49.3°C cpu-little</dd>
-              </dl>
-            </div>
-
-            <!-- GPU -->
-            <div class="mock-card sys-card">
-              <h3>🎨 GPU</h3>
-              <dl class="sys-kv">
-                <dt>Model</dt><dd>Mali-G610 MC4</dd>
-                <dt>Driver</dt><dd>r40p0 · OpenGL ES 3.2</dd>
-                <dt>Vulkan</dt><dd>1.3.231</dd>
-                <dt>Freq</dt><dd>800 MHz / 1000 MHz max</dd>
-                <dt>Util</dt><dd>37%</dd>
-              </dl>
-            </div>
-
-            <!-- Memory -->
-            <div class="mock-card sys-card">
-              <h3>💾 <span class="lang-en">Memory</span><span class="lang-zh">内存</span></h3>
-              <dl class="sys-kv">
-                <dt>Total</dt><dd>7 892 MB</dd>
-                <dt>Used</dt><dd>4 137 MB · 52%</dd>
-                <dt>Free</dt><dd>621 MB</dd>
-                <dt>Buff/Cache</dt><dd>3 134 MB</dd>
-                <dt>Swap</dt><dd>2048 MB (zram) · 412 used</dd>
-              </dl>
-            </div>
-
-            <!-- DDR & UFS -->
-            <div class="mock-card sys-card">
-              <h3>🪙 DDR &amp; UFS</h3>
-              <dl class="sys-kv">
-                <dt>DDR type</dt><dd>LPDDR5 · 6400 MT/s</dd>
-                <dt>Channels</dt><dd>2</dd>
-                <dt>Storage</dt><dd>UFS 3.1 · 128 GB</dd>
-                <dt><span class="lang-en">Seq read</span><span class="lang-zh">顺序读</span></dt><dd>2.1 GB/s</dd>
-                <dt><span class="lang-en">Seq write</span><span class="lang-zh">顺序写</span></dt><dd>1.4 GB/s</dd>
-              </dl>
-            </div>
-
-            <!-- Partitions -->
-            <div class="mock-card sys-card">
-              <h3>🗂 <span class="lang-en">Partitions</span><span class="lang-zh">分区</span></h3>
-              <div class="part-row">
-                <span class="part-name">system_a</span>
-                <div class="part-bar"><div class="part-bar-fill" style="width:86%;"></div></div>
-                <span class="part-pct">3.4 / 4 G</span>
-              </div>
-              <div class="part-row">
-                <span class="part-name">vendor_a</span>
-                <div class="part-bar"><div class="part-bar-fill" style="width:61%;"></div></div>
-                <span class="part-pct">610 / 1 G</span>
-              </div>
-              <div class="part-row">
-                <span class="part-name">boot_a</span>
-                <div class="part-bar"><div class="part-bar-fill" style="width:92%;"></div></div>
-                <span class="part-pct">58 / 64 M</span>
-              </div>
-              <div class="part-row">
-                <span class="part-name">userdata</span>
-                <div class="part-bar"><div class="part-bar-fill" style="width:46%;"></div></div>
-                <span class="part-pct">47 / 103 G</span>
-              </div>
-              <div class="part-row">
-                <span class="part-name">metadata</span>
-                <div class="part-bar"><div class="part-bar-fill" style="width:12%;"></div></div>
-                <span class="part-pct">2 / 16 M</span>
-              </div>
-            </div>
-
-            <!-- File systems -->
-            <div class="mock-card sys-card">
-              <h3>📁 <span class="lang-en">Filesystems</span><span class="lang-zh">文件系统</span></h3>
-              <div style="font-family:var(--font-mono); font-size:12px; line-height:1.7;">
-                <div><span style="color:var(--anth-text-secondary);">/</span>            → erofs  ro</div>
-                <div><span style="color:var(--anth-text-secondary);">/vendor</span>      → erofs  ro</div>
-                <div><span style="color:var(--anth-text-secondary);">/data</span>        → f2fs   rw</div>
-                <div><span style="color:var(--anth-text-secondary);">/metadata</span>    → ext4   rw</div>
-                <div><span style="color:var(--anth-text-secondary);">/sdcard</span>      → sdcardfs rw</div>
-                <div><span style="color:var(--anth-text-secondary);">/dev/cpuset</span>  → cgroup rw</div>
-                <div><span style="color:var(--anth-text-secondary);">/sys/fs/bpf</span>  → bpf    rw</div>
-              </div>
-            </div>
-
-            <!-- Network -->
-            <div class="mock-card sys-card">
-              <h3>🌐 <span class="lang-en">Network</span><span class="lang-zh">网络</span></h3>
-              <dl class="sys-kv">
-                <dt>wlan0</dt><dd>board.lan · up · -52 dBm</dd>
-                <dt>SSID</dt><dd>lab-2.4G</dd>
-                <dt>eth0</dt><dd>down</dd>
-                <dt>rndis0</dt><dd>board-usb.lan · up</dd>
-                <dt>DNS</dt><dd>dns.lan, 1.1.1.1</dd>
-              </dl>
-            </div>
-
-            <!-- Battery -->
-            <div class="mock-card sys-card">
-              <h3>🔋 <span class="lang-en">Battery</span><span class="lang-zh">电池</span></h3>
-              <dl class="sys-kv">
-                <dt>Level</dt><dd>74%</dd>
-                <dt>Status</dt><dd><span class="lang-en">charging (AC)</span><span class="lang-zh">充电中 (AC)</span></dd>
-                <dt>Voltage</dt><dd>4.12 V</dd>
-                <dt>Current</dt><dd>+1824 mA</dd>
-                <dt>Temp</dt><dd>38.2°C</dd>
-                <dt><span class="lang-en">Health</span><span class="lang-zh">健康</span></dt><dd>good · 412 cycles</dd>
-              </dl>
-            </div>
-
-            <!-- Security -->
-            <div class="mock-card sys-card">
-              <h3>🛡 <span class="lang-en">Security</span><span class="lang-zh">安全</span></h3>
-              <dl class="sys-kv">
-                <dt>Verified Boot</dt><dd><span style="color:var(--anth-green);">GREEN</span> · AVB v1.2</dd>
-                <dt>dm-verity</dt><dd>enforcing</dd>
-                <dt>FBE</dt><dd>aes-256-xts</dd>
-                <dt>SELinux policy</dt><dd>v33 · 2026-02-14 build</dd>
-                <dt>OEM unlock</dt><dd style="color:var(--anth-danger);">enabled</dd>
-                <dt>adb secure</dt><dd>1</dd>
-              </dl>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============ 6. CHARTS ============ -->
-        <section id="charts" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">6 · Real-time Charts</span><span class="lang-zh">6 · 实时图表</span></h2>
-            <span class="status-pill status-pill--plan"><span class="lang-en">New capability</span><span class="lang-zh">新能力</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">1 Hz sampling by default, 60-second sliding window, pause / zoom / CSV export. Always visible at the top of the app so you notice thermal throttle or memory pressure before the LLM does.</span>
-            <span class="lang-zh">默认 1 Hz 采样，60 秒滑窗，可暂停 / 缩放 / 导 CSV。常驻顶栏，让你比 LLM 更早发现降频或内存压力。</span>
-          </p>
-          <div class="need-row">
-            <span class="need-pill">WS /metrics/stream</span>
-            <span class="need-pill">ring buffer 300s</span>
-            <span class="need-pill">µPlot / Chart.js</span>
-          </div>
-
-          <div class="mock-card">
-            <div class="spark-grid">
-              <div class="spark-card">
-                <h3>CPU<span class="lang-en"> utilization</span><span class="lang-zh"> 占用</span></h3>
-                <span class="spark-val">47<span class="spark-unit">%</span></span>
-                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 40 L10 38 L20 42 L30 35 L40 30 L50 34 L60 28 L70 22 L80 26 L90 20 L100 24 L110 18 L120 22 L130 16 L140 20 L150 14 L160 12 L170 18 L180 22 L190 28 L200 24 L210 30 L220 26 L230 32 L240 28 L250 34 L260 30 L270 26 L280 32 L290 28 L300 32" fill="none" stroke="#d97757" stroke-width="1.6"/>
-                </svg>
-              </div>
-
-              <div class="spark-card">
-                <h3><span class="lang-en">Memory used</span><span class="lang-zh">内存占用</span></h3>
-                <span class="spark-val">4.1<span class="spark-unit">GB</span></span>
-                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 44 L20 43 L40 42 L60 41 L80 40 L100 39 L120 38 L140 36 L160 34 L180 32 L200 30 L220 29 L240 28 L260 27 L280 26 L300 25" fill="none" stroke="#6a9bcc" stroke-width="1.6"/>
-                </svg>
-              </div>
-
-              <div class="spark-card">
-                <h3><span class="lang-en">Battery temperature</span><span class="lang-zh">电池温度</span></h3>
-                <span class="spark-val">38.2<span class="spark-unit">°C</span></span>
-                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 50 L25 48 L50 46 L75 44 L100 40 L125 38 L150 36 L175 34 L200 32 L225 30 L250 28 L275 26 L300 24" fill="none" stroke="#a14238" stroke-width="1.6"/>
-                </svg>
-              </div>
-
-              <div class="spark-card">
-                <h3><span class="lang-en">Disk IO</span><span class="lang-zh">磁盘 IO</span></h3>
-                <span class="spark-val">82<span class="spark-unit">MB/s</span></span>
-                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 50 L20 48 L40 44 L60 30 L80 14 L100 28 L120 45 L140 50 L160 48 L180 32 L200 18 L220 24 L240 40 L260 46 L280 44 L300 38" fill="none" stroke="#788c5d" stroke-width="1.6"/>
-                </svg>
-              </div>
-
-              <div class="spark-card">
-                <h3><span class="lang-en">Network</span><span class="lang-zh">网络吞吐</span></h3>
-                <span class="spark-val">1.2<span class="spark-unit">MB/s</span></span>
-                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 48 L25 44 L50 40 L75 44 L100 36 L125 32 L150 38 L175 28 L200 24 L225 30 L250 22 L275 28 L300 20" fill="none" stroke="#d97757" stroke-width="1.6"/>
-                </svg>
-              </div>
-
-              <div class="spark-card">
-                <h3><span class="lang-en">GPU utilization</span><span class="lang-zh">GPU 占用</span></h3>
-                <span class="spark-val">37<span class="spark-unit">%</span></span>
-                <svg class="spark-svg" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 46 L25 40 L50 44 L75 38 L100 42 L125 32 L150 36 L175 28 L200 34 L225 26 L250 30 L275 24 L300 28" fill="none" stroke="#6a9bcc" stroke-width="1.6"/>
-                </svg>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============ COMING NEXT ============ -->
-        <section id="next" style="margin-bottom:var(--space-9);">
-          <div class="section-head">
-            <h2><span class="lang-en">Coming next — batch 2</span><span class="lang-zh">后续批次 — batch 2</span></h2>
-            <span class="status-pill status-pill--plan"><span class="lang-en">Pending review</span><span class="lang-zh">等你过稿</span></span>
-          </div>
-          <p class="section-sub">
-            <span class="lang-en">We will mock these six after you sign off on batch 1 above. Each will get the same walk-through treatment before any backend work starts.</span>
-            <span class="lang-zh">上面 6 块你过稿后，这 6 块再按同样方式出静态稿 —— 全部定稿了再开后端。</span>
-          </p>
-
-          <div class="next-grid">
-            <div class="next-card">
-              <h3>🪵 <span class="lang-en">Logcat / dmesg stream</span><span class="lang-zh">Logcat / dmesg 流</span></h3>
-              <p>
-                <span class="lang-en">Level colors, tag / PID / regex filters, pause / export, trigger rules (“on FATAL: auto bugreport + screenshot”), ANR timeline markers.</span>
-                <span class="lang-zh">级别着色、tag / PID / 正则过滤、暂停 / 导出、触发规则（"FATAL 时自动抓 bugreport + 截图"）、ANR 时间轴标记。</span>
-              </p>
-            </div>
-
-            <div class="next-card">
-              <h3>🔍 <span class="lang-en">UI Inspector</span><span class="lang-zh">UI 检查器</span></h3>
-              <p>
-                <span class="lang-en">Screenshot with bounds overlay on hover, searchable view tree, selected-node details. No tap / swipe — diagnosis only.</span>
-                <span class="lang-zh">截图上悬浮高亮控件 bounds、控件树可搜索、选中控件详情。不做 tap / swipe —— 只诊断。</span>
-              </p>
-            </div>
-
-            <div class="next-card">
-              <h3>📦 <span class="lang-en">Artifacts browser</span><span class="lang-zh">产物浏览器</span></h3>
-              <p>
-                <span class="lang-en">Tree by session, type filters, inline preview of PNG / JSON / logcat / XML, quota bar, zip &amp; download.</span>
-                <span class="lang-zh">按 session 树形、类型筛选、PNG / JSON / logcat / XML 在线预览、配额进度条、打包下载。</span>
-              </p>
-            </div>
-
-            <div class="next-card">
-              <h3>⏳ <span class="lang-en">Sessions</span><span class="lang-zh">Session 会话</span></h3>
-              <p>
-                <span class="lang-en">List, open, replay with a timeline scrubber, diff two runs, fork from any turn, tag &amp; star.</span>
-                <span class="lang-zh">列表、打开、按时间轴 scrubber 回放、两次 run 对比、任意轮 fork、打标签收藏。</span>
-              </p>
-            </div>
-
-            <div class="next-card">
-              <h3>🚦 <span class="lang-en">HITL approvals</span><span class="lang-zh">HITL 审批</span></h3>
-              <p>
-                <span class="lang-en">Queue of pending dangerous tool calls, approve / deny / edit-then-approve, session-scoped allowlist, full audit trail.</span>
-                <span class="lang-zh">危险 tool 调用审批队列、允许 / 拒绝 / 改后放行、session 内白名单、完整审计。</span>
-              </p>
-            </div>
-
-            <div class="next-card">
-              <h3>🩺 <span class="lang-en">Doctor &amp; Settings</span><span class="lang-zh">Doctor 与设置</span></h3>
-              <p>
-                <span class="lang-en">Red / yellow / green health check over tunnels, adb, serial, MCP, config, env. Backend config form, workspace quota, theme, language.</span>
-                <span class="lang-zh">隧道 / adb / 串口 / MCP / config / env 的红黄绿体检。后端配置表单、workspace 配额、主题、语言。</span>
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <!-- Feedback callout -->
-        <div class="mock-card" style="background:var(--anth-bg-subtle); border-style:dashed;">
-          <h3 style="margin-top:0;">
-            <span class="lang-en">→ Walk through, then cut.</span>
-            <span class="lang-zh">→ 先过一遍，再砍。</span>
-          </h3>
-          <p style="margin-bottom:0;">
-            <span class="lang-en">Open an issue or send a note with what to remove, keep, or add from this preview. Once batch 1 stabilizes, we freeze the schema and start wiring the FastAPI endpoints / WebSocket channels behind each widget.</span>
-            <span class="lang-zh">在 issue 里留言或直接反馈：这份 preview 里要删什么、留什么、加什么。batch 1 定稿后，我们冻结 schema，再按每个控件接上 FastAPI / WebSocket。</span>
-          </p>
-        </div>
-      </div>
-    </main>
-
-    <footer style="background:var(--anth-bg-subtle); border-top:1px solid var(--anth-light-gray); padding:var(--space-7) 0; margin-top:var(--space-8);">
-      <div class="anth-container" style="display:flex; flex-wrap:wrap; gap:var(--space-5); justify-content:space-between; align-items:baseline;">
-        <div style="font-family:var(--font-heading); font-weight:600;">android-llm-bridge</div>
-        <div style="font-size:13px; color:var(--anth-text-secondary);">
-          <span class="lang-en">© 2026 android-llm-bridge contributors · Apache 2.0 · open-source</span>
-          <span class="lang-zh">© 2026 android-llm-bridge contributors · Apache 2.0 · 开源</span>
-        </div>
-        <div style="display:flex; gap:var(--space-4); font-size:14px;">
-          <a class="anth-link" href="./">Home</a>
-          <a class="anth-link" href="on-device-agent.html"><span class="lang-en">On-device Agent</span><span class="lang-zh">设备端 Agent</span></a>
-          <a class="anth-link" href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
-        </div>
-      </div>
-    </footer>
-
-    <script>
-      function applyLang(lang){
-        document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
-        const btn = document.getElementById("langBtn");
-        if(btn) btn.textContent = lang === "zh" ? "English" : "中文";
-        try{ localStorage.setItem("alb.lang", lang); }catch(e){}
-      }
-      function toggleLang(){
-        const cur = (localStorage.getItem("alb.lang") || "en");
-        applyLang(cur === "zh" ? "en" : "zh");
-      }
-      (function init(){
-        let stored = null;
-        try{ stored = localStorage.getItem("alb.lang"); }catch(e){}
-        const prefer = stored || (navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
-        if(prefer === "zh") applyLang("zh");
-      })();
-    </script>
-  </body>
+    applyLang();
+  })();
+</script>
+</body>
 </html>
