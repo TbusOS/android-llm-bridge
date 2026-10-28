@@ -20,6 +20,10 @@
 # it (2026-10-28: 7 processes were still there after the session closed) —
 # so this script stops it on exit, picking processes by that profile path
 # in their command line: the user's own Edge windows are never touched.
+#
+# One check per start: after a run that downloaded a file, the next
+# DevTools connection to the same Edge has hung (2026-10-28, twice). The
+# check scripts then say so and exit; restart this script between runs.
 set -euo pipefail
 
 HOST="${ALB_BENCH_SSH_HOST:?set ALB_BENCH_SSH_HOST to the bench ssh alias}"

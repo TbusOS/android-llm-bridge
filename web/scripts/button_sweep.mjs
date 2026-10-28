@@ -75,8 +75,21 @@ function record(status, page, name, detail = "") {
   if (status !== "PASS" || process.env.SWEEP_VERBOSE) console.log(`${status.padEnd(4)}  ${page}  «${name}»${detail ? `  — ${detail}` : ""}`);
 }
 
+/* A remote Edge that already served one run with a download in it has
+   been seen to accept the DevTools socket and then never answer
+   (2026-10-28, twice); a fresh one always did. Say what to do. */
+async function connectRemote(url) {
+  try {
+    return await chromium.connectOverCDP(url, { timeout: 30000 });
+  } catch (e) {
+    console.error(`cannot drive the browser at ${url}: ${String(e.message).split("\n")[0]}`);
+    console.error("restart it: stop web/scripts/win_browser.sh (Ctrl+C) and start it again, then rerun");
+    process.exit(2);
+  }
+}
+
 await mkdir(OUT, { recursive: true });
-const browser = CDP ? await chromium.connectOverCDP(CDP) : await chromium.launch();
+const browser = CDP ? await connectRemote(CDP) : await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", acceptDownloads: true });
 await ctx.addInitScript(() => {
   try {
@@ -137,7 +150,10 @@ async function controls() {
       const style = getComputedStyle(el);
       if (r.width === 0 || r.height === 0 || style.visibility === "hidden") continue;
       if (el.closest("[inert], [hidden]")) continue;
-      const name = (el.getAttribute("aria-label") || el.textContent || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 60);
+      // accessible name, roughly: aria-label, then a <label> (an input's
+      // name comes from it, not from its own text), then text, then title
+      const labelText = el.labels && el.labels.length ? el.labels[0].textContent : "";
+      const name = (el.getAttribute("aria-label") || labelText || el.textContent || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 60);
       const n = seen.get(name) ?? 0;
       seen.set(name, n + 1);
       const key = `${el.tagName}:${name}#${n}`;
@@ -147,6 +163,8 @@ async function controls() {
         name,
         nth: n,
         tag: el.tagName.toLowerCase(),
+        // for an unnamed control: enough to find it in the source
+        hint: name ? "" : `${el.getAttribute("type") ?? ""} ${el.id ? `#${el.id}` : ""} near «${(el.closest("label, li, tr, div")?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40)}»`.trim(),
         disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
         inConfirm: !!el.closest(".confirm, [role=alertdialog]") && /btn--danger|btn--filled/.test(el.className),
         inTerminal: !!el.closest(".xterm, .term--x"),
@@ -180,6 +198,54 @@ async function openPage(path) {
   await page.waitForTimeout(800);
 }
 
+/** Click one control and record what it caused; "gone" if it is not on the page now. */
+async function clickOne(path, c0) {
+  // find it again in the current DOM (earlier clicks may have moved things)
+  const now = (await controls()).find((c) => c.key === c0.key);
+  if (!now) return "gone";
+  if (now.disabled) { record("SKIP", path, c0.name, "disabled now"); return "done"; }
+  // a snackbar from the previous click hides an identical one from this
+  // click (same text, no DOM change) — let it go first
+  await page.waitForFunction(() => !document.querySelector(".snackbar"), null, { timeout: 5000 }).catch(() => {});
+  const loc = nameLocator(now);
+  const urlBefore = page.url();
+  const mutBefore = await page.evaluate(() => window.__albMut);
+  const reqBefore = requests;
+  const dlBefore = downloads;
+  const errBefore = errors.length;
+  const blockedBefore = blocked.length;
+  try {
+    await loc.click({ timeout: 4000 });
+  } catch (e) {
+    record("FAIL", path, c0.name, `click failed: ${String(e.message).split("\n")[0]}`);
+    await openPage(path);
+    return "done";
+  }
+  await page.waitForTimeout(900);
+  const mut = (await page.evaluate(() => window.__albMut).catch(() => mutBefore)) - mutBefore;
+  const effects = [];
+  if (page.url() !== urlBefore) effects.push(`→ ${new URL(page.url()).pathname.replace(/^\/app/, "")}`);
+  if (requests > reqBefore) effects.push(`${requests - reqBefore} req`);
+  if (downloads > dlBefore) effects.push("download");
+  if (mut > 0) effects.push(`${mut} DOM changes`);
+  if (blocked.length > blockedBefore) {
+    record("FAIL", path, c0.name, `tried a board-changing request: ${blocked.slice(blockedBefore).join(" | ")}`);
+  } else if (errors.length > errBefore) {
+    record("FAIL", path, c0.name, `page error: ${errors.slice(errBefore).join(" | ")}`);
+  } else if (effects.length === 0 && now.selected) {
+    record("PASS", path, c0.name, "already selected — nothing to change");
+  } else if (effects.length === 0) {
+    record("DEAD", path, c0.name, "no request, no page change, no navigation");
+  } else {
+    record("PASS", path, c0.name, effects.join(", "));
+  }
+  // put things back: close what the click opened, return to the page
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.keyboard.press("Escape").catch(() => {});
+  if (new URL(page.url()).pathname !== new URL(BASE + path).pathname) await openPage(path);
+  return "done";
+}
+
 for (const path of PAGES) {
   await openPage(path);
   const first = await controls();
@@ -192,6 +258,7 @@ for (const path of PAGES) {
     continue;
   }
   const done = new Set();
+  const retry = [];
   for (const c0 of first) {
     if (done.has(c0.key)) continue;
     done.add(c0.key);
@@ -201,47 +268,14 @@ for (const path of PAGES) {
     if (c0.inTerminal) { record("SKIP", path, c0.name, "inside a terminal"); continue; }
     if (c0.disabled) { record("SKIP", path, c0.name, "disabled now"); continue; }
     if (c0.external) { record(c0.href ? "PASS" : "FAIL", path, c0.name, `external link ${c0.href}`); continue; }
-    if (!c0.name) { record("SKIP", path, "(no accessible name)", `${c0.tag} — unnamed control, an accessibility gap`); continue; }
-
-    // find it again in the current DOM (earlier clicks may have moved things)
-    const now = (await controls()).find((c) => c.key === c0.key);
-    if (!now) { record("SKIP", path, c0.name, "gone after an earlier click"); continue; }
-    const loc = nameLocator(now);
-    const urlBefore = page.url();
-    const mutBefore = await page.evaluate(() => window.__albMut);
-    const reqBefore = requests;
-    const dlBefore = downloads;
-    const errBefore = errors.length;
-    const blockedBefore = blocked.length;
-    try {
-      await loc.click({ timeout: 4000 });
-    } catch (e) {
-      record("FAIL", path, c0.name, `click failed: ${String(e.message).split("\n")[0]}`);
-      await openPage(path);
-      continue;
-    }
-    await page.waitForTimeout(900);
-    const mut = (await page.evaluate(() => window.__albMut).catch(() => mutBefore)) - mutBefore;
-    const effects = [];
-    if (page.url() !== urlBefore) effects.push(`→ ${new URL(page.url()).pathname.replace(/^\/app/, "")}`);
-    if (requests > reqBefore) effects.push(`${requests - reqBefore} req`);
-    if (downloads > dlBefore) effects.push("download");
-    if (mut > 0) effects.push(`${mut} DOM changes`);
-    if (blocked.length > blockedBefore) {
-      record("FAIL", path, c0.name, `tried a board-changing request: ${blocked.slice(blockedBefore).join(" | ")}`);
-    } else if (errors.length > errBefore) {
-      record("FAIL", path, c0.name, `page error: ${errors.slice(errBefore).join(" | ")}`);
-    } else if (effects.length === 0 && now.selected) {
-      record("PASS", path, c0.name, "already selected — nothing to change");
-    } else if (effects.length === 0) {
-      record("DEAD", path, c0.name, "no request, no page change, no navigation");
-    } else {
-      record("PASS", path, c0.name, effects.join(", "));
-    }
-    // put things back: close what the click opened, return to the page
-    await page.keyboard.press("Escape").catch(() => {});
-    await page.keyboard.press("Escape").catch(() => {});
-    if (new URL(page.url()).pathname !== new URL(BASE + path).pathname) await openPage(path);
+    if (!c0.name) { record("SKIP", path, `(no accessible name) ${c0.hint}`, `${c0.tag} — unnamed control, an accessibility gap`); continue; }
+    if ((await clickOne(path, c0)) === "gone") retry.push(c0);
+  }
+  // Controls an earlier click hid (another tab took over, a section closed):
+  // try each once more on a freshly opened page.
+  for (const c0 of retry) {
+    await openPage(path);
+    if ((await clickOne(path, c0)) === "gone") record("SKIP", path, c0.name, "only appears after another action");
   }
   await page.screenshot({ path: join(OUT, `${path.replace(/\W+/g, "_")}.png`) }).catch(() => {});
 }

@@ -120,9 +120,22 @@ const NO_ADB = "no adb device online";
 
 /* ---------------- browser ---------------- */
 
+/* A remote Edge that already served one run with a download in it has
+   been seen to accept the DevTools socket and then never answer
+   (2026-10-28, twice); a fresh one always did. Say what to do. */
+async function connectRemote(url) {
+  try {
+    return await chromium.connectOverCDP(url, { timeout: 30000 });
+  } catch (e) {
+    console.error(`cannot drive the browser at ${url}: ${String(e.message).split("\n")[0]}`);
+    console.error("restart it: stop web/scripts/win_browser.sh (Ctrl+C) and start it again, then rerun");
+    process.exit(2);
+  }
+}
+
 await mkdir(OUT, { recursive: true });
 const CDP = process.env.ALB_CDP_URL || "";
-const browser = CDP ? await chromium.connectOverCDP(CDP) : await chromium.launch();
+const browser = CDP ? await connectRemote(CDP) : await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", acceptDownloads: true });
 const probe = await ctx.newPage();
 const agentString = await probe.evaluate(() => navigator.userAgent);
