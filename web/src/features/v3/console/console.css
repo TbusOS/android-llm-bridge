@@ -1,0 +1,11 @@
+/* Console page extras. Colours come from the shared v3 variables only. */
+.console__note { margin: 0 12px 8px; }
+.console__foot { display: flex; justify-content: flex-end; padding: 0 12px 8px; }
+
+/* xterm fills the dark card: the host is inset so FitAddon measures a padding-free box */
+.console .term.term--x { position: relative; padding: 0; overflow: hidden; }
+.console .term__host { position: absolute; inset: 10px 12px; }
+
+.snips__add { display: flex; flex-direction: column; gap: 8px; }
+.snips__risky { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+.snips .list__trail { display: inline-flex; align-items: center; gap: 2px; }
