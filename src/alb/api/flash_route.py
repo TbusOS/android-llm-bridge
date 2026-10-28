@@ -21,6 +21,13 @@ Endpoints:
                                       "skip_actions": [...]}
                                Parse a flashing manifest into a checked plan and
                                return it with every problem found. Runs nothing.
+    GET  /api/flash/jobs?limit=20
+                               Recorded jobs, newest first, plus `running`
+                               (the job in flight, or null). Read from the
+                               job.json files, so a reloaded page sees the
+                               outcome of a long flash it lost the stream of.
+    GET  /api/flash/jobs/{id}  One record: the full job.json and the name of
+                               its timeline file.
     POST /api/flash/plan/run   Same body + "fingerprint" (from /plan) and
                                "reboot_wait_s". Rebuilds the plan, refuses (409)
                                if it has problems or no longer matches the
@@ -48,11 +55,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Coroutine
 from pathlib import Path
 from typing import Any, Protocol
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -274,3 +282,152 @@ async def flash_plan_run(body: PlanRunBody) -> StreamingResponse:
     return await _stream(
         lambda cb: service.run_plan(plan, reboot_wait_s=body.reboot_wait_s, on_event=cb)
     )
+
+
+# ── job records (what a reloaded page reads after a long flash) ─────────
+#
+# `remote/flash_timeline` writes one directory per job under
+# `workspace/flash/` (or `workspace/devices/<d>/flash/`): `timeline.jsonl`
+# while it runs, `job.json` once it has a verdict. A page that was reloaded
+# mid-flash lost the NDJSON stream; these two endpoints let it read the
+# outcome from disk instead. Read-only.
+
+_JOB_DIR_RE = re.compile(
+    r"^(?P<kind>[A-Za-z0-9][A-Za-z0-9._-]*?)-(?P<ts>\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d)(?:-\d{1,3})?$"
+)
+# `<device>~<dir>` for a job recorded under a device; a bare `<dir>` for the
+# global record. `~` cannot occur in a device serial or a job directory name.
+_JOB_ID_RE = re.compile(
+    r"^(?:[A-Za-z0-9][A-Za-z0-9._:-]{0,63}~)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+)
+
+
+def _job_roots() -> list[tuple[str | None, Path]]:
+    from alb.infra.workspace import workspace_root
+
+    root = workspace_root()
+    roots: list[tuple[str | None, Path]] = [(None, root / "flash")]
+    try:
+        for d in sorted((root / "devices").iterdir()):
+            if d.is_dir() and not d.is_symlink():
+                roots.append((d.name, d / "flash"))
+    except OSError:
+        pass
+    return roots
+
+
+def _read_job_json(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _job_header(directory: Path) -> dict[str, Any]:
+    """The `start` meta record of the job's timeline: label, op, wall clock."""
+    try:
+        with (directory / "timeline.jsonl").open("r", encoding="utf-8") as f:
+            first = json.loads(f.readline())
+    except (OSError, ValueError):
+        return {}
+    return first if isinstance(first, dict) else {}
+
+
+def _iso_from_stamp(ts: str) -> str:
+    # `2026-10-23T10-30-00` (UTC, filename-safe) -> ISO 8601.
+    date, _, clock = ts.partition("T")
+    return f"{date}T{clock.replace('-', ':')}+00:00"
+
+
+def _row_counts(job: dict[str, Any] | None) -> dict[str, int]:
+    counts = {"total": 0, "ok": 0, "failed": 0, "skipped": 0, "not_run": 0}
+    if job is None:
+        return counts
+    rows = job.get("rows")
+    if isinstance(rows, list):  # a plan: one entry per manifest row
+        counts["total"] = len(rows)
+        for r in rows:
+            status = r.get("status") if isinstance(r, dict) else None
+            key = "not_run" if status == "not-run" else status
+            if key in counts:
+                counts[key] += 1
+        return counts
+    # A single job counts as one row, so the page can show one shape.
+    counts["total"] = 1
+    counts["ok" if job.get("ok") else "failed"] = 1
+    return counts
+
+
+def _job_summary(device: str | None, directory: Path) -> dict[str, Any]:
+    m = _JOB_DIR_RE.match(directory.name)
+    job = _read_job_json(directory / "job.json")
+    header = _job_header(directory)
+    kind = m.group("kind") if m else directory.name
+    return {
+        "id": f"{device}~{directory.name}" if device else directory.name,
+        "op": header.get("op") or kind.split("-", 1)[0],
+        "label": header.get("label") or kind.replace("-", " "),
+        "started_at": _iso_from_stamp(m.group("ts")) if m else None,
+        # null = no job.json yet: still running, or the hub died mid-job.
+        "ok": bool(job.get("ok")) if job is not None else None,
+        "code": (job.get("code") or "") if job is not None else "",
+        "failed_line": int(job.get("failed_line") or 0) if job is not None else 0,
+        "rows": _row_counts(job),
+    }
+
+
+def _list_jobs_sync(limit: int) -> list[dict[str, Any]]:
+    found: list[tuple[str, str, str | None, Path]] = []
+    for device, base in _job_roots():
+        try:
+            entries = [p for p in base.iterdir() if p.is_dir() and not p.is_symlink()]
+        except OSError:
+            continue
+        for p in entries:
+            m = _JOB_DIR_RE.match(p.name)
+            if m:
+                found.append((m.group("ts"), p.name, device, p))
+    found.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [_job_summary(device, p) for _, _, device, p in found[:limit]]
+
+
+def _job_detail_sync(job_id: str) -> dict[str, Any] | None:
+    from alb.infra.workspace import workspace_root
+
+    device, sep, name = job_id.rpartition("~")
+    root = workspace_root()
+    base = root / "devices" / device / "flash" if sep else root / "flash"
+    path = base / name
+    if path.is_symlink() or not path.is_dir() or not _JOB_DIR_RE.match(name):
+        return None
+    timeline = path / "timeline.jsonl"
+    rel: str | None = None
+    if timeline.is_file():
+        try:
+            rel = timeline.resolve().relative_to(root.resolve()).as_posix()
+        except (ValueError, OSError):
+            rel = None
+    return {
+        **_job_summary(device or None, path),
+        "job": _read_job_json(path / "job.json"),
+        "timeline": "timeline.jsonl" if timeline.is_file() else None,
+        "timeline_path": rel,
+    }
+
+
+@router.get("/jobs")
+async def flash_jobs(limit: int = Query(20, ge=1, le=200)) -> dict[str, Any]:
+    jobs = await asyncio.to_thread(_list_jobs_sync, limit)
+    running = get_flash_service().status().get("job") or None
+    return {"v": API_VERSION, "ok": True, "running": running, "jobs": jobs}
+
+
+@router.get("/jobs/{job_id}")
+async def flash_job(job_id: str) -> dict[str, Any]:
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job id")
+    detail = await asyncio.to_thread(_job_detail_sync, job_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"v": API_VERSION, "ok": True, **detail}

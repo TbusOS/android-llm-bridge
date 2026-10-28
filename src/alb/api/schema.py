@@ -306,6 +306,16 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     },
     {
         "method": "GET",
+        "path": "/api/flash/jobs",
+        "description": "Recorded flash jobs, newest first, plus the job running now",
+    },
+    {
+        "method": "GET",
+        "path": "/api/flash/jobs/{job_id}",
+        "description": "One recorded flash job: full job.json and its timeline file name",
+    },
+    {
+        "method": "GET",
         "path": "/api/power/battery",
         "description": "Parsed dumpsys battery snapshot",
     },
