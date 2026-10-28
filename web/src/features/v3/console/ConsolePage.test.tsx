@@ -93,6 +93,11 @@ function mockFetch(over: Record<string, () => Response | Promise<Response>> = {}
         return Response.json({ ok: true, boards: [], active: null, serial: { com: "COM7", baud: 115200, bound: true, readers: 2 } });
       }
       if (url.includes("/audit")) return Response.json({ ok: true, since: "", until: "", events: [] });
+      if (url.includes("/devices")) {
+        // adb lists the selected test device as online unless a test says otherwise
+        const dev = useApp.getState().device;
+        return Response.json({ ok: true, transport: "AdbTransport", devices: dev ? [{ serial: dev, state: "device" }] : [] });
+      }
       return Response.json({ ok: false }, { status: 404 });
     }),
   );
