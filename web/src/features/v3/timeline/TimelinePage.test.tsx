@@ -165,6 +165,17 @@ describe("TimelinePage", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Reboot and record" })).not.toBeInTheDocument());
   });
 
+  it("zoom out works until the whole recording is shown, then turns off", async () => {
+    mockFetch(full);
+    renderPage();
+    // 90 s recording: it opens on a 10 s window around the first problem
+    const out = await screen.findByRole("button", { name: "Zoom out" });
+    expect(out).toBeEnabled();
+    for (let i = 0; i < 4; i++) fireEvent.click(screen.getByRole("button", { name: "Zoom out" })); // 10 → 20 → 40 → 80 → 90 s
+    await waitFor(() => expect(screen.getByRole("button", { name: "Zoom out" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+  });
+
   it("says so when a source recorded nothing", async () => {
     mockFetch({ ...full, "/api/timeline/captures?": () => json({ ok: true, data: [{ ...CAP, sources: { logcat: 3, dmesg: 2, uart: 0 }, has_boot: false }] }) });
     renderPage();

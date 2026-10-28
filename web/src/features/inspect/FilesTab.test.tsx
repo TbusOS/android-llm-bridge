@@ -10,8 +10,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const { mockUseApp, mockUpload, mockXfer } = vi.hoisted(() => ({
-  mockUseApp: vi.fn((selector?: (s: { lang: string; device: string }) => unknown) => {
-    const s = { lang: "en", device: "serial-1" };
+  mockUseApp: vi.fn((selector?: (s: { lang: string; device: string | null }) => unknown) => {
+    const s: { lang: string; device: string | null } = { lang: "en", device: "serial-1" };
     return selector ? selector(s) : s;
   }),
   mockUpload: vi.fn(),
@@ -107,3 +107,27 @@ describe("FilesTab upload (drag-drop / picker)", () => {
     await screen.findByText(/Uploaded/);
   });
 });
+
+describe("FilesTab with no adb device", () => {
+  it("keeps the workspace usable, starting in logs/, and only the board side asks for a device", () => {
+    mockUseApp.mockImplementation((selector?: (s: { lang: string; device: string | null }) => unknown) => {
+      const st = { lang: "en", device: null };
+      return selector ? selector(st) : st;
+    });
+    try {
+      render(<FilesTab />);
+      expect(screen.getByText("Board files")).toBeInTheDocument();
+      // workspace pane is there, opened on logs/ where serial-only captures go
+      const pane = workspacePane();
+      expect(pane.textContent).toContain("logs");
+      expect(screen.getByRole("button", { name: /^push$/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^upload$/i })).toBeEnabled();
+    } finally {
+      mockUseApp.mockImplementation((selector?: (s: { lang: string; device: string | null }) => unknown) => {
+        const st = { lang: "en", device: "serial-1" };
+        return selector ? selector(st) : st;
+      });
+    }
+  });
+});
+

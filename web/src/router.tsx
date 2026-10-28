@@ -91,7 +91,7 @@ const routeTree = rootRoute.addChildren([
     name: typeof s.name === "string" ? s.name : undefined,
   })),
   legacy("/perf", "性能", "Performance", "CPU、内存、温度、网络、磁盘的实时曲线。", "Live CPU, memory, temperature, network and disk.", ChartsTab),
-  legacy("/files", "文件", "Files", "板子上的文件和工作区的文件,推送和拉取。", "Files on the board and in the workspace; push and pull.", FilesTab),
+  legacy("/files", "文件", "Files", "板子上的文件和工作区的文件,推送和拉取。", "Files on the board and in the workspace; push and pull.", FilesTab, false),
   legacy("/apps", "应用", "Apps", "安装、启动、停止、清数据和卸载应用。", "Install, start, stop, clear and uninstall apps.", AppTab),
   page("/screen", ScreenPage, (s) => ({ tab: s.tab === "shot" || s.tab === "tree" ? s.tab : undefined })),
   page("/problems", ProblemsPage),

@@ -271,11 +271,20 @@ describe("Chat page", () => {
     expect(screen.getAllByText("fresh question").length).toBeGreaterThan(0);
   });
 
-  it("New chat resets the shared conversation", async () => {
+  it("New chat resets the shared conversation; with nothing to reset it is disabled", async () => {
     mockFetch();
-    renderPage();
-    fireEvent.click(screen.getAllByRole("button", { name: /新对话/ })[0] as HTMLElement);
-    expect(chat.reset).toHaveBeenCalled();
+    const { unmount } = renderPage();
+    // empty live conversation: the button would do nothing, so it is off
+    expect(screen.getAllByRole("button", { name: /新对话/ })[0]).toBeDisabled();
+    unmount();
+    chat.state.turns = [{ role: "user", content: "hi" }];
+    try {
+      renderPage();
+      fireEvent.click(screen.getAllByRole("button", { name: /新对话/ })[0] as HTMLElement);
+      expect(chat.reset).toHaveBeenCalled();
+    } finally {
+      chat.state.turns = [];
+    }
   });
 });
 

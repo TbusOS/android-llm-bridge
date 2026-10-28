@@ -184,7 +184,7 @@ export function ChatPage3() {
           "Ask about the board in plain words. With agent mode on, the model reads logs and runs alb tools on its own; tools run without asking first, including the ones that change the board.",
         )}
         actions={
-          <button type="button" className="btn btn--filled" onClick={newChat}>
+          <button type="button" className="btn btn--filled" onClick={newChat} disabled={a.turns.length === 0 && selected === null} title={a.turns.length === 0 && selected === null ? t("现在就是一段新对话", "This already is a new chat") : undefined}>
             <Icon name="plus" />
             {t("新对话", "New chat")}
           </button>

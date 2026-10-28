@@ -48,8 +48,10 @@ export function FilesTab() {
   const lang = useApp((s) => s.lang);
   const device = useApp((s) => s.device);
   const [devicePath, setDevicePath] = useState(DEFAULT_DEVICE_PATH);
+  // No adb device (a serial-only board, or one sitting in its bootloader):
+  // its serial captures land in workspace/logs/, so open there.
   const [workspacePath, setWorkspacePath] = useState(
-    device ? `${DEFAULT_WS_PREFIX}/${device}` : DEFAULT_WS_PREFIX,
+    device ? `${DEFAULT_WS_PREFIX}/${device}` : "logs",
   );
   const [selectedDevice, setSelectedDevice] = useState<DeviceFileEntry | null>(
     null,
@@ -117,10 +119,6 @@ export function FilesTab() {
     }
   }, [xfer.state, xfer.result, xfer.error, device]);
 
-  if (!device) {
-    return <NoDeviceCard titleZh="文件" titleEn="Files" />;
-  }
-
   const onDeviceEntryActivate = (entry: DeviceFileEntry) => {
     if (entry.is_dir) {
       setDevicePath(joinPath(devicePath, entry.name));
@@ -140,14 +138,14 @@ export function FilesTab() {
   };
 
   const onPull = () => {
-    if (!selectedDevice || selectedDevice.is_dir) return;
+    if (!device || !selectedDevice || selectedDevice.is_dir) return;
     const remote = joinPath(devicePath, selectedDevice.name);
     const local = `${workspacePath || `${DEFAULT_WS_PREFIX}/${device}/pulls`}/${selectedDevice.name}`;
     xfer.start({ serial: device, direction: "pull", remote, local });
   };
 
   const onPush = (force = false) => {
-    if (!selectedWorkspace || selectedWorkspace.is_dir) return;
+    if (!device || !selectedWorkspace || selectedWorkspace.is_dir) return;
     const local = workspacePath
       ? `${workspacePath}/${selectedWorkspace.name}`
       : selectedWorkspace.name;
@@ -156,9 +154,10 @@ export function FilesTab() {
   };
 
   const confirmPush = () => {
-    if (!pendingPush) return;
+    const serial = pendingPush?.serial || device;
+    if (!pendingPush || !serial) return;
     xfer.start({
-      serial: pendingPush.serial || device,
+      serial,
       direction: "push",
       local: pendingPush.local,
       remote: pendingPush.remote,
@@ -208,58 +207,64 @@ export function FilesTab() {
   return (
     <div className="files-tab">
       <div className="files-tab__panes">
-        <FilePane
-          lang={lang}
-          title={lang === "zh" ? "设备" : "Device"}
-          subtitle={device}
-          path={devicePath}
-          onPathChange={(p) => {
-            setDevicePath(p);
-            setSelectedDevice(null);
-          }}
-          onUp={() => {
-            setDevicePath(parentPath(devicePath, "/"));
-            setSelectedDevice(null);
-          }}
-          onRefresh={() => deviceQ.refetch()}
-          isFetching={deviceQ.isFetching}
-          pending={devicePath !== debouncedDevicePath}
-          loading={deviceQ.isLoading}
-          error={
-            deviceQ.error
-              ? String(deviceQ.error)
-              : deviceQ.data && !deviceQ.data.ok
-                ? deviceQ.data.error || "ls failed"
-                : null
-          }
-          truncated={!!deviceQ.data?.truncated}
-          entries={(deviceQ.data?.entries ?? []).map((e) => ({
-            name: e.name,
-            is_dir: e.is_dir,
-            is_link: e.is_link,
-            meta: `${formatBytes(e.size)} · ${e.mode}`,
-            mtime: e.mtime,
-          }))}
-          activeName={selectedDevice?.name ?? null}
-          onActivate={(name) => {
-            const e = deviceQ.data?.entries.find((x) => x.name === name);
-            if (e) onDeviceEntryActivate(e);
-          }}
-        >
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={
-              !selectedDevice || selectedDevice.is_dir || xferRunning
+        {device ? (
+          <FilePane
+            lang={lang}
+            title={lang === "zh" ? "设备" : "Device"}
+            subtitle={device}
+            path={devicePath}
+            onPathChange={(p) => {
+              setDevicePath(p);
+              setSelectedDevice(null);
+            }}
+            onUp={() => {
+              setDevicePath(parentPath(devicePath, "/"));
+              setSelectedDevice(null);
+            }}
+            onRefresh={() => deviceQ.refetch()}
+            isFetching={deviceQ.isFetching}
+            pending={devicePath !== debouncedDevicePath}
+            loading={deviceQ.isLoading}
+            error={
+              deviceQ.error
+                ? String(deviceQ.error)
+                : deviceQ.data && !deviceQ.data.ok
+                  ? deviceQ.data.error || "ls failed"
+                  : null
             }
-            onClick={onPull}
+            truncated={!!deviceQ.data?.truncated}
+            entries={(deviceQ.data?.entries ?? []).map((e) => ({
+              name: e.name,
+              is_dir: e.is_dir,
+              is_link: e.is_link,
+              meta: `${formatBytes(e.size)} · ${e.mode}`,
+              mtime: e.mtime,
+            }))}
+            activeName={selectedDevice?.name ?? null}
+            onActivate={(name) => {
+              const e = deviceQ.data?.entries.find((x) => x.name === name);
+              if (e) onDeviceEntryActivate(e);
+            }}
           >
-            <ArrowDownToLine size={12} className="icon-inline" />{" "}
-            {xferRunning && xfer.inflight?.direction === "pull"
-              ? lang === "zh" ? "拉取中…" : "Pulling…"
-              : lang === "zh" ? "拉到工作区" : "Pull"}
-          </button>
-        </FilePane>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={
+                !selectedDevice || selectedDevice.is_dir || xferRunning
+              }
+              onClick={onPull}
+            >
+              <ArrowDownToLine size={12} className="icon-inline" />{" "}
+              {xferRunning && xfer.inflight?.direction === "pull"
+                ? lang === "zh" ? "拉取中…" : "Pulling…"
+                : lang === "zh" ? "拉到工作区" : "Pull"}
+            </button>
+          </FilePane>
+        ) : (
+          // The workspace lives on the hub, so it stays usable with no adb
+          // device; only the board side needs one.
+          <NoDeviceCard titleZh="板上文件" titleEn="Board files" />
+        )}
 
         <FilePane
           lang={lang}
@@ -312,10 +317,12 @@ export function FilesTab() {
             type="button"
             className="btn btn--primary"
             disabled={
+              !device ||
               !selectedWorkspace ||
               selectedWorkspace.is_dir ||
               xferRunning
             }
+            title={!device ? (lang === "zh" ? "没有 adb 设备,推不了" : "No adb device to push to") : undefined}
             onClick={() => onPush(false)}
           >
             <ArrowUpFromLine size={12} className="icon-inline" />{" "}

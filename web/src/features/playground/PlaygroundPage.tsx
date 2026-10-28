@@ -440,7 +440,7 @@ export function PlaygroundPage() {
             type="button"
             className="playground-chat__clear"
             onClick={onClear}
-            disabled={chat.status === "streaming"}
+            disabled={chat.status === "streaming" || log.length === 0}
           >
             {lang === "zh" ? "清空" : "clear"}
           </button>

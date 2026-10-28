@@ -400,8 +400,9 @@ export function TimelinePage() {
               {t("只看问题", "Problems only")}
             </button>
             <div className="row" style={{ gap: 0 }}>
-              <button type="button" className="icon-btn" aria-label={t("缩小", "Zoom out")} onClick={() => zoom(2)}><Icon name="zoom-out" /></button>
-              <button type="button" className="icon-btn" aria-label={t("放大", "Zoom in")} onClick={() => zoom(0.5)}><Icon name="zoom-in" /></button>
+              {/* at the whole recording / the 0.5 s floor the button would do nothing */}
+              <button type="button" className="icon-btn" aria-label={t("缩小", "Zoom out")} onClick={() => zoom(2)} disabled={r1 - r0 >= total - 1e-6}><Icon name="zoom-out" /></button>
+              <button type="button" className="icon-btn" aria-label={t("放大", "Zoom in")} onClick={() => zoom(0.5)} disabled={r1 - r0 <= 0.5 + 1e-6}><Icon name="zoom-in" /></button>
             </div>
           </div>
         </article>
