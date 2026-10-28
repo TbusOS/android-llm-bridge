@@ -19,6 +19,8 @@
     "e2e:flash": "cd .. && node web/scripts/flash_e2e.mjs",
     "e2e:v3": "cd .. && node web/scripts/v3_e2e.mjs",
     "e2e:func": "cd .. && node web/scripts/func_e2e.mjs",
+    "e2e:sweep": "cd .. && node web/scripts/button_sweep.mjs",
+    "win-browser": "cd .. && web/scripts/win_browser.sh",
     "shots:v3": "node scripts/shoot_v3_previews.mjs"
   },
   "dependencies": {

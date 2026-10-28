@@ -25,9 +25,14 @@
 //                  there, where the page is not a secure context.
 //   FUNC_SERIAL    1 (default) send echo lines on the serial console; 0 skips
 //   FUNC_CHAT      1 (default) send one chat message to the model backend
+//   ALB_CDP_URL    drive a browser that is already running instead of
+//                  launching one, e.g. Edge on the bench Windows machine
+//                  started with --remote-debugging-port and reached through
+//                  `ssh -L` (see web/scripts/win_browser.sh). ALB_BASE must
+//                  then be an address that machine can open, not 127.0.0.1.
 //   E2E_OUT_DIR    screenshots + report.json (default .claude/reports/func-e2e)
 import { chromium } from "playwright";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const BASE = (process.env.ALB_BASE || "http://127.0.0.1:8765/app").replace(/\/$/, "");
@@ -116,8 +121,13 @@ const NO_ADB = "no adb device online";
 /* ---------------- browser ---------------- */
 
 await mkdir(OUT, { recursive: true });
-const browser = await chromium.launch();
+const CDP = process.env.ALB_CDP_URL || "";
+const browser = CDP ? await chromium.connectOverCDP(CDP) : await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", acceptDownloads: true });
+const probe = await ctx.newPage();
+const agentString = await probe.evaluate(() => navigator.userAgent);
+await probe.close();
+console.log(`browser ${browser.version()} · ${CDP ? `remote (${CDP})` : "launched here"} · ${agentString}`);
 await guard(ctx);
 // English labels keep the selectors below stable; typing on the serial
 // console is on so the echo checks can type.
@@ -365,8 +375,18 @@ if (!agentUp) {
     const download = page.waitForEvent("download", { timeout: 10000 });
     await dlg.getByRole("button", { name: "Save as file" }).click();
     const d = await download;
-    const saved = await readFile(await d.path(), "utf8");
-    check("bench log saves to a file", d.suggestedFilename().endsWith(".log") && saved.trimEnd().split("\n").length === inDialog, `${d.suggestedFilename()}`);
+    if (CDP) {
+      // A remote browser saves on its own machine and Playwright cannot
+      // stream the file back ("canceled"); that the download started with
+      // the right name is what is checked here. 2026-10-28 the saved file
+      // was read on the bench over ssh: 200 lines, same as the dialog.
+      check("bench log saves to a file", d.suggestedFilename().endsWith(".log"), `${d.suggestedFilename()} (remote browser: content not read back)`);
+    } else {
+      const chunks = [];
+      for await (const c of await d.createReadStream()) chunks.push(c);
+      const saved = Buffer.concat(chunks).toString("utf8");
+      check("bench log saves to a file", d.suggestedFilename().endsWith(".log") && saved.trimEnd().split("\n").length === inDialog, `${d.suggestedFilename()}`);
+    }
     await page.keyboard.press("Escape");
     check("bench log dialog closes on Esc", (await page.getByRole("dialog").count()) === 0);
   });
@@ -454,10 +474,12 @@ await step("audit log streams operations", async () => {
 
 check("no request that changes a board or the bench was sent", blocked.length === 0, blocked.slice(0, 3).join(" | "));
 check("no uncaught page errors", errors.length === 0, errors.slice(0, 2).join(" | "));
-await browser.close();
+// a remote browser belongs to whoever started it: close our context only
+if (CDP) await ctx.close();
+else await browser.close();
 
 const count = (s) => results.filter((r) => r.status === s).length;
-await writeFile(join(OUT, "report.json"), JSON.stringify({ base: BASE, marker: MARK, adb: !!adbSerial, agent: agentUp, serial: serialBound, results }, null, 2));
+await writeFile(join(OUT, "report.json"), JSON.stringify({ base: BASE, browser: agentString, marker: MARK, adb: !!adbSerial, agent: agentUp, serial: serialBound, results }, null, 2));
 console.log(`\n${count("PASS")} passed · ${count("FAIL")} failed · ${count("SKIP")} skipped  (report: ${join(OUT, "report.json")})`);
 for (const r of results.filter((x) => x.status === "SKIP")) console.log(`  skipped: ${r.name} — ${r.detail}`);
 process.exit(count("FAIL") ? 1 : 0);
