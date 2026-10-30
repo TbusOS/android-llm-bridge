@@ -288,9 +288,14 @@ export async function fetchWorkspace(path: string, signal?: AbortSignal): Promis
 
 export interface CaptureSummary {
   name: string;
+  /** "capture" = a timeline recording; "flash" = a flash job's timeline. */
+  kind?: "capture" | "flash";
+  /** flash jobs: what ran ("reboot normal", "flash cfg") and its verdict (null = none on disk). */
+  label?: string;
+  ok?: boolean | null;
   started_at: string;
   duration_s: number;
-  sources: { logcat?: number; dmesg?: number; uart?: number };
+  sources: { logcat?: number; dmesg?: number; uart?: number; job?: number };
   size_bytes: number;
   has_boot: boolean;
 }

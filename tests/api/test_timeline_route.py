@@ -295,6 +295,70 @@ def test_list_captures_newest_first_with_shape(ws) -> None:
     assert old["size_bytes"] > 0
 
 
+def _make_flash_job(
+    ws: Path, name: str, records: list[dict[str, Any]], job: dict[str, Any] | None
+) -> Path:
+    """A flash job directory as remote/flash_timeline writes it (no device)."""
+    d = ws / "flash" / name
+    d.mkdir(parents=True)
+    head = {"t": 0.0, "src": "meta", "ev": "start", "wall": name[-19:], "label": "reboot normal", "op": "reboot"}
+    with (d / "timeline.jsonl").open("w") as f:
+        for r in [head, *records]:
+            f.write(json.dumps(r) + "\n")
+    if job is not None:
+        (d / "job.json").write_text(json.dumps(job))
+    return d
+
+
+FLASH_RECS: list[dict[str, Any]] = [
+    {"t": 0.1, "src": "job", "ev": "progress", "phase": "flash", "done": 0, "total": 0, "text": "Rebooting   OKAY [  0.000s]"},
+    {"t": 0.4, "src": "uart", "line": "Starting kernel ..."},
+    {"t": 0.5, "src": "job", "ev": "done", "ok": False, "code": "FLASH_FAILED", "error": "no device", "duration_s": 0.5},
+]
+
+
+def test_flash_jobs_are_listed_with_captures_and_read_like_them(ws: Path) -> None:
+    """Flash jobs record the same one-clock timeline.jsonl (ADR-056); they
+    show up in the list by start time, and their job events read as lines."""
+    _make_capture(ws, "capture-2026-10-23T12-00-00", [], device=SERIAL)
+    (ws / "timeline").mkdir()
+    _make_flash_job(ws, "reboot-normal-2026-10-23T12-30-00", FLASH_RECS, {"ok": False, "duration_s": 0.5})
+    _make_flash_job(ws, "flash-cfg-2026-10-23T11-00-00", [], None)  # no verdict yet
+    _make_capture(ws, "capture-2026-10-23T12-10-00", [_r(1.0, "uart", "x")], device=SERIAL)
+    with _client() as c:
+        # the global record (no device) holds the flash jobs
+        glob = c.get("/api/timeline/captures").json()["data"]
+        lines = c.get("/api/timeline/captures/reboot-normal-2026-10-23T12-30-00/lines").json()["data"]
+        only_job = c.get("/api/timeline/captures/reboot-normal-2026-10-23T12-30-00/lines?sources=job").json()["data"]
+        bad = c.get("/api/timeline/captures/..%2Fflash/lines")
+    assert [x["name"] for x in glob] == ["reboot-normal-2026-10-23T12-30-00", "flash-cfg-2026-10-23T11-00-00"]
+    job = glob[0]
+    assert job["kind"] == "flash" and job["label"] == "reboot normal" and job["ok"] is False
+    assert job["started_at"] == "2026-10-23T12:30:00+00:00"
+    assert job["sources"]["job"] == 2 and job["sources"]["uart"] == 1
+    assert glob[1]["ok"] is None
+    texts = [x["text"] for x in lines["lines"]]
+    assert texts[0].startswith("Rebooting") and "Starting kernel ..." in texts
+    assert texts[-1] == "job failed: FLASH_FAILED no device in 0.5s"
+    assert {x["src"] for x in only_job["lines"]} == {"job"}
+    assert bad.status_code in (400, 404)
+
+
+def test_device_captures_and_device_flash_jobs_interleave_by_time(ws: Path) -> None:
+    _make_capture(ws, "capture-2026-10-23T12-00-00", [], device=SERIAL)
+    _make_capture(ws, "capture-2026-10-23T12-20-00", [], device=SERIAL)
+    d = ws / "devices" / SERIAL / "flash" / "plan-2026-10-23T12-10-00"
+    d.mkdir(parents=True)
+    (d / "timeline.jsonl").write_text(json.dumps({"t": 0.0, "src": "meta", "ev": "start", "label": "plan x"}) + "\n")
+    with _client() as c:
+        data = c.get(f"/api/timeline/captures?device={SERIAL}").json()["data"]
+    assert [(x["name"], x["kind"]) for x in data] == [
+        ("capture-2026-10-23T12-20-00", "capture"),
+        ("plan-2026-10-23T12-10-00", "flash"),
+        ("capture-2026-10-23T12-00-00", "capture"),
+    ]
+
+
 def test_list_respects_limit_and_other_devices_are_separate(ws) -> None:
     for i in range(3):
         _make_capture(ws, f"capture-2026-10-23T12-00-0{i}", [])

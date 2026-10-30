@@ -67,6 +67,7 @@ from pydantic import BaseModel, Field
 from alb.api.schema import API_VERSION
 from alb.remote.flash import REBOOT_WAIT_S, FlashEvent, get_flash_service
 from alb.remote.flash_plan import Plan, build_plan
+from alb.remote.flash_timeline import JOB_DIR_RE
 from alb.remote.protocol import JobEvent
 
 router = APIRouter(prefix="/api/flash", tags=["flash"])
@@ -292,9 +293,7 @@ async def flash_plan_run(body: PlanRunBody) -> StreamingResponse:
 # mid-flash lost the NDJSON stream; these two endpoints let it read the
 # outcome from disk instead. Read-only.
 
-_JOB_DIR_RE = re.compile(
-    r"^(?P<kind>[A-Za-z0-9][A-Za-z0-9._-]*?)-(?P<ts>\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d)(?:-\d{1,3})?$"
-)
+_JOB_DIR_RE = JOB_DIR_RE
 # `<device>~<dir>` for a job recorded under a device; a bare `<dir>` for the
 # global record. `~` cannot occur in a device serial or a job directory name.
 _JOB_ID_RE = re.compile(

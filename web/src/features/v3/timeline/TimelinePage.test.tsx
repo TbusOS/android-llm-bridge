@@ -190,6 +190,23 @@ describe("TimelinePage", () => {
     expect(first).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("lists a flash job's timeline, reads its job lines, and does not ask for logcat there", async () => {
+    const FLASH = { name: "reboot-normal-2026-10-28T09-40-00", kind: "flash", label: "reboot normal", ok: false, started_at: "2026-10-28T09:40:00+00:00", duration_s: 1, sources: { logcat: 0, dmesg: 0, uart: 1, job: 2 }, size_bytes: 200, has_boot: false };
+    const f = mockFetch({
+      ...full,
+      "/api/timeline/captures?": () => json({ ok: true, data: [FLASH, CAP] }),
+      "/lines": () => json({ ok: true, data: { lines: [{ t: 0.5, ts: null, src: "job", text: "job failed: FLASH_FAILED no device in 0.5s", level: null, tag: null, pid: null }], truncated: false } }),
+    });
+    renderPage();
+    expect(await screen.findByRole("option", { name: /flash · reboot normal · failed/ })).toBeInTheDocument();
+    expect(await screen.findByText("job failed: FLASH_FAILED no device in 0.5s")).toBeInTheDocument();
+    // every source on: no `sources` filter, so the job lines come back too
+    const linesUrl = f.mock.calls.map((c) => String(c[0])).find((u) => u.includes("/lines")) ?? "";
+    expect(new URL(linesUrl, "http://x").searchParams.has("sources")).toBe(false);
+    // a flash job watches only the serial console: no "is adb online?" here
+    expect(screen.queryByText(/is adb online/)).not.toBeInTheDocument();
+  });
+
   it("says so when a source recorded nothing", async () => {
     mockFetch({ ...full, "/api/timeline/captures?": () => json({ ok: true, data: [{ ...CAP, sources: { logcat: 3, dmesg: 2, uart: 0 }, has_boot: false }] }) });
     renderPage();

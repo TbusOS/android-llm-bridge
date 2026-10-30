@@ -47,12 +47,14 @@ from alb.capabilities import power as power_cap
 from alb.capabilities.boot_stages import detect_boot
 from alb.capabilities.timeline import (
     ALL_SOURCES,
+    READ_SOURCES,
     capture_timeline,
     iter_timeline,
 )
 from alb.capabilities.timeline_view import density, line_view
 from alb.infra.result import Result, envelope_dict, envelope_transport_init_error
 from alb.infra.workspace import is_safe_device, iso_timestamp, workspace_root
+from alb.remote.flash_timeline import JOB_DIR_RE
 from alb.transport.factory import build_transport
 
 router = APIRouter(prefix="/api/timeline", tags=["timeline"])
@@ -84,17 +86,26 @@ def _timeline_dir(device: str | None) -> Path:
     return root / "devices" / device / "timeline" if device else root / "timeline"
 
 
+def _flash_dir(device: str | None) -> Path:
+    root = workspace_root()
+    return root / "devices" / device / "flash" if device else root / "flash"
+
+
 def _check_name(name: str) -> None:
-    if not _NAME_RE.match(name):
+    if not (_NAME_RE.match(name) or JOB_DIR_RE.match(name)):
         raise HTTPException(status_code=400, detail="invalid capture name")
 
 
 def _capture_path(device: str | None, name: str) -> Path:
     """The capture directory, or 400 / 404. Symlinks are refused: nothing
-    this API wrote is a link, so a link is somebody else's data."""
+    this API wrote is a link, so a link is somebody else's data.
+
+    `capture-<ts>` is a timeline recording; any other `<kind>-<ts>` is a
+    flash job, which records the same one-clock timeline.jsonl (ADR-056)."""
     _check_device(device)
     _check_name(name)
-    path = _timeline_dir(device) / name
+    base = _timeline_dir(device) if _NAME_RE.match(name) else _flash_dir(device)
+    path = base / name
     if path.is_symlink() or not (path / "timeline.jsonl").is_file():
         raise HTTPException(status_code=404, detail="capture not found")
     return path
@@ -181,29 +192,113 @@ def _boot_of(path: Path) -> dict[str, Any]:
     return report
 
 
-def _capture_dirs(device: str | None) -> list[Path]:
-    """Capture directories, newest first (names sort chronologically)."""
-    base = _timeline_dir(device)
+_STAMP_RE = re.compile(r"(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d)(?:-(\d{1,3}))?$")
+
+
+def _sort_key(path: Path) -> tuple[str, int]:
+    """(utc stamp, same-second index) from a capture or job directory name —
+    the two kinds share the stamp format, so they interleave by start time."""
+    m = _STAMP_RE.search(path.name)
+    return (m.group(1), int(m.group(2) or 1)) if m else ("", 0)
+
+
+def _capture_dirs(device: str | None) -> list[tuple[str, Path]]:
+    """(kind, directory) for timeline recordings and flash jobs, newest first."""
+    found: list[tuple[str, Path]] = []
+    for kind, base, pattern in (
+        ("capture", _timeline_dir(device), _NAME_RE),
+        ("flash", _flash_dir(device), JOB_DIR_RE),
+    ):
+        try:
+            found += [
+                (kind, p)
+                for p in base.iterdir()
+                if pattern.match(p.name)
+                and p.is_dir()
+                and not p.is_symlink()
+                and (p / "timeline.jsonl").is_file()
+            ]
+        except OSError:
+            continue
+    return sorted(found, key=lambda kp: _sort_key(kp[1]), reverse=True)
+
+
+# A flash job has no summary.json, so its line counts come from one pass over
+# the file; cached like boot detection, by (path, mtime, size).
+_COUNT_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
+
+
+def _flash_stats(path: Path) -> dict[str, Any]:
+    file = path / "timeline.jsonl"
     try:
-        entries = [
-            p
-            for p in base.iterdir()
-            if _NAME_RE.match(p.name) and p.is_dir() and not p.is_symlink()
-        ]
+        st = file.stat()
     except OSError:
-        return []
-    return sorted(entries, key=lambda p: p.name, reverse=True)
+        return {"sources": {}, "last_t": 0.0}
+    key = (str(file), st.st_mtime_ns, st.st_size)
+    hit = _COUNT_CACHE.get(key)
+    if hit is not None:
+        return hit
+    counts: dict[str, int] = {}
+    last_t = 0.0
+    for rec in iter_timeline(path):
+        src = str(rec.get("src") or "")
+        counts[src] = counts.get(src, 0) + 1
+        last_t = max(last_t, float(rec.get("t", 0.0)))
+    stats = {"sources": counts, "last_t": last_t}
+    if len(_COUNT_CACHE) >= _BOOT_CACHE_MAX:
+        _COUNT_CACHE.clear()
+    _COUNT_CACHE[key] = stats
+    return stats
+
+
+def _flash_entry(path: Path) -> dict[str, Any]:
+    job = _read_json(path / "job.json")
+    header = _read_header(path)
+    stats = _flash_stats(path)
+    m = _STAMP_RE.search(path.name)
+    took = job.get("duration_s")
+    return {
+        "name": path.name,
+        "kind": "flash",
+        "label": str(header.get("label") or path.name),
+        # null = no verdict on disk: still running, or the hub died mid-job
+        "ok": bool(job.get("ok")) if job else None,
+        "started_at": _iso_from_stamp(m.group(1)) if m else None,
+        "duration_s": round(float(took), 3) if isinstance(took, (int, float)) else round(stats["last_t"], 3),
+        "sources": {s: int(stats["sources"].get(s, 0)) for s in READ_SOURCES},
+        "size_bytes": _dir_size(path),
+        "has_boot": bool(_boot_of(path)["found"]),
+    }
+
+
+def _read_header(path: Path) -> dict[str, Any]:
+    """The `start` meta record a flash job opens its timeline with."""
+    try:
+        with (path / "timeline.jsonl").open("r", encoding="utf-8") as f:
+            first = json.loads(f.readline())
+    except (OSError, ValueError):
+        return {}
+    return first if isinstance(first, dict) else {}
+
+
+def _iso_from_stamp(stamp: str) -> str:
+    date, _, clock = stamp.partition("T")
+    return f"{date}T{clock.replace('-', ':')}+00:00"
 
 
 def _list_sync(device: str | None, limit: int) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for path in _capture_dirs(device)[:limit]:
+    for kind, path in _capture_dirs(device)[:limit]:
+        if kind == "flash":
+            out.append(_flash_entry(path))
+            continue
         summary = _read_json(path / "summary.json")
         raw_lines = summary.get("lines")
         lines: dict[str, Any] = raw_lines if isinstance(raw_lines, dict) else {}
         out.append(
             {
                 "name": path.name,
+                "kind": "capture",
                 "started_at": _started_at(path),
                 "duration_s": round(int(summary.get("duration_captured_ms") or 0) / 1000, 3),
                 "sources": {s: int(lines.get(s, 0) or 0) for s in ALL_SOURCES},
@@ -246,7 +341,8 @@ def _boot_sync(path: Path, device: str | None) -> dict[str, Any]:
     current = dict(_boot_of(path))
     previous: dict[str, Any] | None = None
     if current["found"]:
-        older = [p for p in _capture_dirs(device) if p.name < path.name][:20]
+        # a flash job that rebooted the board recorded a boot too
+        older = [p for _, p in _capture_dirs(device) if _sort_key(p) < _sort_key(path)][:20]
         for p in older:
             rep = _boot_of(p)
             if rep["found"]:
@@ -263,7 +359,7 @@ def _parse_sources(raw: str | None) -> set[str] | None:
     if not raw:
         return None
     wanted = {s.strip() for s in raw.split(",") if s.strip()}
-    if not wanted or not wanted <= set(ALL_SOURCES):
+    if not wanted or not wanted <= set(READ_SOURCES):
         raise HTTPException(status_code=400, detail="invalid sources")
     return wanted
 

@@ -161,11 +161,11 @@ export function TimelinePage() {
     return () => window.clearTimeout(id);
   }, [grepIn]);
 
-  const chosen = (["logcat", "dmesg", "uart"] as const).filter((s) => srcs[s]);
+  const chosen = (["logcat", "dmesg", "uart", "job"] as const).filter((s) => srcs[s]);
   const linesQ = useDashboardQuery({
     queryKey: ["tl-lines", device, name, chosen.join(","), grep, r0.toFixed(2), r1.toFixed(2)],
     queryFn: ({ signal }) =>
-      captureLines(name as string, { device, sources: chosen.length === 3 ? undefined : chosen.join(","), grep, t0: r0, t1: r1, limit: 2000 }, signal),
+      captureLines(name as string, { device, sources: chosen.length === 4 ? undefined : chosen.join(","), grep, t0: r0, t1: r1, limit: 2000 }, signal),
     refetchMs: 3_600_000,
     enabled: !!name && chosen.length > 0,
   });
@@ -371,7 +371,8 @@ export function TimelinePage() {
   const srcTag = (s: string) => (
     <span className={`src-tag ${TAG_CLASS[s] ?? ""}`}>{s === "uart" ? t("串口", "serial") : s === "job" ? t("烧录", "flash") : s}</span>
   );
-  const missing = (s: "uart" | "dmesg" | "logcat") => (cap.sources[s] ?? 0) === 0;
+  // A flash job only watches the serial console: no logcat / dmesg is expected there.
+  const missing = (s: "uart" | "dmesg" | "logcat") => (cap.sources[s] ?? 0) === 0 && !(cap.kind === "flash" && s !== "uart");
 
   return (
     <>
@@ -387,7 +388,8 @@ export function TimelinePage() {
             <select className="select" id="tl-cap" value={cap.name} onChange={(e) => setPicked(e.target.value)}>
               {list.map((c) => (
                 <option key={c.name} value={c.name}>
-                  {stamp(c.started_at)} · {c.duration_s.toFixed(0)} s · {(c.sources.logcat ?? 0) + (c.sources.dmesg ?? 0) + (c.sources.uart ?? 0)}{c.has_boot ? " · boot" : ""}
+                  {c.kind === "flash" ? `${t("烧录", "flash")} · ${c.label ?? c.name}${c.ok === false ? t(" · 失败", " · failed") : c.ok == null ? t(" · 没有结果", " · no result") : ""} · ` : ""}
+                  {stamp(c.started_at)} · {c.duration_s.toFixed(0)} s · {(c.sources.logcat ?? 0) + (c.sources.dmesg ?? 0) + (c.sources.uart ?? 0) + (c.sources.job ?? 0)}{c.has_boot ? " · boot" : ""}
                 </option>
               ))}
             </select>

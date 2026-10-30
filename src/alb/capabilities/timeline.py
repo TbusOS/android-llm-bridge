@@ -84,6 +84,9 @@ from alb.infra.workspace import InvalidDeviceSerial, iso_timestamp, workspace_pa
 from alb.transport.base import Transport
 
 ALL_SOURCES: Final[tuple[str, ...]] = ("logcat", "dmesg", "uart")
+# What a reader may ask for: the captured sources plus `job`, the progress
+# and verdict of a flash job written into the same file (remote/flash_timeline).
+READ_SOURCES: Final[tuple[str, ...]] = (*ALL_SOURCES, "job")
 
 # How long an incomplete trailing fragment (no newline yet) waits before it
 # is written out anyway. A bootloader prompt such as "=> " never gets its
@@ -841,6 +844,8 @@ def iter_timeline(
                 rec = json.loads(raw)
             except ValueError:
                 continue
+            if isinstance(rec, dict) and rec.get("src") == "job" and "line" not in rec:
+                rec = {**rec, "line": job_event_line(rec)}
             if not isinstance(rec, dict) or "line" not in rec:
                 continue  # meta records are for tooling, not for reading
             if sources is not None and rec.get("src") not in sources:
@@ -856,6 +861,28 @@ def iter_timeline(
                 yield heapq.heappop(heap)[2]
     while heap:
         yield heapq.heappop(heap)[2]
+
+
+def job_event_line(rec: dict[str, Any]) -> str:
+    """A flash job's event as one readable line, so a job's timeline reads
+    like any other: what the tool printed, then the verdict."""
+    ev = str(rec.get("ev") or "")
+    if ev == "progress":
+        text = str(rec.get("text") or "").strip()
+        if text:
+            return text
+        done, total = rec.get("done"), rec.get("total")
+        return f"{rec.get('phase') or 'progress'} {done}/{total}" if total else str(rec.get("phase") or ev)
+    if ev == "done":
+        took = rec.get("duration_s")
+        tail = f" in {float(took):.1f}s" if isinstance(took, (int, float)) else ""
+        if rec.get("ok"):
+            return f"job finished: ok{tail}"
+        what = " ".join(str(x) for x in (rec.get("code"), rec.get("error")) if x)
+        line = rec.get("failed_line")
+        where = f" at manifest line {line}" if line else ""
+        return f"job failed{where}: {what or 'error'}{tail}"
+    return f"job {ev}" if ev else "job event"
 
 
 def format_line(rec: dict[str, Any]) -> str:

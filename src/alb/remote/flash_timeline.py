@@ -32,6 +32,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from types import TracebackType
@@ -40,6 +41,13 @@ from typing import Any
 from alb.infra.workspace import iso_timestamp, workspace_path
 
 _log = logging.getLogger(__name__)
+
+# The directory names `new_timeline` below creates: `<kind>-<utc stamp>`
+# plus `-N` when two jobs start in one second. Read by the flash job
+# endpoints and by the timeline, which lists these jobs next to captures.
+JOB_DIR_RE = re.compile(
+    r"^(?P<kind>[A-Za-z0-9][A-Za-z0-9._-]*?)-(?P<ts>\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d)(?:-\d{1,3})?$"
+)
 
 _CHUNK = 65536
 # Longest a partial line waits before being written out anyway. A bootloader
