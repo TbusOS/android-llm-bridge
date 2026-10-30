@@ -216,6 +216,50 @@ async def test_search_logs_finds_matches(monkeypatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_logs_since_keeps_files_written_after_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+    import time
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    log_dir = tmp_path / "devices" / "abc" / "logs"
+    log_dir.mkdir(parents=True)
+    old, new = log_dir / "old.txt", log_dir / "new.txt"
+    old.write_text("FATAL last week\n")
+    new.write_text("FATAL just now\n")
+    week_ago = time.time() - 7 * 86400
+    os.utime(old, (week_ago, week_ago))
+
+    r = await search_logs("FATAL", since="1h")
+    assert r.ok and r.data is not None
+    assert [Path(m.path).name for m in r.data.matches] == ["new.txt"]
+    assert (r.data.files_searched, r.data.files_older) == (1, 1)
+    assert r.data.since is not None
+
+    everything = await search_logs("FATAL")
+    assert everything.ok and everything.data is not None
+    assert len(everything.data.matches) == 2 and everything.data.files_older == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["5", "yesterday", "2w"])
+async def test_search_logs_rejects_a_bad_since(bad: str) -> None:
+    r = await search_logs("x", since=bad)
+    assert not r.ok and r.error is not None
+    assert r.error.code == "INVALID_FILTER"
+
+
+def test_parse_since_forms() -> None:
+    from alb.capabilities.logging import parse_since
+
+    assert parse_since("2h", now=10_000.0) == 2_800.0
+    assert parse_since("30m", now=10_000.0) == 8_200.0
+    assert parse_since("1761800000") == 1761800000.0
+    assert parse_since("2026-10-30T09:00:00+00:00") == 1793350800.0
+
+
+@pytest.mark.asyncio
 async def test_search_logs_covers_serial_and_timeline_recordings(
     monkeypatch, tmp_path: Path
 ) -> None:

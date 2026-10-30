@@ -51,6 +51,22 @@ def test_search_finds_matches_with_line_numbers(client, workspace) -> None:
     assert line_numbers == [2, 4]
 
 
+def test_search_since_filters_files_and_rejects_bad_values(
+    client: TestClient, workspace: Path
+) -> None:
+    import os
+    import time
+
+    old = _put_log(workspace, "abc123", "old.txt", "ERROR: long ago\n")
+    _put_log(workspace, "abc123", "new.txt", "ERROR: now\n")
+    stamp = time.time() - 3 * 86400
+    os.utime(old, (stamp, stamp))
+    data = client.get("/api/log/search?pattern=ERROR&since=24h").json()["data"]
+    assert data["match_count"] == 1 and data["files_older"] == 1
+    bad = client.get("/api/log/search?pattern=ERROR&since=soon").json()
+    assert bad["ok"] is False and bad["error"]["code"] == "INVALID_FILTER"
+
+
 def test_search_truncates_at_max(client, workspace) -> None:
     _put_log(
         workspace,

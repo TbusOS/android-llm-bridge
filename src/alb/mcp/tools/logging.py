@@ -191,6 +191,7 @@ def register(mcp) -> None:
         path: str | None = None,
         device: str | None = None,
         max_matches: int = 200,
+        since: str | None = None,
     ) -> dict[str, Any]:
         """Regex-search across workspace-collected logs.
 
@@ -205,9 +206,14 @@ def register(mcp) -> None:
             path: optional single file or directory (default: all workspace logs)
             device: limit to one device's logs
             max_matches: cap at 200 by default
+            since: only files written to since then — "30m", "2h", "7d", an
+                ISO time or epoch seconds. A file still being written after
+                it is searched whole (lines carry no common clock).
         """
         p = Path(path).resolve() if path else None
-        r = await search_logs(pattern, path=p, device=device, max_matches=max_matches)
+        r = await search_logs(
+            pattern, path=p, device=device, max_matches=max_matches, since=since
+        )
         return r.to_dict()
 
     @mcp.tool()

@@ -222,6 +222,30 @@ describe("LogsPage other tabs", () => {
     expect(screen.getAllByRole("link", { name: "Open" })).toHaveLength(1);
   });
 
+  it("a time range is sent as since, and older files left out are reported", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input));
+        return json({ ok: true, data: { pattern: "panic", truncated: false, match_count: 0, matches: [], files_searched: 2, files_older: 5, since: 1 } });
+      }),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Search all recordings/ }));
+    fireEvent.change(screen.getByLabelText("search"), { target: { value: "panic" } });
+    fireEvent.change(screen.getByLabelText("time range"), { target: { value: "24h" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText(/5 older files fall outside this time range/)).toBeInTheDocument();
+    const q = new URL(urls.find((u) => u.startsWith("/api/log/search")) ?? "", "http://x").searchParams;
+    expect(q.get("since")).toBe("24h");
+    // "any time" sends no since at all
+    fireEvent.change(screen.getByLabelText("time range"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(urls.filter((u) => u.startsWith("/api/log/search"))).toHaveLength(2));
+    expect(new URL(urls.filter((u) => u.startsWith("/api/log/search"))[1] ?? "", "http://x").searchParams.has("since")).toBe(false);
+  });
+
   it("shows the empty result and the error result of a search", async () => {
     const f = vi.fn(async () => json({ ok: true, data: { pattern: "zzz", truncated: false, match_count: 0, matches: [] } }));
     vi.stubGlobal("fetch", f);

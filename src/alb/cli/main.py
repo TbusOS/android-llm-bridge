@@ -343,9 +343,17 @@ def log_search(
     path: Path | None = typer.Option(None, "--path"),
     device: str | None = typer.Option(None, "--device"),
     max_matches: int = typer.Option(200, "--max"),
+    since: str | None = typer.Option(
+        None,
+        "--since",
+        help="Only files written to since then: 30m / 2h / 7d, an ISO time "
+        "(2026-10-30T09:00), or epoch seconds.",
+    ),
 ) -> None:
     """Regex-search across collected logs."""
-    result = run_async(search_logs(pattern, path=path, device=device, max_matches=max_matches))
+    result = run_async(
+        search_logs(pattern, path=path, device=device, max_matches=max_matches, since=since)
+    )
     print_result(ctx, result)
 
 

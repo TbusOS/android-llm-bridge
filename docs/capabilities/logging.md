@@ -38,7 +38,7 @@ alb dmesg [--duration N] [--output PATH]
 alb uart-capture [--duration N] [--baud 115200] [--output PATH]
 
 # 检索已采集的日志
-alb log search <pattern> [--device D] [--from TIME] [--to TIME]
+alb log search <pattern> [--device D] [--path P] [--max N] [--since 30m|2h|7d|ISO]
 
 # 分页读日志文件
 alb log tail <path> [--lines N]
@@ -65,7 +65,8 @@ alb logcat --duration 30 --output ./run-A.txt               # 落到指定文件
 alb dmesg --duration 10
 alb uart-capture --duration 30 --baud 1500000
 alb diag bugreport --output ./reports/                      # zip 落到 reports/
-alb log search "FATAL" --from "2026-04-15T10:00" --to "2026-04-15T11:00"
+alb log search "FATAL" --since 2h                          # 只搜最近 2 小时里还在写的文件
+alb log search "FATAL" --since 2026-04-15T10:00
 alb log tail workspace/devices/abc/logs/xxx.txt --lines 50
 ```
 
@@ -120,10 +121,12 @@ async def alb_uart_capture(duration: int = 30, baud: int = 115200, ...) -> dict:
     Use for: boot log, u-boot stage, kernel panic rescue."""
 
 @mcp.tool()
-async def alb_log_search(pattern: str, device: str | None = None,
-                         from_time: str | None = None,
-                         to_time: str | None = None) -> dict:
+async def alb_log_search(pattern: str, path: str | None = None,
+                         device: str | None = None, max_matches: int = 200,
+                         since: str | None = None) -> dict:
     """Search across all collected logs for a pattern.
+       since: "30m" / "2h" / "7d" / ISO time — only files last written
+       after it (a file filter: log lines carry no common clock).
        LLM 换页模式: 当长日志 context 爆时, 先 collect 只返路径,
        然后用 search 按需读取相关片段."""
 
@@ -151,9 +154,11 @@ async def capture_uart(transport, duration=30) -> Result[UartCapture]:
                     suggestion="Switch to serial transport: alb setup serial")
     ...
 
-async def search_logs(pattern: str, device=None, from_time=None,
-                      to_time=None) -> Result[SearchResults]:
-    """在 workspace 里搜。M1 用 grep；M2 用 sqlite FTS5。"""
+async def search_logs(pattern: str, *, path=None, device=None, max_matches=200,
+                      since=None) -> Result[SearchResults]:
+    """在 workspace 里搜。since 按文件最后写入时间筛,不按行:
+    logcat 行是板子时钟、没有年份,串口原始抓取没有时间,只有文件
+    写入时间是统一的。早先设想的 from_time / to_time 没有实现。"""
 
 async def tail_log(path: Path, lines: int = 50) -> Result[str]:
     """只允许读 workspace/ 内的路径（防路径穿越）。"""

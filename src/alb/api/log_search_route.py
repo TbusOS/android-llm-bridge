@@ -36,8 +36,13 @@ async def get_log_search(
     pattern: str = Query(..., min_length=1, max_length=512),
     device: str | None = Query(None, max_length=128),
     max: int = Query(200, ge=1, le=1000),
+    since: str | None = Query(None, max_length=40),
 ) -> dict[str, Any]:
     """Regex-search across workspace logs and return line-level matches.
+
+    ``since`` ("1h" / "24h" / "7d" back from the hub's clock, an ISO time
+    or epoch seconds) keeps only files written to since then; a bad value
+    is ``ok: false`` / ``INVALID_FILTER`` like a bad pattern.
 
     The pattern is compiled by the capability layer (``re.compile``);
     bad regex syntax bubbles up as ``ok: false`` with ``error.code =
@@ -46,7 +51,7 @@ async def get_log_search(
     if device and not is_safe_device(device):
         # L-051: no-echo on reject (sec MID-1). See diag_route._resolve_transport.
         raise HTTPException(status_code=400, detail="invalid device serial")
-    r = await search_logs(pattern, device=device, max_matches=max)
+    r = await search_logs(pattern, device=device, max_matches=max, since=since)
     return envelope_dict(r)
 
 

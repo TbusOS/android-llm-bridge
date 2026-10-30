@@ -173,12 +173,17 @@ interface SearchResult {
   truncated: boolean;
   max: number;
   ms: number | null;
+  older: number;
 }
+
+/** `since` choices: files last written within this long, counted on the hub's clock. */
+const SINCE = ["", "1h", "24h", "7d"] as const;
 
 export function SearchPanel({ device }: { device: string | null }) {
   const t = useT();
   const [q, setQ] = useState("panic|oops|fatal");
   const [max, setMax] = useState<number>(200);
+  const [since, setSince] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<SearchResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -191,8 +196,8 @@ export function SearchPanel({ device }: { device: string | null }) {
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetchLogSearch(pattern, { device, max });
-      if (r.ok && r.data) setRes({ pattern, matches: r.data.matches, truncated: r.data.truncated, max, ms: r.timing_ms ?? null });
+      const r = await fetchLogSearch(pattern, { device, max, since: since || null });
+      if (r.ok && r.data) setRes({ pattern, matches: r.data.matches, truncated: r.data.truncated, max, ms: r.timing_ms ?? null, older: r.data.files_older ?? 0 });
       else {
         setRes(null);
         setErr(`${r.error?.code ?? "ERROR"}: ${r.error?.message ?? ""}`);
@@ -234,6 +239,20 @@ export function SearchPanel({ device }: { device: string | null }) {
             <Icon name="search" size="sm" />
             <input value={q} onChange={(e) => setQ(e.target.value)} aria-label={t("搜索", "search")} placeholder={t("正则,例如 Unable to handle kernel", "Regex, e.g. Unable to handle kernel")} />
           </label>
+          <select
+            className="select"
+            style={{ width: "auto" }}
+            aria-label={t("时间范围", "time range")}
+            title={t("按文件最后写入的时间筛:只搜这段时间里还在写的文件。日志行自己的时间不统一(logcat 是板子时钟、没有年份),所以按文件筛。", "Filters by when a file was last written: only files still being written in this window are searched. Log lines carry no common clock (logcat has the board's, without a year), so files are filtered instead.")}
+            value={since}
+            onChange={(e) => setSince(e.target.value)}
+          >
+            {SINCE.map((s) => (
+              <option key={s} value={s}>
+                {s === "" ? t("全部时间", "any time") : s === "1h" ? t("最近 1 小时", "last hour") : s === "24h" ? t("最近 24 小时", "last 24 hours") : t("最近 7 天", "last 7 days")}
+              </option>
+            ))}
+          </select>
           <select className="select" style={{ width: "auto" }} aria-label={t("最多列出几处命中", "most hits to list")} value={max} onChange={(e) => setMax(Number(e.target.value))}>
             {LIMITS.map((n) => (
               <option key={n} value={n}>{t(`最多 ${n} 处`, `up to ${n} hits`)}</option>
@@ -263,13 +282,18 @@ export function SearchPanel({ device }: { device: string | null }) {
             {t("时间轴录制、串口抓取、dmesg 和 logcat 抓取都会被搜到。", "Timeline recordings, serial captures, dmesg and logcat captures are all searched.")}
           </Empty>
         ) : res && res.matches.length === 0 ? (
-          <Empty icon="search" title={t("没有命中", "No hits")}>{t("换个关键词,或者先录一段时间轴。", "Try another pattern, or record a timeline first.")}</Empty>
+          <Empty icon="search" title={t("没有命中", "No hits")}>
+            {res.older
+              ? t(`${res.older} 个更早的文件没在这个时间范围里,没搜。放宽时间范围再试。`, `${res.older} older files fall outside this time range and were not searched. Widen the range and try again.`)
+              : t("换个关键词,或者先录一段时间轴。", "Try another pattern, or record a timeline first.")}
+          </Empty>
         ) : res ? (
           <>
             <div className="t-body-small t-muted" aria-live="polite">
               {t(`${res.matches.length} 处命中,在 ${files} 个文件里`, `${res.matches.length} hits in ${files} files`)}
               {res.ms !== null ? t(` · 用时 ${res.ms} ms`, ` · ${res.ms} ms`) : ""}
               {res.truncated ? t(`,只列了前 ${res.max} 处,调大上限能看到更多`, `; only the first ${res.max} are listed, raise the limit to see more`) : ""}
+              {res.older ? t(` · ${res.older} 个更早的文件没搜`, ` · ${res.older} older files not searched`) : ""}
             </div>
             <ul className="list">
               {res.matches.map((m, i) => {

@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -86,6 +88,11 @@ class SearchResults:
     pattern: str
     matches: list[SearchMatch]
     truncated: bool = False
+    # How many files were read, and how many a `since` left out because
+    # nothing was written to them after it (0 without a `since`).
+    files_searched: int = 0
+    files_older: int = 0
+    since: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,7 +100,40 @@ class SearchResults:
             "matches": [m.to_dict() for m in self.matches],
             "truncated": self.truncated,
             "match_count": len(self.matches),
+            "files_searched": self.files_searched,
+            "files_older": self.files_older,
+            "since": self.since,
         }
+
+
+_SINCE_RELATIVE = re.compile(r"^(\d+(?:\.\d+)?)\s*([smhd])$")
+_SINCE_UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_since(text: str, *, now: float | None = None) -> float:
+    """`since` as the CLI, MCP and the web send it → epoch seconds.
+
+    "30m" / "2h" / "7d" (back from now, on the hub's clock — so a browser on
+    another machine with a skewed clock still means what it says), an ISO
+    8601 time ("2026-10-30T09:00", naive = the hub's local time) or epoch
+    seconds. ValueError on anything else."""
+    raw = text.strip()
+    if m := _SINCE_RELATIVE.match(raw):
+        return (time.time() if now is None else now) - float(m.group(1)) * _SINCE_UNIT_S[m.group(2)]
+    try:
+        value = float(raw)
+    except ValueError:
+        pass
+    else:
+        if value > 1e9:  # epoch seconds; a bare small number is ambiguous
+            return value
+        raise ValueError(f"since {text!r}: a bare number must be epoch seconds — use 30m / 2h / 7d")
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        raise ValueError(
+            f"since {text!r}: use 30m / 2h / 7d, an ISO time like 2026-10-30T09:00, or epoch seconds"
+        ) from None
 
 
 # ─── logcat ────────────────────────────────────────────────────────
@@ -548,11 +588,19 @@ async def search_logs(
     path: Path | None = None,
     device: str | None = None,
     max_matches: int = 200,
+    since: float | str | None = None,
 ) -> Result[SearchResults]:
     """Grep-style search across workspace logs.
 
     If `path` is None, searches all files under workspace/devices/<serial>/logs/
     (or all devices if `device` is None).
+
+    `since` (epoch seconds, or text for `parse_since`) keeps the files last written
+    at or after it. It is a file filter, not a line filter: log lines carry
+    no common clock (logcat has the board's, without a year; a raw serial
+    capture has none), but every file has the time it was last written. A
+    file that was still being written after `since` is searched whole,
+    earlier lines included.
 
     ReDoS guard: the actual scan runs in a worker thread with a hard
     ``_SEARCH_TIMEOUT_S`` cap via :func:`asyncio.wait_for`.  Pathological
@@ -579,6 +627,22 @@ async def search_logs(
             category="input",
         )
 
+    if isinstance(since, str):
+        try:
+            since = parse_since(since)
+        except ValueError as e:
+            return fail(
+                code="INVALID_FILTER",
+                message=str(e),
+                suggestion="since: 30m / 2h / 7d, an ISO time, or epoch seconds",
+                category="input",
+            )
+    older = 0
+    if since is not None:
+        kept = [f for f in files if _mtime(f) >= since]
+        older = len(files) - len(kept)
+        files = kept
+
     deadline = perf_counter() + _SEARCH_TIMEOUT_S
     try:
         matches, truncated, timed_out = await asyncio.wait_for(
@@ -604,7 +668,23 @@ async def search_logs(
             category="timeout",
         )
 
-    return ok(data=SearchResults(pattern=pattern, matches=matches, truncated=truncated))
+    return ok(
+        data=SearchResults(
+            pattern=pattern,
+            matches=matches,
+            truncated=truncated,
+            files_searched=len(files),
+            files_older=older,
+            since=since,
+        )
+    )
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0  # vanished since it was listed: counts as older
 
 
 async def tail_log(

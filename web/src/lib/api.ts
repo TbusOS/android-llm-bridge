@@ -1285,6 +1285,10 @@ export interface LogSearchData {
   matches: LogSearchMatch[];
   truncated: boolean;
   match_count: number;
+  /** Files read, and files a `since` left out as last written before it. */
+  files_searched?: number;
+  files_older?: number;
+  since?: number | null;
 }
 
 export interface LogSearchResponse {
@@ -1296,12 +1300,14 @@ export interface LogSearchResponse {
 
 export async function fetchLogSearch(
   pattern: string,
-  opts: { device?: string | null; max?: number } = {},
+  opts: { device?: string | null; max?: number; since?: string | null } = {},
   signal?: AbortSignal,
 ): Promise<LogSearchResponse> {
   const params = new URLSearchParams({ pattern });
   if (opts.device) params.set("device", opts.device);
   if (opts.max != null) params.set("max", String(opts.max));
+  // "1h" / "24h" / "7d": counted back on the hub's clock, not this browser's
+  if (opts.since) params.set("since", opts.since);
   const r = await fetch(`/api/log/search?${params.toString()}`, { signal });
   if (!r.ok && r.status !== 422 && r.status !== 400) {
     throw new AlbApiError(
