@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -290,3 +291,56 @@ def test_empty_filter_passes(monkeypatch, tmp_path) -> None:
                 ws.receive_bytes()
     # Empty string falls through truthy check → not forwarded as kwarg.
     assert "filter" not in captured_kwargs
+
+
+def test_stream_passes_buffers_to_stream_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.logcat_stream_route.build_transport",
+        lambda **_: _FakeAdbStreamTransport(last_kwargs=captured),
+    )
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/logcat/stream") as ws:
+            ws.send_json({"buffers": ["events", "crash", "events"]})
+            ready = ws.receive_json()
+            for _ in range(3):
+                ws.receive_bytes()
+    assert ready["buffers"] == ["events", "crash"]
+    assert captured.get("buffers") == ["events", "crash"]
+
+
+def test_no_buffers_means_the_boards_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.logcat_stream_route.build_transport",
+        lambda **_: _FakeAdbStreamTransport(last_kwargs=captured),
+    )
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/logcat/stream") as ws:
+            ws.send_json({"buffers": []})
+            assert ws.receive_json()["buffers"] == []
+            for _ in range(3):
+                ws.receive_bytes()
+    assert "buffers" not in captured
+
+
+@pytest.mark.parametrize("bad", [["Events"], ["main;reboot"], "main", ["a"] * 9, [1]])
+def test_bad_buffers_rejected_with_close_frame(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "alb.api.logcat_stream_route.build_transport",
+        lambda **_: _FakeAdbStreamTransport(),
+    )
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/logcat/stream") as ws:
+            ws.send_json({"buffers": bad})
+            msg = ws.receive_json()
+    assert msg["type"] == "closed" and msg["reason"] == "bad_buffers"

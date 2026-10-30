@@ -26,6 +26,7 @@ def register(mcp) -> None:
         tags: list[str] | None = None,
         clear_before: bool = False,
         device: str | None = None,
+        buffers: list[str] | None = None,
     ) -> dict[str, Any]:
         """Collect Android logcat to workspace for `duration` seconds.
 
@@ -50,6 +51,8 @@ def register(mcp) -> None:
             tags: shortcut — auto-builds "<tag>:V *:S" style filter
             clear_before: run `logcat -c` before collecting
             device: optional device serial
+            buffers: `logcat -b` names, e.g. ["events"] for system events,
+                ["radio"] for the modem, ["all"]; omit for the board's default
         """
         t = build_transport(device_serial=device)
         r = await collect_logcat(
@@ -59,6 +62,7 @@ def register(mcp) -> None:
             tags=tags,
             clear_before=clear_before,
             device=device,
+            buffers=buffers,
         )
         return r.to_dict()
 

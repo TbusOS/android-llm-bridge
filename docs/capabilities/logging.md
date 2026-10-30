@@ -29,7 +29,7 @@ tags: [capability, logging, logcat, dmesg, uart]
 
 ```bash
 # logcat 采集
-alb logcat [--duration N] [--filter FILTER] [--tag TAG]... [--clear] [--output PATH]
+alb logcat [--duration N] [--filter FILTER] [--tag TAG]... [--buffer NAME]... [--clear] [--output PATH]
 
 # dmesg
 alb dmesg [--duration N] [--output PATH]
@@ -59,6 +59,7 @@ alb log list [--device D]
 alb logcat --duration 30 --filter "*:E"                     # 仅 Error 级别
 alb logcat --duration 60 --tag ActivityManager --tag WindowManager
 alb logcat --clear --duration 120                           # 先清缓冲再采集
+alb logcat --duration 30 --buffer events                    # 只读 events 缓冲区(logcat -b events)
 alb logcat --duration 30 --output ./logs/                   # 落到当前目录的 logs/
 alb logcat --duration 30 --output ./run-A.txt               # 落到指定文件
 alb dmesg --duration 10
@@ -80,6 +81,7 @@ async def alb_logcat(
     tags: list[str] = [],
     clear_before: bool = False,
     device: str | None = None,
+    buffers: list[str] | None = None,
 ) -> dict:
     """
     Collect Android logcat to workspace.
@@ -103,6 +105,8 @@ async def alb_logcat(
       filter:   logcat filter expression
       tags:     tag names to keep (convenience; combined into filter)
       clear_before: logcat -c before collecting
+      buffers:  logcat -b names, e.g. ["events"], ["radio"], ["all"];
+                omit for the board's default buffers
     """
 
 @mcp.tool()
@@ -136,7 +140,7 @@ async def alb_log_tail(path: str, lines: int = 50) -> dict:
 # src/alb/capabilities/logging.py
 
 async def collect_logcat(transport, duration=60, filter=None, tags=[],
-                         clear_before=False) -> Result[LogcatSummary]: ...
+                         clear_before=False, buffers=None) -> Result[LogcatSummary]: ...
 
 async def collect_dmesg(transport, duration=10) -> Result[DmesgSummary]: ...
 

@@ -106,6 +106,11 @@ _LOGCAT_THREADTIME_RE = re.compile(
 )
 
 
+# `logcat -b` names: the same shape rule as /logcat/stream and the timeline.
+_BUFFER_NAME = re.compile(r"^[a-z]{1,16}$")
+_MAX_BUFFERS = 8
+
+
 async def collect_logcat(
     transport: Transport,
     *,
@@ -115,6 +120,7 @@ async def collect_logcat(
     clear_before: bool = False,
     device: str | None = None,
     output: Path | str | None = None,
+    buffers: list[str] | None = None,
 ) -> Result[LogcatSummary]:
     """Collect logcat for N seconds into a workspace file.
 
@@ -127,7 +133,18 @@ async def collect_logcat(
             - None → workspace/.../logs/<ts>-logcat.txt
             - Existing dir or trailing "/" → that dir + auto file name
             - Anything else → exact file path
+        buffers: `logcat -b <name>` each, e.g. ["events"] or ["all"];
+            None / [] = the board's default buffers. Which names exist is
+            the board's call; only the shape is checked here.
     """
+    bad = [b for b in buffers or [] if not isinstance(b, str) or not _BUFFER_NAME.match(b)]
+    if bad or len(buffers or []) > _MAX_BUFFERS:
+        return fail(
+            code="INVALID_FILTER",
+            message=f"bad logcat buffers: {bad or buffers!r}",
+            suggestion=f"Up to {_MAX_BUFFERS} lowercase names, e.g. main, system, crash, events, radio, all",
+            category="input",
+        )
     if duration < 1 or duration > 3600:
         return fail(
             code="INVALID_DURATION",
@@ -158,12 +175,14 @@ async def collect_logcat(
         device=device,
     )
 
+    # Only when asked: a transport without `-b` support never sees the key.
+    extra: dict[str, Any] = {"buffers": list(buffers)} if buffers else {}
     start = perf_counter()
     stats = _LineStats()
     try:
         async with asyncio.timeout(duration + 5):
             await _drain_stream(
-                transport.stream_read("logcat", filter=filt, clear=clear_before),
+                transport.stream_read("logcat", filter=filt, clear=clear_before, **extra),
                 artifact,
                 stats,
                 max_seconds=duration,

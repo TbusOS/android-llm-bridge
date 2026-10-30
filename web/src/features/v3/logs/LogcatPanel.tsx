@@ -7,7 +7,7 @@ import { Dot, Empty, ErrorBanner, toast } from "../../../components/v3/ui";
 import { copyText } from "../../../lib/clipboard";
 import { useT } from "../../../lib/i18n";
 import { useShell } from "../../../stores/shell";
-import { badSpecTokens, LEVELS, type Level, type LogEntry, makeMatcher, parseQuery, type useLogcat } from "./logcatModel";
+import { badSpecTokens, LEVELS, LOGCAT_BUFFERS, type Level, type LogEntry, makeMatcher, parseQuery, type useLogcat } from "./logcatModel";
 
 const PAGE = 1000;
 
@@ -94,6 +94,21 @@ export function LogcatPanel({ lc, device }: { lc: ReturnType<typeof useLogcat>; 
               {t("应用", "Apply")}
             </button>
           </form>
+          <select
+            className="select"
+            style={{ width: "auto" }}
+            value={lc.buffer}
+            onChange={(e) => lc.applyBuffer(e.target.value)}
+            aria-label={t("缓冲区", "Buffer")}
+            title={t(
+              "交给 adb logcat -b 的缓冲区。默认是板子自己的那组(多数是 main、system、crash);events 是系统事件,radio 是基带,kernel 是内核日志(要板子支持),all 是全部。切换时清屏重连。",
+              "Buffer handed to adb logcat -b. Default is the board's own set (main, system and crash on most boards); events holds system events, radio the modem, kernel the kernel log (if the board has it), all every buffer. Switching clears the view and reconnects.",
+            )}
+          >
+            {LOGCAT_BUFFERS.map((b) => (
+              <option key={b} value={b}>{b ? b : t("默认缓冲区", "default buffers")}</option>
+            ))}
+          </select>
           <div className="seg seg--sm" role="group" aria-label={t("级别", "levels")}>
             {LEVELS.map((l) => (
               <button key={l} type="button" aria-pressed={levels.has(l)} onClick={() => toggleLevel(l)}>{l}</button>

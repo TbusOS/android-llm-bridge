@@ -6,11 +6,15 @@ frontend useUartStream hook can be reused mostly verbatim.
 Protocol:
 
     C → S (first JSON, optional, 1.5 s timeout):
-        {"device": "<serial>", "filter": "*:E", "tags": ["MyApp"]}
+        {"device": "<serial>", "filter": "*:E", "tags": ["MyApp"],
+         "buffers": ["events"]}
+        `buffers` → `logcat -b <name>` each; absent / [] = the board's
+        default buffers. Names are checked for shape only — which ones exist
+        is the board's call (`logcat -b radio` on a board without a radio).
 
     S → C (JSON, on accept):
         {"type": "ready", "device": "...", "transport": "adb",
-         "filter": "<final filter>"}
+         "filter": "<final filter>", "buffers": [...]}
 
     S → C (binary frames):
         Raw logcat bytes (verbatim from AdbTransport.stream_read('logcat')).
@@ -57,6 +61,26 @@ class _CloseState:
 _FILTER_TOKEN = re.compile(r"^[A-Za-z0-9_.*-]+:[VDIWEFSvdiwefs]$")
 
 
+_BUFFER_NAME = re.compile(r"^[a-z]{1,16}$")
+_MAX_BUFFERS = 8
+
+
+def _parse_buffers(raw: Any) -> tuple[list[str], str | None]:
+    """`buffers` from the first frame → (names, error). Same shape rule as the
+    timeline's logcat_buffers; duplicates are dropped, order kept."""
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list) or len(raw) > _MAX_BUFFERS:
+        return [], f"buffers must be a list of at most {_MAX_BUFFERS} names"
+    names: list[str] = []
+    for b in raw:
+        if not isinstance(b, str) or not _BUFFER_NAME.match(b):
+            return [], f"bad logcat buffer name: {b!r} (lowercase letters, e.g. main, events)"
+        if b not in names:
+            names.append(b)
+    return names, None
+
+
 def _validate_filter_spec(spec: str | None) -> str | None:
     """Return error message if logcat filter spec is invalid, None if OK.
 
@@ -92,6 +116,7 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
     device = config.get("device")
     filter_spec = config.get("filter")
     tags = config.get("tags")
+    buffers, buffers_err = _parse_buffers(config.get("buffers"))
 
     # Build a filter spec from `tags` if provided and `filter` wasn't —
     # mirrors alb_logcat MCP tool ergonomics.
@@ -104,6 +129,12 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
         await ws.send_json(
             {"type": "closed", "reason": "bad_device", "error": "invalid device serial"}
         )
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
+
+    if buffers_err is not None:
+        await ws.send_json({"type": "closed", "reason": "bad_buffers", "error": buffers_err})
         with contextlib.suppress(Exception):
             await ws.close()
         return
@@ -160,12 +191,13 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
             "device": device or "",
             "transport": getattr(transport, "name", "adb"),
             "filter": filter_spec or "",
+            "buffers": buffers,
         }
     )
 
     cs = _CloseState()
     pump_task = asyncio.create_task(
-        _pump_logcat_to_ws(ws, transport, filter_spec, cs)
+        _pump_logcat_to_ws(ws, transport, filter_spec, cs, buffers)
     )
     recv_task = asyncio.create_task(_recv_loop(ws))
     try:
@@ -190,13 +222,19 @@ async def logcat_stream_ws(ws: WebSocket) -> None:
 
 
 async def _pump_logcat_to_ws(
-    ws: WebSocket, transport: Any, filter_spec: str | None, cs: _CloseState
+    ws: WebSocket,
+    transport: Any,
+    filter_spec: str | None,
+    cs: _CloseState,
+    buffers: list[str] | None = None,
 ) -> None:
-    """Iterate transport.stream_read('logcat', filter=...) and forward
-    each chunk as a binary WS frame."""
+    """Iterate transport.stream_read('logcat', filter=..., buffers=...) and
+    forward each chunk as a binary WS frame."""
     kwargs: dict[str, Any] = {}
     if filter_spec:
         kwargs["filter"] = filter_spec
+    if buffers:
+        kwargs["buffers"] = buffers
     try:
         async for chunk in transport.stream_read("logcat", **kwargs):
             if not chunk:

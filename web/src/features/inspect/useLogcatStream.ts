@@ -27,6 +27,8 @@ export interface LogcatConnectArgs {
   device?: string | null;
   filter?: string | null;
   tags?: string[] | null;
+  /** `logcat -b <name>` each; empty / absent = the board's default buffers. */
+  buffers?: string[] | null;
 }
 
 export interface LogcatStreamApi {
@@ -86,6 +88,7 @@ export function useLogcatStream(): LogcatStreamApi {
         if (args?.device) config.device = args.device;
         if (args?.filter) config.filter = args.filter;
         if (args?.tags && args.tags.length > 0) config.tags = args.tags;
+        if (args?.buffers && args.buffers.length > 0) config.buffers = args.buffers;
         try {
           ws.send(JSON.stringify(config));
         } catch {
@@ -105,7 +108,8 @@ export function useLogcatStream(): LogcatStreamApi {
                 msg.reason === "init_failed" ||
                 msg.reason === "stream_error" ||
                 msg.reason === "unsupported_source" ||
-                msg.reason === "bad_filter"
+                msg.reason === "bad_filter" ||
+                msg.reason === "bad_buffers"
               ) {
                 setState("error");
                 setError(msg.error || msg.reason);

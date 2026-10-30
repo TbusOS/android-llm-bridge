@@ -53,6 +53,15 @@ export class LineSplitter {
   }
 }
 
+/* ---------------- what the stream is opened with ---------------- */
+
+/** Buffers offered on the Logcat tab; "" = the board's default set. */
+export const LOGCAT_BUFFERS = ["", "main", "system", "crash", "events", "radio", "kernel", "all"] as const;
+
+function streamArgs(spec: string, buffer: string) {
+  return { filter: spec || null, buffers: buffer ? [buffer] : null };
+}
+
 /* ---------------- board filter spec ---------------- */
 
 /** One `<TAG>:<LEVEL>` token, the rule /logcat/stream applies before it starts adb. */
@@ -146,6 +155,10 @@ export function useLogcat(device: string | null) {
   const total = useRef(0);
   const [spec, setSpec] = useState("");
   const specRef = useRef("");
+  // "" = the board's default buffers (main, system, crash on most boards).
+  const [buffer, setBuffer] = useState("");
+  const bufferRef = useRef("");
+
 
   useEffect(() => {
     const split = new LineSplitter();
@@ -209,7 +222,7 @@ export function useLogcat(device: string | null) {
     }
     reset();
     setStopped(false);
-    connect({ device, filter: specRef.current || null });
+    connect({ device, ...streamArgs(specRef.current, bufferRef.current) });
     return () => disconnect();
   }, [device, connect, disconnect, reset]);
 
@@ -244,7 +257,7 @@ export function useLogcat(device: string | null) {
     if (!device) return;
     reset();
     setStopped(false);
-    connect({ device, filter: specRef.current || null });
+    connect({ device, ...streamArgs(specRef.current, bufferRef.current) });
   }, [device, connect, reset]);
   const stop = useCallback(() => {
     setStopped(true);
@@ -256,6 +269,15 @@ export function useLogcat(device: string | null) {
       const s = next.trim().split(/\s+/).filter(Boolean).join(" ");
       specRef.current = s;
       setSpec(s);
+      if (device && !stopped) start();
+    },
+    [device, stopped, start],
+  );
+  /** Read another logcat buffer (`logcat -b`); restarts the stream like a new filter. */
+  const applyBuffer = useCallback(
+    (next: string) => {
+      bufferRef.current = next;
+      setBuffer(next);
       if (device && !stopped) start();
     },
     [device, stopped, start],
@@ -287,5 +309,5 @@ export function useLogcat(device: string | null) {
     return n;
   }, [tick]);
 
-  return { ...stream, stopped, visible, received, paused, buffered, dropped, pause, resume, clear, start, stop, spec, applySpec, histogram, perMinute };
+  return { ...stream, stopped, visible, received, paused, buffered, dropped, pause, resume, clear, start, stop, spec, applySpec, buffer, applyBuffer, histogram, perMinute };
 }

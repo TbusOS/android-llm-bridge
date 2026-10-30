@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -91,6 +92,31 @@ async def test_collect_dmesg_counts_errors(monkeypatch, tmp_path: Path) -> None:
 
 
 # ─── --output / -o overrides (parity with capture_uart) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_collect_logcat_passes_buffers_only_when_asked(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+    t = _mk_transport()
+
+    def _record(*a: Any, **kw: Any) -> AsyncIterator[bytes]:
+        seen.append(kw)
+        return _stream([b"04-15 10:30:00.123 1 1 I A: hi\n"])
+
+    t.stream_read = _record
+    assert (await collect_logcat(t, duration=1, output=tmp_path / "a.txt", buffers=["events"])).ok
+    assert (await collect_logcat(t, duration=1, output=tmp_path / "b.txt")).ok
+    assert seen[0]["buffers"] == ["events"]
+    # no buffers asked for: the key is not passed at all (ssh / other transports)
+    assert "buffers" not in seen[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [["Events"], ["main -c"], ["x"] * 9])
+async def test_collect_logcat_rejects_bad_buffers(bad: list[str]) -> None:
+    r = await collect_logcat(_mk_transport(), duration=5, buffers=bad)
+    assert not r.ok and r.error is not None
+    assert r.error.code == "INVALID_FILTER"
 
 
 @pytest.mark.asyncio

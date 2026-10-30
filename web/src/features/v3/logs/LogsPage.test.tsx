@@ -277,6 +277,24 @@ describe("logcat: clear, stop / start, board filter, pause", () => {
     expect(firstFrame(again[1] as FakeWS)).toEqual({ device: DEVICE });
   });
 
+  it("picking a buffer reopens the stream with logcat -b, and the default sends none", async () => {
+    renderPage();
+    const first = wsAt("/logcat/stream")[0] as FakeWS;
+    act(() => first.open());
+    expect(firstFrame(first)).not.toHaveProperty("buffers");
+    act(() => first.text(L("09:31:04.121", 1188, "E", "SensorsHal", "from main")));
+    await screen.findByText("from main");
+    fireEvent.change(screen.getByLabelText("Buffer"), { target: { value: "events" } });
+    const second = wsAt("/logcat/stream")[1] as FakeWS;
+    act(() => second.open());
+    expect(firstFrame(second)).toMatchObject({ buffers: ["events"] });
+    expect(screen.queryByText("from main")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Buffer"), { target: { value: "" } });
+    const third = wsAt("/logcat/stream")[2] as FakeWS;
+    act(() => third.open());
+    expect(firstFrame(third)).not.toHaveProperty("buffers");
+  });
+
   it("sends the board filter to the stream and refuses a malformed one", async () => {
     renderPage();
     const ws = wsAt("/logcat/stream")[0] as FakeWS;

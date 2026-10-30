@@ -256,6 +256,13 @@ def logcat(
         help="Local log path (default: workspace/.../logs/<ts>-logcat.txt; "
         "trailing '/' or existing dir → that dir + auto name).",
     ),
+    buffer: list[str] = typer.Option(
+        None,
+        "--buffer",
+        "-b",
+        help="logcat -b <name> (repeatable): main, system, crash, events, radio, all. "
+        "Default: the board's own set.",
+    ),
 ) -> None:
     """Collect logcat to workspace (or --output) for `duration` seconds."""
     transport = get_transport(ctx, device_serial=device)
@@ -268,6 +275,7 @@ def logcat(
             clear_before=clear,
             device=device,
             output=output,
+            buffers=buffer or None,
         )
     )
     print_result(ctx, result)
