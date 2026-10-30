@@ -450,3 +450,79 @@ def test_terminal_bad_device_rejected(client) -> None:
         msg = ws.receive_json()
         assert msg["type"] == "closed"
         assert msg["error"]["code"] == "INVALID_DEVICE"
+
+
+# ── per-command exit codes (transport/exit_marks) ─────────────────────
+
+
+class _BashTransport(_PtyFakeTransport):
+    """A real interactive bash: SETUP has to work on it end to end."""
+
+    async def interactive_shell(self, *, rows: int = 24, cols: int = 80) -> Any:
+        import os
+
+        env = {k: v for k, v in os.environ.items() if k not in ("ENV", "PROMPT_COMMAND")}
+        env["PS1"] = "probe$ "
+        return await open_pty_subprocess(
+            "bash", "--norc", "--noprofile", "-i", env=env, rows=rows, cols=cols
+        )
+
+
+@pytest.fixture
+def bash_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
+    import shutil
+
+    if not shutil.which("bash"):
+        pytest.skip("needs bash")
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    from alb.infra.event_bus import reset_bus
+
+    reset_bus()
+    monkeypatch.setattr("alb.api.terminal_route.build_transport", lambda **kwargs: _BashTransport())
+    with TestClient(create_app()) as c:
+        yield c
+
+
+def test_a_typed_command_reports_its_exit_code(bash_client: Any, tmp_path: Any) -> None:
+    exits: list[dict[str, Any]] = []
+    shown = b""
+    with bash_client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "session_id": "term-exit-test"})
+        assert ws.receive_json()["type"] == "ready"
+        for cmd in ("false", "sh -c 'exit 3'", "true"):
+            ws.send_json({"type": "input", "data": cmd + "\r"})
+            for _ in range(200):
+                msg = ws.receive()
+                if msg.get("bytes"):
+                    shown += msg["bytes"]
+                elif msg.get("text"):
+                    import json as _json
+
+                    obj = _json.loads(msg["text"])
+                    if obj.get("type") == "command_exit":
+                        exits.append(obj)
+                        break
+    assert [(e["line"], e["exit_code"]) for e in exits] == [
+        ("false", 1),
+        ("sh -c 'exit 3'", 3),
+        ("true", 0),
+    ]
+    assert b"133;D" not in shown, "markers and the SETUP echo stay out of the terminal"
+    events = [e for e in _read_events(tmp_path) if e.get("kind") == "command_exit"]
+    assert [e["summary"] for e in events] == ["exit 1: false", "exit 3: sh -c 'exit 3'", "exit 0: true"]
+
+
+def test_exit_codes_can_be_turned_off(bash_client: Any) -> None:
+    shown = b""
+    with bash_client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "exit_codes": False})
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "input", "data": "echo marker-off-check\r"})
+        for _ in range(200):
+            msg = ws.receive()
+            if msg.get("bytes"):
+                shown += msg["bytes"]
+                if shown.count(b"marker-off-check") >= 2:
+                    break
+    assert b"133;D" not in shown and b"KSH_VERSION" not in shown, "no SETUP was sent"

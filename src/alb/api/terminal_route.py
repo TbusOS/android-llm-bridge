@@ -25,6 +25,13 @@ Protocol:
     S → C (JSON, on shell exit):
         {"type": "closed", "exit_code": 0}
 
+    S → C (JSON, when a typed command finishes and the shell reports it):
+        {"type": "command_exit", "line": "<command>", "exit_code": 1}
+        Read from a marker the hub puts in the shell's prompt
+        (transport/exit_marks); also written to the session's audit as a
+        `command_exit` event. Off with {"exit_codes": false} in the first
+        frame; unavailable on shells other than mksh / bash.
+
 The PTY is owned by this WebSocket connection; closing the WS tears
 the shell down. HITL command interception lands in a follow-up commit.
 """
@@ -34,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -46,6 +54,8 @@ from alb.infra.workspace import (
     iso_timestamp,
     session_path,
 )
+from alb.transport.exit_marks import SETUP as EXIT_MARK_SETUP
+from alb.transport.exit_marks import ExitMarks
 from alb.transport.factory import build_transport
 from alb.transport.interactive import InteractiveShell
 from alb.transport.terminal_guard import TerminalGuard
@@ -61,6 +71,8 @@ def _summarize_terminal_payload(payload: dict) -> str:
         return f"deny: {line} ({rule})" if rule else f"deny: {line}"
     if ev in ("hitl_approve", "hitl_deny"):
         return f"{ev}: {line}"
+    if ev == "command_exit":
+        return f"exit {payload.get('exit_code')}: {line}"
     return str(ev or "?")
 
 router = APIRouter()
@@ -76,6 +88,7 @@ async def terminal_ws(ws: WebSocket) -> None:
     rows = _safe_int(config.get("rows", 24), 24)
     cols = _safe_int(config.get("cols", 80), 80)
     read_only = bool(config.get("read_only", False))
+    want_exit_codes = config.get("exit_codes", True) is not False
     session_id = str(config.get("session_id") or f"term-{iso_timestamp()}")
 
     # Validate session_id BEFORE spawning the PTY shell. Doing it after
@@ -154,7 +167,14 @@ async def terminal_ws(ws: WebSocket) -> None:
             "reason": rule.reason,
         })
 
+    # The command a reported exit code belongs to: the last line the guard
+    # let through. Cleared once reported, so a bare Enter (or the prompt
+    # redrawn by Ctrl+C) does not repeat it.
+    last_command: dict[str, str | None] = {"line": None}
+
     async def on_audit(payload: dict) -> None:
+        if payload.get("event") == "command":
+            last_command["line"] = str(payload.get("line") or "") or None
         try:
             with audit_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps({"ts": iso_timestamp(), **payload}, ensure_ascii=False))
@@ -195,8 +215,21 @@ async def terminal_ws(ws: WebSocket) -> None:
         "read_only": read_only,
     })
 
+    marks: ExitMarks | None = None
+    if want_exit_codes:
+        await shell.write(EXIT_MARK_SETUP)
+        marks = ExitMarks(asyncio.get_running_loop().time())
+
+    async def on_exit(code: int) -> None:
+        line, last_command["line"] = last_command["line"], None
+        if line is None:
+            return
+        await on_audit({"event": "command_exit", "line": line, "exit_code": code})
+        with contextlib.suppress(Exception):
+            await ws.send_json({"type": "command_exit", "line": line, "exit_code": code})
+
     recv_task = asyncio.create_task(_recv_loop(ws, shell, guard))
-    send_task = asyncio.create_task(_send_loop(ws, shell))
+    send_task = asyncio.create_task(_send_loop(ws, shell, marks, on_exit))
     try:
         done, pending = await asyncio.wait(
             {recv_task, send_task},
@@ -273,14 +306,45 @@ async def _recv_loop(
         return
 
 
-async def _send_loop(ws: WebSocket, shell: InteractiveShell) -> None:
-    """Forward shell stdout to the client as binary frames."""
+async def _send_loop(
+    ws: WebSocket,
+    shell: InteractiveShell,
+    marks: ExitMarks | None = None,
+    on_exit: Callable[[int], Awaitable[None]] | None = None,
+) -> None:
+    """Forward shell stdout to the client as binary frames, with the exit
+    code markers taken out (and reported) when `marks` is set."""
+    clock = asyncio.get_running_loop()
     try:
         while True:
-            chunk = await shell.read()
+            if marks is not None and marks.waiting:
+                # asyncio.timeout, not wait_for: on 3.11 wait_for swallows a
+                # cancel that lands while the read has just completed, and
+                # this task is cancelled when the client leaves — it then
+                # waited on a shell that is only closed after it ends (the
+                # close-control test hung every time).
+                try:
+                    async with asyncio.timeout(max(0.01, marks.seconds_left(clock.time()))):
+                        chunk = await shell.read()
+                except TimeoutError:
+                    held = marks.give_up()  # this shell shows no marker
+                    if held:
+                        await ws.send_bytes(held)
+                    continue
+            else:
+                chunk = await shell.read()
             if not chunk:
+                if marks is not None and marks.waiting:
+                    held = marks.give_up()
+                    if held:
+                        await ws.send_bytes(held)
                 return
-            await ws.send_bytes(chunk)
+            out, codes = marks.feed(chunk, clock.time()) if marks is not None else (chunk, [])
+            if out:
+                await ws.send_bytes(out)
+            if on_exit is not None:
+                for code in codes:
+                    await on_exit(code)
     except WebSocketDisconnect:
         return
     except Exception:

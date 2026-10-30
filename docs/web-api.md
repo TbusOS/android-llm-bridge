@@ -255,7 +255,7 @@ before forwarding to the shell.
 
 | Direction | Message | Notes |
 |---|---|---|
-| C → S | `{"device":"<serial>","transport":"adb","rows":24,"cols":80,"read_only":false,"session_id":"..."}` | First frame, optional |
+| C → S | `{"device":"<serial>","transport":"adb","rows":24,"cols":80,"read_only":false,"session_id":"...","exit_codes":true}` | First frame, optional |
 | S → C | `{"v":"1","type":"ready","device":"...","transport":"adb","session_id":"...","read_only":false}` | Session started |
 | C ↔ S | binary frames | Raw stdin / stdout bytes |
 | C → S | `{"type":"resize","rows":30,"cols":120}` | PTY resize |
@@ -265,7 +265,18 @@ before forwarding to the shell.
 | C → S | `{"type":"set_read_only","value":true}` | Toggle mid-session |
 | S → C | `{"type":"control_ack","action":"set_read_only","read_only":true}` | |
 | C → S | `{"type":"control","action":"close"}` | Graceful close |
+| S → C | `{"type":"command_exit","line":"false","exit_code":1}` | A typed command finished (see below) |
 | S → C | `{"type":"closed","exit_code":0}` | Shell ended |
+
+**Per-command exit codes.** At the start of a session the hub prepends a
+marker carrying `$?` to the shell's prompt (`ESC ] 133 ; D ; <code> BEL`,
+the OSC 133 "command finished" mark), cuts it out of the bytes it forwards,
+and reports each one as `command_exit` — also written to the session audit
+(`terminal/command_exit`, summary `exit 1: false`). Works on mksh (Android's
+shell) and bash; on other shells no marker appears and, after 2 s, the
+session just has no exit codes. Commands typed inside a nested shell
+(`su`, `sh`) get none until it is left. `"exit_codes": false` in the first
+frame leaves the prompt alone.
 
 **HITL deny-list** (server-side): rm targeting `/system /vendor /boot
 /data /root /sdcard /product /odm /dev /sys /proc`, `dd`, `mkfs*`,
