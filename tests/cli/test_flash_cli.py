@@ -311,3 +311,19 @@ def test_status_with_one_list_for_all_boards_reads_as_before(monkeypatch):
     r = CliRunner().invoke(flash_cli.app, ["status"])
     assert r.exit_code == 0
     assert "partitions cfg" in r.output and "board" not in r.output
+
+
+def test_status_prints_why_flashing_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    why = {
+        "code": "FASTBOOT_UNAVAILABLE",
+        "cause": "no_agent",
+        "message": "no agent connected",
+        "suggestion": "start the agent on the bench host, or run `alb bench agent-start`",
+    }
+    _status_hub(monkeypatch, {"available": False, "unavailable": why, "busy": False, "job": ""})
+    r = CliRunner().invoke(flash_cli.app, ["status"])
+    assert r.exit_code == 1
+    assert "FASTBOOT_UNAVAILABLE: no agent connected" in r.output
+    assert "alb bench agent-start" in r.output
+    # the old wording blamed fastboot_path, which is the wrong fix here
+    assert "fastboot_path" not in r.output

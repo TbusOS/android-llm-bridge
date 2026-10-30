@@ -403,6 +403,13 @@ describe("Flash page: what the v2 tab had", () => {
     await waitFor(() => expect(banner.textContent).toContain("set fastboot_path in its agent.conf"));
   });
 
+  it("unavailable: the hub's cause decides the wording, even when the agent status cannot be read", async () => {
+    const why = { code: "FASTBOOT_UNAVAILABLE", cause: "no_agent", message: "no agent connected" };
+    mockHub((url) => (url.startsWith("/agent/status") ? json({ detail: "down" }, 503) : undefined), { status: { available: false, unavailable: why } });
+    renderPage();
+    expect(await screen.findByText(/no bench agent is connected to the hub/)).toBeInTheDocument();
+  });
+
   it("links to the board config page, where the config partition is read back", async () => {
     mockHub();
     renderPage();

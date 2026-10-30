@@ -194,9 +194,19 @@ export const benchAgentStart = (onEvent: (ev: NdjsonEvent) => void) => postNdjso
 
 /* ---------------- flash ---------------- */
 
+/** Why flashing is unavailable (null when it is available). `code` is the
+ *  one a refused job carries; `cause` picks the fix. */
+export interface FlashUnavailable {
+  code: string;
+  cause: "no_agent" | "no_fastboot" | string;
+  message: string;
+  suggestion?: string;
+}
+
 export interface FlashStatusView {
   ok: boolean;
   available: boolean;
+  unavailable?: FlashUnavailable | null;
   busy: boolean;
   job: string | null;
   partitions: string[];

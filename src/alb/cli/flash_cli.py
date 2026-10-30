@@ -220,11 +220,16 @@ def cmd_status() -> None:
     except httpx.HTTPError as e:
         _hub_unreachable(e)
     if not data.get("available"):
-        typer.echo("[fail] fastboot unavailable")
-        typer.echo(
-            "        no connected agent advertises the fastboot capability — "
-            "set fastboot_path in the agent's agent.conf and restart it"
-        )
+        why = data.get("unavailable") or {}
+        if why.get("message"):
+            typer.echo(f"[fail] {why.get('code')}: {why['message']}")
+            typer.echo(f"        {why.get('suggestion') or ''}".rstrip())
+        else:  # a hub from before the reason was reported
+            typer.echo("[fail] fastboot unavailable")
+            typer.echo(
+                "        no connected agent advertises the fastboot capability — "
+                "set fastboot_path in the agent's agent.conf and restart it"
+            )
         raise typer.Exit(code=1)
     if data.get("busy"):
         typer.echo(f"[busy] {data.get('job') or 'a job is running'}")

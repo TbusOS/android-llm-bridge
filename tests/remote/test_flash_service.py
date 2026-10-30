@@ -129,12 +129,36 @@ async def test_status_reports_availability():
     # lists, none applies); `board` names whose list it is — none here.
     assert svc.status() == {
         "available": True,
+        "unavailable": None,
         "busy": False,
         "job": "",
         "partitions": [],
         "partitions_problem": "",
         "board": None,
     }
+
+
+def test_status_says_why_flashing_is_unavailable() -> None:
+    """The web and `alb flash status` print this instead of guessing it from
+    /agent/status; the code is the one a refused job carries."""
+    none = _service(None).status()
+    assert none["available"] is False
+    assert none["unavailable"]["code"] == "FASTBOOT_UNAVAILABLE"
+    assert none["unavailable"]["cause"] == "no_agent"
+    no_fb = _service(_Agent(_Channel([]), caps=["adb"])).status()["unavailable"]
+    assert no_fb["cause"] == "no_fastboot"
+    assert "fastboot_path" in no_fb["suggestion"]
+
+
+async def test_a_host_only_op_still_runs_without_fastboot() -> None:
+    """A refusal that is about fastboot must not stop an op that needs only
+    the agent (the USB listing answers on a bench with no fastboot)."""
+    svc = _service(_Agent(_Channel([]), caps=["adb"]))
+    assert svc._refusal(need_fastboot=False, exclusive=False) is None
+    refused = svc._refusal(need_fastboot=True, exclusive=False)
+    assert refused is not None and refused.code == "FASTBOOT_UNAVAILABLE"
+    no_agent = _service(None)._refusal(need_fastboot=False, exclusive=False)
+    assert no_agent is not None and no_agent.code == "FASTBOOT_UNAVAILABLE"
 
 
 # ── the job round trip ──────────────────────────────────────────────────

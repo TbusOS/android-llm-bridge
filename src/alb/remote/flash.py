@@ -301,10 +301,35 @@ class FlashService:
             "build": str(getattr(agent, "build", "") or ""),
         }
 
+    def unavailable(self) -> dict[str, str] | None:
+        """Why flashing is unavailable right now, or None when it is available.
+
+        One code for both causes, the same one a refused job carries
+        (FASTBOOT_UNAVAILABLE), with `cause` saying which of the two fixes
+        applies: start an agent, or give the connected one a fastboot."""
+        agent = self._get_agent()
+        if agent is None:
+            return {
+                "code": "FASTBOOT_UNAVAILABLE",
+                "cause": "no_agent",
+                "message": "no agent connected",
+                "suggestion": "start the agent on the bench host, or run `alb bench agent-start`",
+            }
+        if CAP_FASTBOOT not in getattr(agent, "caps", []):
+            return {
+                "code": "FASTBOOT_UNAVAILABLE",
+                "cause": "no_fastboot",
+                "message": f"agent {agent.agent_id} does not advertise the fastboot capability",
+                "suggestion": "set fastboot_path in that agent's agent.conf to the fastboot "
+                "executable, then restart the agent",
+            }
+        return None
+
     def status(self) -> dict[str, Any]:
         allowed = self.partition_list()
         return {
             "available": self.available(),
+            "unavailable": self.unavailable(),
             "busy": self.busy,
             "job": self._current,
             "partitions": allowed.names,
@@ -638,14 +663,9 @@ class FlashService:
         A host-only op (the USB listing, a Windows log) needs an agent but
         not fastboot, and is not exclusive: it must answer during a
         30-minute flash — that is often exactly when it is wanted."""
-        agent = self._get_agent()
-        if agent is None:
-            return _fail("FASTBOOT_UNAVAILABLE", "no agent connected")
-        if need_fastboot and not self.available():
-            return _fail(
-                "FASTBOOT_UNAVAILABLE",
-                f"agent {agent.agent_id} does not advertise the fastboot capability",
-            )
+        why = self.unavailable()
+        if why is not None and (need_fastboot or why["cause"] == "no_agent"):
+            return _fail(why["code"], why["message"])
         if exclusive and self._lock.locked():
             # Refuse NOW rather than await the lock: see the module docstring.
             return _fail("FASTBOOT_BUSY", f"another job is running ({self._current})")

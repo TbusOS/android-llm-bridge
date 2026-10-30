@@ -12,7 +12,7 @@ import { LogDialog } from "../../../components/v3/LogDialog";
 import { useAgentStatus, useBenchBoard, useFlashStatusQuery } from "../../../components/v3/TopBar";
 import { CardHead, Confirm, Dot, Empty, ErrorBanner, PageHead, Pill, toast } from "../../../components/v3/ui";
 import type { AgentStatus } from "../../../lib/api";
-import { type FlashJobSummary, fetchFlashJobs, flashOp } from "../../../lib/api3";
+import { type FlashJobSummary, type FlashUnavailable, fetchFlashJobs, flashOp } from "../../../lib/api3";
 import { useDashboardQuery } from "../../../lib/dashboardQuery";
 import { type T, useT } from "../../../lib/i18n";
 import { CommandsMode } from "./CommandsMode";
@@ -40,27 +40,28 @@ import "./flash.css";
 type Mode = "pkg" | "one" | "cmd";
 
 /**
- * Why GET /api/flash/status says `available: false`. That endpoint only
- * carries the boolean (agent connected AND it advertises fastboot), so the
- * reason comes from GET /agent/status: no agent at all, or an agent whose
- * `caps` lack `fastboot` because it found no fastboot executable on its host.
+ * Why flashing is unavailable, worded for the fix. The hub says which case it
+ * is (`unavailable.cause` from GET /api/flash/status); /agent/status only
+ * supplies the agent's name, and stands in for a hub from before that field.
  */
-export function unavailableReason(t: T, agents: AgentStatus | undefined): string {
-  if (agents) {
-    const current = agents.agents.find((a) => a.current) ?? agents.agents[0];
-    if (!current) {
-      return t(
-        "烧录现在不可用:没有台架 agent 连到 hub。在接板子的那台 Windows 上启动 agent,或者去台架页远程拉起。",
-        "Flashing is unavailable: no bench agent is connected to the hub. Start the agent on the Windows machine the boards are plugged into, or start it remotely from the Bench page.",
-      );
-    }
-    if (!current.caps.includes("fastboot")) {
-      const who = current.name || current.agent_id;
-      return t(
-        `烧录现在不可用:agent ${who} 连上了,但没有报告 fastboot 能力,它那台机器上找不到 fastboot。在那台机器的 agent.conf 里把 fastboot_path 设成 fastboot 可执行文件的路径,然后重启 agent。`,
-        `Flashing is unavailable: agent ${who} is connected but does not advertise fastboot, because it finds no fastboot executable on its machine. Set fastboot_path in that machine's agent.conf to the fastboot executable, then restart the agent.`,
-      );
-    }
+export function unavailableReason(t: T, why: FlashUnavailable | null | undefined, agents: AgentStatus | undefined): string {
+  const current = agents ? (agents.agents.find((a) => a.current) ?? agents.agents[0]) : undefined;
+  const cause = why?.cause ?? (agents ? (!current ? "no_agent" : !current.caps.includes("fastboot") ? "no_fastboot" : "") : "");
+  if (cause === "no_agent") {
+    return t(
+      "烧录现在不可用:没有台架 agent 连到 hub。在接板子的那台 Windows 上启动 agent,或者去台架页远程拉起。",
+      "Flashing is unavailable: no bench agent is connected to the hub. Start the agent on the Windows machine the boards are plugged into, or start it remotely from the Bench page.",
+    );
+  }
+  if (cause === "no_fastboot") {
+    const who = current?.name || current?.agent_id || "";
+    return t(
+      `烧录现在不可用:agent ${who} 连上了,但没有报告 fastboot 能力,它那台机器上找不到 fastboot。在那台机器的 agent.conf 里把 fastboot_path 设成 fastboot 可执行文件的路径,然后重启 agent。`,
+      `Flashing is unavailable: agent ${who} is connected but does not advertise fastboot, because it finds no fastboot executable on its machine. Set fastboot_path in that machine's agent.conf to the fastboot executable, then restart the agent.`,
+    );
+  }
+  if (why?.message) {
+    return t(`烧录现在不可用:${why.message}`, `Flashing is unavailable: ${why.message}`);
   }
   return t(
     "烧录现在不可用:台架 agent 没有连上,或者它没有报告 fastboot 能力。agent 连着时,在它的 agent.conf 里设 fastboot_path 后重启 agent。",
@@ -88,7 +89,7 @@ export function FlashPage() {
   const s = status.data;
   const available = !!s?.available;
   const boardName = s?.board ?? board.data?.active ?? null;
-  const whyUnavailable = unavailableReason(t, agents.data);
+  const whyUnavailable = unavailableReason(t, s?.unavailable, agents.data);
   const disabledReason = status.isError
     ? t("读不到烧录状态。", "Cannot read the flash status.")
     : !s
