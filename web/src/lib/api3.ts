@@ -262,10 +262,17 @@ export interface PlanView {
   skipped?: number;
   [k: string]: unknown;
 }
-export const checkPlan = (manifest: string, skip: string[], skipActions: string[]) =>
-  postJson<PlanView>("/api/flash/plan", { manifest, skip, skip_actions: skipActions });
-export const runPlan = (manifest: string, skip: string[], skipActions: string[], fingerprint: string, onEvent: (ev: NdjsonEvent) => void) =>
-  postNdjson("/api/flash/plan/run", { manifest, skip, skip_actions: skipActions, fingerprint }, onEvent);
+/** `fromLine` > 0 resumes a plan that stopped: rows before that manifest line are skipped (getvar checks still run). */
+const planBody = (manifest: string, skip: string[], skipActions: string[], fromLine: number) => ({
+  manifest,
+  skip,
+  skip_actions: skipActions,
+  ...(fromLine > 0 ? { from_line: fromLine } : {}),
+});
+export const checkPlan = (manifest: string, skip: string[], skipActions: string[], fromLine = 0) =>
+  postJson<PlanView>("/api/flash/plan", planBody(manifest, skip, skipActions, fromLine));
+export const runPlan = (manifest: string, skip: string[], skipActions: string[], fingerprint: string, onEvent: (ev: NdjsonEvent) => void, fromLine = 0) =>
+  postNdjson("/api/flash/plan/run", { ...planBody(manifest, skip, skipActions, fromLine), fingerprint }, onEvent);
 export const flashOp = (path: "flash" | "getvar" | "oem" | "reboot" | "devices", body: unknown, onEvent: (ev: NdjsonEvent) => void) =>
   postNdjson(`/api/flash/${path}`, body, onEvent);
 

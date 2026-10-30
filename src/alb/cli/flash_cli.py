@@ -13,7 +13,7 @@ command is a client of it.
     alb flash reboot [target]
     alb flash oem <command>
     alb flash write <partition> <image>
-    alb flash plan <manifest> [--skip p1,p2] [--skip-action a] [--dry-run] [--yes]
+    alb flash plan <manifest> [--skip p1,p2] [--skip-action a] [--from-line N] [--dry-run] [--yes]
 
 `write`, not `flash flash`: the verb reads as what it does to the device.
 """
@@ -396,6 +396,13 @@ def _report_plan(final: dict[str, Any]) -> None:
     not_run = [str(r.get("line")) for r in rows if r.get("status") == "not-run"]
     if not_run:
         typer.echo(f"  not run: line {', '.join(not_run)}", err=True)
+    if line:
+        # the failed row itself runs again: it may have been cut off mid-write
+        typer.echo(
+            f"  to resume once fixed: the same command with --from-line {line} "
+            "(rows before it are skipped, getvar checks still run)",
+            err=True,
+        )
     _report_artifacts(str(final.get("artifacts") or ""), err=True)
     raise typer.Exit(code=1)
 
@@ -427,6 +434,10 @@ def cmd_plan(
         None, "--skip-action", help="rows without a partition to leave out: setvar, "
         "getvar, oem, reboot-bootloader, reboot (comma-separated or repeated)"
     ),
+    from_line: int = typer.Option(
+        0, "--from-line", help="resume a plan that stopped: skip the rows before this manifest "
+        "line (getvar checks still run); it must be a row of the manifest", min=0
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="print the plan and stop"),
     reboot_wait: float = typer.Option(
         120.0, "--reboot-wait", help="seconds to wait for the board to return to fastboot "
@@ -450,6 +461,8 @@ def cmd_plan(
         "skip": list(skip or []),
         "skip_actions": list(skip_action or []),
     }
+    if from_line:
+        payload["from_line"] = from_line
     plan = _fetch_plan(payload)
     _print_plan(plan)
     problems = plan.get("problems") or []

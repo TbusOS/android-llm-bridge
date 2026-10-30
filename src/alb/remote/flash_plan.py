@@ -300,13 +300,20 @@ def _split(values: list[str]) -> list[str]:
     return out
 
 
-def apply_skips(rows: list[PlanRow], skip: list[str], skip_actions: list[str]) -> list[str]:
+def apply_skips(
+    rows: list[PlanRow], skip: list[str], skip_actions: list[str], from_line: int = 0
+) -> list[str]:
     """Mark skipped rows; return problems.
 
     A skip that matches no row is a problem, not a no-op. The skip is how
     the caller protects something — a debug bootloader, say — and a typo
     (`abl` for `abl_a`) would otherwise flash exactly what it was meant to
-    protect, silently."""
+    protect, silently.
+
+    `from_line` resumes a plan that stopped: rows before that manifest line
+    are skipped, except `getvar` checks — they write nothing, and they are
+    what makes sure the board is still the one the package is for. It must
+    name a row (a typo would otherwise resume from somewhere else)."""
     problems: list[str] = []
     partitions = sorted({r.partition for r in rows if r.partition})
     for name in _split(skip):
@@ -331,6 +338,15 @@ def apply_skips(rows: list[PlanRow], skip: list[str], skip_actions: list[str]) -
             problems.append(f"--skip-action {action} matches no row")
         for r in hits:
             r.skip = r.skip or f"--skip-action {action}"
+    if from_line:
+        lines = [r.line for r in rows]
+        if from_line not in lines:
+            shown = ", ".join(str(n) for n in lines[:40]) + (" ..." if len(lines) > 40 else "")
+            problems.append(f"--from-line {from_line} is not a row of this manifest (rows: {shown})")
+        else:
+            for r in rows:
+                if r.line < from_line and r.action != "getvar":
+                    r.skip = r.skip or f"--from-line {from_line}"
     for r in rows:
         if r.runs and r.action in UNRUNNABLE:
             problems.append(
@@ -498,6 +514,7 @@ async def build_plan(
     skip: list[str],
     skip_actions: list[str],
     agent: AgentView | None,
+    from_line: int = 0,
 ) -> Plan:
     """Parse, resolve, hash and check — the whole plan or its problems.
 
@@ -517,7 +534,7 @@ async def build_plan(
         except UnicodeDecodeError:
             return Plan(name, [], ["the manifest is not UTF-8 text"])
         rows, problems = parse_manifest(text)
-        problems += apply_skips(rows, skip, skip_actions)
+        problems += apply_skips(rows, skip, skip_actions, from_line)
         problems += _resolve_files(rows, manifest.parent, root)
         problems += check_agent(rows, agent)
         return Plan(name, rows, problems, fingerprint(name, rows))

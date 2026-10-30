@@ -194,6 +194,45 @@ def test_setvar_must_be_skipped_explicitly():
     assert "--skip-action setvar" in problems[0]
 
 
+RESUME_MANIFEST = """\
+tool getvar product
+tool flash loader_a                 loader.elf
+tool reboot-bootloader
+tool flash boot_a                   boot.img
+tool flash super                    super.img
+tool reboot
+"""
+
+
+def test_from_line_skips_the_rows_before_it_but_keeps_getvar_checks() -> None:
+    """Resuming at the row that failed: everything before it is skipped,
+    except the getvar check, which writes nothing and is what makes sure
+    the board is still the one the package is for."""
+    rows, _ = parse_manifest(RESUME_MANIFEST)
+    assert apply_skips(rows, [], [], from_line=4) == []
+    assert {r.line: r.skip for r in rows if not r.runs} == {2: "--from-line 4", 3: "--from-line 4"}
+    assert [r.line for r in rows if r.runs] == [1, 4, 5, 6]
+
+
+def test_from_line_keeps_an_explicit_skip_reason_and_must_name_a_row() -> None:
+    rows, _ = parse_manifest(RESUME_MANIFEST)
+    assert apply_skips(rows, ["loader_a"], [], from_line=4) == []
+    assert rows[1].skip == "--skip loader_a"
+    rows, _ = parse_manifest(RESUME_MANIFEST)
+    problems = apply_skips(rows, [], [], from_line=99)
+    assert len(problems) == 1 and "--from-line 99 is not a row" in problems[0]
+    assert all(r.runs for r in rows), "a bad line resumes nothing"
+
+
+def test_from_line_changes_the_fingerprint() -> None:
+    """The confirmation covers where the run starts."""
+    whole, _ = parse_manifest(RESUME_MANIFEST)
+    apply_skips(whole, [], [])
+    resumed, _ = parse_manifest(RESUME_MANIFEST)
+    apply_skips(resumed, [], [], from_line=4)
+    assert fingerprint("m", whole) != fingerprint("m", resumed)
+
+
 def test_a_skip_action_that_matches_nothing_refuses_the_plan():
     rows, _ = parse_manifest("tool flash boot_a boot.img\n")
     assert apply_skips(rows, [], ["reboot"]) == ["--skip-action reboot matches no row"]

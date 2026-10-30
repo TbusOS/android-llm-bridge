@@ -10,9 +10,12 @@ wrong subsystem: go find out yourself.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from typing import Any
 
 import httpx
 import pytest
+from click.testing import Result
 from typer.testing import CliRunner
 
 from alb.cli import flash_cli
@@ -147,8 +150,10 @@ def _plan_body(problems=()):
     }
 
 
-def _hub(monkeypatch, *, problems=(), fail_line=0):
-    calls: list[tuple[str, dict]] = []
+def _hub(
+    monkeypatch: pytest.MonkeyPatch, *, problems: Sequence[str] = (), fail_line: int = 0
+) -> list[tuple[str, dict[str, Any]]]:
+    calls: list[tuple[str, dict[str, Any]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content or b"{}")
@@ -196,7 +201,7 @@ def _hub(monkeypatch, *, problems=(), fail_line=0):
     return calls
 
 
-def _invoke(args, input_=None):
+def _invoke(args: list[str], input_: str | None = None) -> Result:
     return CliRunner().invoke(flash_cli.app, ["plan", *args], input=input_)
 
 
@@ -251,6 +256,26 @@ def test_a_failed_row_is_named_and_exits_1(monkeypatch):
     assert r.exit_code == 1
     assert "[fail] line 4 flash boot_b <- boot.img: FLASH_FAILED" in r.output
     assert "write failed" in r.output
+
+
+def test_a_failed_row_says_how_to_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    _hub(monkeypatch, fail_line=4)
+    r = _invoke(["images/board-x/flash.txt", "--yes"])
+    assert r.exit_code == 1
+    assert "--from-line 4" in r.output
+
+
+def test_from_line_is_sent_to_both_the_check_and_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _hub(monkeypatch)
+    r = _invoke(["images/board-x/flash.txt", "--from-line", "4", "--yes"])
+    assert r.exit_code == 0, r.output
+    assert calls[0][1]["from_line"] == 4 and calls[1][1]["from_line"] == 4
+
+
+def test_without_from_line_the_body_is_as_before(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _hub(monkeypatch)
+    _invoke(["images/board-x/flash.txt", "--dry-run"])
+    assert "from_line" not in calls[0][1]
 
 
 def test_a_plan_refusal_detail_is_printed_one_problem_per_line(capsys):

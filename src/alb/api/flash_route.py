@@ -18,7 +18,7 @@ Endpoints:
     POST /api/flash/reboot     Body: {"target": "" | "bootloader" | ...}
     POST /api/flash/flash      Body: {"partition": str, "image": <workspace path>}
     POST /api/flash/plan       Body: {"manifest": <workspace path>, "skip": [...],
-                                      "skip_actions": [...]}
+                                      "skip_actions": [...], "from_line": N}
                                Parse a flashing manifest into a checked plan and
                                return it with every problem found. Runs nothing.
     GET  /api/flash/jobs?limit=20
@@ -225,6 +225,9 @@ class PlanBody(BaseModel):
     # matches no row, which is the check that actually protects anything.
     skip: list[str] = Field(default_factory=list, max_length=128)
     skip_actions: list[str] = Field(default_factory=list, max_length=8)
+    # Resume a plan that stopped: rows before this manifest line are skipped
+    # (getvar checks still run). 0 = from the top.
+    from_line: int = Field(0, ge=0, le=100_000)
 
 
 class PlanRunBody(PlanBody):
@@ -251,6 +254,7 @@ async def _build(body: PlanBody) -> Plan:
         skip=body.skip,
         skip_actions=body.skip_actions,
         agent=get_flash_service().agent_view(),
+        from_line=body.from_line,
     )
 
 

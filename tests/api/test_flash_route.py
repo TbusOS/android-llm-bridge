@@ -9,6 +9,7 @@ line-by-line must see movement while a partition is being written.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,7 +52,7 @@ class _FakeService:
         return self.result
 
 
-def _install(monkeypatch, service):
+def _install(monkeypatch: pytest.MonkeyPatch, service: Any) -> Any:
     import alb.api.flash_route as route
 
     monkeypatch.setattr(route, "get_flash_service", lambda: service)
@@ -241,6 +242,26 @@ def test_plan_reports_problems_with_a_200(monkeypatch):
     joined = " ".join(body["problems"])
     assert "--skip nope matches no row" in joined
     assert "misc (line 2)" in joined
+
+
+def test_plan_from_line_resumes_and_the_run_must_use_it_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    svc = _PlanService()
+    _install(monkeypatch, svc)
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        body = c.post("/api/flash/plan", json={"manifest": rel, "from_line": 2}).json()
+        assert body["ok"] is True, body["problems"]
+        assert [r["skip"] for r in body["rows"]] == ["--from-line 2", "", ""]
+        # the shown plan started at line 2: running it from the top is a different plan
+        whole = c.post(
+            "/api/flash/plan/run", json={"manifest": rel, "fingerprint": body["fingerprint"]}
+        )
+        assert whole.status_code == 409 and svc.runs == []
+        ok = c.post(
+            "/api/flash/plan/run",
+            json={"manifest": rel, "from_line": 2, "fingerprint": body["fingerprint"]},
+        )
+    assert ok.status_code == 200 and len(svc.runs) == 1
 
 
 def test_plan_manifest_must_be_in_the_workspace(monkeypatch):

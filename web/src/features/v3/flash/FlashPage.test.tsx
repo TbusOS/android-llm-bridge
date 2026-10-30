@@ -178,6 +178,23 @@ describe("Flash page", () => {
     expect(screen.getByRole("button", { name: "Reboot to fastbootd" })).toBeInTheDocument();
     const run = calls.find((c) => c.url === "/api/flash/plan/run");
     expect(run?.body).toMatchObject({ fingerprint: "b".repeat(64), manifest: "flash-images/flash_all.txt", skip: [] });
+    expect(run?.body).not.toHaveProperty("from_line");
+
+    // continue from the failed line: a re-check with from_line, nothing runs until confirmed
+    const runsBefore = calls.filter((c) => c.url === "/api/flash/plan/run").length;
+    fireEvent.click(screen.getByRole("button", { name: "Continue from line 23" }));
+    await waitFor(() => expect(calls.filter((c) => c.url === "/api/flash/plan").at(-1)?.body).toMatchObject({ from_line: 23 }));
+    expect(await screen.findByText(/Resuming at line 23/)).toBeInTheDocument();
+    expect(calls.filter((c) => c.url === "/api/flash/plan/run")).toHaveLength(runsBefore);
+    fireEvent.click(screen.getByRole("button", { name: "Flash package" }));
+    // the failure banner is still an alert too: pick the confirmation
+    const confirmBox = (await screen.findAllByRole("alert")).find((a) => a.textContent?.includes("rows run"));
+    fireEvent.click(within(confirmBox as HTMLElement).getByRole("button", { name: "Flash package" }));
+    await waitFor(() => expect(calls.filter((c) => c.url === "/api/flash/plan/run")).toHaveLength(runsBefore + 1));
+    expect(calls.filter((c) => c.url === "/api/flash/plan/run").at(-1)?.body).toMatchObject({ from_line: 23 });
+    // back to the top
+    fireEvent.click(screen.getByRole("button", { name: "Start from the top" }));
+    await waitFor(() => expect(calls.filter((c) => c.url === "/api/flash/plan").at(-1)?.body).not.toHaveProperty("from_line"));
   });
 
   it("a reloaded page shows the job that is still running and the recent jobs", async () => {

@@ -37,6 +37,8 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
   const [manifest, setManifest] = useState<string | null>(null);
   const [skip, setSkip] = useState<string[]>([]);
   const [skipActions, setSkipActions] = useState<string[]>([]);
+  // > 0 after "Continue from line N": the plan resumes at that manifest line.
+  const [fromLine, setFromLine] = useState(0);
   const [plan, setPlan] = useState<PlanView | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -59,11 +61,11 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
   }, [files.data, showImages]);
   const hiddenCount = (files.data ?? []).length - manifests.length;
 
-  const doCheck = useCallback(async (m: string, sk: string[], sa: string[]) => {
+  const doCheck = useCallback(async (m: string, sk: string[], sa: string[], fl: number) => {
     setChecking(true);
     setCheckError(null);
     try {
-      const p = await checkPlan(m, sk, sa);
+      const p = await checkPlan(m, sk, sa, fl);
       if (Array.isArray(p.rows)) setPlan(p);
       else {
         setPlan(null);
@@ -82,6 +84,7 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
     setManifest(m);
     setSkip([]);
     setSkipActions([]);
+    setFromLine(0);
     setPlan(null);
     setCheckError(null);
     setConfirm(false);
@@ -101,7 +104,7 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
     setSkip(sk);
     setSkipActions(sa);
     setConfirm(false);
-    void doCheck(manifest, sk, sa);
+    void doCheck(manifest, sk, sa, fromLine);
   };
 
   const problems = plan?.problems ?? [];
@@ -158,7 +161,7 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
     curLineRef.current = null;
     setCurLine(null);
     setStepNo(null);
-    void run.start("plan", (on) => runPlan(manifest, skip, skipActions, plan.fingerprint, on), onPlanEvent);
+    void run.start("plan", (on) => runPlan(manifest, skip, skipActions, plan.fingerprint, on, fromLine), onPlanEvent);
   };
 
   const rebootFastbootd = () => {
@@ -232,7 +235,7 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
             </div>
           </div>
           <div className="row">
-            <button type="button" className="btn btn--filled" disabled={!manifest || checking || running || !available} title={!available ? disabledReason : undefined} onClick={() => manifest && void doCheck(manifest, skip, skipActions)}>
+            <button type="button" className="btn btn--filled" disabled={!manifest || checking || running || !available} title={!available ? disabledReason : undefined} onClick={() => manifest && void doCheck(manifest, skip, skipActions, fromLine)}>
               {checking ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <Icon name="check-circle" />}
               {t("检查计划", "Check the plan")}
             </button>
@@ -243,6 +246,26 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
         {/* step 2 */}
         <article className="card plan">
           <CardHead title={t("2 · 计划", "2 · Plan")} />
+          {fromLine > 0 ? (
+            <div className="banner banner--info">
+              <Icon name="info" />
+              <p>{t(`从第 ${fromLine} 行续跑:前面写分区、重启的行都跳过,getvar 检查照跑,确认板子还是这块。`, `Resuming at line ${fromLine}: the writes and reboots before it are skipped; getvar checks still run, to make sure it is still the same board.`)}</p>
+              <div className="banner__actions">
+                <button
+                  type="button"
+                  className="btn btn--text btn--sm"
+                  disabled={checking || running}
+                  onClick={() => {
+                    setFromLine(0);
+                    setConfirm(false);
+                    if (manifest) void doCheck(manifest, skip, skipActions, 0);
+                  }}
+                >
+                  {t("改回从头开始", "Start from the top")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {checkError ? <ErrorBanner>{checkError}</ErrorBanner> : null}
           {!plan && !checkError ? (
             <Empty icon="list" title={t("还没有计划", "No plan yet")}>
@@ -277,7 +300,7 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
                           if (!manifest) return;
                           const sk = [...new Set([...skip, ...untickable.map((r) => r.partition as string)])];
                           setSkip(sk);
-                          void doCheck(manifest, sk, skipActions);
+                          void doCheck(manifest, sk, skipActions, fromLine);
                         }}
                       >
                         {t("勾掉这些行", "Untick them")}
@@ -376,7 +399,19 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
         {(running || done) && mine ? (
           <article className="card">
             <CardHead title={running ? t("各行进度", "Rows") : t("3 · 结果", "3 · Result")} />
-            {done && !running ? <ResultBanner done={done} doneRows={doneRows} onFastbootd={() => setRebootConfirm(true)} /> : null}
+            {done && !running ? (
+              <ResultBanner
+                done={done}
+                doneRows={doneRows}
+                onFastbootd={() => setRebootConfirm(true)}
+                onResume={(line) => {
+                  if (!manifest) return;
+                  setFromLine(line);
+                  setConfirm(false);
+                  void doCheck(manifest, skip, skipActions, line);
+                }}
+              />
+            ) : null}
             <Confirm
               open={rebootConfirm}
               tone="danger"
@@ -441,7 +476,7 @@ export function PackageMode({ run, available, board, disabledReason }: PackageMo
   );
 }
 
-function ResultBanner({ done, doneRows, onFastbootd }: { done: NdjsonEvent; doneRows: PlanRow[]; onFastbootd: () => void }) {
+function ResultBanner({ done, doneRows, onFastbootd, onResume }: { done: NdjsonEvent; doneRows: PlanRow[]; onFastbootd: () => void; onResume: (line: number) => void }) {
   const t = useT();
   const ran = Number(done.ran ?? 0);
   const skipped = Number(done.skipped ?? 0);
@@ -473,6 +508,16 @@ function ResultBanner({ done, doneRows, onFastbootd }: { done: NdjsonEvent; done
         </p>
         <div className="banner__actions">
           {wantsFastbootd ? <button type="button" className="btn btn--text btn--sm" onClick={onFastbootd}>{t("重启到 fastbootd", "Reboot to fastbootd")}</button> : null}
+          {failedLine ? (
+            <button
+              type="button"
+              className="btn btn--text btn--sm"
+              title={t("重新检查一份从这一行开始的计划;它自己也会再跑一次(可能写到一半断了)。确认后才执行。", "Checks a plan that starts at this line again; the line itself runs again (it may have stopped mid-write). Nothing runs until you confirm.")}
+              onClick={() => onResume(failedLine)}
+            >
+              {t(`从第 ${failedLine} 行继续`, `Continue from line ${failedLine}`)}
+            </button>
+          ) : null}
         </div>
       </div>
       {out ? <OutputBlock text={out} title={failedLine ? t(`停在第 ${failedLine} 行时的输出`, `Output where it stopped (line ${failedLine})`) : t("整包作业的输出", "Package job output")} fileName={`flash-plan${failedLine ? `-line-${failedLine}` : ""}.log`} maxHeight={160} /> : null}
