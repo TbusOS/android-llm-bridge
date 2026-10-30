@@ -344,6 +344,19 @@ def test_flash_jobs_are_listed_with_captures_and_read_like_them(ws: Path) -> Non
     assert bad.status_code in (400, 404)
 
 
+def test_many_flash_jobs_do_not_push_recordings_out_of_the_list(ws: Path) -> None:
+    _make_capture(ws, "capture-2026-10-23T08-00-00", [], device=SERIAL)
+    for i in range(5):
+        d = ws / "devices" / SERIAL / "flash" / f"devices-2026-10-23T12-00-0{i}"
+        d.mkdir(parents=True)
+        (d / "timeline.jsonl").write_text(json.dumps({"t": 0.0, "src": "meta", "ev": "start"}) + "\n")
+    with _client() as c:
+        data = c.get(f"/api/timeline/captures?device={SERIAL}&limit=3").json()["data"]
+    kinds = [x["kind"] for x in data]
+    assert kinds.count("flash") == 3 and kinds.count("capture") == 1
+    assert data[-1]["name"] == "capture-2026-10-23T08-00-00", "the older recording is still listed"
+
+
 def test_device_captures_and_device_flash_jobs_interleave_by_time(ws: Path) -> None:
     _make_capture(ws, "capture-2026-10-23T12-00-00", [], device=SERIAL)
     _make_capture(ws, "capture-2026-10-23T12-20-00", [], device=SERIAL)

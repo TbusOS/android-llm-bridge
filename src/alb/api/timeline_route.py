@@ -202,15 +202,20 @@ def _sort_key(path: Path) -> tuple[str, int]:
     return (m.group(1), int(m.group(2) or 1)) if m else ("", 0)
 
 
-def _capture_dirs(device: str | None) -> list[tuple[str, Path]]:
-    """(kind, directory) for timeline recordings and flash jobs, newest first."""
+def _capture_dirs(device: str | None, per_kind: int | None = None) -> list[tuple[str, Path]]:
+    """(kind, directory) for timeline recordings and flash jobs, newest first.
+
+    `per_kind` caps each kind on its own before they are merged: jobs are
+    far more numerous (every `fastboot devices` is one; 137 jobs next to 7
+    recordings on the bench, 2026-10-30), and one shared cap would push the
+    recordings out of the list."""
     found: list[tuple[str, Path]] = []
     for kind, base, pattern in (
         ("capture", _timeline_dir(device), _NAME_RE),
         ("flash", _flash_dir(device), JOB_DIR_RE),
     ):
         try:
-            found += [
+            mine = [
                 (kind, p)
                 for p in base.iterdir()
                 if pattern.match(p.name)
@@ -220,6 +225,8 @@ def _capture_dirs(device: str | None) -> list[tuple[str, Path]]:
             ]
         except OSError:
             continue
+        mine.sort(key=lambda kp: _sort_key(kp[1]), reverse=True)
+        found += mine[:per_kind] if per_kind is not None else mine
     return sorted(found, key=lambda kp: _sort_key(kp[1]), reverse=True)
 
 
@@ -288,7 +295,8 @@ def _iso_from_stamp(stamp: str) -> str:
 
 def _list_sync(device: str | None, limit: int) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for kind, path in _capture_dirs(device)[:limit]:
+    # up to `limit` of each kind: recordings are never crowded out by jobs
+    for kind, path in _capture_dirs(device, per_kind=limit):
         if kind == "flash":
             out.append(_flash_entry(path))
             continue
