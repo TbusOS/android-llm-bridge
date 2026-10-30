@@ -772,8 +772,10 @@ async def _reconnecting_serial_stream(
     console. The dominant CLI workflow is "start capture, *then* reboot
     the board"; the dominant Web workflow is "open the UART tab, *then*
     reboot the board". Both need the read side to keep retrying until
-    real bytes arrive. See ``BUG_serial_capture_idle_auto_exit.md`` for
-    the field report.
+    real bytes arrive. Field report (2026-05): on an idle board,
+    ``alb serial capture -d 240`` exited after ~120 ms with a 0-byte log,
+    while ``nc`` on the same bridge port held the connection for the
+    whole window.
 
     Backoff: a constant ``backoff_s`` sleep between reconnect attempts (no
     exponential growth — we want responsiveness when the bridge starts

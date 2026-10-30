@@ -289,9 +289,9 @@ async def _pump_uart_to_ws(
     :func:`_reconnecting_serial_stream` (no deadline) so an idle UART
     bridge that EOFs the client connection doesn't tear the WS down;
     we reopen and keep listening until the client closes the WS or
-    ``_run_read_only`` cancels us. See
-    ``BUG_serial_capture_idle_auto_exit.md`` for the field report on
-    the equivalent CLI path.
+    ``_run_read_only`` cancels us. The docstring of
+    :func:`_reconnecting_serial_stream` has the field report from the
+    equivalent CLI path.
 
     Stops on WebSocketDisconnect / outer cancel / send error. Other
     errors reported as closed-frame before bubbling.

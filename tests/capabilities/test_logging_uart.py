@@ -146,7 +146,7 @@ async def test_capture_uart_output_trailing_slash(tmp_path: Path) -> None:
     assert art.name.endswith("-uart.log")
 
 
-# ─── idle-bridge bug regression (BUG_serial_capture_idle_auto_exit) ───
+# ─── idle-bridge regression: capture must not exit on early EOF ───
 @pytest.mark.asyncio
 async def test_capture_uart_holds_duration_when_stream_idles(monkeypatch, tmp_path: Path) -> None:
     """When the bridge immediately EOFs (idle COM port), capture_uart must
