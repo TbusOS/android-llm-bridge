@@ -39,6 +39,15 @@ interface UseChatStreamArgs {
   model: string | null;
   tools?: boolean;
   maxTurns?: number;
+  /** Ask before each tool call the model makes (off by default). */
+  confirmTools?: boolean;
+}
+
+/** A tool call the server is holding until the person answers. */
+export interface ToolConfirmRequest {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
 }
 
 export interface UseChatStreamResult {
@@ -49,6 +58,9 @@ export interface UseChatStreamResult {
   cancel: () => void;
   retry: () => void;
   reset: () => void;
+  /** Set while the server waits for an answer about one tool call. */
+  confirmRequest: ToolConfirmRequest | null;
+  answerConfirm: (approve: boolean) => void;
 }
 
 /** Clamp reasonText (server-supplied close.reason) by code-points,
@@ -60,10 +72,11 @@ function clampReason(raw: string, max = 200): string {
 }
 
 export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
-  const { backend, model, tools = true, maxTurns = 8 } = args;
+  const { backend, model, tools = true, maxTurns = 8, confirmTools = false } = args;
 
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<ToolConfirmRequest | null>(null);
 
   // Mutable refs so handlers don't capture stale closures
   const activeAssistantIdRef = useRef<string | null>(null);
@@ -90,6 +103,11 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
           status: "streaming",
           content: t.content + ev.delta,
         }));
+        return;
+      }
+
+      if (ev.type === "tool_confirm_request") {
+        setConfirmRequest({ id: ev.id, name: ev.name, arguments: ev.arguments ?? {} });
         return;
       }
 
@@ -150,6 +168,9 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
     path: "/chat/ws",
     onJson: (raw, helpers) => handleEvent(raw as StreamEvent, helpers),
     onSettled: (info) => {
+      // Whatever ended the turn, no question is pending any more (the
+      // server refuses an unanswered call when the socket goes away).
+      setConfirmRequest(null);
       // Single terminal dispatch via discriminated union switch.
       // server-source done/error already updated the turn via
       // handleEvent above (activeAssistant is null at this point).
@@ -221,10 +242,20 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
         model,
         tools,
         max_turns: maxTurns,
+        ...(confirmTools && tools ? { confirm_tools: true } : {}),
       };
       stream.start(payload);
     },
-    [backend, model, tools, maxTurns, stream],
+    [backend, model, tools, maxTurns, confirmTools, stream],
+  );
+
+  const answerConfirm = useCallback(
+    (approve: boolean) => {
+      if (!confirmRequest) return;
+      stream.send({ type: "tool_confirm", id: confirmRequest.id, approve });
+      setConfirmRequest(null);
+    },
+    [confirmRequest, stream],
   );
 
   const send = useCallback(
@@ -258,6 +289,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
     sessionIdRef.current = null;
     setTurns([]);
     setSessionId(null);
+    setConfirmRequest(null);
     stream.reset();
   }, [stream]);
 
@@ -269,5 +301,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
     cancel,
     retry,
     reset,
+    confirmRequest,
+    answerConfirm,
   };
 }

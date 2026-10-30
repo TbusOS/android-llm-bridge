@@ -100,6 +100,45 @@ describe("useChatStream", () => {
     expect(ass?.status).toBe("streaming");
   });
 
+  it("confirm_tools is sent only when asked for, and only with tools on", () => {
+    const off = renderHook(() => useChatStream({ backend: "ollama", model: null, tools: true }));
+    act(() => off.result.current.send("a"));
+    act(() => emit(0, { kind: "open" }));
+    expect(currentClients[0]?.sentMessages[0]).not.toHaveProperty("confirm_tools");
+
+    const on = renderHook(() => useChatStream({ backend: "ollama", model: null, tools: true, confirmTools: true }));
+    act(() => on.result.current.send("b"));
+    act(() => emit(1, { kind: "open" }));
+    expect(currentClients[1]?.sentMessages[0]).toMatchObject({ confirm_tools: true });
+
+    const noTools = renderHook(() => useChatStream({ backend: "ollama", model: null, tools: false, confirmTools: true }));
+    act(() => noTools.result.current.send("c"));
+    act(() => emit(2, { kind: "open" }));
+    expect(currentClients[2]?.sentMessages[0]).not.toHaveProperty("confirm_tools");
+  });
+
+  it("a tool_confirm_request waits for an answer; the answer goes back on the socket", () => {
+    const { result } = renderHook(() => useChatStream({ backend: "ollama", model: null, tools: true, confirmTools: true }));
+    act(() => result.current.send("reboot it"));
+    act(() => emit(0, { kind: "open" }));
+    act(() =>
+      emit(0, { kind: "json", data: { type: "tool_confirm_request", id: "q1", name: "alb_reboot", arguments: { mode: "normal" } } }),
+    );
+    expect(result.current.confirmRequest).toEqual({ id: "q1", name: "alb_reboot", arguments: { mode: "normal" } });
+    act(() => result.current.answerConfirm(false));
+    expect(currentClients[0]?.sentMessages.at(-1)).toEqual({ type: "tool_confirm", id: "q1", approve: false });
+    expect(result.current.confirmRequest).toBeNull();
+  });
+
+  it("an unanswered question is dropped when the turn ends", () => {
+    const { result } = renderHook(() => useChatStream({ backend: "ollama", model: null, tools: true, confirmTools: true }));
+    act(() => result.current.send("reboot it"));
+    act(() => emit(0, { kind: "open" }));
+    act(() => emit(0, { kind: "json", data: { type: "tool_confirm_request", id: "q1", name: "alb_reboot", arguments: {} } }));
+    act(() => result.current.cancel());
+    expect(result.current.confirmRequest).toBeNull();
+  });
+
   it("tool_call_start adds entry · tool_call_end marks done with result", () => {
     const { result } = renderHook(() =>
       useChatStream({ backend: "ollama", model: null, tools: true }),

@@ -121,6 +121,9 @@ export interface UseWsChatStreamResult<TReq> {
    *  if a stream is somehow still live (consumer bug or unusual
    *  timing), tear it down first. */
   reset: () => void;
+  /** Send one more JSON frame on the live socket (e.g. an answer to a
+   *  tool confirmation). Returns false when nothing is in flight. */
+  send: (msg: object) => boolean;
 }
 
 export function useWsChatStream<TReq>(
@@ -260,5 +263,15 @@ export function useWsChatStream<TReq>(
     setPhase("idle");
   }, [teardown]);
 
-  return { phase, settled, start, cancel, reset };
+  const send = useCallback((msg: object) => {
+    if (settledRef.current || !clientRef.current) return false;
+    try {
+      clientRef.current.send(msg);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  return { phase, settled, start, cancel, reset, send };
 }

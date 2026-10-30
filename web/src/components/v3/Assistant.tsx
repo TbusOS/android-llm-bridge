@@ -35,8 +35,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const model = useApp((s) => s.model);
   const source = useShell((s) => s.source);
   const agentMode = useShell((s) => s.agentMode);
+  const confirmTools = useShell((s) => s.confirmTools);
   const backend = source === "api" ? (API_BACKENDS.has(appBackend) ? appBackend : "openai-compat") : API_BACKENDS.has(appBackend) ? "ollama" : appBackend;
-  const chat = useChatStream({ backend, model, tools: agentMode });
+  const chat = useChatStream({ backend, model, tools: agentMode, confirmTools });
   const context = useShell((s) => s.context);
   const clearContext = useShell((s) => s.clearContext);
   const api = useMemo<AssistantApi>(
@@ -162,15 +163,66 @@ const Turn = memo(function Turn({ turn, onRetry }: { turn: ChatTurn; onRetry?: (
   );
 });
 
+/** "Ask me before each tool call" — off by default: board commands run
+ *  without asking (user decision 2026-10-23); this is the opt-in for the
+ *  calls the model decides on by itself (2026-10-30). */
+export function ConfirmToolsSwitch({ className }: { className?: string }) {
+  const t = useT();
+  const agentMode = useShell((s) => s.agentMode);
+  const on = useShell((s) => s.confirmTools);
+  const set = useShell((s) => s.setConfirmTools);
+  return (
+    <label className={className} title={agentMode ? undefined : t("只在 Agent 模式下有用", "Only matters in agent mode")}>
+      <input
+        type="checkbox"
+        className="switch"
+        checked={on}
+        disabled={!agentMode}
+        aria-label={t("调工具前先问我", "Ask before each tool call")}
+        onChange={(e) => {
+          set(e.target.checked);
+          toast(e.target.checked ? t("模型每次调用工具前都会先问你。", "The model asks you before each tool call.") : t("工具直接执行,不再先问。", "Tools run without asking."));
+        }}
+      />
+      <span>
+        <b>{t("调工具前先问我", "Ask before each tool call")}</b>
+        <small>{t("默认关:工具直接执行。打开后,每次调用都停下来等你点「执行」或「不执行」。", "Off by default: tools just run. When on, every call waits until you press Run or Skip.")}</small>
+      </span>
+    </label>
+  );
+}
+
+/** The tool call the hub is holding until the person answers. */
+function ToolConfirmCard() {
+  const t = useT();
+  const { confirmRequest, answerConfirm } = useAssistant();
+  if (!confirmRequest) return null;
+  const args = JSON.stringify(confirmRequest.arguments, null, 2);
+  return (
+    <div className="banner banner--warn" role="alertdialog" aria-label={t("确认工具调用", "Confirm tool call")}>
+      <Icon name="alert" />
+      <p>
+        {t("模型要调用 ", "The model wants to call ")}
+        <b className="mono">{confirmRequest.name}</b>
+        {args !== "{}" ? <pre className="mono" style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{args}</pre> : null}
+      </p>
+      <div className="banner__actions">
+        <button type="button" className="btn btn--filled btn--sm" onClick={() => answerConfirm(true)}>{t("执行", "Run")}</button>
+        <button type="button" className="btn btn--text btn--sm" onClick={() => answerConfirm(false)}>{t("不执行", "Skip")}</button>
+      </div>
+    </div>
+  );
+}
+
 export function Conversation({ className }: { className?: string }) {
-  const { turns, isStreaming, retry } = useAssistant();
+  const { turns, isStreaming, retry, confirmRequest } = useAssistant();
   const t = useT();
   const last = turns[turns.length - 1];
   const canRetry = !isStreaming && last?.role === "assistant" && (last.status === "error" || last.status === "cancelled");
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: "end" });
-  }, [turns]);
+  }, [turns, confirmRequest]);
   return (
     <div className={`convo ${className ?? ""}`}>
       {turns.length === 0 ? (
@@ -189,6 +241,7 @@ export function Conversation({ className }: { className?: string }) {
         // memoised earlier turns keep equal props.
         turns.map((turn, i) => <Turn key={turn.id} turn={turn} onRetry={canRetry && i === turns.length - 1 ? retry : undefined} />)
       )}
+      {confirmRequest ? <ToolConfirmCard /> : null}
       <div ref={end} />
     </div>
   );
@@ -449,6 +502,7 @@ export function AssistantSheet({ onOpenFull }: { onOpenFull: () => void }) {
           <small>{t("模型可以调用 alb 工具读日志、跑命令,每次调用都显示在对话里。", "The model may call alb tools to read logs and run commands; every call shows in the chat.")}</small>
         </span>
       </label>
+      {agentMode ? <ConfirmToolsSwitch className="sheet__agent" /> : null}
       {source === "board" ? (
         <div className="sheet__body">
           <OnDevicePanel />

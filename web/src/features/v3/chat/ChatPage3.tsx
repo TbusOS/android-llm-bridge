@@ -9,7 +9,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 
-import { Composer, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
+import { Composer, ConfirmToolsSwitch, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
 import { Icon } from "../../../components/v3/Icon";
 import { CardHead, Empty, ErrorBanner, Menu, PageHead, Pill, toast } from "../../../components/v3/ui";
 import { copyText } from "../../../lib/clipboard";
@@ -167,8 +167,8 @@ export function ChatPage3() {
         eyebrow={t("助手", "Assistant")}
         title={t("对话", "Chat")}
         desc={t(
-          "用大白话问板子的事。开了 Agent 模式,模型会自己读日志、调用 alb 工具;工具直接执行,不会先问你,包括会改动板子的那几个。",
-          "Ask about the board in plain words. With agent mode on, the model reads logs and runs alb tools on its own; tools run without asking first, including the ones that change the board.",
+          "用大白话问板子的事。开了 Agent 模式,模型会自己读日志、调用 alb 工具;默认直接执行、不先问你,包括会改动板子的那几个。要每次先问,打开右边的「调工具前先问我」。",
+          "Ask about the board in plain words. With agent mode on, the model reads logs and runs alb tools on its own; by default they run without asking first, including the ones that change the board. To be asked each time, turn on Ask before each tool call on the right.",
         )}
         actions={
           <button type="button" className="btn btn--filled" onClick={newChat} disabled={a.turns.length === 0 && selected === null} title={a.turns.length === 0 && selected === null ? t("现在就是一段新对话", "This already is a new chat") : undefined}>
@@ -565,6 +565,7 @@ function ToolsCard() {
           />
         }
       />
+      {agentMode ? <ConfirmToolsSwitch className="sheet__agent" /> : null}
       {tools.isLoading ? (
         <div className="row"><span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />{t("读取中…", "Loading…")}</div>
       ) : tools.isError ? (

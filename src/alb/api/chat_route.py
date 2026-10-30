@@ -39,8 +39,10 @@ Response (error) — still HTTP 200 (follows our Result envelope):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +50,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
 
 from alb.agent.backends import get_backend
-from alb.agent.loop import AgentLoop
+from alb.agent.loop import AgentLoop, ToolExecutor
 from alb.agent.session import ChatSession
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.metric_sampler import TokenSampler
@@ -70,6 +72,12 @@ class ChatRequest(BaseModel):
     ollama_url: str | None = Field(None, description="Override Ollama URL (Ollama backend only).")
     max_turns: int = Field(8, ge=1, le=32)
     tools: bool = Field(True, description="If False, plain chat with no MCP tools.")
+    confirm_tools: bool = Field(
+        False,
+        description="WS only: ask the client before every tool call and run it only "
+        "if approved. Off by default — board commands run without asking (user "
+        "decision 2026-10-23); this is the opt-in for the model's own calls.",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -207,6 +215,10 @@ async def chat_ws(ws: WebSocket) -> None:
             )
             return
         loop, session, llm = built
+        confirms: _Confirmations | None = None
+        if req.confirm_tools and req.tools:
+            confirms = _Confirmations(ws)
+            loop.tool_executor = confirms.wrap(loop.tool_executor)
 
         await _publish_chat_event(
             session.session_id, "user", _truncate(req.message)
@@ -216,6 +228,7 @@ async def chat_ws(ws: WebSocket) -> None:
         # group throughput by backend (dashboard be-card sparkline).
         sampler = TokenSampler(session_id=session.session_id, backend=llm.name)
         sampler.start()
+        reader = asyncio.create_task(confirms.read_replies()) if confirms else None
         try:
             # Hook sampler directly to the backend's raw token events via
             # AgentLoop's on_raw_token callback, so we get accurate token
@@ -250,6 +263,12 @@ async def chat_ws(ws: WebSocket) -> None:
 
                 await ws.send_json(event)
         finally:
+            if reader is not None:
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reader
+            if confirms is not None:
+                confirms.deny_all()
             await sampler.close()
     except WebSocketDisconnect:
         return
@@ -329,6 +348,74 @@ async def _build_agent(
         system_prompt=prompt.as_text(),
     )
     return loop, session, llm
+
+
+# How long a tool call waits for the person to answer before it is refused.
+_CONFIRM_TIMEOUT_S = 600.0
+
+
+class _Confirmations:
+    """Ask the client before each tool call (ChatRequest.confirm_tools).
+
+    S → C  {"type": "tool_confirm_request", "id", "name", "arguments"}
+    C → S  {"type": "tool_confirm", "id", "approve": true|false}
+
+    A call that is declined, unanswered for _CONFIRM_TIMEOUT_S, or left
+    pending when the socket goes away does not run; the model gets an error
+    result it can read and explain."""
+
+    def __init__(self, ws: WebSocket) -> None:
+        self._ws = ws
+        self._pending: dict[str, asyncio.Future[bool]] = {}
+
+    def wrap(self, run: ToolExecutor) -> ToolExecutor:
+        async def asking(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            cid = uuid.uuid4().hex[:12]
+            fut: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            self._pending[cid] = fut
+            try:
+                await self._ws.send_json(
+                    {"type": "tool_confirm_request", "id": cid, "name": name, "arguments": args}
+                )
+                approved = await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT_S)
+            except TimeoutError:
+                return _declined(name, "TOOL_CONFIRM_TIMEOUT", "nobody answered in time")
+            except Exception:  # the socket is gone: nothing runs
+                return _declined(name, "TOOL_DECLINED", "the page went away before answering")
+            finally:
+                self._pending.pop(cid, None)
+            if not approved:
+                return _declined(name, "TOOL_DECLINED", "the user declined this call")
+            return await run(name, args)
+
+        return asking
+
+    async def read_replies(self) -> None:
+        try:
+            while True:
+                msg = await self._ws.receive_json()
+                if isinstance(msg, dict) and msg.get("type") == "tool_confirm":
+                    fut = self._pending.get(str(msg.get("id")))
+                    if fut is not None and not fut.done():
+                        fut.set_result(msg.get("approve") is True)
+        finally:
+            self.deny_all()
+
+    def deny_all(self) -> None:
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_result(False)
+
+
+def _declined(name: str, code: str, why: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": f"{name} was not run: {why}",
+            "suggestion": "tell the user what this call would do and ask how to go on",
+        },
+    }
 
 
 async def _empty_executor(name: str, args: dict) -> dict:

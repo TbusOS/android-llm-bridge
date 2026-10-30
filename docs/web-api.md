@@ -101,11 +101,18 @@ Streaming agent chat.
 |---|---|---|
 | C → S | `ChatRequest` JSON (same shape as POST body) | First frame |
 | S → C | `{"type":"token","delta":"..."}` | Partial assistant content |
+| S → C | `{"type":"tool_confirm_request","id":"...","name":"...","arguments":{...}}` | Only with `"confirm_tools": true` in the request: the call waits for an answer |
+| C → S | `{"type":"tool_confirm","id":"...","approve":true}` | Answer to one `tool_confirm_request` |
 | S → C | `{"type":"tool_call_start","name":"...","arguments":{...}}` | Tool about to run |
 | S → C | `{"type":"tool_call_end","name":"...","result":{...}}` | Tool completed |
 | S → C | `{"type":"done","content":"...","session_id":"...","model":"...","backend":"...","usage":{...}}` | Terminal; always present |
 
 Client closes after `done`. Server closes on disconnect.
+
+`confirm_tools` is off by default: tool calls run without asking. When it is
+on, a call that is declined, left unanswered for 10 minutes, or still waiting
+when the socket closes does not run; the model gets an error result
+(`TOOL_DECLINED` / `TOOL_CONFIRM_TIMEOUT`) and can explain it.
 
 ## Playground (raw LLM)
 

@@ -23,6 +23,8 @@ interface ShellState {
   searchOpen: boolean;
   source: ModelSource;
   agentMode: boolean;
+  /** Ask before each tool call the model makes. Off by default (2026-10-30). */
+  confirmTools: boolean;
   openSheet: (ctx?: AssistantContext | null) => void;
   closeSheet: () => void;
   toggleSheet: () => void;
@@ -31,6 +33,7 @@ interface ShellState {
   setSearchOpen: (open: boolean) => void;
   setSource: (s: ModelSource) => void;
   setAgentMode: (on: boolean) => void;
+  setConfirmTools: (on: boolean) => void;
 }
 
 export const useShell = create<ShellState>()(
@@ -42,6 +45,7 @@ export const useShell = create<ShellState>()(
       searchOpen: false,
       source: "host",
       agentMode: true,
+      confirmTools: false,
       openSheet: (ctx) => set((s) => ({ sheetOpen: true, context: ctx === undefined ? s.context : ctx })),
       closeSheet: () => set({ sheetOpen: false }),
       toggleSheet: () => set((s) => ({ sheetOpen: !s.sheetOpen })),
@@ -50,7 +54,8 @@ export const useShell = create<ShellState>()(
       setSearchOpen: (searchOpen) => set({ searchOpen }),
       setSource: (source) => set({ source }),
       setAgentMode: (agentMode) => set({ agentMode }),
+      setConfirmTools: (confirmTools) => set({ confirmTools }),
     }),
-    { name: "alb.shell", partialize: (s) => ({ source: s.source, agentMode: s.agentMode }) },
+    { name: "alb.shell", partialize: (s) => ({ source: s.source, agentMode: s.agentMode, confirmTools: s.confirmTools }) },
   ),
 );

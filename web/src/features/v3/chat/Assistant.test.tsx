@@ -10,7 +10,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const chat = vi.hoisted(() => ({
-  state: { turns: [] as unknown[], sessionId: null as string | null, isStreaming: false },
+  state: { turns: [], sessionId: null, isStreaming: false } as { turns: unknown[]; sessionId: string | null; isStreaming: boolean; confirmRequest?: unknown },
+  answerConfirm: vi.fn(),
   send: vi.fn(),
   reset: vi.fn(),
   cancel: vi.fn(),
@@ -19,11 +20,11 @@ const chat = vi.hoisted(() => ({
 const clip = vi.hoisted(() => ({ copyText: vi.fn(async (_: string) => true) }));
 
 vi.mock("../../chat/useChatStream", () => ({
-  useChatStream: () => ({ ...chat.state, send: chat.send, reset: chat.reset, cancel: chat.cancel, retry: chat.retry }),
+  useChatStream: () => ({ ...chat.state, send: chat.send, reset: chat.reset, cancel: chat.cancel, retry: chat.retry, answerConfirm: chat.answerConfirm }),
 }));
 vi.mock("../../../lib/clipboard", () => clip);
 
-import { AssistantProvider, COMPOSER_MAX_PX, Composer, Conversation } from "../../../components/v3/Assistant";
+import { AssistantProvider, COMPOSER_MAX_PX, Composer, ConfirmToolsSwitch, Conversation } from "../../../components/v3/Assistant";
 import { SnackbarHost, useSnack } from "../../../components/v3/ui";
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
@@ -68,8 +69,8 @@ const ai = (id: string, over: object) => ({ id, role: "assistant", content: "", 
 
 beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  chat.state = { turns: [], sessionId: null, isStreaming: false };
-  for (const f of [chat.send, chat.reset, chat.cancel, chat.retry, clip.copyText]) f.mockClear();
+  chat.state = { turns: [], sessionId: null, isStreaming: false, confirmRequest: null };
+  for (const f of [chat.send, chat.reset, chat.cancel, chat.retry, chat.answerConfirm, clip.copyText]) f.mockClear();
   useApp.setState({ lang: "zh", device: "board-a", backend: "ollama", model: null });
   useShell.setState({ source: "host", agentMode: true, context: null, sheetOpen: false });
   useSnack.setState({ text: null }); // a toast from the previous test is also role=status
@@ -373,5 +374,32 @@ describe("small things", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     expect(chat.send).toHaveBeenCalledWith("why?");
     expect(document.activeElement).toBe(box);
+  });
+});
+
+describe("ask before each tool call", () => {
+  it("a held tool call shows its name and arguments; Run and Skip answer it", () => {
+    chat.state = { ...chat.state, isStreaming: true, confirmRequest: { id: "q1", name: "alb_reboot", arguments: { mode: "normal" } } };
+    render(tree());
+    const card = screen.getByRole("alertdialog");
+    expect(card.textContent).toContain("alb_reboot");
+    expect(card.textContent).toContain('"mode": "normal"');
+    fireEvent.click(within(card).getByRole("button", { name: "执行" }));
+    expect(chat.answerConfirm).toHaveBeenCalledWith(true);
+    fireEvent.click(within(card).getByRole("button", { name: "不执行" }));
+    expect(chat.answerConfirm).toHaveBeenLastCalledWith(false);
+  });
+
+  it("the switch is off by default and only usable in agent mode", () => {
+    useShell.setState({ confirmTools: false, agentMode: false });
+    const { unmount } = render(<ConfirmToolsSwitch />);
+    const box = screen.getByRole("checkbox", { name: "调工具前先问我" }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(true);
+    unmount();
+    useShell.setState({ agentMode: true });
+    render(<ConfirmToolsSwitch />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "调工具前先问我" }));
+    expect(useShell.getState().confirmTools).toBe(true);
   });
 });

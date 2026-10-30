@@ -335,3 +335,117 @@ def test_ws_chat_emits_tps_sample(client, monkeypatch, tmp_path):
     assert last["source"] == "chat"
     assert last["data"]["total_tokens"] > 0
     assert last["data"]["window_s"] == 1.0  # default interval
+
+
+# ─── confirm_tools: ask before each tool call (off by default) ───────
+
+
+class _OneToolCallBackend(_FakeBackend):
+    """Asks for one alb_reboot, then answers with what the tool returned."""
+
+    def __init__(self) -> None:
+        super().__init__("unused")
+        self.turn = 0
+
+    async def chat(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
+        from alb.agent.backend import ToolCall
+
+        self.turn += 1
+        if self.turn == 1:
+            return ChatResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="alb_reboot", arguments={"mode": "normal"})],
+                finish_reason="tool_calls",
+                model=self.model,
+            )
+        return ChatResponse(content=f"tool said: {messages[-1].content}", finish_reason="stop", model=self.model)
+
+    supports_streaming = True
+
+    async def stream(self, messages: list[Message], **kwargs: Any) -> Any:
+        resp = await self.chat(messages)
+        yield {
+            "type": "done",
+            "content": resp.content,
+            "tool_calls": [tc.to_dict() for tc in resp.tool_calls],
+            "finish_reason": resp.finish_reason,
+            "usage": {},
+            "model": self.model,
+            "thinking": "",
+        }
+
+
+def _tools_ran(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    ran: list[str] = []
+
+    async def _executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        ran.append(name)
+        return {"ok": True, "data": "rebooting"}
+
+    async def _make() -> tuple[list[ToolSpec], Any]:
+        spec = ToolSpec(name="alb_reboot", description="reboot", parameters={"type": "object", "properties": {}})
+        return [spec], _executor
+
+    monkeypatch.setattr("alb.mcp.executor.make_agent_tools", _make)
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _OneToolCallBackend())
+    return ran
+
+
+def _talk(client: TestClient, body: dict[str, Any], answer: bool | None) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json(body)
+        while True:
+            ev = ws.receive_json()
+            events.append(ev)
+            if ev.get("type") == "tool_confirm_request" and answer is not None:
+                ws.send_json({"type": "tool_confirm", "id": ev["id"], "approve": answer})
+            if ev.get("type") == "done":
+                return events
+
+
+def test_confirm_tools_declined_means_the_tool_never_runs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ran = _tools_ran(monkeypatch)
+    events = _talk(client, {"message": "reboot it", "tools": True, "confirm_tools": True}, answer=False)
+    asks = [e for e in events if e["type"] == "tool_confirm_request"]
+    assert len(asks) == 1 and asks[0]["name"] == "alb_reboot" and asks[0]["arguments"] == {"mode": "normal"}
+    assert ran == []
+    assert "TOOL_DECLINED" in events[-1]["data"]
+
+
+def test_confirm_tools_approved_runs_the_tool(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ran = _tools_ran(monkeypatch)
+    events = _talk(client, {"message": "reboot it", "tools": True, "confirm_tools": True}, answer=True)
+    assert ran == ["alb_reboot"]
+    assert "rebooting" in events[-1]["data"]
+
+
+def test_without_confirm_tools_nothing_is_asked(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default: board commands run without asking (2026-10-23)."""
+    ran = _tools_ran(monkeypatch)
+    events = _talk(client, {"message": "reboot it", "tools": True}, answer=None)
+    assert not [e for e in events if e["type"] == "tool_confirm_request"]
+    assert ran == ["alb_reboot"]
+
+
+def test_a_page_that_leaves_before_answering_runs_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ran = _tools_ran(monkeypatch)
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "reboot it", "tools": True, "confirm_tools": True})
+        while ws.receive_json().get("type") != "tool_confirm_request":
+            pass
+    # the socket is closed with the question unanswered
+    import time
+
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and not ran:
+        time.sleep(0.05)
+    assert ran == []

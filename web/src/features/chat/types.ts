@@ -56,6 +56,8 @@ export interface ChatRequestPayload {
   model: string | null;
   tools: boolean;
   max_turns: number;
+  /** Ask before each tool call (server waits for a tool_confirm answer). */
+  confirm_tools?: boolean;
 }
 
 /** A single event from the server stream. Shape mirrors loop.run_stream. */
@@ -68,6 +70,7 @@ export type StreamEvent =
       arguments: Record<string, unknown>;
     }
   | { type: "tool_call_end"; id: string; name: string; result: unknown }
+  | { type: "tool_confirm_request"; id: string; name: string; arguments: Record<string, unknown> }
   | {
       type: "done";
       ok: boolean;
