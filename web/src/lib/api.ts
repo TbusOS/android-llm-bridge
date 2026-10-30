@@ -76,6 +76,10 @@ export async function fetchApiVersion(signal?: AbortSignal): Promise<ApiVersion>
 
 export interface SessionSummary {
   session_id: string;
+  /** First line of the first user message ("" = none yet). */
+  title?: string;
+  /** "web" (chat page / assistant panel) or "cli" (`alb chat`); "" = older session. */
+  source?: string;
   created: string | null;
   backend: string;
   model: string;

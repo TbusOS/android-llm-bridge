@@ -4537,6 +4537,23 @@ html[lang^="zh"] h3 {
   white-space: nowrap;
 }
 
+/* A titled session: the first user line on top, the id and source below. */
+.sessions-table__title {
+  display: block;
+  font-family: inherit;
+  color: var(--anth-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessions-table__sub {
+  display: block;
+  font-size: 11px;
+  color: var(--anth-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sessions-table__cell {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 12px;

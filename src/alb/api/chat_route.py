@@ -319,7 +319,7 @@ async def _build_agent(
                 "session_id": req.session_id,
             }
     else:
-        session = ChatSession.create(backend=llm.name, model=llm.model)
+        session = ChatSession.create(backend=llm.name, model=llm.model, source="web")
 
     loop = AgentLoop(
         backend=llm,

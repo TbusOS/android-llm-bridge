@@ -31,9 +31,9 @@ const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
 const DAY = 86_400_000;
 
 const SESSIONS = [
-  { session_id: "20261028-aaaa1111", created: iso(3600_000), backend: "ollama", model: "qwen-x", device: "board-a", turns: 6, last_event_ts: iso(1800_000) },
-  { session_id: "20261027-bbbb2222", created: iso(DAY), backend: "openai-compat", model: "cloud-y", device: null, turns: 2, last_event_ts: iso(DAY) },
-  { session_id: "20261010-cccc3333", created: iso(18 * DAY), backend: "ollama", model: "qwen-x", device: null, turns: 4, last_event_ts: iso(18 * DAY) },
+  { session_id: "20261028-aaaa1111", title: "Why did the last boot panic?", source: "web", created: iso(3600_000), backend: "ollama", model: "qwen-x", device: "board-a", turns: 6, last_event_ts: iso(1800_000) },
+  { session_id: "20261027-bbbb2222", title: "Why is boot slow?", source: "cli", created: iso(DAY), backend: "openai-compat", model: "cloud-y", device: null, turns: 2, last_event_ts: iso(DAY) },
+  { session_id: "20261010-cccc3333", title: "Read the tombstone", created: iso(18 * DAY), backend: "ollama", model: "qwen-x", device: null, turns: 4, last_event_ts: iso(18 * DAY) },
 ];
 
 const DETAIL: Record<string, object> = {
@@ -160,6 +160,15 @@ describe("Chat page", () => {
     expect(screen.getByText(/云端 API · cloud-y/)).toBeInTheDocument();
   });
 
+  it("names sessions from the list's title without one detail request per session", async () => {
+    const calls = mockFetch();
+    renderPage();
+    expect(await screen.findByText("Why is boot slow?")).toBeInTheDocument();
+    const detailReads = calls.filter((c) => /\/sessions\/[^/?]+/.test(c));
+    // only the opened conversation is read, not every row of the list
+    expect(detailReads.length).toBeLessThanOrEqual(1);
+  });
+
   it("search narrows the list", async () => {
     mockFetch();
     renderPage();
@@ -236,9 +245,12 @@ describe("Chat page", () => {
   });
 
   it("an unreadable session says so with a retry", async () => {
-    mockFetch({ detail: (id) => (id === "20261010-cccc3333" ? new Response("x", { status: 500 }) : Response.json(DETAIL[id] ?? {})) });
+    mockFetch({
+      sessions: () => Response.json({ ok: true, sessions: SESSIONS.map((x) => (x.session_id === "20261010-cccc3333" ? { ...x, title: "" } : x)) }),
+      detail: (id) => (id === "20261010-cccc3333" ? new Response("x", { status: 500 }) : Response.json(DETAIL[id] ?? {})),
+    });
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /^对话 \d\d:\d\d/ })); // title fell back to the time: its detail is unreadable
+    fireEvent.click(await screen.findByRole("button", { name: /^对话 \d\d:\d\d/ })); // no title in the list: it falls back to the time
     expect(await screen.findByText(/读不到这次对话/)).toBeInTheDocument();
   });
 

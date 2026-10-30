@@ -4,7 +4,7 @@ Pure filesystem scan over the layout produced by
 `alb.agent.session.ChatSession`:
 
     workspace/sessions/<session-id>/
-        meta.json        # session_id / created / backend / model / device
+        meta.json        # session_id / created / backend / model / device / source
         messages.jsonl   # one Message per line — used for turn count + last activity
 
 No transport / LLM backend dependency, so this endpoint stays cheap and
@@ -43,6 +43,35 @@ def _count_lines(path: Path) -> int:
     return n
 
 
+_TITLE_MAX = 80
+
+
+def _title(messages: Path) -> str:
+    """The first line of the first user message, cut to _TITLE_MAX — what a
+    person would call the conversation. Read from messages.jsonl, so sessions
+    written before titles existed have one too. Stops at that message: a long
+    session costs one short read, not a full parse."""
+    if not messages.exists():
+        return ""
+    try:
+        with messages.open("r", encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(msg, dict) or msg.get("role") != "user":
+                    continue
+                text = str(msg.get("content") or "").strip()
+                if not text:
+                    continue
+                first = text.splitlines()[0].strip()
+                return first if len(first) <= _TITLE_MAX else first[: _TITLE_MAX - 1] + "…"
+    except OSError:
+        return ""
+    return ""
+
+
 def _mtime_iso(path: Path) -> str | None:
     if not path.exists():
         return None
@@ -64,6 +93,9 @@ def _summarize(session_dir: Path) -> dict[str, Any]:
     messages = session_dir / "messages.jsonl"
     return {
         "session_id": meta.get("session_id") or session_dir.name,
+        "title": _title(messages),
+        # "web" / "cli"; "" for sessions from before the field was written.
+        "source": meta.get("source") or "",
         "created": meta.get("created"),
         "backend": meta.get("backend") or "",
         "model": meta.get("model") or "",

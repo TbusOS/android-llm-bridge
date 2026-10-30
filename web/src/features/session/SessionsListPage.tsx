@@ -36,10 +36,18 @@ function formatRel(iso: string | null, lang: "en" | "zh"): string {
   return lang === "zh" ? `${days} 天前` : `${days} d ago`;
 }
 
+/** Where a session was started, as the hub recorded it ("" = older session). */
+function sourceLabel(source: string, lang: string): string {
+  if (source === "web") return lang === "zh" ? "网页" : "web";
+  if (source === "cli") return lang === "zh" ? "命令行" : "command line";
+  return source;
+}
+
 function matches(s: SessionSummary, q: string): boolean {
   if (!q) return true;
   const t = q.toLowerCase();
   return (
+    (s.title ?? "").toLowerCase().includes(t) ||
     s.session_id.toLowerCase().includes(t) ||
     s.backend.toLowerCase().includes(t) ||
     s.model.toLowerCase().includes(t) ||
@@ -169,7 +177,7 @@ export function SessionsListPage() {
                   // visual row 1:1.
                   aria-label={
                     lang === "zh"
-                      ? `会话 ${s.session_id} · 创建 ${
+                      ? `会话 ${s.title ? `${s.title} · ` : ""}${s.session_id} · 创建 ${
                           s.created
                             ? new Date(s.created).toLocaleString("zh-CN", {
                                 month: "2-digit",
@@ -180,7 +188,7 @@ export function SessionsListPage() {
                               })
                             : "未知"
                         } · ${s.backend} ${s.model} · 设备 ${s.device ?? "未指定"} · ${s.turns} 轮 · 最近 ${formatRel(s.last_event_ts, lang)}`
-                      : `Session ${s.session_id} · created ${
+                      : `Session ${s.title ? `${s.title} · ` : ""}${s.session_id} · created ${
                           s.created
                             ? new Date(s.created).toLocaleString("en-US", {
                                 month: "2-digit",
@@ -193,7 +201,19 @@ export function SessionsListPage() {
                         } · ${s.backend} ${s.model} · device ${s.device ?? "none"} · ${s.turns} turns · last ${formatRel(s.last_event_ts, lang)}`
                   }
                 >
-                  <span className="sessions-table__id">{s.session_id}</span>
+                  <span className="sessions-table__id">
+                    {s.title ? (
+                      <>
+                        <span className="sessions-table__title">{s.title}</span>
+                        <small className="sessions-table__sub">
+                          {s.session_id}
+                          {s.source ? ` · ${sourceLabel(s.source, lang)}` : ""}
+                        </small>
+                      </>
+                    ) : (
+                      s.session_id
+                    )}
+                  </span>
                   <span className="sessions-table__cell">
                     {s.created
                       ? new Date(s.created).toLocaleString(

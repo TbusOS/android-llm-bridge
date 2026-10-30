@@ -6,8 +6,8 @@
  * The agent loop has no approval step before tools that change the board,
  * so tools are shown as "runs" when agent mode is on, never as "asks".
  */
-import { useQueries, useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { Composer, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
 import { Icon } from "../../../components/v3/Icon";
@@ -34,7 +34,6 @@ import "./chat.css";
 
 const API_BACKENDS = new Set(["openai-compat", "anthropic", "openai"]);
 /** Sessions whose first message is fetched to give them a title. */
-const TITLE_FETCH = 8;
 
 /* ---------------- helpers ---------------- */
 
@@ -122,29 +121,17 @@ export function ChatPage3() {
   }, [a.isStreaming, refetch]);
 
   const list = sessions.data?.sessions ?? [];
-  const titleQs = useQueries({
-    queries: list.slice(0, TITLE_FETCH).map((s) => ({
-      queryKey: ["chat3-session-title", s.session_id],
-      queryFn: ({ signal }: { signal?: AbortSignal }) => fetchSessionDetail(s.session_id, signal),
-      staleTime: 5 * 60_000,
-      retry: false,
-    })),
-  });
-  const titles = useMemo(() => {
-    const m = new Map<string, string>();
-    list.slice(0, TITLE_FETCH).forEach((s, i) => {
-      const first = titleQs[i]?.data?.messages.find((x) => x.role === "user" && x.content?.trim());
-      if (first?.content) m.set(s.session_id, firstLine(first.content));
-    });
-    return m;
-    // titleQs is a fresh array each render; its data identity is what matters
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, titleQs.map((q) => q.dataUpdatedAt).join(",")]);
-
   const liveFirst = a.turns.find((x) => x.role === "user")?.content;
   const liveTitle = liveFirst ? firstLine(liveFirst) : t("新对话", "New chat");
   const liveInList = a.sessionId ? list.some((s) => s.session_id === a.sessionId) : false;
-  const titleOf = (s: SessionSummary) => (s.session_id === a.sessionId && liveFirst ? firstLine(liveFirst) : titles.get(s.session_id) ?? `${t("对话", "Chat")} ${hhmm(s.last_event_ts ?? s.created) || s.session_id.slice(-6)}`);
+  // `title` comes with the list (the first user line, read by the hub), so
+  // naming N sessions no longer costs N detail requests.
+  const titleOf = (s: SessionSummary) =>
+    s.session_id === a.sessionId && liveFirst
+      ? firstLine(liveFirst)
+      : s.title
+        ? firstLine(s.title)
+        : `${t("对话", "Chat")} ${hhmm(s.last_event_ts ?? s.created) || s.session_id.slice(-6)}`;
 
   const q = search.trim().toLowerCase();
   const shown = list.filter((s) => !q || `${titleOf(s)} ${s.model} ${s.backend} ${s.session_id}`.toLowerCase().includes(q));

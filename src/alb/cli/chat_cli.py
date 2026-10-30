@@ -171,7 +171,7 @@ def chat(
             console.print(f"[red]✗ session not found: {session_id}[/]")
             raise typer.Exit(code=1)
     else:
-        session = ChatSession.create(backend=llm.name, model=llm.model)
+        session = ChatSession.create(backend=llm.name, model=llm.model, source="cli")
 
     _print_banner(llm, session, len(specs), no_tools)
 

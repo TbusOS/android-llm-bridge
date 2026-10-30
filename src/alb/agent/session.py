@@ -46,6 +46,9 @@ class ChatSession:
     backend: str = ""
     model: str = ""
     device: str | None = None
+    # Who started it: "web" (chat page / assistant panel) or "cli" (`alb chat`).
+    # "" = a session from before this field, or a caller that did not say.
+    source: str = ""
     _messages: list[Message] = field(default_factory=list, repr=False)
 
     # ── Construction ────────────────────────────────────────────────
@@ -56,10 +59,11 @@ class ChatSession:
         backend: str = "",
         model: str = "",
         device: str | None = None,
+        source: str = "",
     ) -> "ChatSession":
         """Create a new session directory + meta.json and return the handle."""
         sid = new_session_id()
-        s = cls(session_id=sid, backend=backend, model=model, device=device)
+        s = cls(session_id=sid, backend=backend, model=model, device=device, source=source)
         s.dir.mkdir(parents=True, exist_ok=True)
         s._write_meta()
         return s
@@ -80,6 +84,7 @@ class ChatSession:
             s.backend = meta.get("backend") or ""
             s.model = meta.get("model") or ""
             s.device = meta.get("device")
+            s.source = meta.get("source") or ""
 
         if s.messages_file.exists():
             for line in s.messages_file.read_text().splitlines():
@@ -138,5 +143,6 @@ class ChatSession:
             "backend": self.backend,
             "model": self.model,
             "device": self.device,
+            "source": self.source,
         }
         self.meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2))

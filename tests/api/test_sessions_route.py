@@ -243,3 +243,37 @@ def test_detail_scan_runs_in_worker_thread_l033(monkeypatch, client, workspace) 
     r = client.get(f"/sessions/{sid}")
     assert r.status_code == 200
     assert "_load_detail_in_thread" in seen
+
+
+def test_title_is_the_first_user_line_and_source_is_reported(
+    client: TestClient, workspace: Path
+) -> None:
+    sdir = _make_session(workspace, "20261030-titled", created="2026-10-30T08:00:00+00:00")
+    meta = json.loads((sdir / "meta.json").read_text())
+    (sdir / "meta.json").write_text(json.dumps({**meta, "source": "cli"}))
+    long_line = "抓 30 秒 logcat 看开机卡在哪 " + "x" * 100
+    with (sdir / "messages.jsonl").open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"role": "system", "content": "you are alb"}) + "\n")
+        f.write("not json\n")
+        f.write(json.dumps({"role": "user", "content": "   "}) + "\n")
+        f.write(json.dumps({"role": "user", "content": long_line + "\nsecond line"}) + "\n")
+        f.write(json.dumps({"role": "user", "content": "later question"}) + "\n")
+    s = client.get("/sessions").json()["sessions"][0]
+    assert s["source"] == "cli"
+    assert s["title"].startswith("抓 30 秒 logcat 看开机卡在哪")
+    assert len(s["title"]) == 80 and s["title"].endswith("…")
+    assert "second line" not in s["title"]
+
+
+def test_old_sessions_have_empty_title_and_source(client: TestClient, workspace: Path) -> None:
+    _make_session(workspace, "20260427-old", created="2026-04-27T00:00:00+00:00")
+    s = client.get("/sessions").json()["sessions"][0]
+    assert s["title"] == "" and s["source"] == ""
+
+
+def test_new_sessions_record_their_source(workspace: Path) -> None:
+    from alb.agent.session import ChatSession
+
+    s = ChatSession.create(backend="ollama", model="m", source="web")
+    assert json.loads(s.meta_file.read_text())["source"] == "web"
+    assert ChatSession.load(s.session_id).source == "web"
