@@ -1551,10 +1551,24 @@ export interface ComPort {
   desc?: string;
 }
 
+/** The agent's last remote update as its host recorded it (ADR-060).
+ *  `reported: "pending"` = the hub read a `pending` from the target build's
+ *  own hello as `updated` (that hello is the connection the helper waits for). */
+export interface AgentLastUpdate {
+  id?: string;
+  outcome?: "updated" | "rolled_back" | "aborted" | "pending" | string;
+  from_build?: string;
+  to_build?: string;
+  at?: number;
+  reported?: string;
+}
+
 export interface AgentStatusItem {
   agent_id: string;
   name: string;
   version: number;
+  build?: string;
+  last_update?: AgentLastUpdate;
   caps: string[];
   current: boolean;
   adb_devices: string[];

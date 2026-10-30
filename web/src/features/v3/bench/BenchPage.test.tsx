@@ -194,6 +194,22 @@ describe("Bench page", () => {
     expect(screen.getByText("sending 12 files")).toBeInTheDocument();
   });
 
+  it("agent card shows the last remote update: none, updated, rolled back", async () => {
+    mock();
+    const { unmount } = renderPage();
+    expect(await screen.findByText("none recorded")).toBeInTheDocument();
+    unmount();
+    const withUpdate = (outcome: string) => ({ ...AGENT, agents: [{ ...AGENT.agents[0], last_update: { id: "u1", outcome, from_build: "aaaaaaaaaaaa00", to_build: "bbbbbbbbbbbb00", at: 1761616620 } }] });
+    mock({ agent: withUpdate("updated") });
+    const second = renderPage();
+    expect(await screen.findByText("updated", { selector: ".pill" })).toBeInTheDocument();
+    expect(screen.getByText(/aaaaaaaaaaaa → bbbbbbbbbbbb/)).toBeInTheDocument();
+    second.unmount();
+    mock({ agent: withUpdate("rolled_back") });
+    renderPage();
+    expect(await screen.findByText("rolled back", { selector: ".pill" })).toBeInTheDocument();
+  });
+
   it("a failed agent update shows its code", async () => {
     mock({ extra: (url) => (url === "/api/bench/agent-update" ? ndjson([{ ev: "done", ok: false, error: { code: "AGENT_UPDATE_ROLLED_BACK", message: "the old version is back" } }]) : undefined) });
     renderPage();

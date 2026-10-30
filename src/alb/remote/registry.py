@@ -71,6 +71,24 @@ class _Pending:
     csecret: str
 
 
+def settled_update(last: dict[str, Any] | None, build: str) -> dict[str, Any]:
+    """The agent's last remote update, with a `pending` that is already over
+    read as the outcome it is.
+
+    The bench's update helper writes `pending` before it starts the new build
+    and `updated` only after that build has connected — but the new build
+    reads the record while it starts, before connecting, so its hello always
+    says `pending` (/agent/status showed `pending` from 2026-10-16 on). A hello
+    from the build the record was heading for IS that connection, so the
+    update completed. `pending` on any other build (the helper died mid-swap
+    and the old build came back) is left as reported."""
+    rec = dict(last or {})
+    if rec.get("outcome") == "pending" and build and rec.get("to_build") == build:
+        rec["outcome"] = "updated"
+        rec["reported"] = "pending"
+    return rec
+
+
 class AgentConnection:
     """One connected agent. Owns the signaling-WS send callable + metadata.
     Pending-channel futures live in the registry (keyed by the global cid)."""
@@ -100,7 +118,7 @@ class AgentConnection:
         self.build = build
         # {"id", "outcome", "from_build", "to_build", "at"} of the agent's last
         # remote update, as the bench host's update helper recorded it.
-        self.last_update: dict[str, Any] = dict(last_update or {})
+        self.last_update: dict[str, Any] = settled_update(last_update, build)
         # Partitions this bench permits, straight from the agent's hello.
         # Empty = no allowlist configured = any well-formed name is accepted.
         # Callers must not read empty as "nothing allowed" — see the web

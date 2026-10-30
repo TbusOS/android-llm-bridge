@@ -19,7 +19,7 @@ import {
   runBenchOp,
   selectBenchBoard,
 } from "../../../lib/api3";
-import type { AgentStatusItem } from "../../../lib/api";
+import type { AgentLastUpdate, AgentStatusItem } from "../../../lib/api";
 import { useT } from "../../../lib/i18n";
 import { useBenchOps } from "./useBenchOps";
 
@@ -361,6 +361,26 @@ function UsbCard({ usb, connected }: { usb: { loading: boolean; error: string | 
 
 type Job = { kind: "update" | "start"; running: boolean; lines: string[]; done: NdjsonEvent | null } | null;
 
+function LastUpdate({ last }: { last: AgentLastUpdate | undefined }) {
+  const t = useT();
+  if (!last?.outcome) return <span className="t-muted">{t("没有记录", "none recorded")}</span>;
+  const when = typeof last.at === "number" ? new Date(last.at * 1000).toLocaleString() : "";
+  const route = last.from_build && last.to_build ? `${last.from_build.slice(0, 12)} → ${last.to_build.slice(0, 12)}` : "";
+  const [tone, label] =
+    last.outcome === "updated"
+      ? (["ok", t("换版成功", "updated")] as const)
+      : last.outcome === "rolled_back"
+        ? (["bad", t("新版没连上,已放回旧版", "rolled back")] as const)
+        : last.outcome === "aborted"
+          ? (["warn", t("中途放弃,没有换", "abandoned, nothing changed")] as const)
+          : (["warn", t("没有结果:换版中途断了", "no result: the swap was cut short")] as const);
+  return (
+    <span title={last.id ? `update ${last.id}` : undefined}>
+      <Pill tone={tone}>{label}</Pill> <span className="mono t-muted">{[route, when].filter(Boolean).join(" · ")}</span>
+    </span>
+  );
+}
+
 function AgentCard({
   agentError,
   loading,
@@ -412,6 +432,7 @@ function AgentCard({
               {bundle && build ? stale ? <Pill tone="warn">{t("台架上的较旧", "bench is behind")}</Pill> : <Pill tone="ok">{t("一致", "same")}</Pill> : null}
             </dd>
           </div>
+          <div><dt>{t("上次远程更新", "Last remote update")}</dt><dd><LastUpdate last={item.last_update} /></dd></div>
           <div><dt>{t("adb 设备", "adb devices")}</dt><dd>{item.adb_devices.length}</dd></div>
           <div><dt>{t("串口", "COM ports")}</dt><dd>{item.com_ports.length}</dd></div>
           <div><dt>{t("操作表", "Operations")}</dt><dd>{opsData ? t(`${opsData.ops.length} 项`, `${opsData.ops.length} operations`) : "—"}</dd></div>

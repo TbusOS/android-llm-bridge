@@ -268,6 +268,32 @@ def test_status_shows_the_build_and_the_last_update(monkeypatch):
     assert agent["last_update"] == {"id": "u1", "outcome": "updated"}
 
 
+@pytest.mark.parametrize(
+    ("build", "expected"),
+    [
+        # The new build's hello: the helper had not yet written `updated`.
+        ("new0000", {"outcome": "updated", "reported": "pending"}),
+        # The old build is back with `pending`: the swap did not finish.
+        ("old0000", {"outcome": "pending"}),
+    ],
+)
+def test_a_pending_update_on_the_target_build_is_updated(
+    monkeypatch: pytest.MonkeyPatch, build: str, expected: dict[str, str]
+) -> None:
+    monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
+    hello = p.hello(agent_id="agent-1", name="t", version=1, caps=["adb"], token=None)
+    hello["build"] = build
+    hello["update"] = {"id": "u1", "outcome": "pending", "from_build": "old0000", "to_build": "new0000"}
+    with TestClient(create_app()) as c:
+        with c.websocket_connect("/agent/connect") as ws:
+            ws.send_text(p.encode_control(hello))
+            ws.receive_text()
+            agent = c.get("/agent/status").json()["agents"][0]
+    last = agent["last_update"]
+    assert {k: last[k] for k in expected} == expected
+    assert ("reported" in last) == ("reported" in expected)
+
+
 def test_an_old_agent_has_no_build(monkeypatch):
     monkeypatch.delenv("ALB_AGENT_TOKEN", raising=False)
     hello = p.hello(agent_id="agent-1", name="t", version=1, caps=["adb"], token=None)
