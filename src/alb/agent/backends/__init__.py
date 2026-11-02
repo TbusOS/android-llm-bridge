@@ -88,10 +88,15 @@ def _construct(name: str, **kwargs: Any) -> LLMBackend:
         #   caller kwargs > env > library default.
         env_base = os.environ.get("ALB_OLLAMA_URL")
         env_model = os.environ.get("ALB_OLLAMA_MODEL")
+        env_ctx = os.environ.get("ALB_OLLAMA_NUM_CTX", "").strip()
         if env_base and "base_url" not in kwargs:
             kwargs["base_url"] = env_base
         if env_model and "model" not in kwargs:
             kwargs["model"] = env_model
+        if env_ctx and "num_ctx" not in kwargs:
+            if not env_ctx.isdigit():
+                raise ValueError(f"ALB_OLLAMA_NUM_CTX must be a whole number of tokens, got {env_ctx!r}")
+            kwargs["num_ctx"] = int(env_ctx) or None  # 0: send none, Ollama's own default
         return OllamaBackend(**kwargs)
     if name == "openai-compat":
         from alb.agent.backends.openai_compat import OpenAICompatBackend

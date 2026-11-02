@@ -457,3 +457,142 @@ async def test_stream_thinking_promoted_when_content_empty() -> None:
     # No content tokens at all, but done.content should be promoted from thinking
     assert done["content"] == "I think PONG"
     assert done["thinking"] == "I think PONG"
+
+
+# ─── Context window: num_ctx sent, a filled window refused (2026-11-02) ──
+
+
+def _reply(prompt_tokens: int) -> dict[str, Any]:
+    return {
+        "model": "m",
+        "message": {"role": "assistant", "content": ""},
+        "done": True,
+        "done_reason": "stop",
+        "prompt_eval_count": prompt_tokens,
+        "eval_count": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_num_ctx_is_sent_and_can_be_overridden() -> None:
+    """Ollama's own default (4096) is shorter than the tool list alone."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(req.content)["options"])
+        return httpx.Response(200, json=_reply(10))
+
+    msgs = [Message(role="user", content="hi")]
+    await OllamaBackend(transport=_mock_transport(handler)).chat(msgs)
+    await OllamaBackend(num_ctx=8192, transport=_mock_transport(handler)).chat(msgs)
+    await OllamaBackend(num_ctx=None, transport=_mock_transport(handler)).chat(msgs)
+    await OllamaBackend(transport=_mock_transport(handler)).chat(msgs, options={"num_ctx": 2048})
+    assert [o.get("num_ctx") for o in sent] == [16384, 8192, None, 2048]
+
+
+def test_num_ctx_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from alb.agent.backends import get_backend
+
+    monkeypatch.setenv("ALB_OLLAMA_NUM_CTX", "32768")
+    # with kwargs, as the chat route calls it (no-kwargs calls are cached for probes)
+    assert get_backend("ollama", model="m").num_ctx == 32768  # type: ignore[attr-defined]
+    monkeypatch.setenv("ALB_OLLAMA_NUM_CTX", "0")  # send none: Ollama's own default
+    assert get_backend("ollama", model="m").num_ctx is None  # type: ignore[attr-defined]
+    monkeypatch.setenv("ALB_OLLAMA_NUM_CTX", "16k")
+    with pytest.raises(ValueError, match="ALB_OLLAMA_NUM_CTX"):
+        get_backend("ollama", model="m")
+
+
+@pytest.mark.asyncio
+async def test_chat_refuses_a_reply_whose_prompt_filled_the_window() -> None:
+    """Ollama cuts the start of an over-long prompt (the tool list) and still
+    answers: on the bench that answer was empty. The prompt count equal to
+    num_ctx is the sign."""
+    counts = iter([4096, 4095])
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_reply(next(counts)))
+
+    b = OllamaBackend(num_ctx=4096, transport=_mock_transport(handler))
+    with pytest.raises(BackendError) as ei:
+        await b.chat([Message(role="user", content="hi")])
+    assert ei.value.code == "LLM_CONTEXT_TRUNCATED"
+    assert "4096 of num_ctx 4096" in str(ei.value)
+    assert "ALB_OLLAMA_NUM_CTX" in ei.value.suggestion
+    # one token short of the window: it all fit
+    resp = await b.chat([Message(role="user", content="hi")])
+    assert resp.usage["input_tokens"] == 4095
+
+
+@pytest.mark.asyncio
+async def test_stream_refuses_a_reply_whose_prompt_filled_the_window() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_ndjson(
+                {"model": "m", "message": {"content": "x"}, "done": False},
+                _reply(16384),
+            ),
+        )
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    events: list[dict[str, Any]] = []
+    with pytest.raises(BackendError) as ei:
+        async for ev in b.stream([Message(role="user", content="hi")]):
+            events.append(ev)
+    assert ei.value.code == "LLM_CONTEXT_TRUNCATED"
+    assert [e["type"] for e in events] == ["token"]  # no done event for a cut prompt
+
+
+def test_the_new_code_is_in_the_catalog() -> None:
+    from alb.infra.errors import ERROR_CODES
+
+    assert ERROR_CODES["LLM_CONTEXT_TRUNCATED"].category == "system"
+
+
+@pytest.mark.asyncio
+async def test_stream_keeps_tool_calls_sent_before_the_done_chunk() -> None:
+    """Ollama 0.21 sends the tool calls in a chunk before `done: true` and
+    none on the done chunk (bench, 2026-11-02); they were dropped, so the
+    web assistant never ran a tool."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_ndjson(
+                {
+                    "model": "m",
+                    "message": {
+                        "content": "",
+                        "tool_calls": [{"id": "call_1", "function": {"index": 0, "name": "alb_shell", "arguments": {"cmd": "sleep 45"}}}],
+                    },
+                    "done": False,
+                },
+                {"model": "m", "message": {"content": ""}, "done": True, "done_reason": "stop", "prompt_eval_count": 5786, "eval_count": 18},
+            ),
+        )
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    events = [ev async for ev in b.stream([Message(role="user", content="run it")])]
+    done = next(ev for ev in events if ev["type"] == "done")
+    assert [(t["name"], t["arguments"]) for t in done["tool_calls"]] == [("alb_shell", {"cmd": "sleep 45"})]
+    assert done["finish_reason"] == "tool_calls"
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_double_tool_calls_repeated_on_done() -> None:
+    call = {"function": {"name": "alb_devices", "arguments": {}}}  # no id from the server
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_ndjson(
+                {"model": "m", "message": {"content": "", "tool_calls": [call]}, "done": False},
+                {"model": "m", "message": {"content": "", "tool_calls": [call]}, "done": True, "done_reason": "stop", "prompt_eval_count": 9},
+            ),
+        )
+
+    b = OllamaBackend(transport=_mock_transport(handler))
+    events = [ev async for ev in b.stream([Message(role="user", content="list")])]
+    done = next(ev for ev in events if ev["type"] == "done")
+    assert [t["name"] for t in done["tool_calls"]] == ["alb_devices"]

@@ -441,6 +441,8 @@ browser goes away; these let a reloaded page show what happened.
 | `BACKEND_UNREACHABLE` | playground | ollama daemon down, etc. |
 | `BACKEND_HTTP_ERROR` | playground | backend returned 4xx/5xx |
 | `BACKEND_TIMEOUT` | playground | request timed out |
+| `LLM_CONTEXT_TRUNCATED` | chat / playground | the prompt filled the whole context window (`num_ctx`, default 16384, env `ALB_OLLAMA_NUM_CTX`); the start was cut off, so the reply is not used |
+| `CHAT_STOPPED` | chat WS | the page closed the socket before `done`; tool calls left without a result get this one in the session |
 | `TRANSPORT_NO_PTY` | terminal | transport doesn't support interactive shell |
 | `PTY_SPAWN_FAILED` | terminal | fork / exec failed |
 | `PLAYGROUND_INTERNAL` | playground WS | unexpected server error |

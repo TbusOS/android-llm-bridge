@@ -183,6 +183,14 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Missing system dependency",
         "Install the missing tool per error.details",
     ),
+    # chat / LLM backend (raised as BackendError, reported in the done event)
+    "LLM_CONTEXT_TRUNCATED": ErrorSpec(
+        "LLM_CONTEXT_TRUNCATED",
+        "system",
+        "The request filled the model's whole context window; the LLM server cut "
+        "the start off, so the model saw only part of it",
+        "Raise ALB_OLLAMA_NUM_CTX, turn tools off for this chat, or start a new session",
+    ),
     # serial state (raised by SerialTransport when shell() is called in
     # a state that can't accept a command). See transport/serial_state.py
     # for the full state taxonomy.

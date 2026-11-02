@@ -55,6 +55,12 @@ DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5:3b"
 DEFAULT_TIMEOUT = 120.0  # CPU inference on 3B can legitimately take 60-90s
 DEFAULT_THINK = False  # reasoning models (gpt-oss, qwen3-thinking) — skip chain-of-thought by default for agent/tool use
+# Context window asked of Ollama on every request. Its own default (4096 on
+# the bench's 0.21) is shorter than the agent's tool list alone: with the 36
+# tools a request is 5786 tokens, Ollama cut the start off and the model
+# answered nothing (2026-11-02). One value for every call also keeps Ollama
+# from reloading the model between requests that ask for different sizes.
+DEFAULT_NUM_CTX = 16384
 
 
 class OllamaBackend(LLMBackend):
@@ -72,6 +78,12 @@ class OllamaBackend(LLMBackend):
             waste output tokens. Pass `think=True` for interactive chat where
             the user wants to see the model's reasoning. Ignored by
             non-thinking models.
+        num_ctx: context window (tokens) sent as `options.num_ctx`;
+            env ALB_OLLAMA_NUM_CTX through get_backend; None sends none and
+            leaves Ollama's default. A reply whose prompt filled the whole
+            window raises LLM_CONTEXT_TRUNCATED: Ollama dropped the start of
+            the request (tool list and instructions first), so the answer
+            is not one to trust.
     """
 
     name = "ollama"
@@ -88,9 +100,11 @@ class OllamaBackend(LLMBackend):
         timeout: float = DEFAULT_TIMEOUT,
         default_options: dict[str, Any] | None = None,
         think: bool = DEFAULT_THINK,
+        num_ctx: int | None = DEFAULT_NUM_CTX,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
+        self.num_ctx = num_ctx
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.default_options: dict[str, Any] = default_options or {}
@@ -119,6 +133,7 @@ class OllamaBackend(LLMBackend):
     ) -> ChatResponse:
         body = self._build_body(messages, tools, temperature, max_tokens, kwargs)
         raw = await self._post("/api/chat", body)
+        _raise_if_truncated(raw, body)
         return self._parse_response(raw)
 
     async def stream(
@@ -134,8 +149,10 @@ class OllamaBackend(LLMBackend):
 
         Yields StreamEvent dicts (see LLMBackend.stream docstring).  Content
         deltas are emitted as {"type": "token", "delta": ...}.  Tool-call
-        requests (Ollama emits the tool_calls list only on `done: true`)
-        surface via the terminal {"type": "done", "tool_calls": [...]} event.
+        requests surface via the terminal {"type": "done", "tool_calls": [...]}
+        event. They are collected from every chunk: Ollama 0.21 sends them in
+        a chunk before `done: true` and leaves the done chunk without them
+        (bench, 2026-11-02), where older servers put them on the done chunk.
         """
         body = self._build_body(messages, tools, temperature, max_tokens, kwargs)
         body["stream"] = True
@@ -180,26 +197,18 @@ class OllamaBackend(LLMBackend):
                         thinking_parts.append(delta_t)
                     if chunk.get("model"):
                         model_reply = chunk["model"]
+                    for tc in _parse_tool_calls(msg):
+                        # a server that repeats them on the done chunk: the
+                        # same id, or (no id sent, one made up here) the
+                        # same call
+                        if not any(
+                            seen.id == tc.id or (seen.name, seen.arguments) == (tc.name, tc.arguments)
+                            for seen in tool_calls
+                        ):
+                            tool_calls.append(tc)
                     if chunk.get("done"):
-                        # Terminal chunk: tool_calls (if any) + usage
-                        for tc in msg.get("tool_calls") or []:
-                            fn = tc.get("function") or {}
-                            name = fn.get("name") or ""
-                            args = fn.get("arguments") or {}
-                            if isinstance(args, str):
-                                try:
-                                    args = json.loads(args) if args.strip() else {}
-                                except json.JSONDecodeError:
-                                    args = {"__raw__": args}
-                            if not name:
-                                continue
-                            tool_calls.append(
-                                ToolCall(
-                                    id=tc.get("id") or f"tc_{uuid4().hex[:8]}",
-                                    name=name,
-                                    arguments=args,
-                                )
-                            )
+                        _raise_if_truncated(chunk, body)
+                        # Terminal chunk: usage
                         finish_reason = (
                             "tool_calls" if tool_calls else _classify_done(chunk)
                         )
@@ -266,6 +275,8 @@ class OllamaBackend(LLMBackend):
         extra: dict[str, Any],
     ) -> dict[str, Any]:
         options: dict[str, Any] = {"temperature": temperature}
+        if self.num_ctx:
+            options["num_ctx"] = self.num_ctx
         if max_tokens is not None:
             options["num_predict"] = max_tokens
         options.update(self.default_options)
@@ -347,24 +358,7 @@ class OllamaBackend(LLMBackend):
         if not content and thinking:
             content = thinking
 
-        tool_calls: list[ToolCall] = []
-        for tc in msg.get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            name = fn.get("name") or ""
-            args = fn.get("arguments") or {}
-            if not name:
-                continue
-            # Ollama returns dict already; older / other servers may return str
-            if isinstance(args, str):
-                try:
-                    import json
-
-                    args = json.loads(args) if args.strip() else {}
-                except json.JSONDecodeError:
-                    args = {"__raw__": args}
-            tool_calls.append(
-                ToolCall(id=tc.get("id") or f"tc_{uuid4().hex[:8]}", name=name, arguments=args)
-            )
+        tool_calls = _parse_tool_calls(msg)
 
         finish_reason: FinishReason = "tool_calls" if tool_calls else _classify_done(raw)
 
@@ -437,6 +431,45 @@ def _message_to_ollama(m: Message) -> dict[str, Any]:
     if m.name is not None:
         d["name"] = m.name
     return d
+
+
+def _parse_tool_calls(msg: dict[str, Any]) -> list[ToolCall]:
+    """The tool calls of one Ollama message (or stream chunk)."""
+    calls: list[ToolCall] = []
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        name = fn.get("name") or ""
+        args = fn.get("arguments") or {}
+        if not name:
+            continue
+        # Ollama returns dict already; older / other servers may return str
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args.strip() else {}
+            except json.JSONDecodeError:
+                args = {"__raw__": args}
+        calls.append(ToolCall(id=tc.get("id") or f"tc_{uuid4().hex[:8]}", name=name, arguments=args))
+    return calls
+
+
+def _raise_if_truncated(reply: dict[str, Any], body: dict[str, Any]) -> None:
+    """A prompt that filled the whole window was cut to fit: Ollama drops the
+    start, where the instructions and the tool list are. Its prompt count is
+    the whole prompt even when a cached prefix was reused (checked 2026-11-02:
+    the same request twice reported 30 both times)."""
+    num_ctx = (body.get("options") or {}).get("num_ctx")
+    used = reply.get("prompt_eval_count")
+    if isinstance(num_ctx, int) and num_ctx > 0 and isinstance(used, int) and used >= num_ctx:
+        raise BackendError(
+            "LLM_CONTEXT_TRUNCATED",
+            f"the request filled the model's whole context window ({used} of "
+            f"num_ctx {num_ctx} tokens); Ollama cut the start off, so the model "
+            "saw only part of it",
+            suggestion=(
+                "raise ALB_OLLAMA_NUM_CTX (more memory on the Ollama host), "
+                "turn tools off for this chat, or start a new session"
+            ),
+        )
 
 
 def _build_usage_dict(raw: dict[str, Any]) -> dict[str, Any]:

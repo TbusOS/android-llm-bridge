@@ -127,6 +127,7 @@ tags: [errors, reference, llm-friendly]
 | `SYSTEM_UV_NOT_FOUND` | uv 未安装 | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | `CONFIG_INVALID` | config.toml 格式错 | 查看 `error.details.line` 修改 |
 | `CONFIG_NOT_FOUND` | 找不到配置文件 | `Run: alb init` |
+| `LLM_CONTEXT_TRUNCATED` | 聊天请求塞满了模型的上下文窗口,Ollama 把开头截掉了(工具清单和说明在开头),回答不可信 | 调大 `ALB_OLLAMA_NUM_CTX`(默认 16384),或这次聊天关掉工具,或新开会话 |
 
 ### capability · 业务层
 
