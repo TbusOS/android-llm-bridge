@@ -24,7 +24,7 @@
 //   node web/scripts/button_sweep.mjs --list     # only list what it would click
 // env:
 //   ALB_BASE     default http://127.0.0.1:8765/app
-//   ALB_CDP_URL  drive an already-running browser (e.g. Edge on the bench
+//   ALB_CDP_URL  drive an already-running browser (e.g. Chrome on the bench
 //                Windows machine via web/scripts/win_browser.sh)
 //   SWEEP_PAGES  comma list of paths to limit the run, e.g. /bench,/logs
 //   E2E_OUT_DIR  report.json + screenshots (default .claude/reports/button-sweep)
@@ -75,15 +75,17 @@ function record(status, page, name, detail = "") {
   if (status !== "PASS" || process.env.SWEEP_VERBOSE) console.log(`${status.padEnd(4)}  ${page}  «${name}»${detail ? `  — ${detail}` : ""}`);
 }
 
-/* A remote Edge that already served one run with a download in it has
-   been seen to accept the DevTools socket and then never answer
-   (2026-10-28, twice); a fresh one always did. Say what to do. */
+/* A headless Edge that downloaded a file and then opened another page
+   accepts the next DevTools connection and never finishes it: it keeps a
+   hidden page with no renderer that Playwright attaches to and waits on
+   (bench, 2026-11-02). Chrome, win_browser.sh's default, does not. */
 async function connectRemote(url) {
   try {
     return await chromium.connectOverCDP(url, { timeout: 30000 });
   } catch (e) {
     console.error(`cannot drive the browser at ${url}: ${String(e.message).split("\n")[0]}`);
     console.error("restart it: stop web/scripts/win_browser.sh (Ctrl+C) and start it again, then rerun");
+    console.error("(a headless Edge does this after a run with a download; win_browser.sh without --edge starts Chrome)");
     process.exit(2);
   }
 }
