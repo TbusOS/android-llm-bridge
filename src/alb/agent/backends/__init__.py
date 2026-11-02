@@ -89,6 +89,7 @@ def _construct(name: str, **kwargs: Any) -> LLMBackend:
         env_base = os.environ.get("ALB_OLLAMA_URL")
         env_model = os.environ.get("ALB_OLLAMA_MODEL")
         env_ctx = os.environ.get("ALB_OLLAMA_NUM_CTX", "").strip()
+        env_timeout = os.environ.get("ALB_OLLAMA_TIMEOUT", "").strip()
         if env_base and "base_url" not in kwargs:
             kwargs["base_url"] = env_base
         if env_model and "model" not in kwargs:
@@ -97,6 +98,11 @@ def _construct(name: str, **kwargs: Any) -> LLMBackend:
             if not env_ctx.isdigit():
                 raise ValueError(f"ALB_OLLAMA_NUM_CTX must be a whole number of tokens, got {env_ctx!r}")
             kwargs["num_ctx"] = int(env_ctx) or None  # 0: send none, Ollama's own default
+        if env_timeout and "timeout" not in kwargs:
+            try:
+                kwargs["timeout"] = float(env_timeout)
+            except ValueError:
+                raise ValueError(f"ALB_OLLAMA_TIMEOUT must be a number of seconds, got {env_timeout!r}") from None
         return OllamaBackend(**kwargs)
     if name == "openai-compat":
         from alb.agent.backends.openai_compat import OpenAICompatBackend

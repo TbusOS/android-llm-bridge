@@ -53,7 +53,12 @@ from alb.agent.backend import (
 
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5:3b"
-DEFAULT_TIMEOUT = 120.0  # CPU inference on 3B can legitimately take 60-90s
+# Seconds to wait on Ollama, including the wait for the first streamed byte:
+# it sends nothing until the whole prompt is read. With the tool list
+# (5786 tokens) gemma4:26b on the bench's CPU took 170 s for that alone, so
+# the old 120 s cut every tool chat off (2026-11-02). The Stop button ends a
+# turn that takes too long. Env ALB_OLLAMA_TIMEOUT through get_backend.
+DEFAULT_TIMEOUT = 600.0
 DEFAULT_THINK = False  # reasoning models (gpt-oss, qwen3-thinking) — skip chain-of-thought by default for agent/tool use
 # Context window asked of Ollama on every request. Its own default (4096 on
 # the bench's 0.21) is shorter than the agent's tool list alone: with the 36
@@ -224,7 +229,7 @@ class OllamaBackend(LLMBackend):
             raise BackendError(
                 "BACKEND_TIMEOUT",
                 f"ollama stream timed out after {self.timeout}s: {e}",
-                suggestion="raise timeout or pick a smaller model",
+                suggestion="raise ALB_OLLAMA_TIMEOUT or pick a smaller model",
             ) from e
 
         content = "".join(content_parts)
@@ -331,7 +336,7 @@ class OllamaBackend(LLMBackend):
             raise BackendError(
                 "BACKEND_TIMEOUT",
                 f"ollama request timed out after {self.timeout}s: {e}",
-                suggestion="raise timeout or pick a smaller model",
+                suggestion="raise ALB_OLLAMA_TIMEOUT or pick a smaller model",
             ) from e
         except httpx.HTTPError as e:
             raise BackendError(

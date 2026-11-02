@@ -596,3 +596,16 @@ async def test_stream_does_not_double_tool_calls_repeated_on_done() -> None:
     events = [ev async for ev in b.stream([Message(role="user", content="list")])]
     done = next(ev for ev in events if ev["type"] == "done")
     assert [t["name"] for t in done["tool_calls"]] == ["alb_devices"]
+
+
+def test_timeout_default_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ollama sends nothing until the whole prompt is read: 170 s for the
+    tool list on the bench's CPU, past the old 120 s."""
+    from alb.agent.backends import get_backend
+
+    assert OllamaBackend().timeout == 600.0
+    monkeypatch.setenv("ALB_OLLAMA_TIMEOUT", "900")
+    assert get_backend("ollama", model="m").timeout == 900.0  # type: ignore[attr-defined]
+    monkeypatch.setenv("ALB_OLLAMA_TIMEOUT", "ten minutes")
+    with pytest.raises(ValueError, match="ALB_OLLAMA_TIMEOUT"):
+        get_backend("ollama", model="m")
