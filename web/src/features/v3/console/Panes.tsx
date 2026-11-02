@@ -40,7 +40,7 @@ function TermTools({ clear, copy, download }: { clear: () => void; copy: () => v
   return (
     <>
       <button type="button" className="icon-btn icon-btn--sm" aria-label={t("清屏", "Clear")} title={t("清屏", "Clear")} onClick={clear}>
-        <Icon name="close" size="sm" />
+        <Icon name="eraser" size="sm" />
       </button>
       <button type="button" className="icon-btn icon-btn--sm" aria-label={t("复制", "Copy")} title={t("复制选中的文字,没选就复制全部", "Copy the selection, or everything if nothing is selected")} onClick={copy}>
         <Icon name="copy" size="sm" />
