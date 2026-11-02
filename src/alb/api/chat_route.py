@@ -172,11 +172,11 @@ async def chat_ws(ws: WebSocket) -> None:
         # SEC-2: the first frame must be valid JSON and arrive promptly.
         # Without this a client that sends garbage raises JSONDecodeError
         # (uncaught), and one that connects but never sends holds the
-        # socket open indefinitely.
+        # socket open indefinitely. asyncio.timeout, not wait_for: see the
+        # tool-confirm wait in _Confirmations.wrap.
         try:
-            raw = await asyncio.wait_for(
-                ws.receive_json(), timeout=_FIRST_FRAME_TIMEOUT_S
-            )
+            async with asyncio.timeout(_FIRST_FRAME_TIMEOUT_S):
+                raw = await ws.receive_json()
         except (json.JSONDecodeError, asyncio.TimeoutError):
             await ws.send_json(
                 {
@@ -377,7 +377,12 @@ class _Confirmations:
                 await self._ws.send_json(
                     {"type": "tool_confirm_request", "id": cid, "name": name, "arguments": args}
                 )
-                approved = await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT_S)
+                # asyncio.timeout, not wait_for: on Python 3.11 wait_for hands
+                # back the answer and drops a cancel that comes in the same
+                # loop step, so a call approved just as the chat is stopped
+                # would still run.
+                async with asyncio.timeout(_CONFIRM_TIMEOUT_S):
+                    approved = await fut
             except TimeoutError:
                 return _declined(name, "TOOL_CONFIRM_TIMEOUT", "nobody answered in time")
             except Exception:  # the socket is gone: nothing runs

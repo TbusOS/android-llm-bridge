@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -449,3 +450,69 @@ def test_a_page_that_leaves_before_answering_runs_nothing(
     while time.monotonic() < deadline and not ran:
         time.sleep(0.05)
     assert ran == []
+
+
+# ─── cancelling the chat task (the stop button) ─────────────────────
+# On Python 3.11 asyncio.wait_for returns the awaited result and drops a
+# cancel that comes in the same loop step as that result. Both tests put
+# the two in one step and check that the cancel still wins.
+
+
+async def test_a_call_approved_as_the_chat_is_cancelled_does_not_run() -> None:
+    from alb.api.chat_route import _Confirmations
+
+    sent: list[dict[str, Any]] = []
+    asked = asyncio.Event()
+
+    class _Socket:
+        async def send_json(self, msg: dict[str, Any]) -> None:
+            sent.append(msg)
+            asked.set()
+
+    ran: list[str] = []
+
+    async def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        ran.append(name)
+        return {"ok": True}
+
+    sock: Any = _Socket()
+    confirms = _Confirmations(sock)
+    task = asyncio.ensure_future(confirms.wrap(_run)("alb_reboot", {}))
+    await asked.wait()
+    # what read_replies does when the page answers, then the stop button
+    confirms._pending[sent[0]["id"]].set_result(True)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ran == []
+
+
+async def test_a_cancel_as_the_first_frame_arrives_is_not_lost() -> None:
+    from alb.api.chat_route import chat_ws
+
+    frame: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+    waiting = asyncio.Event()
+    sent: list[dict[str, Any]] = []
+
+    class _Socket:
+        async def accept(self) -> None:
+            pass
+
+        async def receive_json(self) -> Any:
+            waiting.set()
+            return await frame
+
+        async def send_json(self, msg: dict[str, Any]) -> None:
+            sent.append(msg)
+
+        async def close(self) -> None:
+            pass
+
+    sock: Any = _Socket()
+    task = asyncio.create_task(chat_ws(sock))
+    await waiting.wait()
+    frame.set_result({})
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sent == []  # it did not go on to answer the frame
