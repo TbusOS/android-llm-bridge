@@ -330,9 +330,13 @@ else {
   });
   await step("performance shows live metrics", async () => {
     await open(page, "/perf");
-    await page.waitForTimeout(6000);
-    const n = await page.locator("main.content svg path").count();
-    check("performance shows live metrics", n > 0, `${n} chart paths`);
+    // Streaming starts on Connect, not when the page opens; the charts are
+    // Sparkline polylines (2+ samples), not paths.
+    await page.getByRole("button", { name: /^Connect$/ }).click();
+    await page.waitForFunction(() => document.querySelectorAll("main.content svg polyline").length > 0, null, { timeout: 30000 }).catch(() => {});
+    const n = await page.locator("main.content svg polyline").count();
+    await page.getByRole("button", { name: /^Disconnect$/ }).click().catch(() => {});
+    check("performance shows live metrics", n > 0, `${n} chart lines`);
   });
   await step("problems reads pstore", async () => {
     await open(page, "/problems");
