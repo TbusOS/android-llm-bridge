@@ -1359,8 +1359,14 @@ async def _reap(proc: Any) -> None:
 
 async def _usb_list_windows(timeout_s: float) -> list[dict[str, Any]]:
     try:
+        # its own console: the query sets [Console]::OutputEncoding, which on
+        # a shared console switched the agent's window to UTF-8 and made every
+        # later tasklist undecodable (see _CREATE_NO_WINDOW)
         proc = await asyncio.create_subprocess_exec(
-            *_USB_PS_ARGV, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *_USB_PS_ARGV,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=_CREATE_NO_WINDOW,
         )
     except (FileNotFoundError, OSError) as e:
         raise _JobRejected("FLASH_FAILED", f"cannot run powershell on this host: {e}") from e
@@ -2275,6 +2281,12 @@ _CREATE_NEW_CONSOLE = 0x00000010
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+# A child started without this shares the agent's console, and the console's
+# code page is state of the console, not of the process: a PowerShell child
+# setting [Console]::OutputEncoding left the agent's window on 65001 for good
+# (reproduced on the bench 2026-11-02). Children that touch or depend on the
+# code page get a hidden console of their own.
+_CREATE_NO_WINDOW = 0x08000000
 
 # Set when this process is about to stop (a newer instance asked, or an
 # update is being applied): new channels are refused with this reason rather
@@ -3637,14 +3649,21 @@ def _list_processes() -> list[tuple[str, str]]:
     """Best-effort (name, pid) listing of running processes; [] on failure."""
     windows = sys.platform == "win32"
     cmd = ["tasklist", "/fo", "csv", "/nh"] if windows else ["ps", "-eo", "comm=,pid="]
-    # errors="replace": tasklist prints names in the console code page, and
-    # one byte that code page can't decode (seen on a GBK-locale bench) used
-    # to kill subprocess's reader thread. .stdout then came back None, the
-    # splitlines() below raised, and the whole adb_list reply died with it —
-    # every time adb saw no device, so the hub kept the last list it had.
+    # tasklist writes in the code page of the console it is attached to. On
+    # the agent's own console that was whatever the last child left there:
+    # after a USB query's PowerShell set it to UTF-8, tasklist wrote UTF-8
+    # and decoding it as the locale's GBK killed subprocess's reader thread —
+    # .stdout came back None and the whole adb_list reply died, every time
+    # adb saw no device (bench, 2026-10-28; cause found 2026-11-02). In a
+    # console of its own tasklist starts on the OEM code page, which is what
+    # the "oem" codec reads. errors="replace" stays: one odd name must cost
+    # one garbled name, not the listing.
+    kwargs: dict[str, Any] = (
+        {"creationflags": _CREATE_NO_WINDOW, "encoding": "oem"} if windows else {}
+    )
     try:
         out = subprocess.run(
-            cmd, capture_output=True, text=True, errors="replace", timeout=10
+            cmd, capture_output=True, text=True, errors="replace", timeout=10, **kwargs
         ).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return []

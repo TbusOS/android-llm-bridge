@@ -17,6 +17,7 @@ import os
 import struct
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -654,6 +655,33 @@ async def test_usb_list_runs_while_the_lock_is_held_and_without_fastboot(monkeyp
     assert done["stdout"] == ""
     assert [d["vid"] for d in done["data"]["devices"]] == ["18d1", "18d1"]
     assert locked_during == [True], "ran while the flash held the lock — without waiting for it"
+
+
+async def test_usb_list_powershell_gets_a_console_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The query sets [Console]::OutputEncoding. Sharing the agent's console,
+    that switched the agent's window to UTF-8 for good, and every later
+    tasklist came back undecodable as GBK (reproduced on the bench
+    2026-11-02). The PowerShell child must get a console of its own."""
+    seen: dict[str, Any] = {}
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"", b""
+
+    async def fake_exec(*argv: str, **kw: Any) -> _Proc:
+        seen["argv"] = argv
+        seen.update(kw)
+        return _Proc()
+
+    monkeypatch.setattr(agent.asyncio, "create_subprocess_exec", fake_exec)
+    assert await agent._usb_list_windows(5.0) == []
+    assert seen["argv"][0] == "powershell"
+    assert "OutputEncoding" in seen["argv"][-1], "the query this test is about"
+    assert seen.get("creationflags", 0) & agent._CREATE_NO_WINDOW
 
 
 async def test_exclusive_op_is_refused_while_the_lock_is_held(monkeypatch):

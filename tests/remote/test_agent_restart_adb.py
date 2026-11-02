@@ -10,6 +10,9 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 _AGENT_PATH = Path(__file__).resolve().parents[2] / "clients" / "windows-agent" / "alb_agent.py"
 
@@ -183,6 +186,33 @@ def test_list_processes_survives_bytes_the_locale_cannot_decode(monkeypatch):
     assert ("vendor_adb", "4242") in procs
     assert len(procs) == 2
     assert agent._find_adb_conflicts() == ["vendor_adb pid=4242"]
+
+
+def test_list_processes_on_windows_gets_a_console_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tasklist writes in the code page of the console it is attached to.
+    The agent's console had been left on UTF-8 by a PowerShell child, so the
+    listing came back undecodable as the locale's GBK. On Windows it runs in
+    a console of its own, which starts on the OEM code page, and is read as
+    that. (Off Windows neither option may be passed — the test above runs the
+    real subprocess.run there and would fail on either.)"""
+    import subprocess
+
+    seen: dict[str, Any] = {}
+
+    def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        seen["cmd"] = cmd
+        seen.update(kw)
+        return subprocess.CompletedProcess(cmd, 0, stdout='"vendor_adb.exe","4242","Console","1","5 K"\n')
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    monkeypatch.setattr(agent.sys, "platform", "win32")
+    assert agent._list_processes() == [("vendor_adb.exe", "4242")]
+    assert seen["cmd"][0] == "tasklist"
+    assert seen.get("creationflags", 0) & agent._CREATE_NO_WINDOW
+    assert seen.get("encoding") == "oem"
+    assert seen.get("errors") == "replace"
 
 
 def test_list_processes_treats_missing_stdout_as_empty(monkeypatch):
