@@ -216,9 +216,15 @@ async def terminal_ws(ws: WebSocket) -> None:
     })
 
     marks: ExitMarks | None = None
+    # Keys wait for this: a board's shell drops input that arrives before its
+    # first prompt, and a command typed ahead of SETUP gets no exit code.
+    shell_up = asyncio.Event()
     if want_exit_codes:
-        await shell.write(EXIT_MARK_SETUP)
+        # SETUP itself goes out once the shell has printed its prompt; see
+        # _send_loop.
         marks = ExitMarks(asyncio.get_running_loop().time())
+    else:
+        shell_up.set()
 
     async def on_exit(code: int) -> None:
         line, last_command["line"] = last_command["line"], None
@@ -228,8 +234,13 @@ async def terminal_ws(ws: WebSocket) -> None:
         with contextlib.suppress(Exception):
             await ws.send_json({"type": "command_exit", "line": line, "exit_code": code})
 
-    recv_task = asyncio.create_task(_recv_loop(ws, shell, guard))
-    send_task = asyncio.create_task(_send_loop(ws, shell, marks, on_exit))
+    recv_task = asyncio.create_task(_recv_loop(ws, shell, guard, shell_up))
+    send_task = asyncio.create_task(
+        _send_loop(
+            ws, shell, marks, on_exit,
+            setup=EXIT_MARK_SETUP if marks else None, shell_up=shell_up,
+        )
+    )
     try:
         done, pending = await asyncio.wait(
             {recv_task, send_task},
@@ -255,10 +266,20 @@ async def terminal_ws(ws: WebSocket) -> None:
 
 
 async def _recv_loop(
-    ws: WebSocket, shell: InteractiveShell, guard: TerminalGuard
+    ws: WebSocket,
+    shell: InteractiveShell,
+    guard: TerminalGuard,
+    shell_up: asyncio.Event | None = None,
 ) -> None:
     """Forward client messages — bytes go through the HITL guard,
-    JSON frames carry resize / control / hitl_response / set_read_only."""
+    JSON frames carry resize / control / hitl_response / set_read_only.
+    Keys wait for `shell_up` (set by _send_loop) and keep their order."""
+
+    async def feed(data: bytes) -> None:
+        if shell_up is not None:
+            await shell_up.wait()
+        await guard.feed(data)
+
     try:
         while True:
             msg = await ws.receive()
@@ -267,13 +288,13 @@ async def _recv_loop(
             data = msg.get("bytes")
             text = msg.get("text")
             if data is not None:
-                await guard.feed(data)
+                await feed(data)
                 continue
             if text is not None:
                 try:
                     obj = json.loads(text)
                 except json.JSONDecodeError:
-                    await guard.feed(text.encode("utf-8", errors="replace"))
+                    await feed(text.encode("utf-8", errors="replace"))
                     continue
                 if not isinstance(obj, dict):
                     continue
@@ -287,7 +308,7 @@ async def _recv_loop(
                 elif kind == "input":
                     payload = obj.get("data", "")
                     if isinstance(payload, str):
-                        await guard.feed(payload.encode("utf-8", errors="replace"))
+                        await feed(payload.encode("utf-8", errors="replace"))
                 elif kind == "hitl_response":
                     await guard.respond_hitl(
                         approve=bool(obj.get("approve", False)),
@@ -311,10 +332,29 @@ async def _send_loop(
     shell: InteractiveShell,
     marks: ExitMarks | None = None,
     on_exit: Callable[[int], Awaitable[None]] | None = None,
+    *,
+    setup: bytes | None = None,
+    shell_up: asyncio.Event | None = None,
 ) -> None:
     """Forward shell stdout to the client as binary frames, with the exit
-    code markers taken out (and reported) when `marks` is set."""
+    code markers taken out (and reported) when `marks` is set.
+
+    `setup` is written to the shell when its first output arrives, or after
+    ARM_TIMEOUT_S of silence. A board's shell drops what reaches it before
+    its first prompt: SETUP written at spawn never took effect on a bench board
+    (2026-11-02), the terminal showed its echo and no exit code came.
+    `shell_up` is set right after, and lets the client's keys through."""
     clock = asyncio.get_running_loop()
+
+    async def send_setup() -> None:
+        nonlocal setup
+        if setup is not None and marks is not None:
+            await shell.write(setup)
+            marks.setup_sent(clock.time())
+        setup = None
+        if shell_up is not None:
+            shell_up.set()
+
     try:
         while True:
             if marks is not None and marks.waiting:
@@ -327,6 +367,9 @@ async def _send_loop(
                     async with asyncio.timeout(max(0.01, marks.seconds_left(clock.time()))):
                         chunk = await shell.read()
                 except TimeoutError:
+                    if setup is not None:  # a silent shell: send it anyway
+                        await send_setup()
+                        continue
                     held = marks.give_up()  # this shell shows no marker
                     if held:
                         await ws.send_bytes(held)
@@ -339,6 +382,8 @@ async def _send_loop(
                     if held:
                         await ws.send_bytes(held)
                 return
+            if setup is not None:  # the first prompt is out: the shell reads input now
+                await send_setup()
             out, codes = marks.feed(chunk, clock.time()) if marks is not None else (chunk, [])
             if out:
                 await ws.send_bytes(out)

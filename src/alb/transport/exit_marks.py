@@ -78,6 +78,11 @@ class ExitMarks:
     def seconds_left(self, now: float) -> float:
         return max(0.0, self._deadline - now)
 
+    def setup_sent(self, now: float) -> None:
+        """SETUP reached the shell just now: the marker gets ARM_TIMEOUT_S
+        from here, not from when the session started."""
+        self._deadline = now + ARM_TIMEOUT_S
+
     def give_up(self) -> bytes:
         """No marker came: show what was held and stop holding."""
         self.unavailable = True

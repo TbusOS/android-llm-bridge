@@ -344,3 +344,57 @@ async def test_guard_read_only_lets_safe_commands_through() -> None:
     await g.feed(b"ls /sdcard\n")
     assert not g.has_pending
     assert bytes(shell.written).endswith(b"ls /sdcard\n")
+
+
+# ─── Nothing to check (the default): keys go straight to the shell ───
+
+
+@pytest.mark.asyncio
+async def test_guard_without_checks_forwards_each_key_and_never_echoes() -> None:
+    """The board's shell echoes what it gets; the guard echoing as well put
+    every command on the screen twice (`su` showed as `susu`, 2026-11-02)."""
+    shell = _FakeShell()
+    echos: list[bytes] = []
+
+    async def on_echo(b: bytes) -> None:
+        echos.append(b)
+
+    g = TerminalGuard(shell, on_echo=on_echo)  # type: ignore[arg-type]
+    await g.feed(b"s")
+    assert bytes(shell.written) == b"s"  # not held until Enter
+    await g.feed(b"u\r")
+    assert bytes(shell.written) == b"su\r"
+    assert echos == []
+
+
+@pytest.mark.asyncio
+async def test_guard_without_checks_sends_ctrl_c_and_tab_at_once() -> None:
+    """Held until Enter, Ctrl+C could not stop a running command and Tab
+    never reached the shell's completion."""
+    shell = _FakeShell()
+    g = TerminalGuard(shell)  # type: ignore[arg-type]
+    await g.feed(b"sleep 8\r")
+    await g.feed(b"\x03")
+    assert bytes(shell.written).endswith(b"\x03")
+    await g.feed(b"ech\t")
+    assert bytes(shell.written).endswith(b"ech\t")
+
+
+@pytest.mark.asyncio
+async def test_guard_without_checks_records_typed_lines_only() -> None:
+    """The audit gets the typed line; one edited with Tab or history keys
+    is left out, since its text here is not the command that ran."""
+    shell = _FakeShell()
+    audits: list[dict] = []
+
+    async def on_audit(ev: dict) -> None:
+        audits.append(ev)
+
+    g = TerminalGuard(shell, on_audit=on_audit)  # type: ignore[arg-type]
+    await g.feed(b"lls\x7f\x7fs -la\r")  # backspaces
+    await g.feed(b"oops\x15id\r")  # Ctrl+U clears the line
+    await g.feed(b"ech\to hi\r")  # Tab completion
+    await g.feed(b"\x1b[A\r")  # history
+    await g.feed(b"half\x03")  # Ctrl+C drops the line
+    await g.feed(b"true\r")
+    assert [a["line"] for a in audits if a["event"] == "command"] == ["ls -la", "id", "true"]

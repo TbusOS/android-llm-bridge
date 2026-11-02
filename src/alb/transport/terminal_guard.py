@@ -128,6 +128,8 @@ _CR = ord("\r")
 _BS = 0x08      # ^H
 _DEL = 0x7F     # backspace key on most terminals
 _ESC = 0x1B     # start of an escape sequence
+_ETX = 0x03     # Ctrl+C: the shell drops the line
+_NAK = 0x15     # Ctrl+U: the shell clears the line
 
 
 @dataclass
@@ -177,6 +179,26 @@ class TerminalGuard:
         self._pending_line: str | None = None  # waiting for HITL response
         self._closed = False
 
+    @property
+    def read_only(self) -> bool:
+        return self._read_only
+
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        # Held and passed-through keys do not mix within one line.
+        self._read_only = value
+        if hasattr(self, "_buf"):
+            self._buf.reset()
+
+    @property
+    def holds_lines(self) -> bool:
+        """Whether a line waits for Enter to be checked. With no rules and
+        read-only off there is nothing to check (board commands are not
+        restricted, 2026-10-23): keys then go straight to the shell, which
+        echoes and edits them itself — Tab, Ctrl+C and history all work,
+        and nothing is shown twice."""
+        return self.read_only or bool(self.rules)
+
     # ── External API ─────────────────────────────────────────────
 
     async def feed(self, data: bytes) -> None:
@@ -195,8 +217,33 @@ class TerminalGuard:
             await self._echo(b"\a")
             return
 
+        if not self.holds_lines:
+            await self.shell.write(data)
+            for byte in data:
+                await self._track_byte(byte)
+            return
+
         for byte in data:
             await self._handle_byte(byte)
+
+    async def _track_byte(self, byte: int) -> None:
+        """Follow what was typed, for the audit log only: the shell has the
+        keys already. A line edited with keys the guard cannot replay (Tab
+        completion, arrows / history, other control keys) is not recorded,
+        since its text here would not be the command that ran."""
+        if byte in (_CR, _NL):
+            if not self._buf.in_escape:
+                await self._audit("command", {"line": self._buf.text()})
+            self._buf.reset()
+        elif byte in (_ETX, _NAK):
+            self._buf.reset()
+        elif byte in (_BS, _DEL):
+            if self._buf.chars:
+                self._buf.chars.pop()
+        elif byte < 0x20:
+            self._buf.in_escape = True
+        elif not self._buf.in_escape:
+            self._buf.chars.append(byte)
 
     async def _handle_byte(self, byte: int) -> None:
         if byte == _CR or byte == _NL:

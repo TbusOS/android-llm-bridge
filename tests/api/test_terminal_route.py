@@ -23,7 +23,8 @@ pytestmark = pytest.mark.skipif(
 
 
 class _PtyFakeTransport(Transport):
-    """Stub transport whose interactive_shell returns a `cat` PTY."""
+    """Stub transport whose interactive_shell returns a `cat` PTY that, like
+    a shell, prints a prompt first (the hub waits for one before SETUP)."""
 
     name = "adb"
 
@@ -47,7 +48,7 @@ class _PtyFakeTransport(Transport):
         return {"ok": True}
 
     async def interactive_shell(self, *, rows: int = 24, cols: int = 80):
-        return await open_pty_subprocess("cat", rows=rows, cols=cols)
+        return await open_pty_subprocess("sh", "-c", "printf 'fake$ '; exec cat", rows=rows, cols=cols)
 
 
 class _NoPtyTransport(_PtyFakeTransport):
@@ -194,8 +195,8 @@ def test_terminal_ws_board_command_not_held_by_default(client) -> None:
             data = msg.get("bytes") if isinstance(msg, dict) else None
             if data:
                 seen += data
-                # One copy is the guard's own keystroke echo; a second can
-                # only come from the shell, i.e. the line was forwarded.
+                # `cat` on a pty shows the line twice: the tty's echo and
+                # cat's output — both only once the line reached it.
                 if seen.count(b"reboot bootloader") >= 2:
                     return
         pytest.fail(f"command never reached the shell: {seen!r}")
@@ -526,3 +527,53 @@ def test_exit_codes_can_be_turned_off(bash_client: Any) -> None:
                 if shown.count(b"marker-off-check") >= 2:
                     break
     assert b"133;D" not in shown and b"KSH_VERSION" not in shown, "no SETUP was sent"
+
+
+class _LateBashTransport(_BashTransport):
+    """bash that drops what reaches it before its first prompt, as the
+    board's shell does: SETUP written at spawn was lost on a bench board."""
+
+    async def interactive_shell(self, *, rows: int = 24, cols: int = 80) -> Any:
+        import os
+
+        env = {k: v for k, v in os.environ.items() if k not in ("ENV", "PROMPT_COMMAND")}
+        env["PS1"] = "probe$ "
+        late = (
+            "import os, termios, time; time.sleep(0.5); termios.tcflush(0, termios.TCIFLUSH); "
+            "os.execvp('bash', ['bash', '--norc', '--noprofile', '-i'])"
+        )
+        return await open_pty_subprocess(sys.executable, "-c", late, env=env, rows=rows, cols=cols)
+
+
+def _read_until(ws: Any, needle: bytes, exits: list[dict[str, Any]]) -> bytes:
+    import json as _json
+
+    shown = b""
+    for _ in range(400):
+        msg = ws.receive()
+        if msg.get("bytes"):
+            shown += msg["bytes"]
+        elif msg.get("text"):
+            obj = _json.loads(msg["text"])
+            if obj.get("type") == "command_exit":
+                exits.append(obj)
+        if needle in shown:
+            return shown
+    pytest.fail(f"{needle!r} never showed: {shown!r}")
+
+
+def test_exit_codes_on_a_shell_that_drops_early_input(
+    monkeypatch: pytest.MonkeyPatch, bash_client: Any
+) -> None:
+    """SETUP waits for the first prompt, and so do keys typed before it."""
+    monkeypatch.setattr("alb.api.terminal_route.build_transport", lambda **kwargs: _LateBashTransport())
+    exits: list[dict[str, Any]] = []
+    with bash_client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({"device": None, "session_id": "term-late-shell"})
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "input", "data": "false\r"})  # typed before any prompt
+        shown = _read_until(ws, b"probe$ ", exits)
+        ws.send_json({"type": "input", "data": "echo done-$((1+1))\r"})
+        shown += _read_until(ws, b"done-2", exits)
+    assert [(e["line"], e["exit_code"]) for e in exits] == [("false", 1)]
+    assert b"KSH_VERSION" not in shown, "the SETUP echo stays out of the terminal"
