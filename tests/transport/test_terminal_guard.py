@@ -398,3 +398,26 @@ async def test_guard_without_checks_records_typed_lines_only() -> None:
     await g.feed(b"half\x03")  # Ctrl+C drops the line
     await g.feed(b"true\r")
     assert [a["line"] for a in audits if a["event"] == "command"] == ["ls -la", "id", "true"]
+
+
+@pytest.mark.asyncio
+async def test_guard_without_checks_records_a_line_before_its_enter_is_sent() -> None:
+    """The exit code a prompt reports is paired with the last recorded line;
+    a shell that answered before the record landed lost the exit code."""
+    audits: list[dict[str, Any]] = []
+    seen_at_enter: list[list[str]] = []
+
+    class _Shell(_FakeShell):
+        async def write(self, data: bytes) -> None:
+            if b"\r" in data:
+                seen_at_enter.append([a["line"] for a in audits if a["event"] == "command"])
+            await super().write(data)
+
+    async def on_audit(ev: dict[str, Any]) -> None:
+        audits.append(ev)
+
+    g = TerminalGuard(_Shell(), on_audit=on_audit)  # type: ignore[arg-type]
+    await g.feed(b"false\r")
+    await g.feed(b"tr")
+    await g.feed(b"ue\rid\r")  # two lines in one chunk
+    assert seen_at_enter == [["false"], ["false", "true"], ["false", "true", "id"]]

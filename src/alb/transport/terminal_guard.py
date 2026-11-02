@@ -218,9 +218,19 @@ class TerminalGuard:
             return
 
         if not self.holds_lines:
-            await self.shell.write(data)
+            # A line is recorded before its Enter reaches the shell: the exit
+            # code the prompt reports next is paired with the last recorded
+            # line, and a fast shell answers before a later record lands
+            # (the exit code of `true` went missing 4 runs in 25).
+            pending = bytearray()
             for byte in data:
                 await self._track_byte(byte)
+                pending.append(byte)
+                if byte in (_CR, _NL):
+                    await self.shell.write(bytes(pending))
+                    pending.clear()
+            if pending:
+                await self.shell.write(bytes(pending))
             return
 
         for byte in data:
