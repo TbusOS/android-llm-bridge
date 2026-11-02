@@ -1,6 +1,8 @@
 /* Console page extras. Colours come from the shared v3 variables only. */
 .console__note { margin: 0 12px 8px; }
-.console__foot { display: flex; justify-content: flex-end; padding: 0 12px 8px; }
+.console__tab { display: inline-flex; align-items: center; flex: none; }
+.console__tab .tab { padding-right: 4px; }
+.console__tab-close { margin-right: 8px; }
 
 /* xterm fills the dark card: the host is inset so FitAddon measures a padding-free box */
 .console .term.term--x { position: relative; padding: 0; overflow: hidden; }

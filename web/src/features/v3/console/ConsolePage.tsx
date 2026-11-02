@@ -57,11 +57,11 @@ export function ConsolePage() {
     setActiveId(tab.id);
   };
   const closeTab = (id: string) => {
-    setTabs((l) => {
-      const next = l.filter((x) => x.id !== id);
-      if (id === activeId) setActiveId(next[next.length - 1]?.id ?? "");
-      return next;
-    });
+    const at = tabs.findIndex((x) => x.id === id);
+    const next = tabs.filter((x) => x.id !== id);
+    setTabs(next);
+    // Closing the open one moves to its right-hand neighbour (left if it was last).
+    if (id === activeId) setActiveId((next[at] ?? next[at - 1])?.id ?? "");
   };
 
   const audit = useDashboardQuery({
@@ -85,7 +85,6 @@ export function ConsolePage() {
     const n = same.length > 1 ? ` #${same.indexOf(tab) + 1}` : "";
     return tab.kind === "adb" ? `adb shell${n} · ${device ?? "—"}` : `${t("串口", "Serial")}${n} · ${serial?.com ?? "—"}`;
   };
-  const activeTab = tabs.find((x) => x.id === activeId);
 
   return (
     <>
@@ -129,13 +128,24 @@ export function ConsolePage() {
             <>
               <div className="tabs" role="tablist" aria-label={t("终端", "Terminals")}>
                 {tabs.map((tab) => (
-                  <button key={tab.id} type="button" className="tab" role="tab" aria-selected={tab.id === activeId} aria-controls={`t-${tab.id}`} onClick={() => {
-                    picked.current = true;
-                    setActiveId(tab.id);
-                  }}>
-                    <Icon name={tab.kind === "adb" ? "terminal" : "plug"} size="sm" />
-                    {tabLabel(tab)}
-                  </button>
+                  <span key={tab.id} className="console__tab" role="presentation">
+                    <button type="button" className="tab" role="tab" aria-selected={tab.id === activeId} aria-controls={`t-${tab.id}`} onClick={() => {
+                      picked.current = true;
+                      setActiveId(tab.id);
+                    }}>
+                      <Icon name={tab.kind === "adb" ? "terminal" : "plug"} size="sm" />
+                      {tabLabel(tab)}
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn icon-btn--sm console__tab-close"
+                      aria-label={t(`关闭 ${tabLabel(tab)}`, `Close ${tabLabel(tab)}`)}
+                      title={t("关闭这个终端", "Close this terminal")}
+                      onClick={() => closeTab(tab.id)}
+                    >
+                      <Icon name="close" size="sm" />
+                    </button>
+                  </span>
                 ))}
               </div>
               {tabs.map((tab) =>
@@ -151,11 +161,6 @@ export function ConsolePage() {
                   />
                 ),
               )}
-              <div className="console__foot">
-                <button type="button" className="btn btn--text btn--sm" onClick={() => closeTab(activeId)} disabled={!activeTab}>
-                  {t("关闭这个终端", "Close this terminal")}
-                </button>
-              </div>
             </>
           )}
         </article>

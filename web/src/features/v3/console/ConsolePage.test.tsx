@@ -310,8 +310,26 @@ describe("Console", () => {
     fireEvent.click(screen.getByRole("button", { name: /新建终端/ }));
     fireEvent.click(screen.getByRole("menuitem", { name: /串口控制台/ }));
     expect(screen.getAllByRole("tab").length).toBe(3);
-    for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "关闭这个终端" }));
+    for (let i = 0; i < 3; i++) fireEvent.click(screen.getAllByRole("button", { name: /^关闭 / })[0] as HTMLElement);
     expect(screen.getByText("没有打开的终端")).toBeInTheDocument();
+  });
+
+  it("every tab has its own close button; closing the open one moves to a neighbour", async () => {
+    mockFetch();
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /新建终端/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /adb shell/ }));
+    const tabs = () => screen.getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")]);
+    expect(screen.getAllByRole("button", { name: /^关闭 / }).length).toBe(3);
+    // the new adb tab (#2) is open; close the serial tab, which is not
+    fireEvent.click(screen.getByRole("button", { name: /^关闭 串口/ }));
+    expect(tabs()).toEqual([
+      [`adb shell #1 · ${DEV}`, "false"],
+      [`adb shell #2 · ${DEV}`, "true"],
+    ]);
+    // close the open one (the last): the one on its left opens
+    fireEvent.click(screen.getByRole("button", { name: `关闭 adb shell #2 · ${DEV}` }));
+    expect(tabs()).toEqual([[`adb shell · ${DEV}`, "true"]]);
   });
 
   it("reads terminal colours from the CSS variables", async () => {
