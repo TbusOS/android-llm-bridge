@@ -130,7 +130,8 @@ describe("SystemInfoTab info panels (ARCH-2)", () => {
     expect(
       screen.getByRole("heading", { name: /Processes \(top CPU\)/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText("system_server (123)")).toBeInTheDocument();
+    expect(screen.getByText("system_server")).toBeInTheDocument();
+    expect(screen.getByText("123")).toBeInTheDocument();
   });
 
   it("shows a per-card error when a panel envelope fails, keeping siblings", () => {
@@ -146,7 +147,7 @@ describe("SystemInfoTab info panels (ARCH-2)", () => {
     expect(screen.getByText("selinux read denied")).toBeInTheDocument();
     // Sibling panels still render — one bad panel must not blank the tab.
     expect(screen.getByText("simple_ondemand")).toBeInTheDocument();
-    expect(screen.getByText("system_server (123)")).toBeInTheDocument();
+    expect(screen.getByText("system_server")).toBeInTheDocument();
   });
 
   it("renders a loading placeholder while a panel is still pending", () => {
@@ -163,8 +164,13 @@ describe("SystemInfoTab info panels (ARCH-2)", () => {
       "/vendor": { used_kib: "900", avail_kib: "100", use_pct: "91%", device: "/dev/b" },
     };
     render(<SystemInfoTab />);
-    const rows = document.querySelectorAll(".part-row");
+    const storage = screen.getByRole("heading", { name: "Storage usage" }).closest(".sys-card") as HTMLElement;
+    const rows = storage.querySelectorAll("tbody tr");
     expect(rows.length).toBe(2);
+    // used / free are on the row now, not only in a tooltip
+    expect(rows[0]!.textContent).toContain("/dev/a");
+    expect(rows[0]!.textContent).toContain("1000 KB");
+    expect(rows[0]!.textContent).toContain("2.0 MB");
     // 46% → green tier, 91% → red tier; bar width = use_pct.
     const green = document.querySelector(".part-fill--green") as HTMLElement | null;
     const red = document.querySelector(".part-fill--red") as HTMLElement | null;
@@ -172,6 +178,30 @@ describe("SystemInfoTab info panels (ARCH-2)", () => {
     expect(red).not.toBeNull();
     expect(green!.style.width).toBe("46%");
     expect(red!.style.width).toBe("91%");
+  });
+
+  it("short cards flow in columns; long lists get the whole width (2026-11-02)", () => {
+    system.data.system.mounts = [
+      { device: "/dev/block/dm-7", mount_point: "/", fstype: "ext4", opts: "ro,seclabel,relatime" },
+      { device: "/dev/block/dm-9", mount_point: "/apex/com.android.adbd@360499999", fstype: "ext4", opts: "ro,dirsync" },
+    ];
+    system.data.system.partitions = [{ name: "boot_a", target: "/dev/block/mmcblk0p15" }];
+    render(<SystemInfoTab />);
+    const cardOf = (name: RegExp) => screen.getByRole("heading", { name }).closest(".sys-card") as HTMLElement;
+    for (const name of [/^System$/, /^GPU$/, /^Battery$/]) expect(cardOf(name).parentElement!.className).toBe("sys-cols");
+    for (const name of [/^Storage usage$/, /^Mounts · 2$/, /^Partitions \(by-name\) · 1$/, /^Processes/, /^Thermal zones/]) {
+      expect(cardOf(name).parentElement!.className).toBe("sys-stack");
+    }
+    const mounts = cardOf(/^Mounts/);
+    expect([...mounts.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Mount point", "Device", "Type", "Options"]);
+    const row = mounts.querySelectorAll("tbody tr")[1]!;
+    expect([...row.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
+      "/apex/com.android.adbd@360499999",
+      "/dev/block/dm-9",
+      "ext4",
+      "ro,dirsync",
+    ]);
+    expect(row.querySelector(".sys-table__opts")!.getAttribute("title")).toBe("ro,dirsync");
   });
 
   it("shows the no-device card and no panels when nothing is selected", () => {

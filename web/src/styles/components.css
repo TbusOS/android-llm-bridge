@@ -1613,7 +1613,9 @@ html[lang^="zh"] h3 {
 
 .sys-kv {
   display: grid;
-  grid-template-columns: 110px 1fr;
+  /* keys take what they need, up to 45%: a fixed 110px folded long keys
+     into many lines and let long mount paths run into the values */
+  grid-template-columns: fit-content(45%) 1fr;
   gap: 6px var(--space-3);
   font-size: 13px;
   margin: 0;
@@ -1623,6 +1625,7 @@ html[lang^="zh"] h3 {
   font-family: var(--font-heading);
   color: var(--anth-text-secondary);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .sys-kv dd {
@@ -2532,6 +2535,88 @@ html[lang^="zh"] h3 {
   font-family: var(--font-mono);
   font-size: 11px;
 }
+
+/* System info layout (2026-11-02). Short cards flow in columns, each as
+   tall as its content; long lists (storage, mounts, partitions, processes,
+   thermal) take the whole width and a taller scroll box. */
+.sys-cols {
+  columns: 320px;
+  column-gap: var(--space-4);
+}
+.sys-cols > .sys-card {
+  display: inline-block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 var(--space-4);
+  break-inside: avoid;
+}
+.sys-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.sys-scroll {
+  max-height: 480px;
+  overflow: auto;
+}
+.sys-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.sys-table th {
+  position: sticky;
+  top: 0;
+  background: var(--alb-color-card);
+  text-align: left;
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--anth-text-secondary);
+  padding: 4px 12px 6px 0;
+  border-bottom: 1px solid var(--anth-light-gray);
+  white-space: nowrap;
+}
+.sys-table td {
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px dashed var(--anth-light-gray);
+  vertical-align: top;
+  color: var(--anth-text);
+  white-space: nowrap;
+}
+.sys-table tr:last-child td { border-bottom: none; }
+.sys-table .sys-table__num { text-align: right; }
+.sys-table .sys-table__wrap { white-space: normal; overflow-wrap: anywhere; }
+/* options are long and secondary: one line, the rest in the tooltip */
+.sys-table .sys-table__opts {
+  width: 40%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--anth-text-secondary);
+}
+.sys-table .sys-table__bar { width: 30%; min-width: 160px; }
+.sys-usage { display: flex; align-items: center; gap: 8px; }
+.sys-usage .part-bar { flex: 1; }
+.sys-usage .part-pct { min-width: 3.5em; }
+.sys-pairs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0 var(--space-4);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.sys-pairs__item {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--anth-light-gray);
+}
+.sys-pairs__item dt { flex: 0 1 45%; color: var(--anth-text-secondary); overflow-wrap: anywhere; }
+.sys-pairs__item dd { flex: 1; margin: 0; color: var(--anth-text); overflow-wrap: anywhere; }
 
 /* PR-G additions: screenshot + ui dump tabs */
 .screenshot-tab {

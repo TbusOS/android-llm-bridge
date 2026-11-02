@@ -153,87 +153,89 @@ function Snapshot({
   panels: DeviceInfoPanels;
 }) {
   const p = system.props;
+  const zh = lang === "zh";
   return (
-    <div className="sys-grid">
-      <KvCard
-        title={lang === "zh" ? "系统" : "System"}
-        rows={[
-          ["Model", p["ro.product.model"] || "—"],
-          ["Brand", p["ro.product.brand"] || "—"],
-          ["Manufacturer", p["ro.product.manufacturer"] || "—"],
-          ["Android", p["ro.build.version.release"] || "—"],
-          ["SDK", p["ro.build.version.sdk"] || "—"],
-          ["Build", p["ro.build.fingerprint"] || "—"],
-          ["Security patch", p["ro.build.version.security_patch"] || "—"],
-        ]}
-      />
+    <>
+      {/* Short key/value cards flow in columns, each as tall as its own
+          content — a grid row stretched every card to the tallest one. */}
+      <div className="sys-cols">
+        <KvCard
+          title={zh ? "系统" : "System"}
+          rows={[
+            ["Model", p["ro.product.model"] || "—"],
+            ["Brand", p["ro.product.brand"] || "—"],
+            ["Manufacturer", p["ro.product.manufacturer"] || "—"],
+            ["Android", p["ro.build.version.release"] || "—"],
+            ["SDK", p["ro.build.version.sdk"] || "—"],
+            ["Build", p["ro.build.fingerprint"] || "—"],
+            ["Security patch", p["ro.build.version.security_patch"] || "—"],
+          ]}
+        />
 
-      <KvCard
-        title={lang === "zh" ? "CPU / 硬件" : "CPU / Hardware"}
-        rows={[
-          ["SoC",
-            p["ro.boot.soc.product"]
-            || p["ro.hardware.chipname"]
-            || p["ro.board.platform"]
-            || "—"],
-          ["ABI", p["ro.product.cpu.abi"] || "—"],
-          ["Hardware", p["ro.hardware"] || "—"],
-          ["Bootloader", p["ro.bootloader"] || "—"],
-          ["MemTotal", fmtKb(system.meminfo.MemTotal)],
-          ["MemAvailable", fmtKb(system.meminfo.MemAvailable)],
-        ]}
-      />
+        <KvCard
+          title={zh ? "CPU / 硬件" : "CPU / Hardware"}
+          rows={[
+            ["SoC",
+              p["ro.boot.soc.product"]
+              || p["ro.hardware.chipname"]
+              || p["ro.board.platform"]
+              || "—"],
+            ["ABI", p["ro.product.cpu.abi"] || "—"],
+            ["Hardware", p["ro.hardware"] || "—"],
+            ["Bootloader", p["ro.bootloader"] || "—"],
+            ["MemTotal", fmtKb(system.meminfo.MemTotal)],
+            ["MemAvailable", fmtKb(system.meminfo.MemAvailable)],
+          ]}
+        />
 
-      <KvCard
-        title={lang === "zh" ? "内存（详细）" : "Memory (detailed)"}
-        rows={Object.entries(system.meminfo).slice(0, 14).map(([k, v]) => [k, fmtKb(v)])}
-      />
+        {/* ARCH-2: panels previously CLI/MCP-only — security / gpu / processes. */}
+        <SecurityCard env={panels.security} lang={lang} />
 
-      <BlockCard
-        title={lang === "zh" ? "块设备" : "Block devices"}
-        rows={system.block_devices.map((b) => [b.name, fmtKb(Number(b.size_kib) || 0)])}
-        empty={lang === "zh" ? "无" : "none"}
-      />
+        <KvCard
+          title={zh ? "内存（详细）" : "Memory (detailed)"}
+          rows={Object.entries(system.meminfo).slice(0, 14).map(([k, v]) => [k, fmtKb(v)])}
+        />
 
-      <BlockCard
-        title={lang === "zh" ? "分区表（by-name）" : "Partitions (by-name)"}
-        rows={system.partitions.map((part) => [part.name, part.target])}
-        empty={lang === "zh" ? "无" : "none"}
-      />
+        <GpuCard env={panels.gpu} lang={lang} />
 
-      <BlockCard
-        title={lang === "zh" ? "挂载点" : "Mounts"}
-        rows={system.mounts.map((m) => [m.mount_point, `${m.device} (${m.fstype})`])}
-        empty={lang === "zh" ? "无" : "none"}
-      />
+        <KvCard
+          title={zh ? "电池" : "Battery"}
+          rows={Object.entries(system.battery).slice(0, 12)}
+        />
 
-      <StorageCard storage={system.storage} lang={lang} />
+        <BlockCard
+          title={zh ? "网络接口" : "Network"}
+          rows={system.network.map((n) => [
+            n.iface,
+            [n.ipv4, n.ipv6, n.mac].filter(Boolean).join(" · ") || "—",
+          ])}
+          empty={zh ? "未拿到接口" : "no interfaces"}
+        />
 
-      <BlockCard
-        title={lang === "zh" ? "网络接口" : "Network"}
-        rows={system.network.map((n) => [
-          n.iface,
-          [n.ipv4, n.ipv6, n.mac].filter(Boolean).join(" · ") || "—",
-        ])}
-        empty={lang === "zh" ? "未拿到接口" : "no interfaces"}
-      />
+        <BlockCard
+          title={zh ? "块设备" : "Block devices"}
+          rows={system.block_devices.map((b) => [b.name, fmtKb(Number(b.size_kib) || 0)])}
+          empty={zh ? "无" : "none"}
+        />
+      </div>
 
-      <KvCard
-        title={lang === "zh" ? "电池" : "Battery"}
-        rows={Object.entries(system.battery).slice(0, 12)}
-      />
-
-      <BlockCard
-        title={lang === "zh" ? "温度（thermal zones）" : "Thermal zones"}
-        rows={system.thermal.map((t) => [`${t.zone} · ${t.type}`, `${t.temp_c}°C`])}
-        empty={lang === "zh" ? "无温度传感器读数" : "no thermal readings"}
-      />
-
-      {/* ARCH-2: panels previously CLI/MCP-only — security / gpu / processes. */}
-      <SecurityCard env={panels.security} lang={lang} />
-      <GpuCard env={panels.gpu} lang={lang} />
-      <ProcessesCard env={panels.processes} lang={lang} />
-    </div>
+      {/* Long lists get the whole width and a taller scroll box. */}
+      <div className="sys-stack">
+        <StorageCard storage={system.storage} lang={lang} />
+        <MountsCard mounts={system.mounts} lang={lang} />
+        <PairsCard
+          title={`${zh ? "分区表（by-name）" : "Partitions (by-name)"} · ${system.partitions.length}`}
+          pairs={system.partitions.map((part) => [part.name, part.target])}
+          empty={zh ? "无" : "none"}
+        />
+        <ProcessesCard env={panels.processes} lang={lang} />
+        <PairsCard
+          title={`${zh ? "温度（thermal zones）" : "Thermal zones"} · ${system.thermal.length}`}
+          pairs={system.thermal.map((t) => [`${t.zone} · ${t.type}`, `${t.temp_c}°C`])}
+          empty={zh ? "无温度传感器读数" : "no thermal readings"}
+        />
+      </div>
+    </>
   );
 }
 
@@ -318,35 +320,54 @@ function ProcessesCard({
   env: PanelEnv<ApiProcessesInfo>;
   lang: string;
 }) {
+  const zh = lang === "zh";
   const pr = env?.ok ? env.data : undefined;
   if (!pr) {
     return (
       <div className="sys-card">
-        <h3>{lang === "zh" ? "进程（CPU Top）" : "Processes (top CPU)"}</h3>
+        <h3>{zh ? "进程（CPU Top）" : "Processes (top CPU)"}</h3>
         <PanelError env={env} lang={lang} />
       </div>
     );
   }
   return (
-    <BlockCard
-      title={
-        (lang === "zh" ? "进程（CPU Top）· 共 " : "Processes (top CPU) · ") +
-        pr.count
-      }
-      rows={pr.top_cpu
-        .slice(0, 8)
-        .map((proc) => [`${proc.name} (${proc.pid})`, `${proc.cpu_pct}% · ${fmtKb(proc.rss_kb)}`])}
-      empty={lang === "zh" ? "无进程数据" : "no process data"}
-    />
+    <div className="sys-card">
+      <h3>{(zh ? "进程（CPU Top）· 共 " : "Processes (top CPU) · ") + pr.count}</h3>
+      {pr.top_cpu.length === 0 ? (
+        <p className="section-sub" style={{ marginBottom: 0 }}>{zh ? "无进程数据" : "no process data"}</p>
+      ) : (
+        <div className="sys-scroll">
+          <table className="sys-table">
+            <thead>
+              <tr>
+                <th className="sys-table__num">PID</th>
+                <th>{zh ? "进程" : "Process"}</th>
+                <th>{zh ? "用户" : "User"}</th>
+                <th className="sys-table__num">CPU</th>
+                <th className="sys-table__num">{zh ? "内存(RSS)" : "Memory (RSS)"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pr.top_cpu.map((proc) => (
+                <tr key={proc.pid}>
+                  <td className="sys-table__num">{proc.pid}</td>
+                  <td className="sys-table__wrap">{proc.name}</td>
+                  <td>{proc.user || "—"}</td>
+                  <td className="sys-table__num">{proc.cpu_pct}%</td>
+                  <td className="sys-table__num">{fmtKb(proc.rss_kb)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
-/** MBC-4: storage usage as per-partition progress bars (mirrors the
- * docs/webui-preview-v2.html `part-row` / `part-bar` / `part-fill`
- * baseline). The `use_pct` data already exists — this replaces the
- * plain-text KV row with a bar coloured by usage tier. The bar width is
- * the one legitimately-dynamic inline style (data-driven, same as the
- * mockup); the colour is a `part-fill--*` class, not inline hex. */
+/** MBC-4: storage usage, one row per mount with the df numbers and a bar
+ * coloured by usage tier. The bar width is the one legitimately-dynamic
+ * inline style (data-driven); the colour is a `part-fill--*` class. */
 function StorageCard({
   storage,
   lang,
@@ -354,31 +375,120 @@ function StorageCard({
   storage: ApiDeviceSystem["storage"];
   lang: string;
 }) {
+  const zh = lang === "zh";
   const entries = Object.entries(storage);
   return (
-    <div className="sys-card sys-card--block">
-      <h3>{lang === "zh" ? "存储用量" : "Storage usage"}</h3>
+    <div className="sys-card">
+      <h3>{zh ? "存储用量" : "Storage usage"}</h3>
       {entries.length === 0 ? (
-        <p className="section-sub" style={{ marginBottom: 0 }}>
-          {lang === "zh" ? "无" : "none"}
-        </p>
+        <p className="section-sub" style={{ marginBottom: 0 }}>{zh ? "无" : "none"}</p>
       ) : (
-        entries.map(([mount, info]) => {
-          const pct = parsePct(info.use_pct);
-          return (
-            <div
-              className="part-row"
-              key={mount}
-              title={`used ${fmtKb(Number(info.used_kib))} / avail ${fmtKb(Number(info.avail_kib))}`}
-            >
-              <span className="part-name">{mount}</span>
-              <div className="part-bar">
-                <div className={fillTier(pct)} style={{ width: `${pct}%` }} />
+        <div className="sys-scroll">
+          <table className="sys-table">
+            <thead>
+              <tr>
+                <th>{zh ? "挂载点" : "Mount"}</th>
+                <th>{zh ? "设备" : "Device"}</th>
+                <th className="sys-table__num">{zh ? "已用" : "Used"}</th>
+                <th className="sys-table__num">{zh ? "可用" : "Free"}</th>
+                <th className="sys-table__bar">{zh ? "用量" : "Use"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map(([mount, info]) => {
+                const pct = parsePct(info.use_pct);
+                return (
+                  <tr key={mount}>
+                    <td className="sys-table__wrap">{mount}</td>
+                    <td className="sys-table__wrap">{info.device || "—"}</td>
+                    <td className="sys-table__num">{fmtKb(Number(info.used_kib))}</td>
+                    <td className="sys-table__num">{fmtKb(Number(info.avail_kib))}</td>
+                    <td className="sys-table__bar">
+                      <div className="sys-usage">
+                        <div className="part-bar">
+                          <div className={fillTier(pct)} style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="part-pct">{info.use_pct}</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MountsCard({
+  mounts,
+  lang,
+}: {
+  mounts: ApiDeviceSystem["mounts"];
+  lang: string;
+}) {
+  const zh = lang === "zh";
+  return (
+    <div className="sys-card">
+      <h3>{`${zh ? "挂载点" : "Mounts"} · ${mounts.length}`}</h3>
+      {mounts.length === 0 ? (
+        <p className="section-sub" style={{ marginBottom: 0 }}>{zh ? "无" : "none"}</p>
+      ) : (
+        <div className="sys-scroll">
+          <table className="sys-table">
+            <thead>
+              <tr>
+                <th>{zh ? "挂载点" : "Mount point"}</th>
+                <th>{zh ? "设备" : "Device"}</th>
+                <th>{zh ? "类型" : "Type"}</th>
+                <th>{zh ? "选项" : "Options"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mounts.map((m, i) => (
+                <tr key={`${m.mount_point}-${i}`}>
+                  <td className="sys-table__wrap">{m.mount_point}</td>
+                  <td className="sys-table__wrap">{m.device}</td>
+                  <td>{m.fstype}</td>
+                  <td className="sys-table__opts" title={m.opts}>{m.opts}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A long name → value list laid out in as many columns as the width holds. */
+function PairsCard({
+  title,
+  pairs,
+  empty,
+}: {
+  title: string;
+  pairs: [string, string][];
+  empty: string;
+}) {
+  return (
+    <div className="sys-card">
+      <h3>{title}</h3>
+      {pairs.length === 0 ? (
+        <p className="section-sub" style={{ marginBottom: 0 }}>{empty}</p>
+      ) : (
+        <div className="sys-scroll">
+          <dl className="sys-pairs">
+            {pairs.map(([k, v], i) => (
+              <div className="sys-pairs__item" key={`${k}-${i}`}>
+                <dt>{k}</dt>
+                <dd>{v}</dd>
               </div>
-              <span className="part-pct">{info.use_pct}</span>
-            </div>
-          );
-        })
+            ))}
+          </dl>
+        </div>
       )}
     </div>
   );
