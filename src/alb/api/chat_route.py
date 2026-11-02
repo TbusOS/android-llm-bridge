@@ -39,10 +39,10 @@ Response (error) — still HTTP 200 (follows our Result envelope):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -228,48 +228,33 @@ async def chat_ws(ws: WebSocket) -> None:
         # group throughput by backend (dashboard be-card sparkline).
         sampler = TokenSampler(session_id=session.session_id, backend=llm.name)
         sampler.start()
-        reader = asyncio.create_task(confirms.read_replies()) if confirms else None
+        # The page stops a turn by closing the socket (its Stop button).
+        # The watcher sees that and cancels the run, which cancels the model
+        # call or the tool in progress. `turn.stopped` also ends the relay at
+        # the next event, in case an await on the way swallowed the cancel.
+        turn = _Turn()
+        run = asyncio.create_task(_relay(ws, loop, req, session, llm, sampler, turn))
+        watcher = asyncio.create_task(_watch_socket(ws, confirms, run, turn))
         try:
-            # Hook sampler directly to the backend's raw token events via
-            # AgentLoop's on_raw_token callback, so we get accurate token
-            # counts (1 per Ollama chunk) instead of guessing from delta
-            # char length. ADR-021.
-            stream_iter = loop.run_stream(
-                req.message,
-                session=session,
-                on_raw_token=lambda n: sampler.observe(n),
-            )
-            async for event in stream_iter:
-                # Enrich terminal event with backend metadata for client convenience
-                if event.get("type") == "done":
-                    event.setdefault("model", llm.model)
-                    event.setdefault("backend", llm.name)
-
-                kind, summary = _summarize_stream_event(event)
-                if kind:
-                    data: dict[str, Any] = {}
-                    if event.get("type") == "tool_call_start":
-                        data = {"name": event.get("name"), "id": event.get("id")}
-                    elif event.get("type") == "tool_call_end":
-                        data = {"name": event.get("name"), "id": event.get("id"),
-                                "ok": (event.get("result") or {}).get("ok", True)}
-                    elif event.get("type") == "done":
-                        data = {"timing_ms": event.get("timing_ms", 0),
-                                "model": llm.model, "backend": llm.name,
-                                "usage": event.get("usage") or {}}
-                    await _publish_chat_event(
-                        session.session_id, kind, summary, data=data or None
-                    )
-
-                await ws.send_json(event)
+            await asyncio.wait({run})
         finally:
-            if reader is not None:
-                reader.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await reader
+            run.cancel()
+            watcher.cancel()
             if confirms is not None:
                 confirms.deny_all()
-            await sampler.close()
+            try:
+                await asyncio.wait({run, watcher})
+            finally:
+                await sampler.close()
+        if turn.stopped:
+            if not run.cancelled():
+                run.exception()  # whatever the relay hit after a stop is moot
+            await _publish_chat_event(
+                session.session_id, "error", "stopped by the user",
+                data={"code": "CHAT_STOPPED"},
+            )
+            return
+        run.result()  # what the relay ran into, e.g. WebSocketDisconnect
     except WebSocketDisconnect:
         return
     finally:
@@ -277,6 +262,91 @@ async def chat_ws(ws: WebSocket) -> None:
             await ws.close()
         except Exception:  # noqa: BLE001 — already disconnected is fine
             pass
+
+
+@dataclass
+class _Turn:
+    """Who ended a /chat/ws turn: the agent (its done event) or the page."""
+
+    finished: bool = False
+    stopped: bool = False
+
+
+async def _relay(
+    ws: WebSocket,
+    loop: AgentLoop,
+    req: ChatRequest,
+    session: ChatSession,
+    llm: Any,
+    sampler: TokenSampler,
+    turn: _Turn,
+) -> None:
+    """Run the agent loop for one turn and send its events to the page."""
+    # Hook sampler directly to the backend's raw token events via
+    # AgentLoop's on_raw_token callback, so we get accurate token
+    # counts (1 per Ollama chunk) instead of guessing from delta
+    # char length. ADR-021.
+    stream_iter = loop.run_stream(
+        req.message,
+        session=session,
+        on_raw_token=lambda n: sampler.observe(n),
+    )
+    try:
+        async for event in stream_iter:
+            if turn.stopped:
+                return
+            # Enrich terminal event with backend metadata for client convenience
+            if event.get("type") == "done":
+                turn.finished = True
+                event.setdefault("model", llm.model)
+                event.setdefault("backend", llm.name)
+
+            kind, summary = _summarize_stream_event(event)
+            if kind:
+                data: dict[str, Any] = {}
+                if event.get("type") == "tool_call_start":
+                    data = {"name": event.get("name"), "id": event.get("id")}
+                elif event.get("type") == "tool_call_end":
+                    data = {"name": event.get("name"), "id": event.get("id"),
+                            "ok": (event.get("result") or {}).get("ok", True)}
+                elif event.get("type") == "done":
+                    data = {"timing_ms": event.get("timing_ms", 0),
+                            "model": llm.model, "backend": llm.name,
+                            "usage": event.get("usage") or {}}
+                await _publish_chat_event(
+                    session.session_id, kind, summary, data=data or None
+                )
+
+            await ws.send_json(event)
+    finally:
+        # Close it now rather than whenever it is collected: on a stop this
+        # is what lets the loop record results for unfinished tool calls.
+        await stream_iter.aclose()
+
+
+async def _watch_socket(
+    ws: WebSocket,
+    confirms: _Confirmations | None,
+    run: asyncio.Task[None],
+    turn: _Turn,
+) -> None:
+    """Read the socket while a turn runs: pass tool-confirm answers on, and
+    stop the turn when the page closes the socket."""
+    while True:
+        try:
+            msg = await ws.receive_json()
+        except json.JSONDecodeError:
+            continue  # a stray non-JSON frame is not a stop
+        except Exception:  # WebSocketDisconnect, or the socket is unusable
+            break
+        if confirms is not None:
+            confirms.answer(msg)
+    if confirms is not None:
+        confirms.deny_all()
+    # A page that closes once the agent has answered stopped nothing.
+    if not turn.finished and not run.done():
+        turn.stopped = True
+        run.cancel()
 
 
 async def _build_agent(
@@ -395,16 +465,12 @@ class _Confirmations:
 
         return asking
 
-    async def read_replies(self) -> None:
-        try:
-            while True:
-                msg = await self._ws.receive_json()
-                if isinstance(msg, dict) and msg.get("type") == "tool_confirm":
-                    fut = self._pending.get(str(msg.get("id")))
-                    if fut is not None and not fut.done():
-                        fut.set_result(msg.get("approve") is True)
-        finally:
-            self.deny_all()
+    def answer(self, msg: Any) -> None:
+        """Hand a {"type": "tool_confirm"} frame to the call waiting on it."""
+        if isinstance(msg, dict) and msg.get("type") == "tool_confirm":
+            fut = self._pending.get(str(msg.get("id")))
+            if fut is not None and not fut.done():
+                fut.set_result(msg.get("approve") is True)
 
     def deny_all(self) -> None:
         for fut in self._pending.values():

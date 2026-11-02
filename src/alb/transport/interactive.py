@@ -156,7 +156,8 @@ class InteractiveShell:
         if self._proc and self._proc.returncode is None:
             self._proc.terminate()
             try:
-                await asyncio.wait_for(self._proc.wait(), timeout=term_grace_s)
+                async with asyncio.timeout(term_grace_s):
+                    await self._proc.wait()
             except asyncio.TimeoutError:
                 with contextlib.suppress(ProcessLookupError):
                     self._proc.kill()

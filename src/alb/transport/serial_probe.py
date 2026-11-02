@@ -187,7 +187,8 @@ async def _probe_one(
         while perf_counter() < deadline:
             remaining = max(0.05, deadline - perf_counter())
             try:
-                chunk = await asyncio.wait_for(reader.read(1024), timeout=remaining)
+                async with asyncio.timeout(remaining):
+                    chunk = await reader.read(1024)
             except asyncio.TimeoutError:
                 break
             if not chunk:
@@ -196,7 +197,8 @@ async def _probe_one(
     finally:
         writer.close()
         try:
-            await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+            async with asyncio.timeout(1.0):
+                await writer.wait_closed()
         except (asyncio.TimeoutError, Exception):
             pass
 

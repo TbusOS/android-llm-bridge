@@ -129,10 +129,8 @@ async def run(
         )
 
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(input=stdin),
-            timeout=timeout,
-        )
+        async with asyncio.timeout(timeout):
+            stdout_b, stderr_b = await proc.communicate(input=stdin)
     except asyncio.TimeoutError:
         await _escalate_terminate(proc, term_grace_s=term_grace_s)
         return ProcessResult(
@@ -142,6 +140,11 @@ async def run(
             duration_ms=int((perf_counter() - start) * 1000),
             timed_out=True,
         )
+    except asyncio.CancelledError:
+        # Cancelled from above (e.g. the chat's Stop button): end the
+        # child too, or it runs on with nobody reading its output.
+        await _escalate_terminate(proc, term_grace_s=term_grace_s)
+        raise
 
     duration_ms = int((perf_counter() - start) * 1000)
     return ProcessResult(
@@ -223,7 +226,8 @@ async def _escalate_terminate(
         return
 
     try:
-        await asyncio.wait_for(proc.wait(), timeout=term_grace_s)
+        async with asyncio.timeout(term_grace_s):
+            await proc.wait()
         return
     except asyncio.TimeoutError:
         pass

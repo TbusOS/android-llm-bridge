@@ -645,6 +645,45 @@ async def test_shell_sends_ctrl_c_when_command_times_out() -> None:
 
 
 @pytest.mark.asyncio
+async def test_shell_sends_ctrl_c_when_cancelled() -> None:
+    """Cancelling shell() (the chat's Stop button) interrupts the command
+    on the board the way a timeout does, so the next command finds a free
+    shell, and the cancel still reaches the caller."""
+    import re as _re
+
+    running = asyncio.Event()
+    ctrl_c_seen = asyncio.Event()
+
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readline()
+        writer.write(b"$ ")
+        await writer.drain()
+        wrapped = await reader.readline()
+        m = _re.search(rb"__ALB_BEG_([a-f0-9]+)__", wrapped)
+        assert m is not None
+        nonce = m.group(1)
+        writer.write(wrapped + b"__ALB_BEG_" + nonce + b"__\n")  # BEG only — still running
+        await writer.drain()
+        running.set()
+        while byte := await reader.read(1):
+            if byte == b"\x03":
+                ctrl_c_seen.set()
+                writer.write(b"^C\n$ ")
+                await writer.drain()
+                return
+
+    async with _fake_ser2net(handler) as (host, port):
+        t = SerialTransport(tcp_host=host, tcp_port=port, handshake_timeout=1.0)
+        task = asyncio.create_task(t.shell("sleep 999", timeout=60))
+        await asyncio.wait_for(running.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert ctrl_c_seen.is_set(), "transport did not send Ctrl-C to the board"
+
+
+@pytest.mark.asyncio
 async def test_shell_reports_when_board_ignores_ctrl_c() -> None:
     """When Ctrl-C is sent but the board does NOT respond with a
     prompt, stderr annotates that so the user knows a reboot is likely.

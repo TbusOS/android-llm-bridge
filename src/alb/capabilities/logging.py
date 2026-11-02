@@ -532,7 +532,7 @@ async def collect_dmesg(
 # ReDoS vector (e.g. ``(a+)+$``); we can't reliably cancel a single
 # `re.search` C-call mid-execution from Python, but we can:
 #   - run the scan in a worker thread (event loop stays responsive)
-#   - bound the async wait via `asyncio.wait_for`
+#   - bound the async wait via `asyncio.timeout`
 #   - check a deadline between lines to short-circuit non-pathological
 #     slow scans (millions of lines)
 # Worst-case: a single ReDoS line leaks one thread per malicious request
@@ -552,7 +552,7 @@ def _scan_files_for_pattern(
     Returns ``(matches, truncated, timed_out)``. The deadline check
     between lines short-circuits long scans; a single pathological
     ``regex.search()`` line is still bounded only by the outer
-    ``asyncio.wait_for`` (thread may leak).
+    ``asyncio.timeout`` (thread may leak).
     """
     matches: list[SearchMatch] = []
     truncated = False
@@ -603,7 +603,7 @@ async def search_logs(
     earlier lines included.
 
     ReDoS guard: the actual scan runs in a worker thread with a hard
-    ``_SEARCH_TIMEOUT_S`` cap via :func:`asyncio.wait_for`.  Pathological
+    ``_SEARCH_TIMEOUT_S`` cap via :func:`asyncio.timeout`.  Pathological
     patterns ``(a+)+$`` against a 1 KB line still bound the request to
     ``_SEARCH_TIMEOUT_S`` from the caller's perspective.
     """
@@ -645,10 +645,10 @@ async def search_logs(
 
     deadline = perf_counter() + _SEARCH_TIMEOUT_S
     try:
-        matches, truncated, timed_out = await asyncio.wait_for(
-            asyncio.to_thread(_scan_files_for_pattern, regex, files, max_matches, deadline),
-            timeout=_SEARCH_TIMEOUT_S + 0.5,  # +0.5s slack for thread join
-        )
+        async with asyncio.timeout(_SEARCH_TIMEOUT_S + 0.5):  # +0.5s slack for thread join
+            matches, truncated, timed_out = await asyncio.to_thread(
+                _scan_files_for_pattern, regex, files, max_matches, deadline
+            )
     except TimeoutError:
         return fail(
             code="PATTERN_TIMEOUT",

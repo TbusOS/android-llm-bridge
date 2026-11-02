@@ -110,7 +110,8 @@ class SshTransport(Transport):
 
         try:
             try:
-                result = await asyncio.wait_for(conn.run(cmd), timeout=timeout)
+                async with asyncio.timeout(timeout):
+                    result = await conn.run(cmd)
             except asyncio.TimeoutError:
                 return ShellResult(
                     ok=False, exit_code=-1,
@@ -138,7 +139,8 @@ class SshTransport(Transport):
         finally:
             conn.close()
             try:
-                await asyncio.wait_for(conn.wait_closed(), timeout=2)
+                async with asyncio.timeout(2):
+                    await conn.wait_closed()
             except (asyncio.TimeoutError, Exception):
                 pass
 
@@ -191,7 +193,8 @@ class SshTransport(Transport):
         finally:
             conn.close()
             try:
-                await asyncio.wait_for(conn.wait_closed(), timeout=2)
+                async with asyncio.timeout(2):
+                    await conn.wait_closed()
             except (asyncio.TimeoutError, Exception):
                 pass
 
@@ -243,7 +246,8 @@ class SshTransport(Transport):
         finally:
             conn.close()
             try:
-                await asyncio.wait_for(conn.wait_closed(), timeout=2)
+                async with asyncio.timeout(2):
+                    await conn.wait_closed()
             except (asyncio.TimeoutError, Exception):
                 pass
 
@@ -286,14 +290,16 @@ class SshTransport(Transport):
             info["ok"] = True
             info["connected"] = True
             try:
-                r = await asyncio.wait_for(conn.run("uname -a"), timeout=5)
+                async with asyncio.timeout(5):
+                    r = await conn.run("uname -a")
                 info["uname"] = (r.stdout if isinstance(r.stdout, str)
                                  else r.stdout.decode(errors="replace")).strip()
             except Exception:  # noqa: BLE001
                 pass
             conn.close()
             try:
-                await asyncio.wait_for(conn.wait_closed(), timeout=2)
+                async with asyncio.timeout(2):
+                    await conn.wait_closed()
             except (asyncio.TimeoutError, Exception):
                 pass
         except Exception as e:  # noqa: BLE001

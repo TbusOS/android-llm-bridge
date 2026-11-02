@@ -301,9 +301,8 @@ class AdbSocket:
         cls, endpoint: TcpEndpoint, *, timeout_s: float = CONNECT_TIMEOUT_S
     ) -> AdbSocket:
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(endpoint.host, endpoint.port), timeout_s
-            )
+            async with asyncio.timeout(timeout_s):
+                reader, writer = await asyncio.open_connection(endpoint.host, endpoint.port)
         except (OSError, TimeoutError) as e:
             raise AdbServerUnreachable(endpoint, e) from e
         return cls(reader, writer, endpoint, timeout_s=timeout_s)
@@ -313,7 +312,8 @@ class AdbSocket:
         self.writer.write(encode_request(payload))
         try:
             await self.writer.drain()
-            await asyncio.wait_for(read_reply(self.reader, payload), self._timeout)
+            async with asyncio.timeout(self._timeout):
+                await read_reply(self.reader, payload)
         except TimeoutError as e:
             raise AdbProtocolError(
                 f"adb server did not answer {payload!r} within {self._timeout:g}s"
@@ -327,7 +327,8 @@ class AdbSocket:
         """A ``host:`` service that answers ``OKAY`` + one message."""
         await self.request(payload)
         try:
-            return await asyncio.wait_for(read_message(self.reader), self._timeout)
+            async with asyncio.timeout(self._timeout):
+                return await read_message(self.reader)
         except TimeoutError as e:
             raise AdbProtocolError(
                 f"adb server did not finish answering {payload!r} within {self._timeout:g}s"

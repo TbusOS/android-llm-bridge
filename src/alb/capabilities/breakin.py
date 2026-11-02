@@ -531,7 +531,8 @@ async def break_in(
                     slice_s = max(0.001, min(watch.next_send_at(), prompt_deadline) - now)
 
                 try:
-                    chunk = await asyncio.wait_for(link.reader.read(_READ_CHUNK), timeout=slice_s)
+                    async with asyncio.timeout(slice_s):
+                        chunk = await link.reader.read(_READ_CHUNK)
                 except TimeoutError:
                     continue
                 except _LINK_ERRORS:

@@ -20,8 +20,9 @@ Design notes:
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -181,7 +182,7 @@ class AgentLoop:
         *,
         session: ChatSession | None = None,
         on_raw_token: Callable[[int], None] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Streaming variant of run(): yield StreamEvent dicts.
 
         Event types (subset + agent-loop additions):
@@ -297,30 +298,36 @@ class AgentLoop:
                 return
 
             # Dispatch tool calls
-            for tc in turn_tool_calls:
-                yield {
-                    "type": "tool_call_start",
-                    "id": tc.id,
-                    "name": tc.name,
-                    "arguments": tc.arguments,
-                }
-                tool_result = await self._dispatch(tc)
-                artifacts.extend(_extract_artifacts(tool_result))
-                yield {
-                    "type": "tool_call_end",
-                    "id": tc.id,
-                    "name": tc.name,
-                    "result": tool_result,
-                }
-                tool_msg = Message(
-                    role="tool",
-                    content=json.dumps(tool_result, ensure_ascii=False, default=str),
-                    tool_call_id=tc.id,
-                    name=tc.name,
-                )
-                messages.append(tool_msg)
+            unanswered = list(turn_tool_calls)
+            try:
+                for tc in turn_tool_calls:
+                    yield {
+                        "type": "tool_call_start",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    }
+                    tool_result = await self._dispatch(tc)
+                    artifacts.extend(_extract_artifacts(tool_result))
+                    tool_msg = _tool_message(tc, tool_result)
+                    messages.append(tool_msg)
+                    if session is not None:
+                        session.append(tool_msg)
+                    unanswered.pop(0)
+                    yield {
+                        "type": "tool_call_end",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "result": tool_result,
+                    }
+            except (asyncio.CancelledError, GeneratorExit):
+                # Stopped in the middle of the calls (the page's Stop). Give
+                # each call that has no result one, so the session's next
+                # turn sends a history where every tool call is answered.
                 if session is not None:
-                    session.append(tool_msg)
+                    for tc in unanswered:
+                        session.append(_tool_message(tc, _STOPPED_RESULT))
+                raise
 
         # max_turns exhausted
         yield {
@@ -362,6 +369,25 @@ class AgentLoop:
             }
         # Normalise None → empty dict so json.dumps works
         return result if isinstance(result, dict) else {"value": result}
+
+
+_STOPPED_RESULT: dict[str, Any] = {
+    "ok": False,
+    "error": {
+        "code": "CHAT_STOPPED",
+        "message": "the user stopped the chat before this call finished",
+        "suggestion": "ask the user before running it again",
+    },
+}
+
+
+def _tool_message(tc: ToolCall, tool_result: dict[str, Any]) -> Message:
+    return Message(
+        role="tool",
+        content=json.dumps(tool_result, ensure_ascii=False, default=str),
+        tool_call_id=tc.id,
+        name=tc.name,
+    )
 
 
 def _extract_artifacts(tool_result: dict[str, Any]) -> list[Path]:

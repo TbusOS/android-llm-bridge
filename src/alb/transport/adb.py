@@ -528,7 +528,8 @@ async def _stream_transfer(
             with contextlib.suppress(ProcessLookupError):
                 proc.terminate()
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    async with asyncio.timeout(2.0):
+                        await proc.wait()
                 except asyncio.TimeoutError:
                     with contextlib.suppress(ProcessLookupError):
                         proc.kill()

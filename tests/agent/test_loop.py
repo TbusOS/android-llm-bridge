@@ -425,3 +425,64 @@ async def test_run_stream_max_turns_exceeded() -> None:
     assert events[-1]["type"] == "done"
     assert events[-1]["ok"] is False
     assert events[-1]["error"]["code"] == "AGENT_MAX_TURNS_EXCEEDED"
+
+
+# ─── Stopped mid-turn (the page's Stop button) ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_stream_cancelled_in_a_tool_answers_every_call(tmp_path, monkeypatch) -> None:
+    """A stop during the first of two calls leaves both with a CHAT_STOPPED
+    result, so the session's next turn sends no unanswered tool call."""
+    import asyncio
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    b = FakeBackend([_calls(_tc("alb_logcat", {}, "tc_1"), _tc("alb_reboot", {}, "tc_2"))])
+    started = asyncio.Event()
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        started.set()
+        await asyncio.sleep(30)
+        return {"ok": True}
+
+    loop = AgentLoop(b, tools=[_TOOL, _REBOOT], tool_executor=exec_)
+    session = ChatSession.create(backend="fake")
+
+    async def _drain() -> None:
+        async for _ in loop.run_stream("抓日志再重启", session=session):
+            pass
+
+    task = asyncio.create_task(_drain())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    msgs = ChatSession.load(session.session_id).messages()
+    assert [m.role for m in msgs] == ["user", "assistant", "tool", "tool"]
+    assert [m.tool_call_id for m in msgs[2:]] == ["tc_1", "tc_2"]
+    assert all(json.loads(m.content)["error"]["code"] == "CHAT_STOPPED" for m in msgs[2:])
+
+
+@pytest.mark.asyncio
+async def test_run_stream_closed_before_a_call_runs_answers_it(tmp_path, monkeypatch) -> None:
+    """The relay closes the stream when a stop lands while it is sending
+    tool_call_start: the call never runs and still gets a result."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    b = FakeBackend([_calls(_tc("alb_reboot", {}, "tc_1"))])
+    ran: list[str] = []
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        ran.append(name)
+        return {"ok": True}
+
+    loop = AgentLoop(b, tools=[_REBOOT], tool_executor=exec_)
+    session = ChatSession.create(backend="fake")
+    stream = loop.run_stream("重启", session=session)
+    assert (await stream.__anext__())["type"] == "tool_call_start"
+    await stream.aclose()
+
+    assert ran == []
+    last = ChatSession.load(session.session_id).messages()[-1]
+    assert (last.role, last.tool_call_id) == ("tool", "tc_1")
+    assert json.loads(last.content)["error"]["code"] == "CHAT_STOPPED"

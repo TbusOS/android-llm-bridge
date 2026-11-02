@@ -212,10 +212,10 @@ class SerialTransport(Transport):
         attempts = len(self._CONNECT_BACKOFF_S) + 1
         for attempt in range(1, attempts + 1):
             try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.tcp_host, self.tcp_port),
-                    timeout=10,
-                )
+                async with asyncio.timeout(10):
+                    reader, writer = await asyncio.open_connection(
+                        self.tcp_host, self.tcp_port
+                    )
                 return _SerialLink(
                     reader=reader, writer=writer, closer=None, mode="tcp"
                 )
@@ -243,7 +243,8 @@ class SerialTransport(Transport):
         try:
             link.writer.close()
             try:
-                await asyncio.wait_for(link.writer.wait_closed(), timeout=2)
+                async with asyncio.timeout(2):
+                    await link.writer.wait_closed()
             except asyncio.TimeoutError:
                 pass
         except Exception:
@@ -319,9 +320,16 @@ class SerialTransport(Transport):
             # precise command boundaries even with printk noise.
             # Everything else → legacy "send + read until prompt" path.
             if initial_state in _POSIX_SHELL_STATES:
-                return await self._run_with_marker(
-                    link, sm, cmd, timeout, start, initial_state,
-                )
+                try:
+                    return await self._run_with_marker(
+                        link, sm, cmd, timeout, start, initial_state,
+                    )
+                except asyncio.CancelledError:
+                    # Cancelled from above (e.g. the chat's Stop button):
+                    # interrupt the command on the board the way a timeout
+                    # does, so the next command finds a free shell.
+                    await _abort_with_ctrl_c(link, sm)
+                    raise
             return await self._run_legacy(link, sm, cmd, timeout, start)
         finally:
             await self._close(link)
@@ -379,9 +387,8 @@ class SerialTransport(Transport):
         while perf_counter() < deadline:
             remaining = max(0.05, deadline - perf_counter())
             try:
-                chunk = await asyncio.wait_for(
-                    link.reader.read(self.read_chunk), timeout=remaining,
-                )
+                async with asyncio.timeout(remaining):
+                    chunk = await link.reader.read(self.read_chunk)
             except asyncio.TimeoutError:
                 break
             if not chunk:
@@ -474,10 +481,8 @@ class SerialTransport(Transport):
         await link.writer.drain()
 
         try:
-            raw = await asyncio.wait_for(
-                _read_until_any(link.reader, self.prompts),
-                timeout=timeout,
-            )
+            async with asyncio.timeout(timeout):
+                raw = await _read_until_any(link.reader, self.prompts)
         except asyncio.TimeoutError:
             return ShellResult(
                 ok=False,
@@ -545,9 +550,8 @@ class SerialTransport(Transport):
             if remaining <= 0:
                 break
             try:
-                chunk = await asyncio.wait_for(
-                    link.reader.read(self.read_chunk), timeout=0.1,
-                )
+                async with asyncio.timeout(0.1):
+                    chunk = await link.reader.read(self.read_chunk)
             except asyncio.TimeoutError:
                 break
             if not chunk:
@@ -571,9 +575,8 @@ class SerialTransport(Transport):
         while perf_counter() < deadline:
             remaining = max(0.05, deadline - perf_counter())
             try:
-                chunk = await asyncio.wait_for(
-                    link.reader.read(self.read_chunk), timeout=remaining,
-                )
+                async with asyncio.timeout(remaining):
+                    chunk = await link.reader.read(self.read_chunk)
             except asyncio.TimeoutError:
                 break
             if not chunk:
@@ -925,9 +928,8 @@ class SerialTransport(Transport):
         fan-out every other reader gets its own copy of the same stream.
         """
         try:
-            peek = await asyncio.wait_for(
-                link.reader.read(self.read_chunk), timeout=self._SEND_CONFIRM_S
-            )
+            async with asyncio.timeout(self._SEND_CONFIRM_S):
+                peek = await link.reader.read(self.read_chunk)
         except TimeoutError:
             return False
         except (ConnectionResetError, OSError):
@@ -1089,9 +1091,8 @@ async def _abort_with_ctrl_c(
     while perf_counter() < deadline:
         remaining = max(0.05, deadline - perf_counter())
         try:
-            chunk = await asyncio.wait_for(
-                link.reader.read(256), timeout=remaining,
-            )
+            async with asyncio.timeout(remaining):
+                chunk = await link.reader.read(256)
         except asyncio.TimeoutError:
             break
         if not chunk:

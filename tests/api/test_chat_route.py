@@ -516,3 +516,69 @@ async def test_a_cancel_as_the_first_frame_arrives_is_not_lost() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert sent == []  # it did not go on to answer the frame
+
+
+def _wait_until(cond: Any, timeout_s: float = 5.0) -> None:
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline and not cond():
+        time.sleep(0.02)
+
+
+def test_closing_the_socket_stops_the_tool_in_progress(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The page's Stop button closes the socket. The hub cancels the turn:
+    the running tool sees the cancel, the call gets a CHAT_STOPPED result
+    in the session, and the bus hears the turn was stopped."""
+    from alb.agent.session import ChatSession
+
+    seen: list[str] = []
+
+    async def _slow(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        seen.append("started")
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            seen.append("cancelled")
+            raise
+        return {"ok": True}
+
+    async def _make() -> tuple[list[ToolSpec], Any]:
+        spec = ToolSpec(name="alb_reboot", description="reboot", parameters={"type": "object", "properties": {}})
+        return [spec], _slow
+
+    monkeypatch.setattr("alb.mcp.executor.make_agent_tools", _make)
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _OneToolCallBackend())
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "reboot it", "tools": True})
+        _wait_until(lambda: "started" in seen)
+        ws.close()  # what the Stop button does
+        # the test client cancels the whole handler on leaving the block,
+        # so wait inside it for what the hub does on its own
+        _wait_until(lambda: any(e["kind"] == "error" for e in _read_events(tmp_path)))
+
+    assert seen == ["started", "cancelled"]
+    stop = next(e for e in _read_events(tmp_path) if e["kind"] == "error")
+    assert stop["data"] == {"code": "CHAT_STOPPED"}
+    last = ChatSession.load(stop["session_id"]).messages()[-1]
+    assert last.role == "tool" and "CHAT_STOPPED" in last.content
+
+
+def test_a_page_that_closes_after_done_stopped_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setattr(
+        "alb.api.chat_route.get_backend",
+        lambda name, **kw: _StreamingFakeBackend(reply="hi"),
+    )
+    with client.websocket_connect("/chat/ws") as ws:
+        ws.send_json({"message": "ping", "tools": False})
+        while ws.receive_json().get("type") != "done":
+            pass
+        ws.close()
+        assert ws.receive()["type"] == "websocket.close"  # the handler is through
+
+    kinds = [e["kind"] for e in _read_events(tmp_path)]
+    assert "done" in kinds and "error" not in kinds

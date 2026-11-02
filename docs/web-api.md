@@ -109,6 +109,14 @@ Streaming agent chat.
 
 Client closes after `done`. Server closes on disconnect.
 
+Closing the socket before `done` stops the turn (the web UI's Stop button
+does this). The server cancels the model call or the tool in progress: an
+adb command's local process is ended, a serial command gets a Ctrl-C on the
+board. Each tool call of the turn that has no result gets a `CHAT_STOPPED`
+error result in the session, so the next turn on the same `session_id`
+starts from a complete history, and the audit bus gets a `chat` / `error`
+event with `data.code = "CHAT_STOPPED"`.
+
 `confirm_tools` is off by default: tool calls run without asking. When it is
 on, a call that is declined, left unanswered for 10 minutes, or still waiting
 when the socket closes does not run; the model gets an error result

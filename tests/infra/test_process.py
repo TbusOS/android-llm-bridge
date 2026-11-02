@@ -9,6 +9,7 @@ cover would miss exactly those corners.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 
@@ -161,6 +162,30 @@ async def test_run_large_stdout() -> None:
 
 
 # ── spawn_stream context manager ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_ends_the_child_when_cancelled(tmp_path) -> None:
+    """Cancelling run() (the chat's Stop button) ends the child too,
+    instead of leaving it running with nobody reading it."""
+    pidfile = tmp_path / "pid"
+    task = asyncio.create_task(
+        run("/bin/sh", "-c", f"echo $$ > {pidfile}; exec sleep 30", timeout=60, term_grace_s=0.5)
+    )
+    for _ in range(200):
+        if pidfile.exists() and pidfile.read_text().strip():
+            break
+        await asyncio.sleep(0.02)
+    pid = int(pidfile.read_text())
+    task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, 9)
 
 
 @pytest.mark.asyncio
