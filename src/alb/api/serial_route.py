@@ -123,16 +123,24 @@ async def post_break_in(
         )
         _BACKGROUND.add(task)  # a vanished client must not drop a running attempt
         task.add_done_callback(_BACKGROUND.discard)
-        while True:
-            getter = asyncio.create_task(queue.get())
-            done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
-            if getter in done:
-                yield _line(getter.result())
-                continue
-            getter.cancel()
-            while not queue.empty():
-                yield _line(queue.get_nowait())
-            break
+        getter: asyncio.Task[dict[str, Any]] | None = None
+        try:
+            while True:
+                getter = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
+                if getter in done:
+                    yield _line(getter.result())
+                    continue
+                getter.cancel()
+                while not queue.empty():
+                    yield _line(queue.get_nowait())
+                break
+        finally:
+            # A client that hangs up cancels this generator mid-wait; a getter
+            # left pending is garbage-collected later and asyncio logs "Task
+            # was destroyed but it is pending!" (same as flash_route._stream).
+            if getter is not None and not getter.done():
+                getter.cancel()
         try:
             result = task.result()
         except Exception as e:

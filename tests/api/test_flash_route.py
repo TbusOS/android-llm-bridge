@@ -327,3 +327,58 @@ def test_plan_run_streams_steps_and_ends_with_every_row(monkeypatch):
     assert done["ev"] == "done" and done["ok"] is True
     assert [r["status"] for r in done["rows"]] == ["ok", "ok", "ok"]
     assert svc.runs[0][1] == 30
+
+
+# ─── A client that hangs up mid-stream (2026-11-03) ──────────────────
+
+
+async def _hang_up(body_iterator: Any) -> None:
+    """What starlette does when the page goes away: the send waiting for
+    the next line is cancelled, then the generator is closed."""
+    import asyncio
+    import contextlib
+
+    reader = asyncio.create_task(body_iterator.__anext__())
+    await asyncio.sleep(0.05)
+    reader.cancel()
+    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+        await reader
+    await body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_hangs_up_leaves_no_queue_reader_behind() -> None:
+    """The hub log had 12 'Task was destroyed but it is pending!
+    coro=<Queue.get()>' on 2026-11-03: the reader task waiting for the next
+    progress event was left pending when the client left."""
+    import asyncio
+    import gc
+
+    import alb.api.flash_route as route
+
+    loop = asyncio.get_running_loop()
+    reports: list[str] = []
+    old = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, ctx: reports.append(str(ctx.get("message"))))
+    try:
+        release = asyncio.Event()
+
+        async def run(on_event: Any) -> Any:
+            await release.wait()
+            return FlashResult(ok=True)
+
+        resp = await route._stream(run)
+        it = resp.body_iterator
+        await _hang_up(it)
+        [job] = route._RUNNING  # the job outlives the client and stays referenced
+        release.set()
+        await job
+        del resp, it
+        for _ in range(3):
+            gc.collect()
+            await asyncio.sleep(0)
+        assert not [m for m in reports if "destroyed but it is pending" in m]
+        assert not [t for t in asyncio.all_tasks() if "Queue.get" in repr(t.get_coro())]
+        assert job not in route._RUNNING  # dropped once it is done
+    finally:
+        loop.set_exception_handler(old)

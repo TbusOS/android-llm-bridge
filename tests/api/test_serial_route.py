@@ -194,3 +194,49 @@ def test_unsafe_device_is_400(ws) -> None:
     with _client() as c:
         r = c.post("/api/serial/break-in?device=../x", json={})
     assert r.status_code == 400 and "../x" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_hangs_up_leaves_no_queue_reader_behind(
+    monkeypatch: pytest.MonkeyPatch, ws: Path
+) -> None:
+    """Same leak as the flash stream (2026-11-03 hub log): the page goes away
+    while break-in runs; the task reading the progress queue must not be left
+    pending for the garbage collector to report."""
+    import asyncio
+    import contextlib
+    import gc
+
+    release = asyncio.Event()
+
+    async def slow_break_in(transport: Any, **kw: Any) -> Any:
+        await release.wait()
+        return _stopped(ws)
+
+    monkeypatch.setattr(serial_route, "build_transport", lambda **kw: object())
+    monkeypatch.setattr(serial_route, "break_in", slow_break_in)
+
+    loop = asyncio.get_running_loop()
+    reports: list[str] = []
+    old = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, ctx: reports.append(str(ctx.get("message"))))
+    try:
+        resp = await serial_route.post_break_in(serial_route.BreakInBody.model_validate({}), device=None)
+        it = resp.body_iterator
+        reader = asyncio.create_task(it.__anext__())
+        await asyncio.sleep(0.05)
+        reader.cancel()  # the page went away
+        with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+            await reader
+        await it.aclose()
+        [attempt] = serial_route._BACKGROUND  # still running, as before
+        release.set()
+        await attempt
+        del resp, it, reader
+        for _ in range(3):
+            gc.collect()
+            await asyncio.sleep(0)
+        assert not [m for m in reports if "destroyed but it is pending" in m]
+        assert not [t for t in asyncio.all_tasks() if "Queue.get" in repr(t.get_coro())]
+    finally:
+        loop.set_exception_handler(old)

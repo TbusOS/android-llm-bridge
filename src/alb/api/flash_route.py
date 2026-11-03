@@ -74,6 +74,10 @@ router = APIRouter(prefix="/api/flash", tags=["flash"])
 
 NDJSON = "application/x-ndjson"
 
+# Jobs whose client hung up keep running (see _stream); the event loop only
+# holds tasks weakly, so a job nobody awaits any more is kept here until done.
+_RUNNING: set[asyncio.Task[Any]] = set()
+
 
 class FlashBody(BaseModel):
     partition: str = Field(..., min_length=1, max_length=64)
@@ -123,6 +127,9 @@ async def _stream(run: JobRunner) -> StreamingResponse:
 
     async def body() -> AsyncIterator[bytes]:
         task: asyncio.Task[_Verdict] = asyncio.create_task(run(on_event))
+        _RUNNING.add(task)
+        task.add_done_callback(_RUNNING.discard)
+        getter: asyncio.Task[FlashEvent | None] | None = None
         try:
             while True:
                 getter = asyncio.create_task(queue.get())
@@ -159,10 +166,16 @@ async def _stream(run: JobRunner) -> StreamingResponse:
                 yield _line({"ev": JobEvent.DONE.value, **result.as_dict()})
                 return
         finally:
+            # A client that hangs up cancels this generator while it waits on
+            # the getter. Left pending, the getter is garbage-collected later
+            # and asyncio logs "Task was destroyed but it is pending!
+            # coro=<Queue.get()>" (the hub log had 12 on 2026-11-03).
+            if getter is not None and not getter.done():
+                getter.cancel()
             if not task.done():
                 # The client hung up. Do NOT cancel the job — the device is
                 # mid-write and abandoning it there is worse than finishing
-                # into a stream nobody reads.
+                # into a stream nobody reads. _RUNNING keeps it alive.
                 pass
 
     return StreamingResponse(body(), media_type=NDJSON)
