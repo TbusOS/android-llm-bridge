@@ -24,7 +24,7 @@ vi.mock("../../chat/useChatStream", () => ({
 }));
 vi.mock("../../../lib/clipboard", () => clip);
 
-import { AssistantProvider, COMPOSER_MAX_PX, Composer, ConfirmToolsSwitch, Conversation } from "../../../components/v3/Assistant";
+import { AssistantProvider, AssistantSheet, COMPOSER_MAX_PX, Composer, ConfirmToolsSwitch, Conversation } from "../../../components/v3/Assistant";
 import { SnackbarHost, useSnack } from "../../../components/v3/ui";
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
@@ -438,5 +438,84 @@ describe("streamed answers (2026-11-03)", () => {
     chat.state.turns = [user("u1", "q"), ai("a1", { status: "streaming", toolCalls: [{ ...call, status: "running", result: undefined, endedAt: undefined }] })];
     r.rerender(tree());
     expect(screen.queryByText("思考中…")).toBeNull();
+  });
+});
+
+
+describe("reading settings: sheet width and text size (2026-11-03)", () => {
+  function sheet() {
+    useShell.setState({ sheetOpen: true, sheetWidth: 400, chatFontPx: 14 });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AssistantProvider>
+          <AssistantSheet onOpenFull={() => {}} />
+          <SnackbarHost />
+        </AssistantProvider>
+      </QueryClientProvider>,
+    );
+  }
+  const cssVar = (name: string) => document.documentElement.style.getPropertyValue(name);
+
+  it("A+ / A− change the conversation text size, within 12–22 px", () => {
+    sheet();
+    expect(cssVar("--alb-chat-font")).toBe("14px");
+    fireEvent.click(screen.getByRole("button", { name: "放大字体" }));
+    expect(useShell.getState().chatFontPx).toBe(15);
+    expect(cssVar("--alb-chat-font")).toBe("15px");
+    for (let i = 0; i < 20; i++) fireEvent.click(screen.getByRole("button", { name: "放大字体" }));
+    expect(useShell.getState().chatFontPx).toBe(22);
+    expect(screen.getByRole("button", { name: "放大字体" })).toHaveProperty("disabled", true);
+    for (let i = 0; i < 20; i++) fireEvent.click(screen.getByRole("button", { name: "缩小字体" }));
+    expect(useShell.getState().chatFontPx).toBe(12);
+    expect(screen.getByRole("button", { name: "缩小字体" })).toHaveProperty("disabled", true);
+  });
+
+  it("dragging the left edge left makes the sheet wider; the page keeps 480 px", () => {
+    sheet();
+    const edge = screen.getByRole("separator", { name: /拖动调整助手宽度/ });
+    fireEvent.pointerDown(edge, { button: 0, clientX: 600, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 540, pointerId: 1 });
+    expect(useShell.getState().sheetWidth).toBe(460);
+    expect(cssVar("--alb-sheet-w")).toBe("460px");
+    // jsdom's window is 1024 wide: at most 1024 - 480 = 544
+    fireEvent.pointerMove(edge, { clientX: 100, pointerId: 1 });
+    expect(useShell.getState().sheetWidth).toBe(544);
+    fireEvent.pointerUp(edge, { pointerId: 1 });
+    // after letting go, moving does nothing
+    fireEvent.pointerMove(edge, { clientX: 900, pointerId: 1 });
+    expect(useShell.getState().sheetWidth).toBe(544);
+    expect(document.body.classList.contains("is-resizing")).toBe(false);
+  });
+
+  it("the edge works from the keyboard and double-click restores 400 px", () => {
+    sheet();
+    const edge = screen.getByRole("separator", { name: /拖动调整助手宽度/ });
+    fireEvent.keyDown(edge, { key: "ArrowLeft" });
+    expect(useShell.getState().sheetWidth).toBe(432);
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(edge, { key: "ArrowRight" });
+    expect(useShell.getState().sheetWidth).toBe(320);
+    fireEvent.doubleClick(edge);
+    expect(useShell.getState().sheetWidth).toBe(400);
+  });
+
+  it("both settings are kept for the next visit", () => {
+    sheet();
+    fireEvent.click(screen.getByRole("button", { name: "放大字体" }));
+    fireEvent.keyDown(screen.getByRole("separator", { name: /拖动调整助手宽度/ }), { key: "ArrowLeft" });
+    const saved = JSON.parse(localStorage.getItem("alb.shell") ?? "{}");
+    expect(saved.state).toMatchObject({ chatFontPx: 15, sheetWidth: 432 });
+  });
+
+  it("a stored value out of range is clamped when applied", () => {
+    useShell.setState({ sheetOpen: true, sheetWidth: 99999, chatFontPx: 3 });
+    render(
+      <QueryClientProvider client={qc}>
+        <AssistantProvider>
+          <span />
+        </AssistantProvider>
+      </QueryClientProvider>,
+    );
+    expect(cssVar("--alb-sheet-w")).toBe("960px");
+    expect(cssVar("--alb-chat-font")).toBe("12px");
   });
 });

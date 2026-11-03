@@ -14,7 +14,15 @@ import { shortId } from "../../features/v3/chat/toolText";
 import { type OnDeviceProbe, probeOnDevice } from "../../lib/api3";
 import { useT } from "../../lib/i18n";
 import { useApp } from "../../stores/app";
-import { useShell } from "../../stores/shell";
+import {
+  CHAT_FONT_DEFAULT,
+  CHAT_FONT_MAX,
+  CHAT_FONT_MIN,
+  SHEET_W_DEFAULT,
+  SHEET_W_MAX,
+  SHEET_W_MIN,
+  useShell,
+} from "../../stores/shell";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { Pill, toast } from "./ui";
@@ -54,7 +62,109 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     }),
     [chat, backend, context, clearContext],
   );
+  useReadingVars();
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
+}
+
+/** Sheet width and chat text size as CSS variables on <html>: the grid
+ *  column of the docked sheet, the sheet itself and every .msg read them.
+ *  Values from storage are clamped again (they skip the setters). */
+function useReadingVars() {
+  const width = useShell((s) => s.sheetWidth);
+  const font = useShell((s) => s.chatFontPx);
+  useLayoutEffect(() => {
+    const ok = (v: number, lo: number, hi: number, d: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+    const root = document.documentElement.style;
+    root.setProperty("--alb-sheet-w", `${ok(width, SHEET_W_MIN, SHEET_W_MAX, SHEET_W_DEFAULT)}px`);
+    root.setProperty("--alb-chat-font", `${ok(font, CHAT_FONT_MIN, CHAT_FONT_MAX, CHAT_FONT_DEFAULT)}px`);
+  }, [width, font]);
+}
+
+/** Widest the sheet may get in this window: the page keeps 480 px. */
+function maxSheetWidth(): number {
+  return Math.max(SHEET_W_MIN, Math.min(SHEET_W_MAX, window.innerWidth - 480));
+}
+
+/** The left edge of the sheet: drag it, or focus it and use ← / →.
+ *  Double-click puts the default width back. */
+function SheetResizer() {
+  const t = useT();
+  const width = useShell((s) => s.sheetWidth);
+  const setWidth = useShell((s) => s.setSheetWidth);
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const end = () => {
+    drag.current = null;
+    document.body.classList.remove("is-resizing");
+  };
+  const label = t("拖动调整助手宽度;双击恢复默认", "Drag to resize the assistant; double-click for the default width");
+  return (
+    <div
+      className="sheet__resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      title={label}
+      aria-valuenow={width}
+      aria-valuemin={SHEET_W_MIN}
+      aria-valuemax={SHEET_W_MAX}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        drag.current = { x: e.clientX, w: width };
+        document.body.classList.add("is-resizing");
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        // the sheet hangs on the right edge: moving left makes it wider
+        if (d) setWidth(Math.min(maxSheetWidth(), d.w + (d.x - e.clientX)));
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
+      onDoubleClick={() => setWidth(SHEET_W_DEFAULT)}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 96 : 32;
+        if (e.key === "ArrowLeft") setWidth(Math.min(maxSheetWidth(), width + step));
+        else if (e.key === "ArrowRight") setWidth(width - step);
+        else if (e.key === "Home") setWidth(SHEET_W_DEFAULT);
+        else return;
+        e.preventDefault();
+      }}
+    />
+  );
+}
+
+/** A− / A+ for the conversation text (sheet and full-screen chat). */
+export function ChatFontButtons({ className }: { className?: string }) {
+  const t = useT();
+  const px = useShell((s) => s.chatFontPx);
+  const setPx = useShell((s) => s.setChatFontPx);
+  return (
+    <fieldset className={`chat-font ${className ?? ""}`} aria-label={t(`对话字号 ${px}px`, `Chat text size ${px}px`)}>
+      <button
+        type="button"
+        className="icon-btn icon-btn--sm chat-font__btn"
+        aria-label={t("缩小字体", "Smaller text")}
+        title={t(`缩小字体(现在 ${px}px)`, `Smaller text (now ${px}px)`)}
+        disabled={px <= CHAT_FONT_MIN}
+        onClick={() => setPx(px - 1)}
+      >
+        A−
+      </button>
+      <button
+        type="button"
+        className="icon-btn icon-btn--sm chat-font__btn chat-font__btn--big"
+        aria-label={t("放大字体", "Larger text")}
+        title={t(`放大字体(现在 ${px}px)`, `Larger text (now ${px}px)`)}
+        disabled={px >= CHAT_FONT_MAX}
+        onClick={() => setPx(px + 1)}
+      >
+        A+
+      </button>
+    </fieldset>
+  );
 }
 
 export function useAssistant(): AssistantApi {
@@ -477,10 +587,12 @@ export function AssistantSheet({ onOpenFull }: { onOpenFull: () => void }) {
   if (!open) return null;
   return (
     <aside className="sheet" aria-label={t("助手", "Assistant")}>
+      <SheetResizer />
       <div className="sheet__head">
         <Icon name="spark" />
         <h2>{t("助手", "Assistant")}</h2>
         <span className="pill pill--info">{device ?? t("未选设备", "no device")}</span>
+        <ChatFontButtons />
         <button type="button" className="icon-btn icon-btn--sm" aria-label={t("全屏打开", "Open full screen")} title={t("全屏打开", "Open full screen")} onClick={onOpenFull}>
           <Icon name="external" size="sm" />
         </button>

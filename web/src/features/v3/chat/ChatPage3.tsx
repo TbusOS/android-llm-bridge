@@ -9,7 +9,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 
-import { Composer, ConfirmToolsSwitch, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
+import { ChatFontButtons, Composer, ConfirmToolsSwitch, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
 import { Icon } from "../../../components/v3/Icon";
 import { Markdown } from "../../../components/v3/Markdown";
 import { CardHead, Empty, ErrorBanner, Menu, PageHead, Pill, toast } from "../../../components/v3/ui";
@@ -266,6 +266,7 @@ function LiveThread({ title, onNew }: { title: string; onNew: () => void }) {
           {model ?? a.backend} · {source === "api" ? t("云端 API", "cloud API") : source === "board" ? t("板上", "on board") : t("本机", "host")}
         </Pill>
         <div className="card__actions">
+          <ChatFontButtons />
           <Menu
             align="end"
             trigger={(p) => (
@@ -334,6 +335,7 @@ function ReadOnlyThread({
         ) : null}
         {d?.device ? <Pill tone="info">{d.device}</Pill> : null}
         <div className="card__actions">
+          <ChatFontButtons />
           <button type="button" className="btn btn--text btn--sm" onClick={onBack}>
             {t("回到当前对话", "Back to current chat")}
           </button>

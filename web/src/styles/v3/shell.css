@@ -244,11 +244,44 @@ body::before {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 @media (min-width: 1200px) {
+  /* docked: the page keeps at least 480 px however wide the sheet was dragged */
   .app[data-sheet="open"] {
-    grid-template-columns: var(--alb-nav-w) minmax(0, 1fr) var(--alb-sheet-w);
+    --alb-sheet-docked-w: min(var(--alb-sheet-w), calc(100vw - var(--alb-nav-w) - 480px));
+    grid-template-columns: var(--alb-nav-w) minmax(0, 1fr) var(--alb-sheet-docked-w);
   }
-  .app[data-sheet="open"] .sheet { box-shadow: none; }
+  .app[data-sheet="open"] .sheet { box-shadow: none; width: var(--alb-sheet-docked-w); }
 }
+
+/* the sheet's left edge: drag to resize (components/v3/Assistant.tsx SheetResizer) */
+.sheet__resize {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sheet__resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 3px;
+  height: 48px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--md-sys-color-outline);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sheet__resize:hover::after,
+.sheet__resize:focus-visible::after,
+.is-resizing .sheet__resize::after { opacity: 1; }
+.sheet__resize:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
+/* while dragging: no text selection, the resize cursor everywhere */
+.is-resizing { cursor: col-resize; user-select: none; }
 
 .scrim {
   position: fixed;
@@ -307,6 +340,7 @@ body::before {
   .board-switch__meta { display: none; }
   .brand__name { font-size: 18px; }
   .sheet { top: 0; border-radius: 0; }
+  .sheet__resize { display: none; }
 }
 @media (min-width: 600px) {
   .topbar__menu { display: none; }
