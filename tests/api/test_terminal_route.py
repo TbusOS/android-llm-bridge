@@ -545,21 +545,47 @@ class _LateBashTransport(_BashTransport):
         return await open_pty_subprocess(sys.executable, "-c", late, env=env, rows=rows, cols=cols)
 
 
-def _read_until(ws: Any, needle: bytes, exits: list[dict[str, Any]]) -> bytes:
+def _receive(ws: Any, timeout: float = 10.0) -> Any:
+    """ws.receive(), or None when no frame came for `timeout` seconds.
+
+    A lost exit code means no frame ever comes, and a plain receive() then
+    waits forever and stops the whole test run. Same call as starlette's
+    receive() (1.0: portal.call(self._send_rx.receive)) inside
+    anyio.fail_after; if a starlette upgrade renames `_send_rx`, this
+    raises AttributeError rather than passing."""
+    import anyio
+
+    async def rx() -> Any:
+        with anyio.fail_after(timeout):
+            return await ws._send_rx.receive()
+
+    try:
+        return ws.portal.call(rx)
+    except TimeoutError:
+        return None
+
+
+def _read_until(
+    ws: Any, needle: bytes, exits: list[dict[str, Any]], *, exit_count: int = 0
+) -> bytes:
+    """Read frames until `needle` has shown and `exits` holds at least
+    `exit_count` command_exit events."""
     import json as _json
 
     shown = b""
     for _ in range(400):
-        msg = ws.receive()
+        msg = _receive(ws)
+        if msg is None:
+            pytest.fail(f"{needle!r} with {exit_count} exit code(s) never came; got {shown!r} {exits!r}")
         if msg.get("bytes"):
             shown += msg["bytes"]
         elif msg.get("text"):
             obj = _json.loads(msg["text"])
             if obj.get("type") == "command_exit":
                 exits.append(obj)
-        if needle in shown:
+        if needle in shown and len(exits) >= exit_count:
             return shown
-    pytest.fail(f"{needle!r} never showed: {shown!r}")
+    pytest.fail(f"{needle!r} with {exit_count} exit code(s) never showed: {shown!r} {exits!r}")
 
 
 def test_exit_codes_on_a_shell_that_drops_early_input(
@@ -572,8 +598,15 @@ def test_exit_codes_on_a_shell_that_drops_early_input(
         ws.send_json({"device": None, "session_id": "term-late-shell"})
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"type": "input", "data": "false\r"})  # typed before any prompt
-        shown = _read_until(ws, b"probe$ ", exits)
+        # Wait for false's exit code, not for a prompt: the first prompt shown
+        # is the one right after SETUP, and false only runs after it. A line
+        # typed before false's code comes back takes that code (codes go to
+        # the last line typed), so typing at the first prompt failed most runs.
+        shown = _read_until(ws, b"probe$ ", exits, exit_count=1)
         ws.send_json({"type": "input", "data": "echo done-$((1+1))\r"})
-        shown += _read_until(ws, b"done-2", exits)
-    assert [(e["line"], e["exit_code"]) for e in exits] == [("false", 1)]
+        shown += _read_until(ws, b"done-2", exits, exit_count=2)
+    assert [(e["line"], e["exit_code"]) for e in exits] == [
+        ("false", 1),
+        ("echo done-$((1+1))", 0),
+    ]
     assert b"KSH_VERSION" not in shown, "the SETUP echo stays out of the terminal"
