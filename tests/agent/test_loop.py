@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
 from typing import Any
 
 import pytest
@@ -16,7 +16,7 @@ from alb.agent.backend import (
     ToolCall,
     ToolSpec,
 )
-from alb.agent.loop import AgentLoop
+from alb.agent.loop import AgentLoop, repair_tool_name
 from alb.agent.session import ChatSession
 
 
@@ -67,11 +67,10 @@ class FakeBackend(LLMBackend):
         item = self._queue.pop(0)
         if isinstance(item, Exception):
             raise item
-        # For tool-call turns we buffer silently (no token events);
-        # for plain turns, emit each char as a delta to prove char-level streaming.
-        if item.content and not item.tool_calls:
-            for ch in item.content:
-                yield {"type": "token", "delta": ch}
+        # Like the real backends: content streams as one delta per char in
+        # every turn, including one that ends in tool calls.
+        for ch in item.content:
+            yield {"type": "token", "delta": ch}
         yield {
             "type": "done",
             "content": item.content,
@@ -486,3 +485,218 @@ async def test_run_stream_closed_before_a_call_runs_answers_it(tmp_path, monkeyp
     last = ChatSession.load(session.session_id).messages()[-1]
     assert (last.role, last.tool_call_id) == ("tool", "tc_1")
     assert json.loads(last.content)["error"]["code"] == "CHAT_STOPPED"
+
+
+# ─── Tokens go out as they arrive (2026-11-03) ───────────────────────
+
+
+class _GatedBackend(LLMBackend):
+    """Streams "你", then waits for `gate` before "好" and done.  `closed`
+    is set when the generator is shut (its finally ran)."""
+
+    name = "gated"
+    supports_tool_calls = True
+    supports_streaming = True
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self.model = "gated"
+        self.gate = asyncio.Event()
+        self.closed = False
+
+    async def chat(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        **kw: Any,
+    ) -> ChatResponse:
+        raise AssertionError("not used")
+
+    async def stream(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        **kw: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        try:
+            yield {"type": "token", "delta": "你"}
+            await self.gate.wait()
+            yield {"type": "token", "delta": "好"}
+            yield {"type": "done", "content": "你好", "tool_calls": [], "usage": {}}
+        finally:
+            self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_run_stream_sends_a_token_before_the_turn_ends() -> None:
+    """The first token reaches the client while the model is still
+    generating.  The old loop held tokens until done, so this timed out."""
+    import asyncio
+
+    b = _GatedBackend()
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_)
+    stream = loop.run_stream("hi")
+    first = await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+    assert first == {"type": "token", "delta": "你"}
+    b.gate.set()
+    rest = [ev async for ev in stream]
+    assert [e["delta"] for e in rest if e["type"] == "token"] == ["好"]
+    assert rest[-1]["type"] == "done" and rest[-1]["data"] == "你好"
+
+
+@pytest.mark.asyncio
+async def test_run_stream_stop_while_streaming_closes_the_backend_stream() -> None:
+    """Stopping between two tokens shuts the backend's request at once
+    (aclosing), instead of leaving it to the garbage collector."""
+    import asyncio
+
+    b = _GatedBackend()
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_)
+    stream = loop.run_stream("hi")
+    assert (await asyncio.wait_for(stream.__anext__(), timeout=1.0))["type"] == "token"
+    await stream.aclose()
+    assert b.closed is True
+
+
+@pytest.mark.asyncio
+async def test_run_stream_text_before_a_tool_call_is_sent_first() -> None:
+    """A turn that says something and then calls a tool: the text goes out
+    before tool_call_start; done carries only the final turn's answer."""
+    b = FakeBackend(
+        [
+            ChatResponse(
+                content="我先看日志",
+                tool_calls=[_tc("alb_logcat", {}, "tc_1")],
+                finish_reason="tool_calls",
+            ),
+            _final("没有崩溃"),
+        ]
+    )
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_)
+    events = [ev async for ev in loop.run_stream("有崩溃吗")]
+    types = [e["type"] for e in events]
+    start = types.index("tool_call_start")
+    before = "".join(e["delta"] for e in events[:start] if e["type"] == "token")
+    after = "".join(e["delta"] for e in events[start:] if e["type"] == "token")
+    assert before == "我先看日志"
+    assert after == "没有崩溃"
+    assert events[-1]["data"] == "没有崩溃"
+
+
+class _NoTokenBackend(FakeBackend):
+    """A backend that only reports the whole reply on done."""
+
+    async def stream(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        **kw: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        item = self._queue.pop(0)
+        assert isinstance(item, ChatResponse)
+        yield {"type": "done", "content": item.content, "tool_calls": [], "usage": {}}
+
+
+@pytest.mark.asyncio
+async def test_run_stream_reply_without_token_events_is_sent_once() -> None:
+    b = _NoTokenBackend([_final("整段回答")])
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_)
+    events = [ev async for ev in loop.run_stream("hi")]
+    assert [e["delta"] for e in events if e["type"] == "token"] == ["整段回答"]
+
+
+# ─── Tool names glued to a stray prefix (2026-11-03) ─────────────────
+
+_KNOWN = {"alb_describe", "alb_describe_errors", "alb_status", "alb_shell"}
+
+
+@pytest.mark.parametrize(
+    ("name", "want"),
+    [
+        # seen with Ling-3.0-tiny through Ollama 0.40
+        ("alb_describealb_describe_errors", "alb_describe_errors"),
+        ("alb_statusalb_status", "alb_status"),
+        ("alb_stalb_status", "alb_status"),
+        # already right
+        ("alb_status", None),
+        # front part is not the start of the tool name: leave it alone
+        ("my_alb_shell", None),
+        ("xalb_status", None),
+        # unknown and unrelated
+        ("alb_reboot", None),
+    ],
+)
+def test_repair_tool_name(name: str, want: str | None) -> None:
+    assert repair_tool_name(name, _KNOWN) == want
+
+
+@pytest.mark.asyncio
+async def test_run_stream_runs_the_repaired_tool_and_says_so(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    tools = [
+        ToolSpec(name="alb_describe", description="d", parameters={"type": "object"}),
+        ToolSpec(name="alb_describe_errors", description="e", parameters={"type": "object"}),
+    ]
+    b = FakeBackend([_calls(_tc("alb_describealb_describe_errors", {}, "tc_1")), _final("好了")])
+    ran: list[str] = []
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        ran.append(name)
+        return {"ok": True}
+
+    loop = AgentLoop(b, tools=tools, tool_executor=exec_)
+    session = ChatSession.create(backend="fake")
+    events = [ev async for ev in loop.run_stream("错误码", session=session)]
+
+    assert ran == ["alb_describe_errors"]
+    start = next(e for e in events if e["type"] == "tool_call_start")
+    assert start["name"] == "alb_describe_errors"
+    assert start["requested_name"] == "alb_describealb_describe_errors"
+    # the history the model sees next turn uses the real name
+    msgs = ChatSession.load(session.session_id).messages()
+    assert msgs[1].tool_calls[0].name == "alb_describe_errors"
+    assert msgs[2].name == "alb_describe_errors"
+
+
+@pytest.mark.asyncio
+async def test_run_also_repairs_the_tool_name() -> None:
+    tools = [
+        ToolSpec(name="alb_describe", description="d", parameters={"type": "object"}),
+        ToolSpec(name="alb_describe_errors", description="e", parameters={"type": "object"}),
+    ]
+    b = FakeBackend([_calls(_tc("alb_describealb_describe_errors", {}, "tc_1")), _final("好了")])
+    ran: list[str] = []
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        ran.append(name)
+        return {"ok": True}
+
+    r = await AgentLoop(b, tools=tools, tool_executor=exec_).run("错误码")
+    assert r.ok is True
+    assert ran == ["alb_describe_errors"]

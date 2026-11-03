@@ -230,8 +230,9 @@ class LLMBackend(ABC):
         Event shapes (all dict[str, Any] for Python's sake — contract below):
 
             {"type": "token",  "delta": "部分文本",  "tokens": 1}
-                — only emitted for the final assistant turn's content;
-                  tool-call turns buffer silently until done.
+                — emitted as the content arrives, in every turn: a turn
+                  that ends in tool calls may carry some text first.
+                  AgentLoop.run_stream forwards these to the client.
                 — `tokens` is the token count for this delta as reported
                   by the backend's stream framing (Ollama: 1 per chunk;
                   OpenAI-compat: 1 per choices[0].delta.content). Used

@@ -21,8 +21,11 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable
+import logging
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -42,6 +45,20 @@ from alb.infra.result import Result, fail, ok
 # A tool executor receives (tool_name, arguments_dict) and returns the
 # serialisable result that will be fed back to the model as a "tool" message.
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+_log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _closing(it: AsyncIterator[Any]) -> AsyncGenerator[AsyncIterator[Any], None]:
+    """contextlib.aclosing for any async iterator: close it on the way out
+    if it can be closed (backend streams are typed as AsyncIterator)."""
+    try:
+        yield it
+    finally:
+        close = getattr(it, "aclose", None)
+        if close is not None:
+            await close()
 
 _DEFAULT_MAX_TURNS = 8
 
@@ -132,11 +149,13 @@ class AgentLoop:
                     timing_ms=int((perf_counter() - start) * 1000),
                 )
 
+            turn_calls, _renamed = self._repair_tool_names(list(resp.tool_calls))
+
             # Record assistant turn
             asst_msg = Message(
                 role="assistant",
                 content=resp.content,
-                tool_calls=list(resp.tool_calls),
+                tool_calls=turn_calls,
             )
             messages.append(asst_msg)
             if session is not None:
@@ -144,7 +163,7 @@ class AgentLoop:
 
             last_content = resp.content or last_content
 
-            if not resp.tool_calls:
+            if not turn_calls:
                 # Model signalled it's done (finish_reason=stop/length/error)
                 return ok(
                     data=last_content,
@@ -153,7 +172,7 @@ class AgentLoop:
                 )
 
             # Dispatch tool calls
-            for tc in resp.tool_calls:
+            for tc in turn_calls:
                 tool_result = await self._dispatch(tc)
                 artifacts.extend(_extract_artifacts(tool_result))
 
@@ -187,10 +206,16 @@ class AgentLoop:
 
         Event types (subset + agent-loop additions):
             {"type": "token", "delta": "..."}
-                Content token from the *final* assistant turn (one that stops
-                without tool_calls).  Tool-decision turns stream silently.
+                Content text, forwarded as soon as the backend produces it,
+                from every turn.  A turn that ends in tool calls may say
+                something first ("let me check the log"); those tokens arrive
+                before its tool_call_start events.  Clients that show one
+                answer per question start a new text block after a tool call.
 
-            {"type": "tool_call_start", "id": "...", "name": "...", "arguments": {...}}
+            {"type": "tool_call_start", "id": "...", "name": "...", "arguments": {...},
+             "requested_name": "..."}
+                `requested_name` is present only when the model's tool name
+                was repaired (see _repair_tool_names).
             {"type": "tool_call_end",   "id": "...", "name": "...", "result": {...}}
 
             {"type": "done", "ok": true, "data": "...", "session_id": "...",
@@ -228,29 +253,39 @@ class AgentLoop:
         for _turn in range(self.max_turns):
             # Drain one streamed turn into (content, tool_calls, usage)
             turn_content = ""
+            # What the client has already been sent for this turn.
+            streamed = ""
             turn_tool_calls: list[ToolCall] = []
             turn_usage: dict[str, int] = {}
             turn_thinking = ""
             try:
-                async for ev in self.backend.stream(messages, tools=tools):
-                    etype = ev.get("type")
-                    if etype == "token":
-                        # Peek: if this turn will end with tool_calls, we
-                        # can't know yet.  Buffer and only forward if the
-                        # done event has no tool_calls.
-                        turn_content += ev.get("delta", "")
-                        if on_raw_token is not None:
-                            try:
-                                on_raw_token(int(ev.get("tokens", 1)))
-                            except Exception:  # noqa: BLE001 — best-effort
-                                pass
-                    elif etype == "done":
-                        turn_content = ev.get("content", turn_content)
-                        turn_thinking = ev.get("thinking", "")
-                        turn_usage = ev.get("usage", {}) or {}
-                        last_model = ev.get("model", last_model)
-                        for tcd in ev.get("tool_calls") or []:
-                            turn_tool_calls.append(ToolCall.from_dict(tcd))
+                # When the page stops the chat while we sit in a yield
+                # below, the backend's request is closed right away instead
+                # of whenever the generator is collected.
+                async with _closing(self.backend.stream(messages, tools=tools)) as bstream:
+                    async for ev in bstream:
+                        etype = ev.get("type")
+                        if etype == "token":
+                            # Forward at once.  Before 2026-11-03 this was
+                            # held until the turn ended, so a 6 s answer
+                            # appeared all at once after 6 s of nothing.
+                            delta = ev.get("delta", "")
+                            turn_content += delta
+                            if on_raw_token is not None:
+                                try:
+                                    on_raw_token(int(ev.get("tokens", 1)))
+                                except Exception:  # noqa: BLE001 — best-effort
+                                    pass
+                            if delta:
+                                streamed += delta
+                                yield {"type": "token", "delta": delta}
+                        elif etype == "done":
+                            turn_content = ev.get("content", turn_content)
+                            turn_thinking = ev.get("thinking", "")
+                            turn_usage = ev.get("usage", {}) or {}
+                            last_model = ev.get("model", last_model)
+                            for tcd in ev.get("tool_calls") or []:
+                                turn_tool_calls.append(ToolCall.from_dict(tcd))
             except BackendError as e:
                 yield {
                     "type": "done",
@@ -264,6 +299,8 @@ class AgentLoop:
                     "timing_ms": int((perf_counter() - start) * 1000),
                 }
                 return
+
+            turn_tool_calls, renamed = self._repair_tool_names(turn_tool_calls)
 
             # Record assistant turn
             asst_msg = Message(
@@ -279,11 +316,11 @@ class AgentLoop:
             last_usage = turn_usage or last_usage
 
             if not turn_tool_calls:
-                # Final turn — this is the one users see; stream the collected
-                # content as tokens (one delta = full content; backends that
-                # want true char-level streaming can re-yield during the loop)
-                if turn_content:
-                    yield {"type": "token", "delta": turn_content}
+                # Final turn.  Send whatever the token events did not carry:
+                # all of it for a backend that streams no tokens, or a
+                # thinking-only reply the backend promoted to content.
+                if len(turn_content) > len(streamed) and turn_content.startswith(streamed):
+                    yield {"type": "token", "delta": turn_content[len(streamed):]}
                 yield {
                     "type": "done",
                     "ok": True,
@@ -301,12 +338,15 @@ class AgentLoop:
             unanswered = list(turn_tool_calls)
             try:
                 for tc in turn_tool_calls:
-                    yield {
+                    start_ev: dict[str, Any] = {
                         "type": "tool_call_start",
                         "id": tc.id,
                         "name": tc.name,
                         "arguments": tc.arguments,
                     }
+                    if tc.id in renamed:
+                        start_ev["requested_name"] = renamed[tc.id]
+                    yield start_ev
                     tool_result = await self._dispatch(tc)
                     artifacts.extend(_extract_artifacts(tool_result))
                     tool_msg = _tool_message(tc, tool_result)
@@ -343,6 +383,27 @@ class AgentLoop:
         }
 
     # ── Internal ─────────────────────────────────────────────────
+    def _repair_tool_names(
+        self, calls: list[ToolCall]
+    ) -> tuple[list[ToolCall], dict[str, str]]:
+        """Fix tool names a backend glued a stray prefix onto.
+
+        Returns (calls, {call id: name the model sent}) — the second part
+        only holds the calls that were changed.  See repair_tool_name().
+        """
+        known = {t.name for t in self.tools}
+        out: list[ToolCall] = []
+        renamed: dict[str, str] = {}
+        for tc in calls:
+            fixed = repair_tool_name(tc.name, known)
+            if fixed is None:
+                out.append(tc)
+                continue
+            _log.warning("tool name %r repaired to %r", tc.name, fixed)
+            renamed[tc.id] = tc.name
+            out.append(dataclasses.replace(tc, name=fixed))
+        return out, renamed
+
     async def _dispatch(self, tc: ToolCall) -> dict[str, Any]:
         """Run one tool call; translate exceptions into an error envelope."""
         # Basic defense: unknown tool name shouldn't invoke executor
@@ -379,6 +440,28 @@ _STOPPED_RESULT: dict[str, Any] = {
         "suggestion": "ask the user before running it again",
     },
 }
+
+
+def repair_tool_name(name: str, known: set[str]) -> str | None:
+    """Return the real tool name when `name` is one with junk in front.
+
+    Seen 2026-11-03 with Ling-3.0-tiny through Ollama 0.40: asked about
+    error codes, the call came back as ``alb_describealb_describe_errors``
+    (the call id doubled too), on both the streaming and the plain API.
+    The front part is always the beginning of the real name, as if a
+    partial name and the full name were joined.  So the rule is narrow:
+    `name` = P + K, where K is a known tool and K starts with P.  A name
+    that is merely unknown is left alone and fails as TOOL_NOT_FOUND.
+    Returns None when nothing needs fixing.
+    """
+    if not known or name in known:
+        return None
+    best: str | None = None
+    for k in known:
+        glued = len(name) > len(k) and name.endswith(k) and k.startswith(name[: -len(k)])
+        if glued and (best is None or len(k) > len(best)):
+            best = k
+    return best
 
 
 def _tool_message(tc: ToolCall, tool_result: dict[str, Any]) -> Message:
