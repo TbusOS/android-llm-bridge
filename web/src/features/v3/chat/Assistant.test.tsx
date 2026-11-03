@@ -403,3 +403,40 @@ describe("ask before each tool call", () => {
     expect(useShell.getState().confirmTools).toBe(true);
   });
 });
+
+describe("streamed answers (2026-11-03)", () => {
+  it("answers render as Markdown; what the model said before a call sits above that call", () => {
+    chat.state.turns = [
+      user("u1", "hello"),
+      ai("a1", {
+        content: "设备在线:\n\n- **型号**:A\n- **状态**:device",
+        toolCalls: [
+          { id: "c1", name: "alb_devices", requestedName: "alb_devalb_devices", lead: "我先查一下设备", arguments: {}, result: { ok: true }, status: "done", startedAt: 0, endedAt: 5 },
+        ],
+      }),
+    ];
+    const { container } = render(tree());
+    const lead = container.querySelector(".msg--lead");
+    expect(lead?.textContent).toBe("我先查一下设备");
+    // the lead comes before the tool card in the page
+    const card = container.querySelector(".tool");
+    expect(lead && card && lead.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelectorAll(".msg--ai ul li strong")).toHaveLength(2);
+    expect(container.textContent).not.toContain("**");
+    expect(screen.getByText("alb_devalb_devices")).toBeTruthy();
+  });
+
+  it("after the tools ran, it says it is thinking until the answer starts", () => {
+    const call = { id: "c1", name: "alb_status", arguments: {}, result: { ok: true }, status: "done", startedAt: 0, endedAt: 5 };
+    chat.state.turns = [user("u1", "q"), ai("a1", { status: "streaming", toolCalls: [call] })];
+    const r = render(tree());
+    expect(screen.getByText("思考中…")).toBeTruthy();
+    chat.state.turns = [user("u1", "q"), ai("a1", { status: "streaming", content: "好", toolCalls: [call] })];
+    r.rerender(tree());
+    expect(screen.queryByText("思考中…")).toBeNull();
+    // still running a tool: the card's own spinner says so, no second one
+    chat.state.turns = [user("u1", "q"), ai("a1", { status: "streaming", toolCalls: [{ ...call, status: "running", result: undefined, endedAt: undefined }] })];
+    r.rerender(tree());
+    expect(screen.queryByText("思考中…")).toBeNull();
+  });
+});

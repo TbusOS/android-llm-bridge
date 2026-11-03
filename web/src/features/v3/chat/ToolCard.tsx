@@ -23,9 +23,11 @@ export interface ToolCardProps {
   running?: boolean;
   /** Seconds the call took; omitted when unknown (history). */
   secs?: string | null;
+  /** The garbled name the model sent, when the hub repaired it to `name`. */
+  requestedName?: string;
 }
 
-export function ToolCard({ name, args, result, running = false, secs }: ToolCardProps) {
+export function ToolCard({ name, args, result, running = false, secs, requestedName }: ToolCardProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [large, setLarge] = useState(false);
@@ -73,6 +75,14 @@ export function ToolCard({ name, args, result, running = false, secs }: ToolCard
         </small>
       ) : preview && !open ? (
         <small>{preview}</small>
+      ) : null}
+      {requestedName ? (
+        <small className="tool__renamed">
+          {t("模型给的工具名是", "The model asked for")} <code>{requestedName}</code>
+          {t(",已按 ", "; ran ")}
+          <code>{name}</code>
+          {t(" 执行。", " instead.")}
+        </small>
       ) : null}
       <div className="tool__bar">
         <button type="button" className="btn btn--text btn--sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>

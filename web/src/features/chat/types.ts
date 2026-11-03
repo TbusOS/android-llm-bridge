@@ -26,6 +26,12 @@ export interface ToolCallEntry {
   status: ToolCallStatus;
   startedAt: number;
   endedAt?: number;
+  /** What the model said in the same turn before asking for this call
+   *  ("let me check the log"); only on the first call of that turn. */
+  lead?: string;
+  /** The name the model sent when the hub had to repair it (a backend
+   *  glued a stray prefix onto it); `name` is the one that ran. */
+  requestedName?: string;
 }
 
 export type TurnStatus =
@@ -58,6 +64,8 @@ export interface ChatRequestPayload {
   max_turns: number;
   /** Ask before each tool call (server waits for a tool_confirm answer). */
   confirm_tools?: boolean;
+  /** Language the model answers in (the page's UI language). */
+  lang?: "zh" | "en";
 }
 
 /** A single event from the server stream. Shape mirrors loop.run_stream. */
@@ -68,6 +76,7 @@ export type StreamEvent =
       id: string;
       name: string;
       arguments: Record<string, unknown>;
+      requested_name?: string;
     }
   | { type: "tool_call_end"; id: string; name: string; result: unknown }
   | { type: "tool_confirm_request"; id: string; name: string; arguments: Record<string, unknown> }

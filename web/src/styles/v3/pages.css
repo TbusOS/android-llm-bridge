@@ -50,8 +50,27 @@ body.show-src .src-note { display: flex; }
   color: var(--md-sys-color-on-primary-container);
 }
 .msg--ai { align-self: stretch; }
+/* what the model said before calling a tool: part of its work, not the answer */
+.msg--lead { color: var(--alb-color-text-muted); }
 .msg__who { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 12px; color: var(--alb-color-text-muted); }
 .msg pre { margin: 8px 0; }
+/* Markdown in chat text (components/v3/Markdown.tsx) */
+.msg .md-h { margin: 12px 0 6px; font-size: 15px; font-weight: 600; line-height: 1.4; }
+.msg .md-h:first-child { margin-top: 0; }
+.msg h5.md-h { font-size: 14px; }
+.msg .md-list { margin: 0 0 8px; padding-left: 22px; }
+.msg .md-list:last-child { margin-bottom: 0; }
+.msg .md-list .md-list { margin: 2px 0 0; }
+.msg .md-list li + li { margin-top: 2px; }
+.msg :not(pre) > code { font-family: var(--md-ref-typeface-mono); font-size: 0.92em; background: var(--alb-color-well); padding: 1px 5px; border-radius: 4px; }
+.msg--user :not(pre) > code { background: transparent; border: 1px solid currentColor; }
+.msg .md-quote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--md-sys-color-outline-variant); color: var(--alb-color-text-muted); }
+.msg .md-hr { border: 0; border-top: 1px solid var(--alb-color-divider); margin: 10px 0; }
+.msg .md-table { max-width: 100%; overflow-x: auto; margin: 0 0 8px; }
+.msg .md-table table { border-collapse: collapse; font-size: 13px; }
+.msg .md-table th,
+.msg .md-table td { border: 1px solid var(--md-sys-color-outline-variant); padding: 4px 8px; text-align: left; vertical-align: top; }
+.msg .md-table th { background: var(--alb-color-well); font-weight: 600; }
 .ctx {
   display: inline-flex;
   align-items: center;

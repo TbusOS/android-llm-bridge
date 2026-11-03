@@ -16,6 +16,7 @@ import { useT } from "../../lib/i18n";
 import { useApp } from "../../stores/app";
 import { useShell } from "../../stores/shell";
 import { Icon } from "./Icon";
+import { Markdown } from "./Markdown";
 import { Pill, toast } from "./ui";
 
 /* ---------------- shared conversation ---------------- */
@@ -36,8 +37,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const source = useShell((s) => s.source);
   const agentMode = useShell((s) => s.agentMode);
   const confirmTools = useShell((s) => s.confirmTools);
+  const lang = useApp((s) => s.lang);
   const backend = source === "api" ? (API_BACKENDS.has(appBackend) ? appBackend : "openai-compat") : API_BACKENDS.has(appBackend) ? "ollama" : appBackend;
-  const chat = useChatStream({ backend, model, tools: agentMode, confirmTools });
+  const chat = useChatStream({ backend, model, tools: agentMode, confirmTools, lang });
   const context = useShell((s) => s.context);
   const clearContext = useShell((s) => s.clearContext);
   const api = useMemo<AssistantApi>(
@@ -63,31 +65,19 @@ export function useAssistant(): AssistantApi {
 
 /* ---------------- rendering ---------------- */
 
-function Paragraphs({ text }: { text: string }) {
-  // Plain text only: fenced code becomes a terminal block, the rest
-  // paragraphs. Nothing is interpreted as HTML.
-  const parts = text.split(/```(?:\w+)?\n?/);
-  return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 === 1 ? (
-          <pre className="term" key={i}>
-            {p.replace(/\n$/, "")}
-          </pre>
-        ) : (
-          p
-            .split(/\n{2,}/)
-            .filter((s) => s.trim())
-            .map((para, j) => <p key={`${i}-${j}`}>{para}</p>)
-        ),
-      )}
-    </>
-  );
-}
 
 function LiveToolCard({ call }: { call: ToolCallEntry }) {
   const secs = call.endedAt ? ((call.endedAt - call.startedAt) / 1000).toFixed(1) : null;
-  return <ToolCard name={call.name} args={call.arguments} result={call.result} running={call.status === "running"} secs={secs} />;
+  return (
+    <>
+      {call.lead ? (
+        <div className="msg msg--ai msg--lead">
+          <Markdown text={call.lead} />
+        </div>
+      ) : null}
+      <ToolCard name={call.name} requestedName={call.requestedName} args={call.arguments} result={call.result} running={call.status === "running"} secs={secs} />
+    </>
+  );
 }
 
 // memo: useChatStream only replaces the turn being streamed into, so settled
@@ -97,7 +87,7 @@ const Turn = memo(function Turn({ turn, onRetry }: { turn: ChatTurn; onRetry?: (
   if (turn.role === "user") {
     return (
       <div className="msg msg--user">
-        <Paragraphs text={turn.content} />
+        <Markdown text={turn.content} />
       </div>
     );
   }
@@ -111,12 +101,19 @@ const Turn = memo(function Turn({ turn, onRetry }: { turn: ChatTurn; onRetry?: (
   ) : (
     <span />
   );
+  // The model is working and nothing new is on screen: before the first
+  // word, and again after the tools ran while it reads their results
+  // (that wait was blank before; it can be the longest part of a turn).
+  const waiting =
+    !turn.content &&
+    (turn.status === "pending" ||
+      (turn.status === "streaming" && turn.toolCalls.length > 0 && turn.toolCalls.every((c) => c.status === "done")));
   return (
     <>
       {turn.toolCalls.map((c) => (
         <LiveToolCard key={c.id} call={c} />
       ))}
-      {turn.status === "pending" && !turn.content ? (
+      {waiting ? (
         <div className="msg msg--ai">
           <div className="msg__who">
             <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
@@ -131,7 +128,7 @@ const Turn = memo(function Turn({ turn, onRetry }: { turn: ChatTurn; onRetry?: (
             {turn.model ?? ""}
             {turn.timingMs ? ` · ${(turn.timingMs / 1000).toFixed(1)} s` : ""}
           </div>
-          {turn.content ? <Paragraphs text={turn.content} /> : null}
+          {turn.content ? <Markdown text={turn.content} /> : null}
           {turn.artifacts.length ? <ArtifactRow paths={turn.artifacts} /> : null}
           {turn.status === "cancelled" ? (
             // Stopped by the user: not a failure, so no error colour or code.

@@ -11,6 +11,7 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { Composer, ConfirmToolsSwitch, Conversation, OnDevicePanel, SourceSwitch, useAssistant } from "../../../components/v3/Assistant";
 import { Icon } from "../../../components/v3/Icon";
+import { Markdown } from "../../../components/v3/Markdown";
 import { CardHead, Empty, ErrorBanner, Menu, PageHead, Pill, toast } from "../../../components/v3/ui";
 import { copyText } from "../../../lib/clipboard";
 import {
@@ -60,26 +61,6 @@ function hhmm(iso: string | null): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function Paras({ text }: { text: string }) {
-  // Plain text only; fenced code becomes a terminal block. Nothing is read as HTML.
-  const parts = text.split(/```(?:\w+)?\n?/);
-  return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 === 1 ? (
-          <pre className="term" key={i}>
-            {p.replace(/\n$/, "")}
-          </pre>
-        ) : (
-          p
-            .split(/\n{2,}/)
-            .filter((s) => s.trim())
-            .map((para, j) => <p key={`${i}-${j}`}>{para}</p>)
-        ),
-      )}
-    </>
-  );
-}
 
 /** Text handed to a new conversation so it can carry on from an old one. */
 export function seedFrom(d: SessionDetailResponse, lang: "zh" | "en"): string {
@@ -403,26 +384,33 @@ function Messages({ messages, model }: { messages: SessionMessage[]; model: stri
     if (m.role === "user") {
       return (
         <div className="msg msg--user" key={i}>
-          <Paras text={m.content ?? ""} />
+          <Markdown text={m.content ?? ""} />
         </div>
       );
     }
     if (m.role !== "assistant") return null;
+    const calls = m.tool_calls ?? [];
+    const text = m.content?.trim() ? (
+      <div className={calls.length ? "msg msg--ai msg--lead" : "msg msg--ai"}>
+        {calls.length ? null : (
+          <div className="msg__who">
+            <Icon name="robot" size="sm" />
+            {model}
+          </div>
+        )}
+        <Markdown text={m.content ?? ""} />
+      </div>
+    ) : null;
+    // Text in a message that also calls tools was said before the calls
+    // ("let me check the log"): show it above them, as the live view does.
     return (
       <div key={i} className="chat__turn">
-        {(m.tool_calls ?? []).map((c, j) => {
+        {calls.length ? text : null}
+        {calls.map((c, j) => {
           const out = c.id ? results.get(c.id) : undefined;
           return <ToolCard key={c.id ?? j} name={c.name ?? "tool"} args={c.arguments} result={out ? parseResult(out) : undefined} />;
         })}
-        {m.content?.trim() ? (
-          <div className="msg msg--ai">
-            <div className="msg__who">
-              <Icon name="robot" size="sm" />
-              {model}
-            </div>
-            <Paras text={m.content} />
-          </div>
-        ) : null}
+        {calls.length ? null : text}
       </div>
     );
   });

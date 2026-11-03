@@ -41,6 +41,8 @@ interface UseChatStreamArgs {
   maxTurns?: number;
   /** Ask before each tool call the model makes (off by default). */
   confirmTools?: boolean;
+  /** UI language; the model is told to answer in it. */
+  lang?: "zh" | "en";
 }
 
 /** A tool call the server is holding until the person answers. */
@@ -72,7 +74,7 @@ function clampReason(raw: string, max = 200): string {
 }
 
 export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
-  const { backend, model, tools = true, maxTurns = 8, confirmTools = false } = args;
+  const { backend, model, tools = true, maxTurns = 8, confirmTools = false, lang } = args;
 
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -112,18 +114,28 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
       }
 
       if (ev.type === "tool_call_start") {
-        const entry: ToolCallEntry = {
-          id: ev.id,
-          name: ev.name,
-          arguments: ev.arguments,
-          status: "running",
-          startedAt: Date.now(),
-        };
-        updateTurn(aid, (t) => ({
-          ...t,
-          status: "streaming",
-          toolCalls: [...t.toolCalls, entry],
-        }));
+        const startedAt = Date.now();
+        // Tokens stream from every turn now (2026-11-03). Text that came
+        // before this call is what the model said on its way to calling
+        // it: pin it to the call and start the answer text afresh, so the
+        // final answer is not glued onto "let me check the log".
+        updateTurn(aid, (t) => {
+          const entry: ToolCallEntry = {
+            id: ev.id,
+            name: ev.name,
+            arguments: ev.arguments,
+            status: "running",
+            startedAt,
+            ...(t.content.trim() ? { lead: t.content } : {}),
+            ...(ev.requested_name ? { requestedName: ev.requested_name } : {}),
+          };
+          return {
+            ...t,
+            status: "streaming",
+            content: "",
+            toolCalls: [...t.toolCalls, entry],
+          };
+        });
         return;
       }
 
@@ -243,10 +255,11 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
         tools,
         max_turns: maxTurns,
         ...(confirmTools && tools ? { confirm_tools: true } : {}),
+        ...(lang ? { lang } : {}),
       };
       stream.start(payload);
     },
-    [backend, model, tools, maxTurns, confirmTools, stream],
+    [backend, model, tools, maxTurns, confirmTools, lang, stream],
   );
 
   const answerConfirm = useCallback(

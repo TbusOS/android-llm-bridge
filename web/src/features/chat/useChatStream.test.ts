@@ -182,6 +182,44 @@ describe("useChatStream", () => {
     expect(ass?.toolCalls[0]?.result).toEqual({ ok: true });
   });
 
+  it("text before a tool call is pinned to that call; the answer starts afresh (2026-11-03)", () => {
+    const { result } = renderHook(() => useChatStream({ backend: "ollama", model: null, tools: true }));
+    act(() => result.current.send("有崩溃吗"));
+    act(() => emit(0, { kind: "open" }));
+    act(() => emit(0, { kind: "json", data: { type: "token", delta: "我先看" } }));
+    act(() => emit(0, { kind: "json", data: { type: "token", delta: "日志" } }));
+    act(() =>
+      emit(0, {
+        kind: "json",
+        data: { type: "tool_call_start", id: "a", name: "alb_logcat", arguments: {}, requested_name: "alb_logalb_logcat" },
+      }),
+    );
+    act(() => emit(0, { kind: "json", data: { type: "tool_call_start", id: "b", name: "alb_dmesg", arguments: {} } }));
+    let ass = result.current.turns[1];
+    expect(ass?.content).toBe("");
+    expect(ass?.toolCalls[0]).toMatchObject({ lead: "我先看日志", requestedName: "alb_logalb_logcat" });
+    // only the first call of the turn carries the text
+    expect(ass?.toolCalls[1]).not.toHaveProperty("lead");
+    expect(ass?.toolCalls[1]).not.toHaveProperty("requestedName");
+
+    act(() => emit(0, { kind: "json", data: { type: "token", delta: "没有崩溃" } }));
+    act(() => emit(0, { kind: "json", data: { type: "done", ok: true, data: "没有崩溃" } }));
+    ass = result.current.turns[1];
+    expect(ass?.content).toBe("没有崩溃");
+  });
+
+  it("the UI language goes with the request when given", () => {
+    const zh = renderHook(() => useChatStream({ backend: "ollama", model: null, lang: "zh" }));
+    act(() => zh.result.current.send("hello"));
+    act(() => emit(0, { kind: "open" }));
+    expect(currentClients[0]?.sentMessages[0]).toMatchObject({ lang: "zh" });
+
+    const none = renderHook(() => useChatStream({ backend: "ollama", model: null }));
+    act(() => none.result.current.send("hello"));
+    act(() => emit(1, { kind: "open" }));
+    expect(currentClients[1]?.sentMessages[0]).not.toHaveProperty("lang");
+  });
+
   it("done(ok=true, session_id) → turn done + sessionId set + isStreaming=false", () => {
     const { result } = renderHook(() =>
       useChatStream({ backend: "ollama", model: "qwen" }),
