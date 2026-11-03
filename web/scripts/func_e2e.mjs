@@ -177,6 +177,30 @@ async function connected(p) {
   );
 }
 
+/* Wait until some element under `sel` holds a line that reads exactly
+ * `mark`: the board's output of `echo "<mark>"`. The typed command keeps
+ * its quotes, so it never counts, and neither does a marker split by kernel
+ * lines. Returns { ok, seen } where `seen` lists the lines that contain the
+ * marker at all, for the FAIL detail. */
+async function waitForOutputLine(p, sel, mark, timeout = 8000) {
+  const ok = await p
+    .waitForFunction(
+      ([s, m]) => [...document.querySelectorAll(s)].some((el) => (el.textContent ?? "").split("\n").some((l) => l.trim() === m)),
+      [sel, mark],
+      { timeout },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  const seen = await p
+    .locator(sel)
+    .evaluateAll((els, m) => els.flatMap((el) => (el.textContent ?? "").split("\n").map((l) => l.trim())).filter((l) => l.includes(m)).slice(-4), mark)
+    .catch(() => []);
+  return { ok, seen };
+}
+const outputDetail = (ok, seen) => (ok ? "the board's output line is there" : `no line reads exactly the marker; lines with it: ${JSON.stringify(seen)}`);
+
 /* serial console: type `echo "<text>"` and wait for the board's output.
  *
  * Passes when a terminal row reads exactly <text>. Counting the marker in
@@ -195,16 +219,7 @@ async function serialEcho(p, text, timeout = 8000) {
   await panel.click();
   await p.keyboard.type(`echo "${text}"\r`, { delay: 15 });
   const rowsSel = '[role="tabpanel"]:not([hidden]) .xterm-rows';
-  const ok = await p
-    .waitForFunction(
-      ([sel, t]) => [...(document.querySelector(sel)?.children ?? [])].some((r) => (r.textContent ?? "").trim() === t),
-      [rowsSel, text],
-      { timeout },
-    )
-    .then(
-      () => true,
-      () => false,
-    );
+  const { ok } = await waitForOutputLine(p, `${rowsSel} > *`, text, timeout);
   const rows = await p
     .locator(rowsSel)
     .evaluate((el) => [...el.children].map((r) => (r.textContent ?? "").trim()).filter(Boolean).slice(-4))
@@ -253,9 +268,8 @@ else
     const other = await ctx.newPage();
     await serialEcho(other, `${MARK}-l`);
     await other.close();
-    await page.waitForTimeout(1500);
-    const txt = await page.locator("#p-uart").textContent();
-    check("logs page shows live serial output", (txt ?? "").includes(`${MARK}-l`), "marker sent from a second tab");
+    const { ok, seen } = await waitForOutputLine(page, "#p-uart pre.term", `${MARK}-l`);
+    check("logs page shows live serial output", ok, `marker sent from a second tab; ${outputDetail(ok, seen)}`);
     await shot(page, "logs-serial");
   });
 if (!adbSerial) {
@@ -294,9 +308,13 @@ else
     await page.waitForTimeout(1500);
     const search = page.getByRole("textbox", { name: "search" });
     await search.fill(`${MARK}-t`);
-    await page.waitForTimeout(2000);
-    const body = await page.locator("main.content").textContent();
-    check("timeline records and finds the marker", !serialBound || (body ?? "").includes(`${MARK}-t`), serialBound ? "serial line found in the recording" : "recorded (no serial to mark)");
+    if (!serialBound) {
+      await page.waitForTimeout(2000);
+      check("timeline records and finds the marker", true, "recorded (no serial to mark)");
+    } else {
+      const { ok, seen } = await waitForOutputLine(page, "main.content .logs .log__msg", `${MARK}-t`);
+      check("timeline records and finds the marker", ok, outputDetail(ok, seen));
+    }
     await shot(page, "timeline");
   });
 
@@ -311,9 +329,8 @@ else
     const r = page.waitForResponse((x) => /search/.test(x.url()), { timeout: 30000 });
     await box.press("Enter");
     await r;
-    await page.waitForTimeout(1000);
-    const txt = await page.locator("main.content").textContent();
-    check("log search finds the marker in saved recordings", (txt ?? "").includes(`${MARK}-t`));
+    const { ok, seen } = await waitForOutputLine(page, "main.content .log-search-hit .list__title", `${MARK}-t`);
+    check("log search finds the marker in saved recordings", ok, outputDetail(ok, seen));
   });
 
 // 6. adb-only device pages
