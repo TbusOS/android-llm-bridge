@@ -42,8 +42,10 @@ async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
     raw_tools = await mcp.list_tools()
 
     specs: list[ToolSpec] = []
+    schemas: dict[str, dict[str, Any]] = {}
     for t in raw_tools:
         schema = t.inputSchema or {"type": "object", "properties": {}}
+        schemas[t.name] = schema
         specs.append(
             ToolSpec(
                 name=t.name,
@@ -53,6 +55,7 @@ async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
         )
 
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = coerce_string_args(schemas.get(name, {}), args)
         try:
             _, structured = await mcp.call_tool(name, args)
         except Exception as e:  # noqa: BLE001 — executor must never crash AgentLoop
@@ -71,6 +74,37 @@ async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
         return {"ok": True, "data": structured}
 
     return specs, executor
+
+
+def coerce_string_args(schema: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Turn a number into a string where the tool only takes a string.
+
+    Seen 2026-11-03: the bench board's serial is all digits (an 8-digit
+    number), and Ling-3.0-tiny wrote ``"device": <that number>`` as a JSON
+    number.  Tool argument validation does not turn int into str, so every
+    alb_shell call failed and the model retried until AGENT_MAX_TURNS_EXCEEDED.
+    Only plain numbers are changed, and only for a parameter whose type
+    allows a string but no number; everything else is passed through.
+    """
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return args
+    out = dict(args)
+    for key, value in args.items():
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            continue
+        prop = props.get(key)
+        if isinstance(prop, dict) and _takes_string_not_number(prop):
+            out[key] = str(value)
+    return out
+
+
+def _takes_string_not_number(prop: dict[str, Any]) -> bool:
+    types: set[Any] = {prop.get("type")}
+    for alt in prop.get("anyOf") or []:
+        if isinstance(alt, dict):
+            types.add(alt.get("type"))
+    return "string" in types and not types & {"integer", "number"}
 
 
 def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
