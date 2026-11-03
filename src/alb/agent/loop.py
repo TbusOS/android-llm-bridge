@@ -62,6 +62,25 @@ async def _closing(it: AsyncIterator[Any]) -> AsyncGenerator[AsyncIterator[Any],
 
 _DEFAULT_MAX_TURNS = 8
 
+# Output ceiling per model turn, passed to the backend as max_tokens.
+# Without one, Ollama has no limit (num_predict unset) and keeps going past
+# the context window by dropping the start: 2026-11-03 one answer to "你的
+# 模型id是啥" ran 12 minutes and 17197 tokens on the CPU-only LLM host until
+# the client hung up, and every other chat waited behind it. 4096 is far
+# above what a normal answer takes (the same question: under 30 tokens)
+# and matches the Anthropic backend's own default; at ~24 tokens/s it caps
+# a runaway at about 3 minutes. A turn that hits it ends with
+# LLM_OUTPUT_TRUNCATED.
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
+_OUTPUT_TRUNCATED_MESSAGE = (
+    "the answer reached the {limit}-token output limit and was cut off"
+)
+_OUTPUT_TRUNCATED_SUGGESTION = (
+    "ask again, or ask for a shorter answer; a reply that repeats itself "
+    "until the limit is the model looping, a new session usually helps"
+)
+
 
 class AgentLoop:
     """Drive a conversation with tool calling.
@@ -101,18 +120,23 @@ class AgentLoop:
         max_turns: int = _DEFAULT_MAX_TURNS,
         system_prompt: str | None = None,
         user_note: str | None = None,
+        max_output_tokens: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
     ) -> None:
         """`user_note` is appended to every user message the model sees,
         e.g. "(请用简体中文回答)".  The session keeps what the person typed.
         It goes on *every* user message, history included, so a request is
         always the previous request plus new messages and the model server
-        can reuse what it has already read."""
+        can reuse what it has already read.
+
+        `max_output_tokens` caps each model turn (see
+        DEFAULT_MAX_OUTPUT_TOKENS); None leaves it to the backend."""
         self.backend = backend
         self.tools = tools
         self.tool_executor = tool_executor
         self.max_turns = max_turns
         self.system_prompt = system_prompt
         self.user_note = user_note
+        self.max_output_tokens = max_output_tokens
 
     def _for_model(self, msg: Message) -> Message:
         if msg.role != "user" or not self.user_note:
@@ -151,7 +175,9 @@ class AgentLoop:
 
         for _turn in range(self.max_turns):
             try:
-                resp: ChatResponse = await self.backend.chat(messages, tools=tools)
+                resp: ChatResponse = await self.backend.chat(
+                    messages, tools=tools, max_tokens=self.max_output_tokens
+                )
             except BackendError as e:
                 return fail(
                     code=e.code,
@@ -176,7 +202,15 @@ class AgentLoop:
             last_content = resp.content or last_content
 
             if not turn_calls:
-                # Model signalled it's done (finish_reason=stop/length/error)
+                if resp.finish_reason == "length":
+                    return fail(
+                        code="LLM_OUTPUT_TRUNCATED",
+                        message=_OUTPUT_TRUNCATED_MESSAGE.format(limit=self.max_output_tokens),
+                        suggestion=_OUTPUT_TRUNCATED_SUGGESTION,
+                        category="system",
+                        timing_ms=int((perf_counter() - start) * 1000),
+                    )
+                # Model signalled it's done (finish_reason=stop/error)
                 return ok(
                     data=last_content,
                     artifacts=artifacts,
@@ -270,11 +304,15 @@ class AgentLoop:
             turn_tool_calls: list[ToolCall] = []
             turn_usage: dict[str, int] = {}
             turn_thinking = ""
+            turn_finish = "stop"
             try:
                 # When the page stops the chat while we sit in a yield
                 # below, the backend's request is closed right away instead
                 # of whenever the generator is collected.
-                async with _closing(self.backend.stream(messages, tools=tools)) as bstream:
+                stream = self.backend.stream(
+                    messages, tools=tools, max_tokens=self.max_output_tokens
+                )
+                async with _closing(stream) as bstream:
                     async for ev in bstream:
                         etype = ev.get("type")
                         if etype == "token":
@@ -295,6 +333,7 @@ class AgentLoop:
                             turn_content = ev.get("content", turn_content)
                             turn_thinking = ev.get("thinking", "")
                             turn_usage = ev.get("usage", {}) or {}
+                            turn_finish = ev.get("finish_reason") or "stop"
                             last_model = ev.get("model", last_model)
                             for tcd in ev.get("tool_calls") or []:
                                 turn_tool_calls.append(ToolCall.from_dict(tcd))
@@ -333,6 +372,23 @@ class AgentLoop:
                 # thinking-only reply the backend promoted to content.
                 if len(turn_content) > len(streamed) and turn_content.startswith(streamed):
                     yield {"type": "token", "delta": turn_content[len(streamed):]}
+                if turn_finish == "length":
+                    # The text so far stays on the page and in the session;
+                    # the error says why it stops mid-sentence.
+                    yield {
+                        "type": "done",
+                        "ok": False,
+                        "error": {
+                            "code": "LLM_OUTPUT_TRUNCATED",
+                            "message": _OUTPUT_TRUNCATED_MESSAGE.format(limit=self.max_output_tokens),
+                            "suggestion": _OUTPUT_TRUNCATED_SUGGESTION,
+                        },
+                        "session_id": session.session_id if session else "",
+                        "timing_ms": int((perf_counter() - start) * 1000),
+                        "model": last_model,
+                        "usage": last_usage,
+                    }
+                    return
                 yield {
                     "type": "done",
                     "ok": True,

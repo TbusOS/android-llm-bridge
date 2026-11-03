@@ -38,6 +38,7 @@ class FakeBackend(LLMBackend):
         self.model = "fake"
         self._queue = list(scripted)
         self.calls: list[list[Message]] = []
+        self.max_tokens_seen: list[int | None] = []
 
     async def chat(
         self,
@@ -49,6 +50,7 @@ class FakeBackend(LLMBackend):
         **kwargs: Any,
     ) -> ChatResponse:
         self.calls.append([Message(**m.__dict__) for m in messages])
+        self.max_tokens_seen.append(max_tokens)
         item = self._queue.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -64,6 +66,7 @@ class FakeBackend(LLMBackend):
         **kwargs: Any,
     ):
         self.calls.append([Message(**m.__dict__) for m in messages])
+        self.max_tokens_seen.append(max_tokens)
         item = self._queue.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -741,3 +744,69 @@ async def test_no_user_note_leaves_messages_alone() -> None:
 
     await AgentLoop(b, tools=[_TOOL], tool_executor=exec_).run("hello")
     assert [m.content for m in b.calls[0] if m.role == "user"] == ["hello"]
+
+
+# ─── Output limit per model turn ─────────────────────────────────────
+
+
+async def _no_tools(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "data": {}}
+
+
+@pytest.mark.asyncio
+async def test_every_model_turn_gets_the_output_limit() -> None:
+    """Without it Ollama has no limit: one answer ran 12 minutes (2026-11-03)."""
+    from alb.agent.loop import DEFAULT_MAX_OUTPUT_TOKENS
+
+    b = FakeBackend([_calls(_tc("alb_logcat", {}, tc_id="tc_1")), _final("好了")])
+    async for _ in AgentLoop(b, tools=[_TOOL], tool_executor=_no_tools).run_stream("抓日志"):
+        pass
+    assert b.max_tokens_seen == [DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS]
+
+    b = FakeBackend([_calls(_tc("alb_logcat", {}, tc_id="tc_1")), _final("好了")])
+    await AgentLoop(b, tools=[_TOOL], tool_executor=_no_tools).run("抓日志")
+    assert b.max_tokens_seen == [DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS]
+
+    b = FakeBackend([_final("好了")])
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=_no_tools, max_output_tokens=None)
+    await loop.run("hi")
+    assert b.max_tokens_seen == [None]
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_cut_at_the_limit_says_so_and_keeps_the_text() -> None:
+    b = FakeBackend([ChatResponse(content="重复重复重复", finish_reason="length")])
+    session = ChatSession.create(backend="fake")
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=_no_tools, max_output_tokens=64)
+    events = [ev async for ev in loop.run_stream("你的模型id是啥", session=session)]
+
+    assert "".join(e["delta"] for e in events if e["type"] == "token") == "重复重复重复"
+    done = [e for e in events if e["type"] == "done"]
+    assert len(done) == 1
+    assert done[0]["ok"] is False
+    assert done[0]["error"]["code"] == "LLM_OUTPUT_TRUNCATED"
+    assert "64-token" in done[0]["error"]["message"]
+    last = session.messages()[-1]
+    assert (last.role, last.content) == ("assistant", "重复重复重复")
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_that_ends_normally_is_not_reported_as_cut() -> None:
+    b = FakeBackend([ChatResponse(content="ling3-tiny", finish_reason="stop")])
+    events = [ev async for ev in AgentLoop(b, tools=[_TOOL], tool_executor=_no_tools).run_stream("hi")]
+    assert [e["ok"] for e in events if e["type"] == "done"] == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_answer_cut_at_the_limit_fails_with_the_code() -> None:
+    b = FakeBackend([ChatResponse(content="重复重复", finish_reason="length")])
+    r = await AgentLoop(b, tools=[_TOOL], tool_executor=_no_tools).run("hi")
+    assert r.ok is False
+    assert r.error is not None
+    assert r.error.code == "LLM_OUTPUT_TRUNCATED"
+
+
+def test_output_truncated_is_a_registered_error_code() -> None:
+    from alb.infra.errors import ERROR_CODES
+
+    assert ERROR_CODES["LLM_OUTPUT_TRUNCATED"].category == "system"

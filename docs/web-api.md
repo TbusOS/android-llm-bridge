@@ -83,6 +83,10 @@ message the model sees — small local models read past a rule that sits
 before thousands of tokens of tool definitions. The session stores the
 message as typed.
 
+Each model turn is capped at 4096 output tokens
+(`alb.agent.loop.DEFAULT_MAX_OUTPUT_TOKENS`). A turn that hits it ends with
+`LLM_OUTPUT_TRUNCATED`; the text streamed so far stays.
+
 Response:
 
 ```json
@@ -461,6 +465,7 @@ browser goes away; these let a reloaded page show what happened.
 | `BACKEND_HTTP_ERROR` | playground | backend returned 4xx/5xx |
 | `BACKEND_TIMEOUT` | playground | request timed out |
 | `LLM_CONTEXT_TRUNCATED` | chat / playground | the prompt filled the whole context window (`num_ctx`, default 16384, env `ALB_OLLAMA_NUM_CTX`); the start was cut off, so the reply is not used |
+| `LLM_OUTPUT_TRUNCATED` | chat | the answer reached the output limit of one model turn (4096 tokens, `alb.agent.loop.DEFAULT_MAX_OUTPUT_TOKENS`) and was cut off; the text streamed so far stays on the page and in the session |
 | `CHAT_STOPPED` | chat WS | the page closed the socket before `done`; tool calls left without a result get this one in the session |
 | `TRANSPORT_NO_PTY` | terminal | transport doesn't support interactive shell |
 | `PTY_SPAWN_FAILED` | terminal | fork / exec failed |

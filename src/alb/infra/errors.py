@@ -191,6 +191,15 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "the start off, so the model saw only part of it",
         "Raise ALB_OLLAMA_NUM_CTX, turn tools off for this chat, or start a new session",
     ),
+    # reported by AgentLoop in the done event; the text so far is kept
+    "LLM_OUTPUT_TRUNCATED": ErrorSpec(
+        "LLM_OUTPUT_TRUNCATED",
+        "system",
+        "The answer reached the agent's output limit per model turn "
+        "(alb.agent.loop.DEFAULT_MAX_OUTPUT_TOKENS) and was cut off",
+        "Ask again or ask for a shorter answer; a reply that repeats itself until "
+        "the limit is the model looping, a new session usually helps",
+    ),
     # serial state (raised by SerialTransport when shell() is called in
     # a state that can't accept a command). See transport/serial_state.py
     # for the full state taxonomy.
