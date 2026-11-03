@@ -70,6 +70,12 @@ body.show-src .src-note { display: flex; }
 .msg .md-table table { border-collapse: collapse; font-size: 13px; }
 .msg .md-table th,
 .msg .md-table td { border: 1px solid var(--md-sys-color-outline-variant); padding: 4px 8px; text-align: left; vertical-align: top; }
+/* .msg breaks anywhere, which lets a table squeeze its columns until
+   "transport" splits into "transp/ort". Inside a table, words stay whole;
+   a table wider than the chat scrolls in its own box (.md-table). */
+.msg .md-table th,
+.msg .md-table td { overflow-wrap: normal; word-break: normal; }
+.msg .md-table code { white-space: nowrap; }
 .msg .md-table th { background: var(--alb-color-well); font-weight: 600; }
 .ctx {
   display: inline-flex;
