@@ -394,6 +394,9 @@ async def _build_agent(
         workspace_root=Path.cwd() / "workspace",
         tool_count=len(specs),
         reply_language=req.lang or DEFAULT_REPLY_LANGUAGE,
+        model=llm.model,
+        backend=llm.name,
+        context_tokens=_context_tokens(llm),
     )
 
     if req.session_id:
@@ -429,6 +432,13 @@ async def _build_agent(
         user_note=reply_language_note(req.lang or DEFAULT_REPLY_LANGUAGE),
     )
     return loop, session, llm
+
+
+def _context_tokens(llm: Any) -> int | None:
+    """The context window the hub asks the backend for (Ollama's num_ctx);
+    None for backends that do not set one."""
+    n = getattr(llm, "num_ctx", None)
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else None
 
 
 # How long a tool call waits for the person to answer before it is refused.

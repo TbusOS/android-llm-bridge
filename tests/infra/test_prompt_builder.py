@@ -283,3 +283,36 @@ def test_reply_language_note() -> None:
     assert reply_language_note("en") == "(Please answer in English.)"
     assert reply_language_note("auto") is None
     assert reply_language_note("fr") == "(请用简体中文回答)"
+
+
+# ─── Model line (2026-11-03: "which model are you" got "I have no model ID") ─
+
+
+def test_prompt_names_the_model_and_its_context() -> None:
+    text = default_agent_prompt(
+        transport_name="adb", model="ling3-tiny", backend="ollama", context_tokens=16384
+    ).as_text()
+    assert "you are the language model ling3-tiny, served by ollama. ling3-tiny is your model name (model ID)." in text
+    assert "Context window: 16384 tokens per request" in text
+
+
+def test_prompt_model_without_context() -> None:
+    text = default_agent_prompt(transport_name="adb", model="m", backend="openai-compat").as_text()
+    assert "you are the language model m, served by openai-compat." in text
+    assert "Context window" not in text
+
+
+def test_prompt_without_model_has_no_model_line() -> None:
+    assert "Model:" not in default_agent_prompt(transport_name="adb").as_text()
+
+
+def test_model_line_is_dynamic() -> None:
+    """Switching models must not change the cached static part."""
+    a = default_agent_prompt(transport_name="adb", model="a")
+    b = default_agent_prompt(transport_name="adb", model="b")
+
+    def static(p: Prompt) -> list[str]:
+        return [blk.content for blk in p.blocks[: p.cache_boundary()]]
+
+    assert static(a) == static(b)
+    assert any("language model a." in blk.content for blk in a.blocks[a.cache_boundary() :])

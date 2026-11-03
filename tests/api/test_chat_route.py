@@ -636,3 +636,25 @@ def test_chat_user_message_carries_the_language_note(
         body["lang"] = lang
     assert client.post("/chat", json=body).status_code == 200
     assert _PromptSpy.last_user == [f"hello\n\n{note}" if note else "hello"]
+
+
+class _CtxSpy(_PromptSpy):
+    num_ctx = 16384
+
+
+def test_chat_system_prompt_names_model_and_context(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-11-03: asked "which model are you", the model said it has no
+    model ID — the prompt never told it."""
+    _PromptSpy.seen = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _CtxSpy())
+    assert client.post("/chat", json={"message": "你的模型id是啥", "tools": False}).status_code == 200
+    assert "you are the language model fake-model, served by fake." in _PromptSpy.seen[0]
+    assert "Context window: 16384 tokens" in _PromptSpy.seen[0]
+
+
+def test_chat_backend_without_num_ctx_names_only_the_model(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _PromptSpy.seen = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _PromptSpy())
+    assert client.post("/chat", json={"message": "hi", "tools": False}).status_code == 200
+    assert "you are the language model fake-model, served by fake." in _PromptSpy.seen[0]
+    assert "Context window" not in _PromptSpy.seen[0]

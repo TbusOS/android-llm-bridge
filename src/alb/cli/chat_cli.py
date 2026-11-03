@@ -154,6 +154,9 @@ def chat(
         transport_name="auto",
         workspace_root=Path.cwd() / "workspace",
         tool_count=len(specs),
+        model=llm.model,
+        backend=llm.name,
+        context_tokens=getattr(llm, "num_ctx", None),
     )
 
     loop = AgentLoop(

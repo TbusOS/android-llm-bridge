@@ -269,6 +269,9 @@ def default_agent_prompt(
     extra_static: list[str] | None = None,
     extra_dynamic: list[str] | None = None,
     reply_language: str = DEFAULT_REPLY_LANGUAGE,
+    model: str | None = None,
+    backend: str | None = None,
+    context_tokens: int | None = None,
 ) -> Prompt:
     """Assemble the standard agent system prompt.
 
@@ -286,6 +289,10 @@ def default_agent_prompt(
             dynamic blocks.
         reply_language: "zh" (default), "en" or "auto" (follow the user);
             see REPLY_LANGUAGE_RULES.  Unknown values fall back to "zh".
+        model / backend / context_tokens: what the model runs as, so it
+            can answer "which model are you" / "how much context do you
+            have".  Without them it cannot know, and a small model makes
+            something up (2026-11-03: "I have no model ID").
 
     The cache boundary lands after all static blocks, so:
         static = role + safety + norms + extra_static
@@ -312,6 +319,25 @@ def default_agent_prompt(
         else f"No device selected (primary transport: {transport_name})"
     )
     b.add_dynamic(device_line, name="device")
+
+    if model:
+        # Spelled out: "Model: <name>" alone was not enough — asked for its
+        # "模型 ID", Ling-3.0-tiny still said it had none (2026-11-03).
+        line = (
+            f"Model: you are the language model {model}"
+            + (f", served by {backend}" if backend else "")
+            + f". {model} is your model name (model ID)."
+        )
+        if context_tokens:
+            line += (
+                f" Context window: {context_tokens} tokens per request"
+                " (system prompt, tool definitions, history and the answer together)."
+            )
+        line += (
+            " When asked which model you are, your model ID or how much context"
+            " you have, answer with these values."
+        )
+        b.add_dynamic(line, name="model")
 
     if workspace_root is not None:
         b.add_dynamic(f"Workspace root: {workspace_root}", name="workspace")
