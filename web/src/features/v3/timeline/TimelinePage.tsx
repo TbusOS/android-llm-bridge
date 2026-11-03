@@ -16,6 +16,8 @@ import {
   captureLines,
   type CaptureSummary,
   type DensityView,
+  deleteAllCaptures,
+  deleteCapture,
   fetchBenchBoard,
   fetchFlashJobs,
   listCaptures,
@@ -160,6 +162,55 @@ export function TimelinePage() {
     const id = window.setTimeout(() => setGrep(grepIn.trim()), 300);
     return () => window.clearTimeout(id);
   }, [grepIn]);
+
+  /* ---- reset: the view as it was when this recording was opened ----
+     (2026-11-03: after dragging the overview or clicking a mark, the only
+     way back was to leave the page and come back) */
+  const viewChanged =
+    userRange?.key === name || selT?.key === name || grepIn !== "" || onlyProblems || !Object.values(srcs).every(Boolean);
+  const resetView = () => {
+    setUserRange(null);
+    setSelT(null);
+    setSrcs({ uart: true, dmesg: true, logcat: true, job: true });
+    setGrepIn("");
+    setGrep("");
+    setOnlyProblems(false);
+  };
+
+  /* ---- delete recordings (flash jobs stay: they are the flash page's history) ---- */
+  const [del, setDel] = useState<null | "one" | "all">(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const ownCount = list.filter((c) => c.kind !== "flash").length;
+  const runDelete = async () => {
+    if (!del) return;
+    setDelBusy(true);
+    try {
+      if (del === "one" && cap) {
+        await deleteCapture(cap.name, device);
+        toast(t("已删除这段录制。", "Recording deleted."));
+      } else {
+        const r = await deleteAllCaptures(device);
+        const d = r.data ?? { deleted: [], skipped_running: [], failed: [] };
+        let msg = t(`已删除 ${d.deleted.length} 段录制`, `Deleted ${d.deleted.length} recordings`);
+        if (d.skipped_running.length) msg += t(`;${d.skipped_running.length} 段还在录,没删`, `; ${d.skipped_running.length} still recording, kept`);
+        if (d.failed.length) msg += t(`;${d.failed.length} 段删不掉`, `; ${d.failed.length} could not be deleted`);
+        toast(`${msg}${t("。", ".")}`);
+      }
+      setPicked(null);
+      resetView();
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      toast(
+        status === 409
+          ? t("这段还在录,录完再删。", "This recording is still running; delete it when it ends.")
+          : `${t("删除失败:", "Delete failed: ")}${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setDelBusy(false);
+      setDel(null);
+      void qc.invalidateQueries({ queryKey: ["captures", device] });
+    }
+  };
 
   const chosen = (["logcat", "dmesg", "uart", "job"] as const).filter((s) => srcs[s]);
   const linesQ = useDashboardQuery({
@@ -374,11 +425,36 @@ export function TimelinePage() {
   // A flash job only watches the serial console: no logcat / dmesg is expected there.
   const missing = (s: "uart" | "dmesg" | "logcat") => (cap.sources[s] ?? 0) === 0 && !(cap.kind === "flash" && s !== "uart");
 
+  const deleteBox = del ? (
+    <div style={{ marginBottom: 16 }}>
+      <Confirm
+        open
+        busy={delBusy}
+        message={
+          del === "one"
+            ? t(
+                `删除录制「${stamp(cap.started_at)} · ${cap.duration_s.toFixed(0)} 秒」?文件会从工作目录删掉,不能恢复。`,
+                `Delete the recording "${stamp(cap.started_at)} · ${cap.duration_s.toFixed(0)} s"? Its files are removed from the workspace; this cannot be undone.`,
+              )
+            : t(
+                `删除${device ? ` ${device} ` : "台架串口"}的全部录制(列表里 ${ownCount} 段)?烧录记录会保留。文件会从工作目录删掉,不能恢复。`,
+                `Delete every recording of ${device ?? "the bench serial port"} (${ownCount} in the list)? Flash jobs are kept. The files are removed from the workspace; this cannot be undone.`,
+              )
+        }
+        confirmLabel={del === "one" ? t("删除", "Delete") : t("全部删除", "Delete all")}
+        cancelLabel={t("取消", "Cancel")}
+        onConfirm={() => void runDelete()}
+        onCancel={() => setDel(null)}
+      />
+    </div>
+  ) : null;
+
   return (
     <>
       {head}
       {serialNote}
       {confirm}
+      {deleteBox}
       {recBox}
       <div className="stack">
         {/* picker + filters */}
@@ -393,6 +469,30 @@ export function TimelinePage() {
                 </option>
               ))}
             </select>
+            <Menu
+              align="start"
+              trigger={(p) => (
+                <button type="button" className="icon-btn" aria-label={t("删除录制", "Delete recordings")} title={t("删除录制", "Delete recordings")} disabled={delBusy} {...p}>
+                  <Icon name="delete" />
+                </button>
+              )}
+              items={[
+                {
+                  key: "one",
+                  icon: "delete",
+                  label: cap.kind === "flash" ? t("这是烧录记录,在烧录页查看,这里不删", "A flash job: kept, see the Flash page") : t("删除这段录制", "Delete this recording"),
+                  disabled: cap.kind === "flash",
+                  onSelect: () => setDel("one"),
+                },
+                {
+                  key: "all",
+                  icon: "delete",
+                  label: t(`清空这台设备的全部录制(${ownCount} 段)`, `Delete all recordings of this device (${ownCount})`),
+                  disabled: ownCount === 0,
+                  onSelect: () => setDel("all"),
+                },
+              ]}
+            />
             <div className="seg seg--sm" role="group" aria-label={t("来源", "sources")}>
               {(["uart", "dmesg", "logcat", "job"] as const).map((s) => (
                 <button key={s} type="button" aria-pressed={srcs[s]} onClick={() => setSrcs((p) => ({ ...p, [s]: !p[s] }))}>
@@ -412,6 +512,16 @@ export function TimelinePage() {
               <button type="button" className="icon-btn" aria-label={t("缩小", "Zoom out")} onClick={() => zoom(2)} disabled={r1 - r0 >= total - 1e-6}><Icon name="zoom-out" /></button>
               <button type="button" className="icon-btn" aria-label={t("放大", "Zoom in")} onClick={() => zoom(0.5)} disabled={r1 - r0 <= 0.5 + 1e-6}><Icon name="zoom-in" /></button>
             </div>
+            <button
+              type="button"
+              className="btn btn--tonal btn--sm"
+              onClick={resetView}
+              disabled={!viewChanged}
+              title={t("回到这段录制刚打开时的样子:时间范围、选中的行、来源、搜索、只看问题", "Back to how this recording looked when opened: range, selected line, sources, search, problems only")}
+            >
+              <Icon name="reset" size="sm" />
+              {t("复位", "Reset")}
+            </button>
           </div>
         </article>
 
@@ -419,7 +529,7 @@ export function TimelinePage() {
         <article className="card">
           <CardHead
             title={rangeLabel}
-            sub={t("在概览条上拖动选范围,点标记跳到那一行", "drag on the overview to pick a range; click a mark to jump to its line")}
+            sub={t("在概览条上拖动选范围,点标记跳到那一行;「复位」回到刚打开时的样子", "drag on the overview to pick a range; click a mark to jump to its line; Reset goes back to the start")}
             actions={
               <button type="button" className="btn btn--text btn--sm" disabled={!firstBad} onClick={() => firstBad && selectT(firstBad.t)}>
                 <Icon name="alert" size="sm" />

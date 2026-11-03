@@ -282,6 +282,17 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "description": "Saved timeline captures for a device, newest first",
     },
     {
+        "method": "DELETE",
+        "path": "/api/timeline/captures",
+        "description": "Delete every timeline recording of a device (needs all=true); "
+        "flash jobs and a recording still running are kept",
+    },
+    {
+        "method": "DELETE",
+        "path": "/api/timeline/captures/{name}",
+        "description": "Delete one timeline recording (flash jobs: 400, still running: 409)",
+    },
+    {
         "method": "GET",
         "path": "/api/timeline/captures/{name}/lines",
         "description": "Merged lines of one capture, filterable by source / text / time",

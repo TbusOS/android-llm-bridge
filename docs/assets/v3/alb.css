@@ -651,11 +651,44 @@ body::before {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 @media (min-width: 1200px) {
+  /* docked: the page keeps at least 480 px however wide the sheet was dragged */
   .app[data-sheet="open"] {
-    grid-template-columns: var(--alb-nav-w) minmax(0, 1fr) var(--alb-sheet-w);
+    --alb-sheet-docked-w: min(var(--alb-sheet-w), calc(100vw - var(--alb-nav-w) - 480px));
+    grid-template-columns: var(--alb-nav-w) minmax(0, 1fr) var(--alb-sheet-docked-w);
   }
-  .app[data-sheet="open"] .sheet { box-shadow: none; }
+  .app[data-sheet="open"] .sheet { box-shadow: none; width: var(--alb-sheet-docked-w); }
 }
+
+/* the sheet's left edge: drag to resize (components/v3/Assistant.tsx SheetResizer) */
+.sheet__resize {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sheet__resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 3px;
+  height: 48px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--md-sys-color-outline);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sheet__resize:hover::after,
+.sheet__resize:focus-visible::after,
+.is-resizing .sheet__resize::after { opacity: 1; }
+.sheet__resize:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
+/* while dragging: no text selection, the resize cursor everywhere */
+.is-resizing { cursor: col-resize; user-select: none; }
 
 .scrim {
   position: fixed;
@@ -714,6 +747,7 @@ body::before {
   .board-switch__meta { display: none; }
   .brand__name { font-size: 18px; }
   .sheet { top: 0; border-radius: 0; }
+  .sheet__resize { display: none; }
 }
 @media (min-width: 600px) {
   .topbar__menu { display: none; }
@@ -1625,6 +1659,11 @@ body.show-src .src-note { display: flex; }
 .sheet__head > svg { color: var(--md-sys-color-primary); }
 .sheet__head h2 { font-size: 16px; line-height: 24px; font-weight: 500; }
 .sheet__head .pill { margin-right: auto; }
+/* A− / A+ (ChatFontButtons) */
+.chat-font { display: inline-flex; align-items: center; gap: 2px; margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+.chat-font__btn { width: auto; min-width: 32px; padding: 0 6px; font-size: 12px; font-weight: 600; letter-spacing: -0.02em; }
+.chat-font__btn--big { font-size: 15px; }
+.chat-font__btn:disabled { opacity: 0.38; cursor: default; }
 .sheet__src { margin: 4px 16px 0; align-self: flex-start; }
 .sheet__agent {
   display: flex;
@@ -1643,7 +1682,8 @@ body.show-src .src-note { display: flex; }
 .sheet__input { border-top: 1px solid var(--alb-color-divider); padding: 12px 16px 14px; }
 
 .convo { display: flex; flex-direction: column; gap: 12px; }
-.msg { font-size: 14px; line-height: var(--alb-lh-body-medium); overflow-wrap: anywhere; min-width: 0; }
+/* --alb-chat-font: the A− / A+ setting (stores/shell.ts chatFontPx) */
+.msg { font-size: var(--alb-chat-font, 14px); line-height: 1.5; overflow-wrap: anywhere; min-width: 0; }
 .msg p { margin: 0 0 8px; }
 .msg p:last-child { margin-bottom: 0; }
 .msg--user {
@@ -1655,8 +1695,33 @@ body.show-src .src-note { display: flex; }
   color: var(--md-sys-color-on-primary-container);
 }
 .msg--ai { align-self: stretch; }
+/* what the model said before calling a tool: part of its work, not the answer */
+.msg--lead { color: var(--alb-color-text-muted); }
 .msg__who { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 12px; color: var(--alb-color-text-muted); }
 .msg pre { margin: 8px 0; }
+/* Markdown in chat text (components/v3/Markdown.tsx) */
+.msg .md-h { margin: 12px 0 6px; font-size: 1.08em; font-weight: 600; line-height: 1.4; }
+.msg .md-h:first-child { margin-top: 0; }
+.msg h5.md-h { font-size: 1em; }
+.msg .md-list { margin: 0 0 8px; padding-left: 22px; }
+.msg .md-list:last-child { margin-bottom: 0; }
+.msg .md-list .md-list { margin: 2px 0 0; }
+.msg .md-list li + li { margin-top: 2px; }
+.msg :not(pre) > code { font-family: var(--md-ref-typeface-mono); font-size: 0.92em; background: var(--alb-color-well); padding: 1px 5px; border-radius: 4px; }
+.msg--user :not(pre) > code { background: transparent; border: 1px solid currentColor; }
+.msg .md-quote { margin: 0 0 8px; padding: 2px 0 2px 12px; border-left: 3px solid var(--md-sys-color-outline-variant); color: var(--alb-color-text-muted); }
+.msg .md-hr { border: 0; border-top: 1px solid var(--alb-color-divider); margin: 10px 0; }
+.msg .md-table { max-width: 100%; overflow-x: auto; margin: 0 0 8px; }
+.msg .md-table table { border-collapse: collapse; font-size: 0.93em; }
+.msg .md-table th,
+.msg .md-table td { border: 1px solid var(--md-sys-color-outline-variant); padding: 4px 8px; text-align: left; vertical-align: top; }
+/* .msg breaks anywhere, which lets a table squeeze its columns until
+   "transport" splits into "transp/ort". Inside a table, words stay whole;
+   a table wider than the chat scrolls in its own box (.md-table). */
+.msg .md-table th,
+.msg .md-table td { overflow-wrap: normal; word-break: normal; }
+.msg .md-table code { white-space: nowrap; }
+.msg .md-table th { background: var(--alb-color-well); font-weight: 600; }
 .ctx {
   display: inline-flex;
   align-items: center;
@@ -1682,8 +1747,8 @@ body.show-src .src-note { display: flex; }
   font-size: 12.5px;
 }
 .tool > svg { color: var(--alb-color-success); }
-.tool code { font-family: var(--md-ref-typeface-mono); font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
-.tool small { grid-column: 2 / -1; font-family: var(--md-ref-typeface-mono); font-size: 11.5px; color: var(--alb-color-text-muted); overflow-wrap: anywhere; }
+.tool code { font-family: var(--md-ref-typeface-mono); font-size: calc(var(--alb-chat-font, 14px) - 2px); font-weight: 500; overflow-wrap: anywhere; }
+.tool small { grid-column: 2 / -1; font-family: var(--md-ref-typeface-mono); font-size: calc(var(--alb-chat-font, 14px) - 2.5px); color: var(--alb-color-text-muted); overflow-wrap: anywhere; }
 .tool details { grid-column: 2 / -1; }
 .tool summary { cursor: pointer; font-size: 12px; color: var(--md-sys-color-primary); }
 .tool .term { margin-top: 6px; font-size: 12px; max-height: 160px; }

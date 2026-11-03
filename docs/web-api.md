@@ -419,6 +419,17 @@ denial, boot milestone, alb's own `[alb]` notes) — what the timeline lanes are
 `{found, total_s, milestones:[{key,label,src,t}], stages:[{key,src,t0,t1}], previous}`; `previous` is the
 newest older recording of the same device that also has milestones, for "this boot vs the last one".
 
+### DELETE /api/timeline/captures/{name}?device=
+
+Delete one timeline recording (`capture-<time>`); `{deleted:[name]}`. No undo — the page asks first.
+A flash job in the list is refused with 400: its directory is the flash page's job history. A
+recording still being written gets 409. Unknown names are 400, a symlinked directory 404.
+
+### DELETE /api/timeline/captures?device=&all=true
+
+Delete every timeline recording of the device: `{deleted, skipped_running, failed}`. Flash jobs and a
+recording still running are kept. Without `all=true` it does nothing (400).
+
 ## Diagnostics, adb, serial
 
 | Endpoint | What it does |

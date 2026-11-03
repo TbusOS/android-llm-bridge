@@ -506,3 +506,86 @@ def test_symlinked_capture_is_not_followed(ws) -> None:
         assert c.get(f"/api/timeline/captures/{link.name}/lines?device={SERIAL}").status_code == 404
         names = [x["name"] for x in c.get(f"/api/timeline/captures?device={SERIAL}").json()["data"]]
     assert link.name not in names
+
+
+# ─── deleting recordings (2026-11-03) ──────────────────────────────
+
+
+def test_delete_one_recording_removes_only_it(ws: Path) -> None:
+    keep = _make_capture(ws, "capture-2026-10-23T12-00-00", BOOT_RECS, summary=BOOT_SUMMARY)
+    gone = _make_capture(ws, "capture-2026-10-23T13-00-00", BOOT_RECS, summary=BOOT_SUMMARY)
+    with _client() as c:
+        r = c.delete(f"/api/timeline/captures/{gone.name}?device={SERIAL}")
+        assert r.status_code == 200, r.text
+        assert r.json()["data"]["deleted"] == [gone.name]
+        names = [x["name"] for x in c.get(f"/api/timeline/captures?device={SERIAL}").json()["data"]]
+        # deleting it again: it is not there any more
+        assert c.delete(f"/api/timeline/captures/{gone.name}?device={SERIAL}").status_code == 404
+    assert not gone.exists() and keep.is_dir()
+    assert names == [keep.name]
+
+
+def test_a_flash_job_is_not_deleted_from_the_timeline(ws: Path) -> None:
+    job = _make_flash_job(ws, "reboot-normal-2026-10-23T12-30-00", FLASH_RECS, {"ok": False, "duration_s": 0.5})
+    with _client() as c:
+        r = c.delete(f"/api/timeline/captures/{job.name}")
+    assert r.status_code == 400
+    assert "flash page" in r.json()["detail"]
+    assert (job / "timeline.jsonl").is_file()
+
+
+@pytest.mark.parametrize("name", ["..", "capture-x", "%2e%2e", "timeline.jsonl"])
+def test_delete_refuses_names_it_did_not_make(ws: Path, name: str) -> None:
+    keep = _make_capture(ws, "capture-2026-10-23T12-00-00", BOOT_RECS)
+    with _client() as c:
+        r = c.delete(f"/api/timeline/captures/{name}?device={SERIAL}")
+    assert r.status_code in (400, 404, 405)
+    assert keep.is_dir()
+
+
+def test_delete_refuses_a_symlinked_recording(ws: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "timeline.jsonl").write_text("{}\n")
+    base = ws / "devices" / SERIAL / "timeline"
+    base.mkdir(parents=True)
+    (base / "capture-2026-10-23T12-00-00").symlink_to(outside, target_is_directory=True)
+    with _client() as c:
+        r = c.delete(f"/api/timeline/captures/capture-2026-10-23T12-00-00?device={SERIAL}")
+    assert r.status_code == 404
+    assert (outside / "timeline.jsonl").is_file()
+
+
+def test_a_recording_still_running_is_not_deleted(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    busy = _make_capture(ws, "capture-2026-10-23T12-00-00", BOOT_RECS)
+    done = _make_capture(ws, "capture-2026-10-23T11-00-00", BOOT_RECS)
+
+    class _Task:
+        def get_name(self) -> str:
+            return f"timeline-capture-{busy.name}"
+
+        def done(self) -> bool:
+            return False
+
+    monkeypatch.setattr(timeline_route, "_BACKGROUND", {_Task()})
+    with _client() as c:
+        assert c.delete(f"/api/timeline/captures/{busy.name}?device={SERIAL}").status_code == 409
+        body = c.delete(f"/api/timeline/captures?device={SERIAL}&all=true").json()
+    assert body["data"] == {"deleted": [done.name], "skipped_running": [busy.name], "failed": []}
+    assert busy.is_dir() and not done.exists()
+
+
+def test_delete_all_needs_all_true_and_keeps_flash_jobs_and_other_devices(ws: Path) -> None:
+    a = _make_capture(ws, "capture-2026-10-23T12-00-00", BOOT_RECS)
+    b = _make_capture(ws, "capture-2026-10-23T13-00-00", BOOT_RECS)
+    other = _make_capture(ws, "capture-2026-10-23T14-00-00", BOOT_RECS, device="OTHERDEVICE01")
+    job_dir = ws / "devices" / SERIAL / "flash" / "reboot-normal-2026-10-23T12-30-00"
+    job_dir.mkdir(parents=True)
+    (job_dir / "timeline.jsonl").write_text(json.dumps({"t": 0.0, "src": "meta", "ev": "start"}) + "\n")
+    with _client() as c:
+        assert c.delete(f"/api/timeline/captures?device={SERIAL}").status_code == 400
+        assert a.is_dir() and b.is_dir()
+        r = c.delete(f"/api/timeline/captures?device={SERIAL}&all=true")
+    assert r.status_code == 200, r.text
+    assert sorted(r.json()["data"]["deleted"]) == sorted([a.name, b.name])
+    assert not a.exists() and not b.exists()
+    assert other.is_dir() and job_dir.is_dir()

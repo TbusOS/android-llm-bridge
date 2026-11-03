@@ -12,6 +12,7 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
+import { useSnack } from "../../../components/v3/ui";
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
 import { TimelinePage } from "./TimelinePage";
@@ -211,5 +212,89 @@ describe("TimelinePage", () => {
     mockFetch({ ...full, "/api/timeline/captures?": () => json({ ok: true, data: [{ ...CAP, sources: { logcat: 3, dmesg: 2, uart: 0 }, has_boot: false }] }) });
     renderPage();
     expect(await screen.findByText(/no serial lines/)).toBeInTheDocument();
+  });
+});
+
+
+describe("reset and delete (2026-11-03)", () => {
+  const rangeOf = () => screen.getByText(/ s of 90 s$/).textContent ?? "";
+
+  it("Reset puts back the range, selection and filters it opened with", async () => {
+    mockFetch(full);
+    renderPage();
+    await screen.findByText("Kernel panic - not syncing: Oops");
+    const reset = screen.getByRole("button", { name: "Reset" });
+    expect(reset).toBeDisabled(); // nothing changed yet
+    const start = rangeOf();
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Problems only" }));
+    await waitFor(() => expect(rangeOf()).not.toBe(start));
+    expect(reset).toBeEnabled();
+    fireEvent.click(reset);
+    await waitFor(() => expect(rangeOf()).toBe(start));
+    expect(screen.getByRole("button", { name: "Problems only" })).toHaveAttribute("aria-pressed", "false");
+    expect(reset).toBeDisabled();
+  });
+
+  it("deletes the recording on screen only after asking", async () => {
+    let listed = [CAP];
+    let deleted = "";
+    mockFetch({
+      ...full,
+      "/api/timeline/captures?": () => json({ ok: true, data: listed }),
+      "/api/timeline/captures/capture-": (url, init) => {
+        if (init?.method !== "DELETE") return json({}, 404);
+        deleted = url;
+        listed = [];
+        return json({ ok: true, data: { deleted: [CAP.name] } });
+      },
+    });
+    renderPage();
+    await screen.findByText("Kernel panic - not syncing: Oops");
+    fireEvent.click(screen.getByRole("button", { name: "Delete recordings" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete this recording" }));
+    expect(deleted).toBe(""); // asked first
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleted).toContain(`/api/timeline/captures/${CAP.name}`));
+    expect(new URL(deleted, "http://x").searchParams.get("device")).toBe(DEVICE);
+    expect(await screen.findByText("No recordings for this device yet")).toBeInTheDocument();
+    expect(useSnack.getState().text).toBe("Recording deleted.");
+  });
+
+  it("Delete all asks, sends all=true and reports recordings it had to keep", async () => {
+    let call = "";
+    mockFetch({
+      ...full,
+      "/api/timeline/captures?": (url, init) => {
+        if (init?.method === "DELETE") {
+          call = url;
+          return json({ ok: true, data: { deleted: [CAP.name], skipped_running: ["capture-2026-10-28T10-00-00"], failed: [] } });
+        }
+        return json({ ok: true, data: [CAP] });
+      },
+    });
+    renderPage();
+    await screen.findByText("Kernel panic - not syncing: Oops");
+    fireEvent.click(screen.getByRole("button", { name: "Delete recordings" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Delete all recordings of this device \(1\)/ }));
+    expect(screen.getByText(/Flash jobs are kept/)).toBeInTheDocument();
+    expect(call).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Delete all" }));
+    await waitFor(() => expect(call).not.toBe(""));
+    const u = new URL(call, "http://x");
+    expect(u.searchParams.get("all")).toBe("true");
+    expect(u.searchParams.get("device")).toBe(DEVICE);
+    await waitFor(() => expect(useSnack.getState().text).toBe("Deleted 1 recordings; 1 still recording, kept."));
+  });
+
+  it("a flash job in the list cannot be deleted from here", async () => {
+    const FLASH = { name: "reboot-normal-2026-10-28T09-40-00", kind: "flash", label: "reboot normal", ok: false, started_at: "2026-10-28T09:40:00+00:00", duration_s: 1, sources: { logcat: 0, dmesg: 0, uart: 1, job: 2 }, size_bytes: 200, has_boot: false };
+    mockFetch({ ...full, "/api/timeline/captures?": () => json({ ok: true, data: [FLASH, CAP] }) });
+    renderPage();
+    await screen.findByRole("option", { name: /flash · reboot normal/ });
+    fireEvent.click(screen.getByRole("button", { name: "Delete recordings" }));
+    expect(await screen.findByRole("menuitem", { name: /A flash job: kept/ })).toBeDisabled();
+    // the timeline recording next to it still counts for Delete all
+    expect(screen.getByRole("menuitem", { name: /Delete all recordings of this device \(1\)/ })).toBeInTheDocument();
   });
 });

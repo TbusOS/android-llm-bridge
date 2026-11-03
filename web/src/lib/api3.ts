@@ -32,6 +32,25 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   return (await r.json()) as T;
 }
 
+async function deleteJson<T>(url: string): Promise<T> {
+  const r = await fetch(url, { method: "DELETE" });
+  let parsed: unknown = null;
+  try {
+    parsed = await r.json();
+  } catch {
+    /* empty body */
+  }
+  if (!r.ok) {
+    const detail = (parsed as { detail?: unknown } | null)?.detail;
+    throw new AlbApiError(
+      `DELETE ${url.split("?")[0]} returned ${r.status}${typeof detail === "string" ? `: ${detail}` : ""}`,
+      r.status,
+      `HTTP_${r.status}`,
+    );
+  }
+  return parsed as T;
+}
+
 async function postJson<T>(url: string, body?: unknown): Promise<T> {
   const r = await fetch(url, {
     method: "POST",
@@ -345,6 +364,13 @@ export const captureLines = (
 ) => getJson<Envelope<{ lines: TimelineLine[]; truncated: boolean }>>(`/api/timeline/captures/${encodeURIComponent(name)}/lines${q(p)}`, signal);
 export const captureDensity = (name: string, device: string | null, bucket_s: number, signal?: AbortSignal) =>
   getJson<Envelope<DensityView>>(`/api/timeline/captures/${encodeURIComponent(name)}/density${q({ device, bucket_s })}`, signal);
+/** Delete one timeline recording (flash jobs are refused: 400). */
+export const deleteCapture = (name: string, device: string | null) =>
+  deleteJson<Envelope<{ deleted: string[] }>>(`/api/timeline/captures/${encodeURIComponent(name)}${q({ device })}`);
+/** Delete every timeline recording of `device`; flash jobs and a recording
+ *  still running are left. */
+export const deleteAllCaptures = (device: string | null) =>
+  deleteJson<Envelope<{ deleted: string[]; skipped_running: string[]; failed: string[] }>>(`/api/timeline/captures${q({ device, all: true })}`);
 export const captureBoot = (name: string, device: string | null, signal?: AbortSignal) =>
   getJson<Envelope<BootView>>(`/api/timeline/captures/${encodeURIComponent(name)}/boot${q({ device })}`, signal);
 export const startCapture = (

@@ -28,6 +28,8 @@ export const ICONS: Record<string, string> = {
   "shield": "<path d='M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z'/>",
   "gear": "<circle cx='12' cy='12' r='3'/><path d='M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1'/>",
   "chevron-down": "<path d='m6 9 6 6 6-6'/>",
+  "reset": "<path d='M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9'/><path d='M4.5 4.5V9H9'/>",
+  "delete": "<path d='M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5'/>",
   "chevron-right": "<path d='m9 6 6 6-6 6'/>",
   "power": "<path d='M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0'/>",
   "stop": "<rect x='5' y='5' width='14' height='14' rx='2'/><path d='M10 9v6M14 9v6'/>",

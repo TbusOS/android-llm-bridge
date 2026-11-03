@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from time import perf_counter
@@ -398,6 +399,78 @@ async def capture_lines(
     path = await asyncio.to_thread(_capture_path, device, name)
     data = await asyncio.to_thread(_lines_sync, path, wanted, grep or None, t0, t1, limit, offset)
     return {"ok": True, "data": data}
+
+
+# ─── delete recordings (2026-11-03) ─────────────────────────────────
+# user: the timeline page needs a way to clear its logs. Only timeline
+# recordings (`capture-<ts>`) are removed; a flash job also shows up in the
+# list but its directory is the flash page's job history, so it stays.
+# A recording still being written is skipped: its task holds the files.
+
+
+def _recording_now(name: str) -> bool:
+    return any(t.get_name() == f"timeline-capture-{name}" and not t.done() for t in _BACKGROUND)
+
+
+def _delete_capture_sync(device: str | None, name: str) -> None:
+    if not _NAME_RE.match(name):
+        if JOB_DIR_RE.match(name):
+            raise HTTPException(
+                status_code=400,
+                detail="flash jobs are not deleted here; they are the flash page's history",
+            )
+        raise HTTPException(status_code=400, detail="invalid capture name")
+    path = _capture_path(device, name)
+    if _recording_now(name):
+        raise HTTPException(status_code=409, detail="this recording is still running")
+    # _capture_path refused symlinks; rmtree removes links inside without
+    # following them.
+    shutil.rmtree(path)
+
+
+@router.delete("/captures/{name}")
+async def delete_capture(
+    name: str,
+    device: str | None = Query(None, max_length=128),
+) -> dict[str, Any]:
+    """Delete one timeline recording. No undo: the page asks first."""
+    try:
+        await asyncio.to_thread(_delete_capture_sync, device, name)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="capture delete failed") from exc
+    return {"ok": True, "data": {"deleted": [name]}}
+
+
+def _delete_all_sync(device: str | None) -> dict[str, Any]:
+    deleted: list[str] = []
+    running: list[str] = []
+    failed: list[str] = []
+    for kind, path in _capture_dirs(device):
+        if kind != "capture":
+            continue
+        if _recording_now(path.name):
+            running.append(path.name)
+            continue
+        try:
+            shutil.rmtree(path)
+            deleted.append(path.name)
+        except OSError:
+            failed.append(path.name)
+    return {"deleted": deleted, "skipped_running": running, "failed": failed}
+
+
+@router.delete("/captures")
+async def delete_all_captures(
+    device: str | None = Query(None, max_length=128),
+    all_: bool = Query(False, alias="all", description="must be true: deletes every timeline recording of this device"),
+) -> dict[str, Any]:
+    """Delete every timeline recording of one device (flash jobs stay).
+    `all=true` is required so a bare DELETE on the list does nothing."""
+    _check_device(device)
+    if not all_:
+        raise HTTPException(status_code=400, detail="pass all=true to delete every recording")
+    data = await asyncio.to_thread(_delete_all_sync, device)
+    return {"ok": not data["failed"], "data": data}
 
 
 def _density_sync(path: Path, bucket_s: float) -> dict[str, Any]:
