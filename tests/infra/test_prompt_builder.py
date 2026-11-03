@@ -274,3 +274,12 @@ def test_reply_language_is_in_the_cached_static_part() -> None:
     p = default_agent_prompt(device_serial="abc", transport_name="adb")
     text = p.as_text()
     assert text.index("简体中文") < text.index("Current device: abc")
+
+
+def test_reply_language_note() -> None:
+    from alb.infra.prompt_builder import reply_language_note
+
+    assert reply_language_note("zh") == "(请用简体中文回答)"
+    assert reply_language_note("en") == "(Please answer in English.)"
+    assert reply_language_note("auto") is None
+    assert reply_language_note("fr") == "(请用简体中文回答)"

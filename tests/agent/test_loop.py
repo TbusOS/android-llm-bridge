@@ -700,3 +700,44 @@ async def test_run_also_repairs_the_tool_name() -> None:
     r = await AgentLoop(b, tools=tools, tool_executor=exec_).run("错误码")
     assert r.ok is True
     assert ran == ["alb_describe_errors"]
+
+
+# ─── user_note: the language reminder (2026-11-03) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_user_note_goes_on_every_user_message_but_not_into_the_session(tmp_path, monkeypatch) -> None:
+    """Every user message the model sees ends with the note, older ones
+    too, so each request starts with the previous one (cache reuse); the
+    session keeps what the person typed."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    b = FakeBackend([_final("你好"), _final("好的")])
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_, system_prompt="sys", user_note="(请用简体中文回答)")
+    session = ChatSession.create(backend="fake")
+    await loop.run("hello", session=session)
+    _ = [ev async for ev in loop.run_stream("again", session=session)]
+
+    first, second = b.calls
+    users_1 = [m.content for m in first if m.role == "user"]
+    users_2 = [m.content for m in second if m.role == "user"]
+    assert users_1 == ["hello\n\n(请用简体中文回答)"]
+    assert users_2 == ["hello\n\n(请用简体中文回答)", "again\n\n(请用简体中文回答)"]
+    # the second request begins with exactly what the first one sent
+    assert [(m.role, m.content) for m in second[: len(first)]] == [(m.role, m.content) for m in first]
+    stored = [m.content for m in ChatSession.load(session.session_id).messages() if m.role == "user"]
+    assert stored == ["hello", "again"]
+
+
+@pytest.mark.asyncio
+async def test_no_user_note_leaves_messages_alone() -> None:
+    b = FakeBackend([_final("hi")])
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    await AgentLoop(b, tools=[_TOOL], tool_executor=exec_).run("hello")
+    assert [m.content for m in b.calls[0] if m.role == "user"] == ["hello"]

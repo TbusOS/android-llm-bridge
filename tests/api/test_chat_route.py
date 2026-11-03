@@ -589,9 +589,11 @@ def test_a_page_that_closes_after_done_stopped_nothing(
 
 class _PromptSpy(_FakeBackend):
     seen: ClassVar[list[str]] = []
+    last_user: ClassVar[list[str]] = []
 
     async def chat(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
         _PromptSpy.seen.append(messages[0].content if messages[0].role == "system" else "")
+        _PromptSpy.last_user.append(messages[-1].content)
         return await super().chat(messages, **kwargs)
 
 
@@ -618,3 +620,19 @@ def test_chat_reply_language_follows_lang(
 def test_chat_rejects_unknown_lang(client: TestClient, fake_backend_patch: Any) -> None:
     r = client.post("/chat", json={"message": "hi", "tools": False, "lang": "fr"})
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("lang", "note"),
+    [(None, "(请用简体中文回答)"), ("en", "(Please answer in English.)"), ("auto", None)],
+)
+def test_chat_user_message_carries_the_language_note(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, lang: str | None, note: str | None
+) -> None:
+    _PromptSpy.last_user = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _PromptSpy())
+    body: dict[str, Any] = {"message": "hello", "tools": False}
+    if lang:
+        body["lang"] = lang
+    assert client.post("/chat", json=body).status_code == 200
+    assert _PromptSpy.last_user == [f"hello\n\n{note}" if note else "hello"]

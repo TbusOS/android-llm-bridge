@@ -100,12 +100,24 @@ class AgentLoop:
         *,
         max_turns: int = _DEFAULT_MAX_TURNS,
         system_prompt: str | None = None,
+        user_note: str | None = None,
     ) -> None:
+        """`user_note` is appended to every user message the model sees,
+        e.g. "(请用简体中文回答)".  The session keeps what the person typed.
+        It goes on *every* user message, history included, so a request is
+        always the previous request plus new messages and the model server
+        can reuse what it has already read."""
         self.backend = backend
         self.tools = tools
         self.tool_executor = tool_executor
         self.max_turns = max_turns
         self.system_prompt = system_prompt
+        self.user_note = user_note
+
+    def _for_model(self, msg: Message) -> Message:
+        if msg.role != "user" or not self.user_note:
+            return msg
+        return dataclasses.replace(msg, content=f"{msg.content}\n\n{self.user_note}")
 
     async def run(
         self,
@@ -127,10 +139,10 @@ class AgentLoop:
         if self.system_prompt:
             messages.append(Message(role="system", content=self.system_prompt))
         if session is not None:
-            messages.extend(session.messages())
+            messages.extend(self._for_model(m) for m in session.messages())
 
         user_msg = Message(role="user", content=user_input)
-        messages.append(user_msg)
+        messages.append(self._for_model(user_msg))
         if session is not None:
             session.append(user_msg)
 
@@ -238,10 +250,10 @@ class AgentLoop:
         if self.system_prompt:
             messages.append(Message(role="system", content=self.system_prompt))
         if session is not None:
-            messages.extend(session.messages())
+            messages.extend(self._for_model(m) for m in session.messages())
 
         user_msg = Message(role="user", content=user_input)
-        messages.append(user_msg)
+        messages.append(self._for_model(user_msg))
         if session is not None:
             session.append(user_msg)
 

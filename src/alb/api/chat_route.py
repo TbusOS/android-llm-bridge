@@ -54,7 +54,11 @@ from alb.agent.loop import AgentLoop, ToolExecutor
 from alb.agent.session import ChatSession
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.metric_sampler import TokenSampler
-from alb.infra.prompt_builder import DEFAULT_REPLY_LANGUAGE, default_agent_prompt
+from alb.infra.prompt_builder import (
+    DEFAULT_REPLY_LANGUAGE,
+    default_agent_prompt,
+    reply_language_note,
+)
 from alb.infra.workspace import InvalidSessionId
 
 _SUMMARY_MAX = 120
@@ -422,6 +426,7 @@ async def _build_agent(
         tool_executor=executor,
         max_turns=req.max_turns,
         system_prompt=prompt.as_text(),
+        user_note=reply_language_note(req.lang or DEFAULT_REPLY_LANGUAGE),
     )
     return loop, session, llm
 

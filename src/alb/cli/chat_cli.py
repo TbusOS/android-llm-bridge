@@ -29,7 +29,11 @@ from alb.agent.backends import get_backend
 from alb.agent.loop import AgentLoop
 from alb.agent.session import ChatSession
 from alb.cli.common import run_async
-from alb.infra.prompt_builder import default_agent_prompt
+from alb.infra.prompt_builder import (
+    DEFAULT_REPLY_LANGUAGE,
+    default_agent_prompt,
+    reply_language_note,
+)
 from alb.infra.workspace import InvalidSessionId
 
 app = typer.Typer(
@@ -158,6 +162,7 @@ def chat(
         tool_executor=executor,
         max_turns=max_turns,
         system_prompt=prompt.as_text(),
+        user_note=reply_language_note(DEFAULT_REPLY_LANGUAGE),
     )
 
     if session_id:

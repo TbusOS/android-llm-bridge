@@ -228,6 +228,24 @@ REPLY_LANGUAGE_RULES: dict[str, str] = {
 }
 DEFAULT_REPLY_LANGUAGE = "zh"
 
+# The same request again, at the end of each user message the model sees.
+# The rule above alone was not enough: Ling's chat template puts all tool
+# definitions (~6k tokens for 36 tools) between the system prompt and the
+# user's message, and an English "hello" got an English answer 3 times out
+# of 3; with this note, Chinese 3 out of 3 (2026-11-03, real model).
+REPLY_LANGUAGE_NOTES: dict[str, str | None] = {
+    "zh": "(请用简体中文回答)",
+    "en": "(Please answer in English.)",
+    "auto": None,
+}
+
+
+def reply_language_note(reply_language: str) -> str | None:
+    """Note for AgentLoop(user_note=...); unknown values count as "zh"."""
+    if reply_language in REPLY_LANGUAGE_NOTES:
+        return REPLY_LANGUAGE_NOTES[reply_language]
+    return REPLY_LANGUAGE_NOTES[DEFAULT_REPLY_LANGUAGE]
+
 DEFAULT_TOOL_NORMS = """\
 Tool usage norms:
   * Long captures (> 5 min logcat) should return a file path, not the raw
