@@ -44,11 +44,13 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
 
+from alb.agent.backend import BackendError, Message, ToolSpec
 from alb.agent.backends import get_backend
 from alb.agent.loop import AgentLoop, ToolExecutor
 from alb.agent.session import ChatSession
@@ -358,14 +360,12 @@ async def _watch_socket(
         run.cancel()
 
 
-async def _build_agent(
+async def _agent_parts(
     req: ChatRequest,
-) -> tuple[AgentLoop, ChatSession, Any] | dict[str, Any]:
-    """Shared setup for POST /chat and WS /chat/ws.
-
-    Returns (loop, session, llm) on success, or {"error": {...}, "session_id": "..."}
-    on failure (same shape both callers expect to wrap).
-    """
+) -> tuple[Any, list[ToolSpec], ToolExecutor, str, str | None] | dict[str, Any]:
+    """(llm, tool specs, executor, system prompt, user note) for a request,
+    or an error dict. Shared by the chat endpoints and warm_up(), so the
+    warm-up sends byte for byte the prefix a chat will send."""
     # Env-var defaults (mirror CLI behaviour)
     model = req.model or os.environ.get("ALB_OLLAMA_MODEL")
     ollama_url = req.ollama_url or os.environ.get("ALB_OLLAMA_URL")
@@ -398,6 +398,22 @@ async def _build_agent(
         backend=llm.name,
         context_tokens=_context_tokens(llm),
     )
+    note = reply_language_note(req.lang or DEFAULT_REPLY_LANGUAGE)
+    return llm, specs, executor, prompt.as_text(), note
+
+
+async def _build_agent(
+    req: ChatRequest,
+) -> tuple[AgentLoop, ChatSession, Any] | dict[str, Any]:
+    """Shared setup for POST /chat and WS /chat/ws.
+
+    Returns (loop, session, llm) on success, or {"error": {...}, "session_id": "..."}
+    on failure (same shape both callers expect to wrap).
+    """
+    parts = await _agent_parts(req)
+    if isinstance(parts, dict):
+        return parts
+    llm, specs, executor, system_prompt, note = parts
 
     if req.session_id:
         try:
@@ -428,10 +444,38 @@ async def _build_agent(
         tools=specs,
         tool_executor=executor,
         max_turns=req.max_turns,
-        system_prompt=prompt.as_text(),
-        user_note=reply_language_note(req.lang or DEFAULT_REPLY_LANGUAGE),
+        system_prompt=system_prompt,
+        user_note=note,
     )
     return loop, session, llm
+
+
+async def warm_up(req: ChatRequest | None = None) -> dict[str, Any]:
+    """Have the model server load the model and read the prompt prefix
+    (system prompt + tool list) before anybody asks.
+
+    A CPU model needs ~45 s to read that prefix from scratch; after that it
+    is reused and a question costs a second or two (bench, 2026-11-03).
+    The hub calls this once at start (server.main → lifespan), with the
+    request a chat page sends by default, so the cached prefix is the one
+    real chats begin with. Nothing is stored: no session, no tool runs.
+    """
+    req = req or ChatRequest.model_validate({"message": "你好", "backend": "ollama", "tools": True})
+    parts = await _agent_parts(req)
+    if isinstance(parts, dict):
+        return {"ok": False, "error": parts.get("error")}
+    llm, specs, _executor, system_prompt, note = parts
+    messages = [
+        Message(role="system", content=system_prompt),
+        Message(role="user", content=f"{req.message}\n\n{note}" if note else req.message),
+    ]
+    tools = specs if specs and llm.supports_tool_calls else None
+    started = perf_counter()
+    try:
+        await llm.chat(messages, tools=tools, max_tokens=1)
+    except BackendError as e:
+        return {"ok": False, "error": {"code": e.code, "message": str(e)}, "model": llm.model}
+    return {"ok": True, "model": llm.model, "seconds": round(perf_counter() - started, 1), "tools": len(specs)}
 
 
 def _context_tokens(llm: Any) -> int | None:

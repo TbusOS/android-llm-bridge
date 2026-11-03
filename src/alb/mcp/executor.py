@@ -24,10 +24,17 @@ Design:
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from alb.agent.backend import ToolSpec
 from alb.agent.loop import ToolExecutor
+
+# Registered for MCP clients but not handed to the agent loop: asking the
+# model to call another model (raw playground chat) is never what a person
+# in the web assistant wants, and its description alone was 1.6k characters
+# of every request (2026-11-03).
+_AGENT_SKIP = frozenset({"alb_playground_chat"})
 
 
 async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
@@ -41,15 +48,21 @@ async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
     mcp = create_server()
     raw_tools = await mcp.list_tools()
 
+    # The tool list goes out with every request: 36 tools were ~6.4k tokens,
+    # 45 s for a CPU model to read before the first word. The copy for the
+    # model is compacted without dropping meaning (dedented docstrings,
+    # "string or null" written as "string"); MCP clients keep the originals.
     specs: list[ToolSpec] = []
     schemas: dict[str, dict[str, Any]] = {}
     for t in raw_tools:
         schema = t.inputSchema or {"type": "object", "properties": {}}
         schemas[t.name] = schema
+        if t.name in _AGENT_SKIP:
+            continue
         specs.append(
             ToolSpec(
                 name=t.name,
-                description=(t.description or "").strip(),
+                description=inspect.cleandoc(t.description or ""),
                 parameters=_sanitize_schema(schema),
             )
         )
@@ -108,13 +121,28 @@ def _takes_string_not_number(prop: dict[str, Any]) -> bool:
 
 
 def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Strip FastMCP's `title` key — Ollama dislikes extra keys in tool schemas."""
+    """The schema the model sees: no FastMCP `title` keys (Ollama dislikes
+    extra keys), and an optional parameter written plainly — FastMCP spells
+    `x: str | None = None` as anyOf [string, null] + default null; for the
+    model "type: string, not required" says the same in a third of the text.
+    Validation still runs against the original schema (FastMCP)."""
     clean = {k: v for k, v in schema.items() if k != "title"}
-    # recurse into properties for nested title removal
     props = clean.get("properties")
     if isinstance(props, dict):
-        clean["properties"] = {
-            k: {kk: vv for kk, vv in v.items() if kk != "title"} if isinstance(v, dict) else v
-            for k, v in props.items()
-        }
+        clean["properties"] = {k: _slim_property(v) if isinstance(v, dict) else v for k, v in props.items()}
     return clean
+
+
+def _slim_property(prop: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in prop.items() if k != "title"}
+    alts = out.get("anyOf")
+    if isinstance(alts, list) and len(alts) == 2:
+        non_null = [a for a in alts if isinstance(a, dict) and a.get("type") != "null"]
+        if len(non_null) == 1 and len(alts) - len(non_null) == 1:
+            del out["anyOf"]
+            for k, v in non_null[0].items():
+                if k != "title":
+                    out.setdefault(k, v)
+    if "default" in out and out["default"] is None:
+        del out["default"]
+    return out

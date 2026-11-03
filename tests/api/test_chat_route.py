@@ -658,3 +658,105 @@ def test_chat_backend_without_num_ctx_names_only_the_model(client: TestClient, m
     assert client.post("/chat", json={"message": "hi", "tools": False}).status_code == 200
     assert "you are the language model fake-model, served by fake." in _PromptSpy.seen[0]
     assert "Context window" not in _PromptSpy.seen[0]
+
+
+# ─── warm-up at hub start (2026-11-03) ───────────────────────────────
+
+
+class _WarmSpy(_FakeBackend):
+    num_ctx = 16384
+    calls: ClassVar[list[dict[str, Any]]] = []
+
+    async def chat(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
+        _WarmSpy.calls.append({"messages": messages, **kwargs})
+        return await super().chat(messages, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_warm_up_sends_the_prefix_a_chat_sends_and_stores_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from alb.api import chat_route
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    tool = ToolSpec(name="alb_status", description="s", parameters={"type": "object"})
+
+    async def tools() -> Any:
+        async def run(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            raise AssertionError("warm-up must not run tools")
+
+        return [tool], run
+
+    monkeypatch.setattr("alb.mcp.executor.make_agent_tools", tools)
+    monkeypatch.setattr(chat_route, "get_backend", lambda name, **kw: _WarmSpy())
+    _WarmSpy.calls = []
+
+    r = await chat_route.warm_up()
+    assert r["ok"] is True and r["tools"] == 1
+
+    built = await chat_route._build_agent(
+        chat_route.ChatRequest.model_validate({"message": "x", "backend": "ollama", "tools": True})
+    )
+    assert not isinstance(built, dict)
+    loop, _, _ = built
+    call = _WarmSpy.calls[0]
+    assert call["messages"][0].content == loop.system_prompt  # same cached prefix
+    assert call["messages"][1].content == "你好\n\n(请用简体中文回答)"
+    assert call["tools"] == [tool]
+    assert call["max_tokens"] == 1
+    # only the session _build_agent made above exists: warm-up made none
+    assert len(list((tmp_path / "sessions").iterdir())) == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_up_reports_a_backend_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    from alb.agent.backend import BackendError
+    from alb.api import chat_route
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+
+    class _Down(_FakeBackend):
+        async def chat(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
+            raise BackendError("BACKEND_UNREACHABLE", "no ollama")
+
+    monkeypatch.setattr(chat_route, "get_backend", lambda name, **kw: _Down())
+    r = await chat_route.warm_up(chat_route.ChatRequest.model_validate({"message": "hi", "tools": False}))
+    assert r["ok"] is False and r["error"]["code"] == "BACKEND_UNREACHABLE"
+
+
+@pytest.mark.parametrize(
+    ("flag", "env", "expect"),
+    [
+        (False, {"ALB_OLLAMA_MODEL": "m"}, 0),  # an app a test builds
+        (True, {"ALB_OLLAMA_MODEL": "m"}, 1),  # the hub main() starts
+        (True, {"ALB_OLLAMA_MODEL": "m", "ALB_WARMUP": "0"}, 0),  # turned off
+        (True, {}, 0),  # no configured model: do not load some default one
+    ],
+)
+def test_warm_up_runs_only_for_the_hub_with_a_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, flag: bool, env: dict[str, str], expect: int
+) -> None:
+    import asyncio
+
+    from alb.api import chat_route
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    monkeypatch.delenv("ALB_OLLAMA_MODEL", raising=False)
+    monkeypatch.delenv("ALB_WARMUP", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    calls: list[int] = []
+
+    async def fake() -> dict[str, Any]:
+        calls.append(1)
+        return {"ok": True, "model": "m", "seconds": 0.0, "tools": 0}
+
+    monkeypatch.setattr(chat_route, "warm_up", fake)
+    app = create_app()
+    app.state.warm_model = flag
+    with TestClient(app) as c:
+        c.get("/health")
+        assert c.portal is not None
+        c.portal.call(asyncio.sleep, 0.05)  # let a background task run
+    assert len(calls) == expect

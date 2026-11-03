@@ -12,6 +12,8 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -79,9 +81,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # formatted — the hub log carries uvicorn requests and alb warnings only.
     install_alb_logging()
     get_metric_store().attach(get_bus())
+    warm = _start_warm_up(app)
     try:
         yield
     finally:
+        if warm is not None and not warm.done():
+            warm.cancel()
         from alb.capabilities.metrics import shutdown_all_streamers
 
         await shutdown_all_streamers()
@@ -97,6 +102,37 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         from alb.remote.forwarder import shutdown_forwarders
 
         await shutdown_forwarders()
+
+
+_log = logging.getLogger("alb.api.warmup")
+
+
+def _start_warm_up(app: FastAPI) -> asyncio.Task[None] | None:
+    """Warm the chat model in the background — only for a hub started by
+    main() (app.state.warm_model), never for an app a test builds.
+
+    Only when ALB_OLLAMA_MODEL names the model: warming some default model
+    nobody chats with would push the real one out of the model server's
+    memory. ALB_WARMUP=0 turns it off."""
+    if not getattr(app.state, "warm_model", False):
+        return None
+    if os.environ.get("ALB_WARMUP", "1").strip() == "0" or not os.environ.get("ALB_OLLAMA_MODEL"):
+        return None
+
+    async def run() -> None:
+        from alb.api.chat_route import warm_up
+
+        try:
+            r = await warm_up()
+        except Exception as e:  # a failed warm-up must not touch the hub
+            _log.warning("model warm-up failed: %s: %s", type(e).__name__, e)
+            return
+        if r.get("ok"):
+            _log.info("model warm-up: %s ready in %.1f s (%s tools)", r.get("model"), r.get("seconds", 0.0), r.get("tools"))
+        else:
+            _log.warning("model warm-up failed: %s", r.get("error"))
+
+    return asyncio.create_task(run(), name="alb-model-warm-up")
 
 
 def create_app() -> FastAPI:
@@ -188,6 +224,10 @@ def main() -> None:
     # bench that — not the network — was the limit. A 2.2 GB image took 108 s
     # compressed, 19 s plain, over the same link.
     deflate = os.environ.get("ALB_WS_DEFLATE", "").strip() == "1"
+    # uvicorn imports "alb.api.server:app" — this module, already loaded —
+    # so the flag reaches the app it serves. Tests build their own apps
+    # with create_app() and never warm a model.
+    app.state.warm_model = True
     uvicorn.run(
         "alb.api.server:app",
         host=host,
