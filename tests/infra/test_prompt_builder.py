@@ -10,6 +10,7 @@ from alb.infra.prompt_builder import (
     DEFAULT_ROLE,
     DEFAULT_SAFETY_RULES,
     DEFAULT_TOOL_NORMS,
+    REPLY_LANGUAGE_RULES,
     Prompt,
     PromptBlock,
     PromptBuilder,
@@ -240,3 +241,36 @@ def test_prompt_is_immutable() -> None:
     # blocks is a tuple -- can't append
     with pytest.raises(AttributeError):
         p.blocks.append(PromptBlock(content="y"))  # type: ignore[attr-defined]
+
+
+# ─── Reply language (2026-11-03: default Simplified Chinese) ─────────
+
+
+def test_default_prompt_answers_in_chinese() -> None:
+    """An English "hello" got an English answer while the rule said
+    "the user's language"; the default is now Chinese."""
+    text = default_agent_prompt(transport_name="adb").as_text()
+    assert REPLY_LANGUAGE_RULES["zh"] in text
+    assert "简体中文" in text
+    assert "language the user writes in" not in text
+
+
+def test_prompt_reply_language_en_and_auto() -> None:
+    en = default_agent_prompt(transport_name="adb", reply_language="en").as_text()
+    assert REPLY_LANGUAGE_RULES["en"] in en
+    assert "简体中文" not in en
+    auto = default_agent_prompt(transport_name="adb", reply_language="auto").as_text()
+    assert REPLY_LANGUAGE_RULES["auto"] in auto
+
+
+def test_prompt_unknown_reply_language_falls_back_to_chinese() -> None:
+    text = default_agent_prompt(transport_name="adb", reply_language="fr").as_text()
+    assert REPLY_LANGUAGE_RULES["zh"] in text
+
+
+def test_reply_language_is_in_the_cached_static_part() -> None:
+    """Static blocks form the prefix the model server can reuse; the
+    language rule belongs there, not after the device line."""
+    p = default_agent_prompt(device_serial="abc", transport_name="adb")
+    text = p.as_text()
+    assert text.index("简体中文") < text.index("Current device: abc")

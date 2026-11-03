@@ -205,9 +205,28 @@ Rules:
   * If a tool returns `error.suggestion`, follow it before retrying.
   * Destructive operations (`rm`, `reboot bootloader`, `fastboot erase`,
     `pm uninstall`) require user confirmation if the permission system
-    asks — never silently proceed.
-  * Reply in the user's language.\
+    asks — never silently proceed.\
 """
+
+# Which language the answer is written in.  The web page sends its UI
+# language; everything else gets Chinese (user decision 2026-11-03: the
+# model answered an English "hello" in English, and the people using this
+# read Chinese).  Small local models follow the rule more reliably when it
+# is also written in the target language.
+REPLY_LANGUAGE_RULES: dict[str, str] = {
+    "zh": (
+        "Language: reply in Simplified Chinese, even when the user writes in "
+        "another language, unless the user asks for a different language.\n"
+        "默认用简体中文回答。工具名、命令、文件路径、日志原文保持原样,不要翻译。"
+    ),
+    "en": (
+        "Language: reply in English unless the user asks for a different "
+        "language.  Keep tool names, commands, file paths and log lines as "
+        "they are."
+    ),
+    "auto": "Language: reply in the language the user writes in.",
+}
+DEFAULT_REPLY_LANGUAGE = "zh"
 
 DEFAULT_TOOL_NORMS = """\
 Tool usage norms:
@@ -231,6 +250,7 @@ def default_agent_prompt(
     tool_count: int | None = None,
     extra_static: list[str] | None = None,
     extra_dynamic: list[str] | None = None,
+    reply_language: str = DEFAULT_REPLY_LANGUAGE,
 ) -> Prompt:
     """Assemble the standard agent system prompt.
 
@@ -246,6 +266,8 @@ def default_agent_prompt(
         extra_dynamic: optional extra dynamic blocks (e.g. recent error
             summary from session history).  Appended after the built-in
             dynamic blocks.
+        reply_language: "zh" (default), "en" or "auto" (follow the user);
+            see REPLY_LANGUAGE_RULES.  Unknown values fall back to "zh".
 
     The cache boundary lands after all static blocks, so:
         static = role + safety + norms + extra_static
@@ -256,6 +278,11 @@ def default_agent_prompt(
         .add_static(DEFAULT_ROLE, name="role")
         .add_static(DEFAULT_SAFETY_RULES, name="safety")
         .add_static(DEFAULT_TOOL_NORMS, name="tool_norms")
+        .add_static(
+            REPLY_LANGUAGE_RULES.get(reply_language)
+            or REPLY_LANGUAGE_RULES[DEFAULT_REPLY_LANGUAGE],
+            name="language",
+        )
     )
     for i, blk in enumerate(extra_static or []):
         b.add_static(blk, name=f"extra_static_{i}")

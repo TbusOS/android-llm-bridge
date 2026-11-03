@@ -44,7 +44,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, ValidationError
@@ -54,7 +54,7 @@ from alb.agent.loop import AgentLoop, ToolExecutor
 from alb.agent.session import ChatSession
 from alb.infra.event_bus import get_bus, make_event
 from alb.infra.metric_sampler import TokenSampler
-from alb.infra.prompt_builder import default_agent_prompt
+from alb.infra.prompt_builder import DEFAULT_REPLY_LANGUAGE, default_agent_prompt
 from alb.infra.workspace import InvalidSessionId
 
 _SUMMARY_MAX = 120
@@ -77,6 +77,11 @@ class ChatRequest(BaseModel):
         description="WS only: ask the client before every tool call and run it only "
         "if approved. Off by default — board commands run without asking (user "
         "decision 2026-10-23); this is the opt-in for the model's own calls.",
+    )
+    lang: Literal["zh", "en", "auto"] | None = Field(
+        None,
+        description="Language the model answers in; the web page sends its UI "
+        "language. Omitted means Simplified Chinese.",
     )
 
 
@@ -384,6 +389,7 @@ async def _build_agent(
         transport_name="auto",
         workspace_root=Path.cwd() / "workspace",
         tool_count=len(specs),
+        reply_language=req.lang or DEFAULT_REPLY_LANGUAGE,
     )
 
     if req.session_id:

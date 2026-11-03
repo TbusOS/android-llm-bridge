@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -582,3 +582,39 @@ def test_a_page_that_closes_after_done_stopped_nothing(
 
     kinds = [e["kind"] for e in _read_events(tmp_path)]
     assert "done" in kinds and "error" not in kinds
+
+
+# ─── Reply language (2026-11-03) ─────────────────────────────────────
+
+
+class _PromptSpy(_FakeBackend):
+    seen: ClassVar[list[str]] = []
+
+    async def chat(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
+        _PromptSpy.seen.append(messages[0].content if messages[0].role == "system" else "")
+        return await super().chat(messages, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("lang", "expect", "absent"),
+    [(None, "简体中文", "reply in English"), ("zh", "简体中文", "reply in English"), ("en", "reply in English", "简体中文")],
+)
+def test_chat_reply_language_follows_lang(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, lang: str | None, expect: str, absent: str
+) -> None:
+    """The page sends its UI language; without one the model is told to
+    answer in Chinese."""
+    _PromptSpy.seen = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _PromptSpy())
+    body: dict[str, Any] = {"message": "hello", "tools": False}
+    if lang:
+        body["lang"] = lang
+    r = client.post("/chat", json=body)
+    assert r.status_code == 200, r.text
+    assert expect in _PromptSpy.seen[0]
+    assert absent not in _PromptSpy.seen[0]
+
+
+def test_chat_rejects_unknown_lang(client: TestClient, fake_backend_patch: Any) -> None:
+    r = client.post("/chat", json={"message": "hi", "tools": False, "lang": "fr"})
+    assert r.status_code == 422
