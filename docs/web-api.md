@@ -71,9 +71,17 @@ Request body:
   "strict_session": false,
   "tools": true,
   "backend": "ollama",
-  "model": "qwen2.5:7b"
+  "model": "qwen2.5:7b",
+  "lang": "zh"
 }
 ```
+
+`lang` is the language the model answers in: `"zh"` (the default when
+omitted), `"en"` or `"auto"` (follow the user). It sets a rule in the
+system prompt and, for `zh` / `en`, a short note at the end of every user
+message the model sees — small local models read past a rule that sits
+before thousands of tokens of tool definitions. The session stores the
+message as typed.
 
 Response:
 
@@ -100,10 +108,10 @@ Streaming agent chat.
 | Direction | Message | Notes |
 |---|---|---|
 | C → S | `ChatRequest` JSON (same shape as POST body) | First frame |
-| S → C | `{"type":"token","delta":"..."}` | Partial assistant content |
+| S → C | `{"type":"token","delta":"..."}` | Assistant text, sent as the model produces it, in every turn. Text the model writes before calling a tool ("let me check the log") arrives before that `tool_call_start`; the web UI shows it above the tool card and starts the answer afresh |
 | S → C | `{"type":"tool_confirm_request","id":"...","name":"...","arguments":{...}}` | Only with `"confirm_tools": true` in the request: the call waits for an answer |
 | C → S | `{"type":"tool_confirm","id":"...","approve":true}` | Answer to one `tool_confirm_request` |
-| S → C | `{"type":"tool_call_start","name":"...","arguments":{...}}` | Tool about to run |
+| S → C | `{"type":"tool_call_start","id":"...","name":"...","arguments":{...}}` | Tool about to run. Has `"requested_name"` when the hub repaired a name the backend garbled (a known tool name with the start of itself glued in front, e.g. `alb_describealb_describe_errors`); `name` is the tool that runs |
 | S → C | `{"type":"tool_call_end","name":"...","result":{...}}` | Tool completed |
 | S → C | `{"type":"done","content":"...","session_id":"...","model":"...","backend":"...","usage":{...}}` | Terminal; always present |
 
