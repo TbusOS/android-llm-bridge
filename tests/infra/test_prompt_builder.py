@@ -285,6 +285,34 @@ def test_reply_language_note() -> None:
     assert reply_language_note("fr") == "(请用简体中文回答)"
 
 
+def test_agent_user_note_names_the_model_inside_the_language_note() -> None:
+    from alb.infra.prompt_builder import agent_user_note
+
+    zh = agent_user_note("zh", model="ling3-tiny", context_tokens=16384)
+    assert zh is not None
+    assert zh.startswith("(请用简体中文回答。") and zh.endswith(")")
+    assert "ling3-tiny" in zh and "16384" in zh and "不用调工具" in zh
+    assert zh.count("(") == 1 and zh.count(")") == 1  # one note, not two
+
+    en = agent_user_note("en", model="ling3-tiny", context_tokens=16384)
+    assert en is not None
+    assert en.startswith("(Please answer in English. ") and en.endswith(")")
+    assert "ling3-tiny" in en and "16384" in en
+
+    no_ctx = agent_user_note("zh", model="m")
+    assert no_ctx is not None and "语言模型 m;" in no_ctx and "token" not in no_ctx
+
+
+def test_agent_user_note_without_a_model_is_the_language_note() -> None:
+    from alb.infra.prompt_builder import agent_user_note
+
+    assert agent_user_note("zh") == "(请用简体中文回答)"
+    assert agent_user_note("en", model=None, context_tokens=16384) == "(Please answer in English.)"
+    assert agent_user_note("fr", model=None) == "(请用简体中文回答)"
+    # "auto": no note at all, a sentence in either language pulls the reply toward it
+    assert agent_user_note("auto", model="ling3-tiny", context_tokens=16384) is None
+
+
 # ─── Model line (2026-11-03: "which model are you" got "I have no model ID") ─
 
 

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from alb.agent.backend import ChatResponse, LLMBackend, Message, ToolSpec
 from alb.api.server import create_app
+from alb.infra.prompt_builder import agent_user_note
 
 
 class _FakeBackend(LLMBackend):
@@ -623,19 +624,33 @@ def test_chat_rejects_unknown_lang(client: TestClient, fake_backend_patch: Any) 
 
 
 @pytest.mark.parametrize(
-    ("lang", "note"),
-    [(None, "(请用简体中文回答)"), ("en", "(Please answer in English.)"), ("auto", None)],
+    ("lang", "starts"),
+    [(None, "(请用简体中文回答。"), ("en", "(Please answer in English."), ("auto", None)],
 )
-def test_chat_user_message_carries_the_language_note(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, lang: str | None, note: str | None
+def test_chat_user_message_carries_the_language_and_model_note(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, lang: str | None, starts: str | None
 ) -> None:
+    """The note names the model too: as the second message of a chat,
+    "你的模型id是啥" got "I have no model ID" 6 times in 10 (2026-11-03)."""
     _PromptSpy.last_user = []
     monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _PromptSpy())
     body: dict[str, Any] = {"message": "hello", "tools": False}
     if lang:
         body["lang"] = lang
     assert client.post("/chat", json=body).status_code == 200
-    assert _PromptSpy.last_user == [f"hello\n\n{note}" if note else "hello"]
+    (sent,) = _PromptSpy.last_user
+    if starts is None:
+        assert sent == "hello"
+    else:
+        assert sent.startswith(f"hello\n\n{starts}")
+        assert "fake-model" in sent
+
+
+def test_chat_model_note_carries_the_context_size(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _PromptSpy.last_user = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _CtxSpy())
+    assert client.post("/chat", json={"message": "hello", "tools": False}).status_code == 200
+    assert "fake-model" in _PromptSpy.last_user[0] and "16384" in _PromptSpy.last_user[0]
 
 
 class _CtxSpy(_PromptSpy):
@@ -702,7 +717,7 @@ async def test_warm_up_sends_the_prefix_a_chat_sends_and_stores_nothing(
     loop, _, _ = built
     call = _WarmSpy.calls[0]
     assert call["messages"][0].content == loop.system_prompt  # same cached prefix
-    assert call["messages"][1].content == "你好\n\n(请用简体中文回答)"
+    assert call["messages"][1].content == f"你好\n\n{agent_user_note('zh', model='fake-model', context_tokens=16384)}"
     assert call["tools"] == [tool]
     assert call["max_tokens"] == 1
     # only the session _build_agent made above exists: warm-up made none

@@ -58,8 +58,8 @@ from alb.infra.event_bus import get_bus, make_event
 from alb.infra.metric_sampler import TokenSampler
 from alb.infra.prompt_builder import (
     DEFAULT_REPLY_LANGUAGE,
+    agent_user_note,
     default_agent_prompt,
-    reply_language_note,
 )
 from alb.infra.workspace import InvalidSessionId
 
@@ -398,7 +398,9 @@ async def _agent_parts(
         backend=llm.name,
         context_tokens=_context_tokens(llm),
     )
-    note = reply_language_note(req.lang or DEFAULT_REPLY_LANGUAGE)
+    note = agent_user_note(
+        req.lang or DEFAULT_REPLY_LANGUAGE, model=llm.model, context_tokens=_context_tokens(llm)
+    )
     return llm, specs, executor, prompt.as_text(), note
 
 

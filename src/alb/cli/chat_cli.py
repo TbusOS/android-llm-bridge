@@ -31,8 +31,8 @@ from alb.agent.session import ChatSession
 from alb.cli.common import run_async
 from alb.infra.prompt_builder import (
     DEFAULT_REPLY_LANGUAGE,
+    agent_user_note,
     default_agent_prompt,
-    reply_language_note,
 )
 from alb.infra.workspace import InvalidSessionId
 
@@ -165,7 +165,9 @@ def chat(
         tool_executor=executor,
         max_turns=max_turns,
         system_prompt=prompt.as_text(),
-        user_note=reply_language_note(DEFAULT_REPLY_LANGUAGE),
+        user_note=agent_user_note(
+            DEFAULT_REPLY_LANGUAGE, model=llm.model, context_tokens=getattr(llm, "num_ctx", None)
+        ),
     )
 
     if session_id:

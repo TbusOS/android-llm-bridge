@@ -80,8 +80,11 @@ Request body:
 omitted), `"en"` or `"auto"` (follow the user). It sets a rule in the
 system prompt and, for `zh` / `en`, a short note at the end of every user
 message the model sees — small local models read past a rule that sits
-before thousands of tokens of tool definitions. The session stores the
-message as typed.
+before thousands of tokens of tool definitions. The same note also names
+the model and its context window, e.g. `(请用简体中文回答。你是语言模型
+ling3-tiny,上下文 16384 token;…)`: a model asked "which model are you"
+after a turn or two otherwise looked it up with a tool or said it had none.
+The session stores the message as typed.
 
 Each model turn is capped at 4096 output tokens
 (`alb.agent.loop.DEFAULT_MAX_OUTPUT_TOKENS`). A turn that hits it ends with

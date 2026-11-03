@@ -246,6 +246,58 @@ def reply_language_note(reply_language: str) -> str | None:
         return REPLY_LANGUAGE_NOTES[reply_language]
     return REPLY_LANGUAGE_NOTES[DEFAULT_REPLY_LANGUAGE]
 
+
+# The model line in the system prompt is not enough once the chat has a
+# turn or two: asked "你的模型id是啥" right after "你好", Ling-3.0-tiny
+# called alb_describe in 8 of 10 runs and said in 6 it had no model ID
+# (as the first message: 19 of 19 right, 2026-11-03). Tool definitions sit
+# between the system prompt and the chat, so the note at the end of each
+# user message is the text it reads last, the same reason the language
+# request is there.
+_MODEL_NOTES: dict[str, tuple[str, str]] = {
+    # (model part, context part); {model} / {ctx} filled in
+    "zh": (
+        "你是语言模型 {model}",
+        ",上下文 {ctx} token",
+    ),
+    "en": (
+        "You are the language model {model}",
+        ", context window {ctx} tokens",
+    ),
+}
+_MODEL_NOTE_TAIL = {
+    "zh": ";问到你的模型、模型 ID 或上下文时直接用这些值回答,不用调工具。",
+    "en": "; when asked about your model, model ID or context, answer with these values, no tool needed.",
+}
+
+
+def agent_user_note(
+    reply_language: str,
+    *,
+    model: str | None = None,
+    context_tokens: int | None = None,
+) -> str | None:
+    """Note for AgentLoop(user_note=...): the reply language request and,
+    when `model` is known, which model this is.
+
+        zh → "(请用简体中文回答。你是语言模型 X,上下文 N token;问到…不用调工具。)"
+
+    "auto" has no note at all, as before: a sentence in either language
+    pulls the reply toward it."""
+    lang = reply_language if reply_language in REPLY_LANGUAGE_NOTES else DEFAULT_REPLY_LANGUAGE
+    base = REPLY_LANGUAGE_NOTES[lang]
+    if base is None or not model or lang not in _MODEL_NOTES:
+        return base
+    who, ctx = _MODEL_NOTES[lang]
+    text = who.format(model=model)
+    if context_tokens:
+        text += ctx.format(ctx=context_tokens)
+    text += _MODEL_NOTE_TAIL[lang]
+    # base is "(…)" or "(…)"; put the model part inside the same brackets
+    if lang == "zh":
+        return f"{base[:-1]}。{text})"
+    return f"{base[:-1]} {text})"
+
 DEFAULT_TOOL_NORMS = """\
 Tool usage norms:
   * Long captures (> 5 min logcat) should return a file path, not the raw
