@@ -12,7 +12,7 @@
 // board or the bench (flash / erase / reboot, root / remount, break-in, app
 // install / uninstall / clear, file push, agent update / start, switching
 // the active board, any DELETE) is aborted in the browser before it leaves
-// and is itself a FAIL. What it does send to a board: `echo alb-func-<n>`
+// and is itself a FAIL. What it does send to a board: `echo "alb-func-<n>"`
 // lines on the serial console (FUNC_SERIAL=0 turns them off), an `echo` in
 // an adb shell when a device is online, and a 30 s timeline recording.
 //
@@ -177,16 +177,39 @@ async function connected(p) {
   );
 }
 
-/* serial console: type a command, return what the terminal showed */
-async function serialEcho(p, text) {
+/* serial console: type `echo "<text>"` and wait for the board's output.
+ *
+ * Passes when a terminal row reads exactly <text>. Counting the marker in
+ * the whole screen is not enough on a serial console: the kernel writes to
+ * the same port, and a line such as `audit: rate limit exceeded` can land in
+ * the middle of the command while it is being typed, splitting the marker.
+ * The quotes keep the typed line from matching: only the shell's output,
+ * with the quotes removed, is a row equal to <text>. Rows are checked on
+ * every frame, so output that scrolls away under kernel lines still counts.
+ * Returns { ok, rows } with the last rows on screen, for the FAIL detail. */
+async function serialEcho(p, text, timeout = 8000) {
   await open(p, "/console");
   await p.getByRole("tab", { name: /serial/i }).first().click();
   const panel = p.locator('[role="tabpanel"]:not([hidden]) .term--x');
   await connected(p);
   await panel.click();
-  await p.keyboard.type(`echo ${text}\r`, { delay: 15 });
-  await p.waitForTimeout(2500);
-  return termText(p, '[role="tabpanel"]:not([hidden]) .xterm-rows');
+  await p.keyboard.type(`echo "${text}"\r`, { delay: 15 });
+  const rowsSel = '[role="tabpanel"]:not([hidden]) .xterm-rows';
+  const ok = await p
+    .waitForFunction(
+      ([sel, t]) => [...(document.querySelector(sel)?.children ?? [])].some((r) => (r.textContent ?? "").trim() === t),
+      [rowsSel, text],
+      { timeout },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  const rows = await p
+    .locator(rowsSel)
+    .evaluate((el) => [...el.children].map((r) => (r.textContent ?? "").trim()).filter(Boolean).slice(-4))
+    .catch(() => []);
+  return { ok, rows };
 }
 
 /* ================= checks ================= */
@@ -204,9 +227,8 @@ if (!SERIAL_OK) skip("serial console echoes a command", "FUNC_SERIAL=0");
 else if (!serialBound) skip("serial console echoes a command", "bench serial port not bound");
 else
   await step("serial console echoes a command", async () => {
-    const out = await serialEcho(page, `${MARK}-c`);
-    const n = out.split(`${MARK}-c`).length - 1;
-    check("serial console echoes a command", n >= 2, `marker seen ${n}× (typed + printed)`);
+    const { ok, rows } = await serialEcho(page, `${MARK}-c`);
+    check("serial console echoes a command", ok, ok ? "the board printed the marker on its own line" : `no row reads the marker; last rows: ${JSON.stringify(rows)}`);
     await shot(page, "console-serial");
   });
 if (!adbSerial) skip("adb shell runs a command", NO_ADB);
