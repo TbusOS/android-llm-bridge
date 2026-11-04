@@ -743,6 +743,9 @@ _job_lock = asyncio.Lock()
 _job_release: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
     "_job_release", default=None
 )
+# The data channel of the job this task is running: how a builtin that runs a
+# long tool (the EDL ops) sends progress. Set by _dispatch around the call.
+_job_ws: contextvars.ContextVar[Any] = contextvars.ContextVar("_job_ws", default=None)
 
 
 class _JobProtocolError(Exception):
@@ -824,6 +827,14 @@ _BOARD_PRODUCT: dict[str, str] = {}
 # Where this agent's own log lands (None = file logging off). It is the only
 # file `log-tail agent` will ever read.
 _AGENT_LOG_PATH: Path | None = None
+# EDL tools (ADR-066), resolved by _apply_flash_config; None = no edl-* rows.
+# _EDL_PROBLEM says why when the config asked for them and they are absent.
+_EDL: _EdlTools | None = None
+_EDL_PROBLEM = ""
+
+
+def _edl_problem_note() -> str:
+    return f" — at start-up: {_EDL_PROBLEM}" if _EDL_PROBLEM else ""
 
 
 def _resolve_fastboot(configured: str) -> str:
@@ -945,12 +956,16 @@ def _partition_refusal(name: str, board: Any = None) -> tuple[str, str] | None:
 
 class _JobRejected(Exception):
     """A request this agent will not act on. `code` is the wire error code
-    the done frame carries; `message` is the human-readable reason."""
+    the done frame carries; `message` is the human-readable reason. A builtin
+    whose tool ran and failed passes the tool's exit code and output along,
+    so the caller sees what the tool said, not only that it failed."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, rc: int = -1, stdout: str = "") -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.rc = rc
+        self.stdout = stdout
 
 
 # A placeholder is a WHOLE argv element, never part of one: "{partition}" is
@@ -1067,10 +1082,10 @@ class OpSpec:
     """One row of the op table. `describe()` is the OpDesc the hub sees."""
 
     name: str
-    group: str  # "fastboot" | "host"
+    group: str  # "fastboot" | "host" | "edl"
     summary: str
     params: tuple[ParamSpec, ...] = ()  # in argv order
-    needs: str = ""  # "fastboot-device" | ""
+    needs: str = ""  # "fastboot-device" | "edl-device" | ""
     image: bool = False  # receives an image stream before running
     max_image_bytes: int = 0  # image ops: 0 = bounded only by this host's temp space
     mutates: bool = True  # changes the device: the hub confirms + records
@@ -1086,9 +1101,9 @@ class OpSpec:
     no_device_msg: str = "no device is in fastboot on this host"
 
     def __post_init__(self) -> None:
-        if self.group not in ("fastboot", "host"):
+        if self.group not in ("fastboot", "host", "edl"):
             raise ValueError(f"op {self.name}: unknown group {self.group!r}")
-        if self.needs not in ("", "fastboot-device"):
+        if self.needs not in ("", "fastboot-device", "edl-device"):
             raise ValueError(f"op {self.name}: unknown needs {self.needs!r}")
         if self.record not in ("none", "events", "uart"):
             raise ValueError(f"op {self.name}: unknown record tier {self.record!r}")
@@ -1515,6 +1530,383 @@ def _fit_rows(rows: list[str], budget: int) -> tuple[list[str], bool]:
     return kept, False
 
 
+# ── builtins: Qualcomm EDL / 9008 (ADR-066) ──────────────────────────
+# A board in Qualcomm's emergency download mode enumerates as USB 05c6:9008
+# and shows up as a COM port ("Qualcomm HS-USB QDLoader 9008 (COM53)").
+# Writing it takes two vendor tools, in order: QSaharaServer loads the
+# firehose programmer into the board's RAM over Sahara; fh_loader then talks
+# firehose to that programmer — program what the XML lists, or reset.
+# Sahara has to run again after every fresh entry into 9008: the programmer
+# lives in RAM and is gone once the board leaves.
+#
+# Same rule as every other op (ADR-056 §决定 5): the hub sends names and
+# choices, never a path or a command line. `dir` is a directory RELATIVE to
+# edl_root in agent.conf; the agent joins it, resolves it (links and
+# junctions included) and refuses anything that lands outside the root.
+# Any package under the root can be used — the root is the boundary, there
+# is no list of allowed packages. The XML and programmer are bare file names
+# inside that directory. The COM port is found here from the USB listing; a
+# caller may name one only to choose among the 9008 ports this host sees,
+# never another port — the board's debug console is a COM port too.
+#
+# How the tools are run is exactly how they were run by hand on the bench
+# (2026-11-03): working directory = the package directory, files by name.
+# fh_loader writes port_trace.txt into its working directory, so that file
+# appears in the package directory, as it did then.
+
+_EDL_VID, _EDL_PID = "05c6", "9008"
+# The Sahara image id under which the boot ROM asks for the firehose programmer.
+_EDL_SAHARA_ID = "13"
+_EDL_COM_RE = re.compile(r"\((COM[1-9][0-9]{0,2})\)\s*$")
+_EDL_PORT_PATTERN = r"COM[1-9][0-9]{0,2}"
+# One path segment: starts with a letter or digit (so never "." or ".."),
+# then letters, digits, dot, underscore, dash, space. Up to 8 segments.
+_EDL_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._ -]{0,63}"
+_EDL_DIR_PATTERN = rf"{_EDL_SEGMENT}(?:[\\/]{_EDL_SEGMENT}){{0,7}}"
+_EDL_FILE = r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+_EDL_XML_PATTERN = rf"{_EDL_FILE}\.xml(?:,{_EDL_FILE}\.xml){{0,15}}"
+_EDL_PROGRAMMER_PATTERN = rf"{_EDL_FILE}\.(?:elf|mbn|melf)"
+_EDL_MEMORY = ("emmc", "nand", "spinor", "ufs")
+# What a successful run prints (bench output, 2026-11-03). Exit code 0 alone
+# is not taken as success: a tool that exits 0 without these lines did not
+# finish what it was asked to do, or is not the tool we think it is.
+_EDL_SAHARA_OK = ("File transferred successfully", "Sahara protocol completed")
+_EDL_FIREHOSE_OK = ("{All Finished Successfully}",)
+_EDL_SAHARA_TIMEOUT_S = 60.0
+_EDL_PROGRAM_TIMEOUT_S = (
+    1500.0  # under the hub's 30-minute job limit, so the agent's kill comes first
+)
+_EDL_RESET_TIMEOUT_S = 60.0
+_EDL_TAIL_LINES = 80  # output lines the done frame carries; every line also went out as progress
+_EDL_OP_NAMES = frozenset({"edl-sahara", "edl-program", "edl-reset"})
+
+
+@dataclass(frozen=True)
+class _EdlTools:
+    sahara: str  # QSaharaServer
+    firehose: str  # fh_loader
+    root: Path  # the directory every `dir` is relative to
+
+
+def _resolve_edl(sahara: str, firehose: str, root: str) -> tuple[_EdlTools | None, str]:
+    """(tools, problem). All three unset = EDL not wanted here: (None, "").
+    Some set = wanted, so a missing piece is a problem to report at start-up,
+    not a silent absence of three rows."""
+    sahara, firehose, root = (v.strip() for v in (sahara or "", firehose or "", root or ""))
+    if not (sahara or firehose or root):
+        return None, ""
+    missing = [
+        k
+        for k, v in (("edl_sahara", sahara), ("edl_firehose", firehose), ("edl_root", root))
+        if not v
+    ]
+    if missing:
+        return None, f"{', '.join(missing)} not set — all three are needed"
+    for key, path in (("edl_sahara", sahara), ("edl_firehose", firehose)):
+        if not Path(path).is_file():
+            return None, f"{key} {path} is not a file"
+    if not Path(root).is_dir():
+        return None, f"edl_root {root} is not a directory"
+    return _EdlTools(sahara, firehose, Path(root)), ""
+
+
+def _edl_inside(base: Path, path: Path) -> bool:
+    return path == base or base in path.parents
+
+
+def _edl_package(root: Path, rel: str) -> Path:
+    """The package directory `rel` names under `root`, resolved. Blocking."""
+    base = root.resolve()
+    target = (base / rel).resolve()
+    if not _edl_inside(base, target) or target == base:
+        raise _JobRejected("EDL_PACKAGE_REJECTED", f"dir {rel!r} resolves outside edl_root")
+    if not target.is_dir():
+        raise _JobRejected(
+            "EDL_PACKAGE_REJECTED", f"dir {rel!r} is not a directory under edl_root on this host"
+        )
+    # fh_loader takes a comma-separated --sendxml list; keep commas out of
+    # every path it is handed so nothing can be read as a second entry.
+    if "," in str(target):
+        raise _JobRejected(
+            "EDL_PACKAGE_REJECTED", f"dir {rel!r}: a comma in the path is not supported"
+        )
+    return target
+
+
+def _edl_file(root: Path, pkg: Path, rel: str, name: str, what: str) -> str:
+    """`name` as a file in the package; returned as the bare name the tool
+    is given (its working directory is the package). Blocking."""
+    path = (pkg / name).resolve()
+    if not _edl_inside(root.resolve(), path) or not path.is_file():
+        raise _JobRejected("EDL_PACKAGE_REJECTED", f"{what} {name!r} is not a file in {rel!r}")
+    return name
+
+
+def _edl_programmer(root: Path, pkg: Path, rel: str, name: str) -> str:
+    """The named programmer, or the only firehose programmer in the package."""
+    if name:
+        return _edl_file(root, pkg, rel, name, "programmer")
+    found = sorted(
+        p.name
+        for p in pkg.iterdir()
+        if p.is_file()
+        and p.name.lower().startswith("prog_")
+        and "firehose" in p.name.lower()
+        and p.suffix.lower() in (".elf", ".mbn", ".melf")
+    )
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise _JobRejected(
+            "EDL_PACKAGE_REJECTED",
+            f"no firehose programmer (prog_*firehose*.elf/.mbn) in {rel!r} — name one with programmer=",
+        )
+    raise _JobRejected(
+        "EDL_PACKAGE_REJECTED",
+        f"{len(found)} firehose programmers in {rel!r} ({', '.join(found)}) — choose one with programmer=",
+    )
+
+
+def _edl_ports(devices: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """(COM ports of the 9008 devices, names of 9008 devices without a COM
+    port). A 9008 device without a port is a missing or broken driver — worth
+    saying, since "no board in 9008" would send someone to the board."""
+    ports: set[str] = set()
+    portless: list[str] = []
+    for d in devices:
+        if d.get("vid") != _EDL_VID or d.get("pid") != _EDL_PID:
+            continue
+        m = _EDL_COM_RE.search(str(d.get("name") or ""))
+        if m:
+            ports.add(m.group(1))
+        else:
+            portless.append(str(d.get("name") or d.get("instance_id") or "?"))
+    return sorted(ports, key=lambda p: int(p[3:])), portless
+
+
+def _pick_edl_port(ports: list[str], portless: list[str], requested: str) -> str:
+    if not ports:
+        if portless:
+            raise _JobRejected(
+                "EDL_NO_DEVICE",
+                f"a board in 9008 (05c6:9008) is attached but has no COM port ({', '.join(portless)}) "
+                "— the Qualcomm USB driver is missing or failed on this host",
+            )
+        raise _JobRejected(
+            "EDL_NO_DEVICE", "no board in 9008 (USB 05c6:9008) is attached to this host"
+        )
+    if requested:
+        if requested in ports:
+            return requested
+        raise _JobRejected(
+            "EDL_NO_DEVICE",
+            f"{requested} is not a 9008 port on this host (9008 ports here: {', '.join(ports)})",
+        )
+    if len(ports) > 1:
+        raise _JobRejected(
+            "EDL_PORT_AMBIGUOUS",
+            f"{len(ports)} boards in 9008 on this host ({', '.join(ports)}) — choose one with port=",
+        )
+    return ports[0]
+
+
+async def _edl_usb_devices(timeout_s: float) -> list[dict[str, Any]]:
+    """The USB listing the 9008 port is read from. Windows only: the port
+    number comes from the device name Windows gives the QDLoader driver."""
+    if sys.platform != "win32":
+        raise _JobRejected(
+            "EDL_NO_DEVICE",
+            "EDL ops find the 9008 port in the Windows device list; this host is not Windows",
+        )
+    return await _usb_list_windows(timeout_s)
+
+
+async def _edl_port(requested: str) -> str:
+    ports, portless = _edl_ports(await _edl_usb_devices(30.0))
+    return _pick_edl_port(ports, portless, requested)
+
+
+def _decode_tool(raw: bytes) -> str:
+    """The vendor tools print in the console's code page (GBK on a Chinese
+    Windows). UTF-8 first, which covers plain ASCII; the code page if that fails."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("gbk", errors="replace")
+
+
+async def _run_edl_tool(
+    data_ws: Any, argv: list[str], *, cwd: Path, timeout_s: float, fail_code: str
+) -> tuple[int, str]:
+    """Run one vendor tool; every output line goes out as progress while it
+    runs. (rc, combined output). A timeout or a cancel kills the tool."""
+    _log.info("job: running %s (in %s)", " ".join(argv), cwd)
+    kw: dict[str, Any] = {"creationflags": _CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(cwd),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            limit=1 << 20,
+            **kw,
+        )
+    except OSError as e:
+        raise _JobRejected(fail_code, f"cannot run {Path(argv[0]).name} on this host: {e}") from e
+    chunks: list[bytes] = []
+
+    async def pump() -> None:
+        assert proc.stdout is not None
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                return
+            chunks.append(line)
+            text = _decode_tool(line).rstrip()
+            if text:
+                await _job_progress(data_ws, "edl", 0, 0, text)
+
+    timed_out = False
+    try:
+        async with asyncio.timeout(timeout_s):
+            await pump()
+            rc = await proc.wait()
+    except TimeoutError:
+        timed_out = True
+        await _reap(proc)
+        rc = -1
+    except BaseException:
+        await _reap(proc)
+        raise
+    out = _decode_tool(b"".join(chunks))
+    if timed_out:
+        out = out.rstrip() + f"\n[agent] killed after {timeout_s:.0f}s"
+    return rc, out
+
+
+def _edl_tail(out: str) -> str:
+    return "\n".join(out.splitlines()[-_EDL_TAIL_LINES:])
+
+
+def _edl_check(
+    rc: int, out: str, markers: tuple[str, ...], tool: str, code: str, hint: str
+) -> None:
+    """Raise unless the tool exited 0 AND printed every success line."""
+    missing = [m for m in markers if m not in out]
+    if rc == 0 and not missing:
+        return
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    errors = [ln for ln in lines if "ERROR" in ln]
+    last = errors[-1] if errors else (lines[-1] if lines else "(no output)")
+    why = f"exit code {rc}" if rc != 0 else f"exit code 0 without {missing[0]!r}"
+    raise _JobRejected(
+        code, f"{tool} failed ({why}): {last[-300:]} — {hint}", rc=rc, stdout=_edl_tail(out)
+    )
+
+
+async def _op_edl_sahara(
+    _spec: OpSpec, values: Mapping[str, Any], *, tools: _EdlTools
+) -> tuple[str, dict[str, Any]]:
+    data_ws = _job_ws.get()
+    rel = str(values["dir"])
+    pkg = await asyncio.to_thread(_edl_package, tools.root, rel)
+    programmer = await asyncio.to_thread(
+        _edl_programmer, tools.root, pkg, rel, str(values["programmer"])
+    )
+    port = await _edl_port(str(values["port"]))
+    argv = [tools.sahara, "-p", f"\\\\.\\{port}", "-s", f"{_EDL_SAHARA_ID}:{programmer}"]
+    started = time.monotonic()
+    rc, out = await _run_edl_tool(
+        data_ws, argv, cwd=pkg, timeout_s=_EDL_SAHARA_TIMEOUT_S, fail_code="EDL_SAHARA_FAILED"
+    )
+    _edl_check(
+        rc,
+        out,
+        _EDL_SAHARA_OK,
+        "QSaharaServer",
+        "EDL_SAHARA_FAILED",
+        "if the programmer was already loaded since the board entered 9008, go on with "
+        "edl-program; otherwise put the board back into 9008 and run edl-sahara again",
+    )
+    return _edl_tail(out), {
+        "port": port,
+        "dir": rel,
+        "programmer": programmer,
+        "seconds": round(time.monotonic() - started, 1),
+    }
+
+
+async def _op_edl_program(
+    _spec: OpSpec, values: Mapping[str, Any], *, tools: _EdlTools
+) -> tuple[str, dict[str, Any]]:
+    data_ws = _job_ws.get()
+    rel = str(values["dir"])
+    pkg = await asyncio.to_thread(_edl_package, tools.root, rel)
+    xml = [
+        await asyncio.to_thread(_edl_file, tools.root, pkg, rel, name, "xml")
+        for name in str(values["xml"]).split(",")
+    ]
+    port = await _edl_port(str(values["port"]))
+    memory = str(values["memory"])
+    argv = [
+        tools.firehose,
+        f"--port=\\\\.\\{port}",
+        f"--sendxml={','.join(xml)}",
+        f"--search_path={pkg}",
+        f"--memoryname={memory}",
+        "--noprompt",
+    ]
+    started = time.monotonic()
+    rc, out = await _run_edl_tool(
+        data_ws, argv, cwd=pkg, timeout_s=_EDL_PROGRAM_TIMEOUT_S, fail_code="EDL_FIREHOSE_FAILED"
+    )
+    _edl_check(
+        rc,
+        out,
+        _EDL_FIREHOSE_OK,
+        "fh_loader",
+        "EDL_FIREHOSE_FAILED",
+        "the programmer must be loaded first (edl-sahara, once per entry into 9008); "
+        "a write that stopped part-way leaves the board half-written — run it again before resetting",
+    )
+    return _edl_tail(out), {
+        "port": port,
+        "dir": rel,
+        "xml": xml,
+        "memory": memory,
+        # Partial-image notes (zero.bin and the like) are normal for factory
+        # packages; reported so a caller can see them, not counted as failure.
+        "warnings": "There were WARNINGS" in out,
+        "seconds": round(time.monotonic() - started, 1),
+    }
+
+
+async def _op_edl_reset(
+    _spec: OpSpec, values: Mapping[str, Any], *, tools: _EdlTools
+) -> tuple[str, dict[str, Any]]:
+    data_ws = _job_ws.get()
+    port = await _edl_port(str(values["port"]))
+    argv = [tools.firehose, f"--port=\\\\.\\{port}", "--reset", "--noprompt"]
+    # Nothing is read from a package; port_trace.txt goes to a scratch directory.
+    work = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="alb-edl-"))
+    try:
+        rc, out = await _run_edl_tool(
+            data_ws, argv, cwd=work, timeout_s=_EDL_RESET_TIMEOUT_S, fail_code="EDL_FIREHOSE_FAILED"
+        )
+    finally:
+        await asyncio.to_thread(shutil.rmtree, work, True)
+    _edl_check(
+        rc,
+        out,
+        _EDL_FIREHOSE_OK,
+        "fh_loader",
+        "EDL_FIREHOSE_FAILED",
+        "reset goes through the programmer — run edl-sahara first if the board entered 9008 again",
+    )
+    return _edl_tail(out), {"port": port}
+
+
 # ── the rows ─────────────────────────────────────────────────────────
 # Timeouts: fastboot BLOCKS waiting for a device when none is in fastboot
 # mode ("< waiting for any device >"). Without a ceiling one such command
@@ -1715,12 +2107,105 @@ def _host_rows(log_sources: Mapping[str, Path]) -> list[OpSpec]:
     return rows
 
 
+def _edl_rows(tools: _EdlTools) -> list[OpSpec]:
+    """The three EDL rows. Builtins, not argv templates: the port is found at
+    run time, and `-s 13:<file>` / `--port=\\\\.\\COMnn` join a value into a
+    larger argv element, which the template rule forbids on purpose."""
+    pkg = ParamSpec(
+        "dir",
+        "text",
+        pattern=_EDL_DIR_PATTERN,
+        max_len=256,
+        label="package dir",
+    )
+    port = ParamSpec(
+        "port",
+        "text",
+        required=False,
+        default="",
+        pattern=_EDL_PORT_PATTERN,
+        max_len=6,
+        label="9008 port",
+    )
+    return [
+        OpSpec(
+            "edl-sahara",
+            "edl",
+            "load the firehose programmer into a board in 9008 (QSaharaServer); "
+            "dir is relative to edl_root, programmer defaults to the only prog_*firehose* file",
+            params=(
+                pkg,
+                ParamSpec(
+                    "programmer",
+                    "text",
+                    required=False,
+                    default="",
+                    pattern=_EDL_PROGRAMMER_PATTERN,
+                    max_len=136,
+                    label="programmer",
+                ),
+                port,
+            ),
+            needs="edl-device",
+            record="events",
+            timeout_s=_EDL_SAHARA_TIMEOUT_S,
+            builtin=functools.partial(_op_edl_sahara, tools=tools),
+        ),
+        OpSpec(
+            "edl-program",
+            "edl",
+            "write what the XML files list to a board in 9008 (fh_loader); "
+            "xml is comma-separated file names in dir; run edl-sahara first",
+            params=(
+                pkg,
+                ParamSpec(
+                    "xml",
+                    "text",
+                    pattern=_EDL_XML_PATTERN,
+                    max_len=1024,
+                    label="xml list",
+                ),
+                ParamSpec(
+                    "memory",
+                    "enum",
+                    required=False,
+                    default="emmc",
+                    choices=_EDL_MEMORY,
+                    label="memory type",
+                ),
+                port,
+            ),
+            needs="edl-device",
+            record="events",
+            timeout_s=_EDL_PROGRAM_TIMEOUT_S,
+            builtin=functools.partial(_op_edl_program, tools=tools),
+        ),
+        OpSpec(
+            "edl-reset",
+            "edl",
+            "reset a board in 9008 through the loaded programmer (fh_loader --reset)",
+            params=(port,),
+            needs="edl-device",
+            record="events",
+            timeout_s=_EDL_RESET_TIMEOUT_S,
+            builtin=functools.partial(_op_edl_reset, tools=tools),
+        ),
+    ]
+
+
 def _build_ops(
-    fastboot: str = "", log_sources: Mapping[str, Path] | None = None
+    fastboot: str = "",
+    log_sources: Mapping[str, Path] | None = None,
+    edl: _EdlTools | None = None,
 ) -> dict[str, OpSpec]:
     """The op table for a host with THIS fastboot (none = no fastboot rows,
-    in the table and therefore in hello) and THESE log sources."""
-    rows = [*(_fastboot_rows(fastboot) if fastboot else []), *_host_rows(log_sources or {})]
+    in the table and therefore in hello), THESE log sources and THESE EDL
+    tools (none = no EDL rows)."""
+    rows = [
+        *(_fastboot_rows(fastboot) if fastboot else []),
+        *_host_rows(log_sources or {}),
+        *(_edl_rows(edl) if edl is not None else []),
+    ]
     return {row.name: row for row in rows}
 
 
@@ -1819,12 +2304,18 @@ async def _run_job(data_ws: Any, ops: Mapping[str, OpSpec], *, hint: str | None 
         return
     spec = ops.get(op)
     if spec is None:
-        await _job_fail(data_ws, f"unsupported job op {op!r}", code="BENCH_OP_UNKNOWN")
+        why = f"unsupported job op {op!r}"
+        if op in _EDL_OP_NAMES:
+            why = (
+                f"{why}: this agent has no EDL tools configured "
+                f"(edl_sahara, edl_firehose and edl_root in agent.conf){_edl_problem_note()}"
+            )
+        await _job_fail(data_ws, why, code="BENCH_OP_UNKNOWN")
         return
     try:
         await _dispatch(data_ws, reader, spec, req)
     except _JobRejected as e:
-        await _job_fail(data_ws, e.message, code=e.code)
+        await _job_fail(data_ws, e.message, code=e.code, rc=e.rc, stdout=e.stdout)
     except Exception as e:
         # Whatever escaped (fastboot removed after start-up, a broken temp
         # dir, …) still ends the job with a `done` frame: without one the
@@ -1855,11 +2346,14 @@ async def _dispatch(data_ws: Any, reader: _JobReader, spec: OpSpec, req: Mapping
     await _check_board_identity(spec, req, fastboot)
     if spec.builtin is not None:
         await data_ws.send(_job_control({"ev": "accepted", "detail": spec.name}))
+        token = _job_ws.set(data_ws)
         try:
             out, data = await spec.builtin(spec, values)
         except _JobRejected as e:
-            await _job_fail(data_ws, e.message, code=e.code)
+            await _job_fail(data_ws, e.message, code=e.code, rc=e.rc, stdout=e.stdout)
             return
+        finally:
+            _job_ws.reset(token)
         await _job_finish(data_ws, 0, out, "", fail_code="", data=data)
         return
     argv = spec.assemble(values)
@@ -1876,7 +2370,7 @@ async def _finish_tool(data_ws: Any, spec: OpSpec, rc: int, out: str, err: str) 
     await _job_finish(data_ws, rc, out, err, fail_code=code, ok_override=ok, fail_error=error)
 
 
-async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1) -> None:
+async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1, stdout: str = "") -> None:
     with contextlib.suppress(Exception):
         await data_ws.send(
             _job_control(
@@ -1884,7 +2378,7 @@ async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1) -> Non
                     "ev": "done",
                     "ok": False,
                     "rc": rc,
-                    "stdout": "",
+                    "stdout": stdout[-_JOB_OUTPUT_CAP:],
                     "stderr": "",
                     "error": error,
                     "code": code,
@@ -3602,6 +4096,7 @@ def _self_check_main(args: argparse.Namespace) -> int:
                 "agent_id": args.agent_id,
                 "agent_id_fixed": args.agent_id_explicit,
                 "boards": _boards_view(),
+                "edl_problem": _EDL_PROBLEM,
             }
         )
     )
@@ -3977,6 +4472,11 @@ _CONFIG_KEYS: dict[str, Any] = {
     # "this build does not support it" rather than "use --flag instead".
     "fastboot_path": str,
     "flash_partitions": str,
+    # ADR-066 Qualcomm EDL (9008): the two vendor tools and the directory the
+    # factory packages live under. All three, or none.
+    "edl_sahara": str,
+    "edl_firehose": str,
+    "edl_root": str,
 }
 # `<base>.<board>` keys (ADR-063 phase 2) → the args attribute holding
 # {board: value}. Config file only: a flag per board would be a flag whose
@@ -4101,6 +4601,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="comma-separated partition allowlist (or flash_partitions in "
         "agent.conf). Empty = any well-formed name is accepted",
+    )
+    ap.add_argument(
+        "--edl-sahara",
+        default=None,
+        help="QSaharaServer executable (or edl_sahara in agent.conf); with "
+        "--edl-firehose and --edl-root, enables the edl-* ops",
+    )
+    ap.add_argument(
+        "--edl-firehose",
+        default=None,
+        help="fh_loader executable (or edl_firehose in agent.conf)",
+    )
+    ap.add_argument(
+        "--edl-root",
+        default=None,
+        help="directory holding the unpacked factory packages (or edl_root in "
+        "agent.conf); every edl-* `dir` is relative to it and must stay inside it",
     )
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument(
@@ -4291,6 +4808,15 @@ def _log_environment(args: argparse.Namespace) -> None:
             "fastboot: not found — this agent will NOT advertise the fastboot "
             "capability (set fastboot_path in agent.conf to enable flashing)"
         )
+    if _EDL is not None:
+        _log.info(
+            "edl: sahara %s · firehose %s · packages under %s",
+            _EDL.sahara,
+            _EDL.firehose,
+            _EDL.root,
+        )
+    elif _EDL_PROBLEM:
+        _log.warning("edl: NOT enabled — %s", _EDL_PROBLEM)
     _log.info("ops: %s", ", ".join(_OPS) if _OPS else "none")
     ports = _enumerate_com()
     _log.info(
@@ -4311,7 +4837,13 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
     whether this agent claims the `fastboot` capability at all — and which
     rows the hello's op table carries."""
     global _FASTBOOT_PATH, _FLASH_PARTITIONS, _BOARD_PARTITIONS, _BOARD_PRODUCT, _OPS
+    global _EDL, _EDL_PROBLEM
     _FASTBOOT_PATH = _resolve_fastboot(getattr(args, "fastboot_path", None) or "")
+    _EDL, _EDL_PROBLEM = _resolve_edl(
+        getattr(args, "edl_sahara", None) or "",
+        getattr(args, "edl_firehose", None) or "",
+        getattr(args, "edl_root", None) or "",
+    )
     _FLASH_PARTITIONS = _partition_set(getattr(args, "flash_partitions", None) or "")
     per_board = getattr(args, "board_flash_partitions", None) or {}
     _BOARD_PARTITIONS = {b: _partition_set(v) for b, v in per_board.items()}
@@ -4332,7 +4864,7 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
         )
     # The op table follows from the same resolution (ADR-059): fastboot rows
     # only when the tool resolved, log-tail sources from what is configured.
-    _OPS = _build_ops(_FASTBOOT_PATH, _log_sources())
+    _OPS = _build_ops(_FASTBOOT_PATH, _log_sources(), _EDL)
     _STATUS.set_ops(list(_OPS))
 
 

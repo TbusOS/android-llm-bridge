@@ -143,6 +143,7 @@ so a new op on the agent needs no hub code.
 | `usb-list` | USB devices as Windows sees them: name, VID:PID, serial, driver, problem code, interface class ids — tells "cable not on this machine" from "driver missing" when `fastboot devices` is empty | no |
 | `log-tail` | last N lines of a host log, optional substring filter. Sources are names only: `agent` (this agent's own log, when `log_file` is set), `setupapi` (Windows' driver-install log) and `update` (the last remote update, once there has been one) | no |
 | `agent-update` | replace this agent's own files and restart it — see below | no |
+| `edl-sahara` / `edl-program` / `edl-reset` | Qualcomm 9008 (EDL) flashing — see "Qualcomm 9008" below | no (needs the board in 9008) |
 
 Two rules do not change:
 
@@ -184,6 +185,39 @@ per-board list set:
 - the global `flash_partitions` must go, and a per-board list may not be
   empty — either would widen the list, so the agent refuses to start, and
   does so before stopping the instance already running.
+
+### Qualcomm 9008 (EDL)
+
+Some boards only take an image in Qualcomm's emergency download mode (USB
+05c6:9008, "Qualcomm HS-USB QDLoader 9008 (COMnn)" in Device Manager). Three
+lines in `agent.conf` add three ops:
+
+```
+edl_sahara=D:\edl\tools\QSaharaServer.exe
+edl_firehose=D:\edl\tools\fh_loader.exe
+edl_root=D:\edl\packages
+```
+
+| op | what |
+|---|---|
+| `edl-sahara dir=<package dir> [programmer=<file>]` | QSaharaServer loads the firehose programmer into the board's RAM; needed again after every entry into 9008 |
+| `edl-program dir=<package dir> xml=<a.xml,patch0.xml> [memory=emmc]` | fh_loader writes what the XML files list |
+| `edl-reset` | reset the board out of 9008 |
+
+- `dir` is relative to `edl_root` (e.g. `board-a\fac`). The hub sends only
+  that name; the full path is built here, and anything that resolves outside
+  `edl_root` (links included) is refused. Any package under the root works —
+  there is no list of packages.
+- Without `programmer`, the only `prog_*firehose*` file in the directory is
+  used; with two, the op is refused and lists them.
+- The agent finds the 9008 COM port in the USB list (05c6:9008 only); none,
+  or two boards in 9008, is an error that lists what it found. `port=COMnn`
+  only chooses among those 9008 ports — the debug console cannot be picked.
+- Both tools run in the package directory with files given by name, exactly
+  as they were run by hand; fh_loader leaves `port_trace.txt` there.
+- Success = exit code 0 **and** the tool's success line ("Sahara protocol
+  completed", "{All Finished Successfully}"). A failure carries the last 80
+  lines of the tool's output.
 
 ## Updating the agent from the hub
 

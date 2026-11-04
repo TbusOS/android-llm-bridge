@@ -1,0 +1,126 @@
+
+Base Version: 18.04.05.15.00
+Binary build date: Apr  5 2018 @ 15:00:19
+Incremental Build version: 18.04. 5.15.00.19
+
+17:37:48: INFO: FH_LOADER WAS CALLED EXACTLY LIKE THIS
+************************************************
+D:\edl\tools\fh_loader.exe --port=\\.\COM53 --sendxml=rawprogram0_abl_only.xml --search_path=D:\packages\board-a\fac --memoryname=emmc --noprompt 
+************************************************
+
+17:37:48: INFO: Current working dir (cwd): D:\packages\board-a\fac\
+17:37:48: INFO: Showing network mappings to allow debugging
+17:37:48: INFO: 
+
+
+
+17:37:48: INFO: Trying to store 'rawprogram0_abl_only.xml' in string table
+17:37:48: INFO: Looking for file 'rawprogram0_abl_only.xml'
+17:37:48: INFO: User wants to talk to port '\\.\COM53'
+17:37:48: INFO: Took       0.01600000 seconds to open port
+17:37:48: INFO: Sorting TAGS to ensure order is <configure>,<erase>, others, <patch>,<power>
+17:37:48: INFO: If  you don't want this, use --dontsorttags
+
+17:37:48: INFO: Sending <configure>
+
+17:37:48: INFO: TARGET SAID: 'INFO: Binary build date: Oct 27 2026 @ 19:59:57'
+
+17:37:48: INFO: TARGET SAID: 'INFO: Binary build date: Oct 27 2026 @ 19:59:57
+'
+
+17:37:48: INFO: TARGET SAID: 'INFO: Chip serial num: 305419896 (0x12345678)'
+
+17:37:48: INFO: TARGET SAID: 'INFO: Supported Functions (15):'
+
+17:37:48: INFO: TARGET SAID: 'INFO: program'
+
+17:37:48: INFO: TARGET SAID: 'INFO: read'
+
+17:37:48: INFO: TARGET SAID: 'INFO: nop'
+
+17:37:48: INFO: TARGET SAID: 'INFO: patch'
+
+17:37:48: INFO: TARGET SAID: 'INFO: configure'
+
+17:37:48: INFO: TARGET SAID: 'INFO: setbootablestoragedrive'
+
+17:37:48: INFO: TARGET SAID: 'INFO: erase'
+
+17:37:48: INFO: TARGET SAID: 'INFO: power'
+
+17:37:48: INFO: TARGET SAID: 'INFO: firmwarewrite'
+
+17:37:48: INFO: TARGET SAID: 'INFO: getstorageinfo'
+
+17:37:48: INFO: TARGET SAID: 'INFO: benchmark'
+
+17:37:48: INFO: TARGET SAID: 'INFO: emmc'
+
+17:37:48: INFO: TARGET SAID: 'INFO: ufs'
+
+17:37:48: INFO: TARGET SAID: 'INFO: fixgpt'
+
+17:37:48: INFO: TARGET SAID: 'INFO: getsha256digest'
+
+17:37:48: INFO: TARGET SAID: 'INFO: End of supported functions 15'
+
+17:37:48: INFO: TARGET SAID: 'INFO: Calling handler for configure'
+
+17:37:48: INFO: TARGET SAID: 'INFO: Storage type set to value eMMC'
+17:37:48: INFO: fh.attrs.MaxPayloadSizeToTargetInBytes = 1048576
+17:37:48: INFO: fh.attrs.MaxPayloadSizeToTargetInBytesSupported = 1048576
+17:37:48: INFO: In handleProgram('abl.elf')
+17:37:48: INFO: Looking for file 'abl.elf'
+17:37:48: INFO: =======================================================
+17:37:48: INFO: {<program> FILE: 'D:\packages\board-a\fac\abl.elf'}
+17:37:48: INFO: {<program> (724.00 KB) 1448 sectors needed at location 12175360 on LUN 0}
+17:37:48: INFO: =======================================================
+
+
+17:37:48: INFO: TARGET SAID: 'INFO: Calling handler for program'
+
+17:37:48: INFO: Overall to target  0.016 seconds (44.19 MBps)
+17:37:48: INFO: 
+17:37:48: INFO: =======================================================
+17:37:48: INFO: ==================== {SUCCESS} ========================
+17:37:48: INFO: =======================================================
+
+
+17:37:48: INFO: In handleProgram('abl.elf')
+17:37:48: INFO: Looking for file 'abl.elf'
+17:37:48: INFO: =======================================================
+17:37:48: INFO: {<program> FILE: 'D:\packages\board-a\fac\abl.elf'}
+17:37:48: INFO: {<program> (724.00 KB) 1448 sectors needed at location 12195840 on LUN 0}
+17:37:48: INFO: =======================================================
+
+
+17:37:48: INFO: TARGET SAID: 'INFO: Calling handler for program'
+
+17:37:48: INFO: Overall to target  0.016 seconds (44.19 MBps)
+17:37:48: INFO: 
+17:37:48: INFO: =======================================================
+17:37:48: INFO: ==================== {SUCCESS} ========================
+17:37:48: INFO: =======================================================
+
+
+17:37:48: INFO: ==============================================================
+17:37:48: INFO: Files used and their paths
+17:37:48: INFO:   1 'D:\packages\board-a\fac\port_trace.txt'
+17:37:48: INFO:   2 'D:\packages\board-a\fac\rawprogram0_abl_only.xml'
+17:37:48: INFO:   3 'D:\packages\board-a\fac\abl.elf'
+
+17:37:48: INFO:      _             (done)
+17:37:48: INFO:     | |                 
+17:37:48: INFO:   __| | ___  _ __   ___ 
+17:37:48: INFO:  / _` |/ _ \| '_ \ / _ \
+17:37:48: INFO: | (_| | (_) | | | |  __/
+17:37:48: INFO:  \__,_|\___/|_| |_|\___|
+17:37:48: INFO: {All Finished Successfully}
+
+17:37:48: INFO: Overall to target  0.281 seconds (5.03 MBps)
+
+Writing log to 'D:\packages\board-a\fac\port_trace.txt', might take a minute
+
+
+Log is 'D:\packages\board-a\fac\port_trace.txt'
+

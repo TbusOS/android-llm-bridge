@@ -68,3 +68,22 @@ log_file=logs/agent.log
 #   flash_partitions.board-a=boot,dtbo,vendor_cfg
 #   fastboot_product.board-a=board_a_product
 #   flash_partitions.board-b=boot_a,boot_b,dtbo_a,dtbo_b
+
+# ── Qualcomm 9008 / EDL flashing (optional, ADR-066) ──────────────────
+# For boards that only take an image in Qualcomm's emergency download mode
+# (USB 05c6:9008, "Qualcomm HS-USB QDLoader 9008 (COMnn)"). Set all three
+# and the agent offers edl-sahara / edl-program / edl-reset; set some and it
+# logs which one is missing and offers none.
+#   edl_sahara   — QSaharaServer.exe (loads the firehose programmer)
+#   edl_firehose — fh_loader.exe     (writes what the XML lists, resets)
+#   edl_root     — the directory the unpacked factory packages sit under.
+#                  The hub names a package by its directory RELATIVE to this
+#                  root (`dir=<package>\<subdir>`); anything that resolves
+#                  outside it is refused. Any package under it can be used.
+# The 9008 COM port is found from the USB device list; never set here.
+#   edl_sahara=D:\edl\tools\QSaharaServer.exe
+#   edl_firehose=D:\edl\tools\fh_loader.exe
+#   edl_root=D:\edl\packages
+#edl_sahara=
+#edl_firehose=
+#edl_root=

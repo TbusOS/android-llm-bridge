@@ -532,6 +532,46 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "Check that the file exists on the bench host and the agent's account "
         "may read it; `alb bench ops` lists the sources this agent offers",
     ),
+    # Qualcomm EDL / 9008 (ADR-066). One code per place to look: the board
+    # (not in 9008), the choice of port, the package on the bench host, and
+    # which of the two vendor tools failed.
+    "EDL_NO_DEVICE": ErrorSpec(
+        "EDL_NO_DEVICE",
+        "transport",
+        "No board in 9008 (USB 05c6:9008 with a COM port) is attached to the agent host",
+        "Put the board into 9008 (it enters on its own after some boot errors, or by "
+        "shorting the test point at power-on); `alb bench usb` shows whether it enumerated "
+        "and whether the Qualcomm driver gave it a COM port",
+    ),
+    "EDL_PORT_AMBIGUOUS": ErrorSpec(
+        "EDL_PORT_AMBIGUOUS",
+        "transport",
+        "More than one board in 9008 is attached to the agent host",
+        "Choose one with port=COMnn (the error lists the 9008 ports found)",
+    ),
+    "EDL_PACKAGE_REJECTED": ErrorSpec(
+        "EDL_PACKAGE_REJECTED",
+        "transport",
+        "The package directory or a file in it is not usable on the agent host: outside "
+        "edl_root, missing, or not unique; nothing was sent to the board",
+        "dir is relative to edl_root in the bench agent.conf; xml and programmer are file "
+        "names inside dir",
+    ),
+    "EDL_SAHARA_FAILED": ErrorSpec(
+        "EDL_SAHARA_FAILED",
+        "transport",
+        "QSaharaServer did not load the firehose programmer",
+        "If edl-sahara already succeeded since the board entered 9008, go on with "
+        "edl-program; otherwise put the board back into 9008 and run edl-sahara again",
+    ),
+    "EDL_FIREHOSE_FAILED": ErrorSpec(
+        "EDL_FIREHOSE_FAILED",
+        "transport",
+        "fh_loader reported a failure (or did not report success)",
+        "Run edl-sahara first after every entry into 9008; read the tool output in the "
+        "result — a write that stopped part-way leaves the board half-written, so run it "
+        "again before resetting",
+    ),
     # Remote agent update (ADR-060). Four codes because each points at a
     # different place to look: the bundle, the new code, the bench host's
     # update log, or the bench host itself.

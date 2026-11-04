@@ -16,7 +16,7 @@ from alb.infra.errors import ERROR_CODES
 _AGENT = Path(__file__).resolve().parents[2] / "clients" / "windows-agent" / "alb_agent.py"
 # Any quoted literal shaped like one of the agent's code families. Matching
 # `code="..."` alone missed codes passed positionally (`_JobRejected("…")`).
-_CODE_RE = re.compile(r'"((?:FLASH|FASTBOOT|BENCH|SERIAL|ADB|AGENT)_[A-Z0-9_]+)"')
+_CODE_RE = re.compile(r'"((?:FLASH|FASTBOOT|BENCH|SERIAL|ADB|AGENT|EDL)_[A-Z0-9_]+)"')
 
 
 def _agent_codes() -> set[str]:
@@ -32,6 +32,7 @@ def test_the_scan_finds_the_codes_it_is_meant_to_find():
         "FASTBOOT_NO_DEVICE",
         "BENCH_OP_UNKNOWN",
         "BENCH_LOG_UNAVAILABLE",  # passed positionally — the case the first pattern missed
+        "EDL_NO_DEVICE",  # the EDL family (ADR-066): missing from the pattern = never checked
     } <= codes
 
 

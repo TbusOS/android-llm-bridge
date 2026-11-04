@@ -211,6 +211,7 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 | `usb-list` | 列这台 Windows 上的 USB 设备：名称、VID:PID、序列号、驱动、问题码、接口类型。`fastboot devices` 为空时，用它分清是线没插在这台机器还是驱动没装 | 否 |
 | `log-tail` | 读本机日志的最后 N 行，可按关键字筛。来源只有名字：`agent`（本 agent 自己的日志，`log_file` 配了才有）、`setupapi`（Windows 的驱动安装日志）、`update`（上一次远程更新的经过，更新过才有） | 否 |
 | `agent-update` | 换这个 agent 自己的文件并重启，见下一节 | 否 |
+| `edl-sahara` / `edl-program` / `edl-reset` | 高通 9008（EDL）烧录，见下面「高通 9008」一节 | 否（要板子在 9008 里） |
 
 两条规矩不变：
 
@@ -243,6 +244,33 @@ flash_partitions.board-b=boot_a,boot_b
   不说「线上接的是哪块板」，这一步才说。
 - `flash_partitions` 总名单必须删掉，按板名单不能为空 —— 两种写法都会让名单变宽，
   agent 拒绝启动，而且在停掉旧实例之前就拒绝。
+
+### 高通 9008（EDL）烧录
+
+有的板子只能在高通紧急下载模式里写（USB 05c6:9008，设备管理器里叫
+「Qualcomm HS-USB QDLoader 9008 (COMnn)」）。在 `agent.conf` 里配三行，agent 就多出三个操作：
+
+```
+edl_sahara=D:\edl\tools\QSaharaServer.exe
+edl_firehose=D:\edl\tools\fh_loader.exe
+edl_root=D:\edl\packages
+```
+
+| 操作 | 做什么 |
+|---|---|
+| `edl-sahara dir=<包目录> [programmer=<文件名>]` | 用 QSaharaServer 把 firehose programmer 送进板子内存。每次重新进 9008 都要先跑一次 |
+| `edl-program dir=<包目录> xml=<a.xml,patch0.xml> [memory=emmc]` | 用 fh_loader 按清单写 |
+| `edl-reset` | 让板子从 9008 重启出来 |
+
+- `dir` 是 `edl_root` 下的相对目录（比如 `board-a\fac`），hub 只发这个名字，
+  完整路径在这台机器上拼；拼出来跑到 `edl_root` 外面的（包括链接指出去的）一律拒绝。
+  根目录下哪个包都能用，没有包名单。
+- `programmer` 不写就用目录里唯一的 `prog_*firehose*` 文件，有两个就拒绝、列出来让你选。
+- 9008 的 COM 口 agent 自己从 USB 列表里找，只认 05c6:9008；找不到、或有两块板都在 9008 时报错并列出。
+  `port=COMnn` 只能在这几个 9008 口里挑，调试串口点不中。
+- 两个工具都在包目录里运行，文件按名字给，和手工跑的命令一样；fh_loader 会在包目录里写 `port_trace.txt`。
+- 判成功要退出码 0 **并且**有成功标志（Sahara 的「Sahara protocol completed」、
+  fh_loader 的「{All Finished Successfully}」）。失败时结果里带工具输出的最后 80 行。
 
 ## 更新 agent：在 Linux 那边推，不用到这台机器上拷
 

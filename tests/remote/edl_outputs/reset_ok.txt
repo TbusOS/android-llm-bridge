@@ -1,0 +1,46 @@
+
+Base Version: 18.04.05.15.00
+Binary build date: Apr  5 2018 @ 15:00:19
+Incremental Build version: 18.04. 5.15.00.19
+
+17:39:04: INFO: FH_LOADER WAS CALLED EXACTLY LIKE THIS
+************************************************
+D:\edl\tools\fh_loader.exe --port=\\.\COM53 --reset --noprompt 
+************************************************
+
+17:39:04: INFO: Current working dir (cwd): D:\packages\board-a\fac\
+17:39:04: INFO: Showing network mappings to allow debugging
+17:39:04: INFO: User wants to talk to port '\\.\COM53'
+17:39:04: INFO: Took       0.00000000 seconds to open port
+17:39:04: INFO: Sorting TAGS to ensure order is <configure>,<erase>, others, <patch>,<power>
+17:39:04: INFO: If  you don't want this, use --dontsorttags
+
+17:39:04: INFO: Sending <configure>
+
+17:39:04: INFO: TARGET SAID: 'INFO: Calling handler for configure'
+
+17:39:04: INFO: TARGET SAID: 'INFO: Storage type set to value eMMC'
+17:39:04: INFO: fh.attrs.MaxPayloadSizeToTargetInBytes = 1048576
+17:39:04: INFO: fh.attrs.MaxPayloadSizeToTargetInBytesSupported = 1048576
+17:39:04: INFO: Sending <power>
+
+17:39:04: INFO: TARGET SAID: 'INFO: Calling handler for power'
+17:39:04: INFO: ==============================================================
+17:39:04: INFO: Files used and their paths
+17:39:04: INFO:   1 'D:\packages\board-a\fac\port_trace.txt'
+
+17:39:04: INFO:      _             (done)
+17:39:04: INFO:     | |                 
+17:39:04: INFO:   __| | ___  _ __   ___ 
+17:39:04: INFO:  / _` |/ _ \| '_ \ / _ \
+17:39:04: INFO: | (_| | (_) | | | |  __/
+17:39:04: INFO:  \__,_|\___/|_| |_|\___|
+17:39:04: INFO: {All Finished Successfully}
+
+17:39:04: INFO: Overall to target  0.063 seconds (0.00 Bps)
+
+Writing log to 'D:\packages\board-a\fac\port_trace.txt', might take a minute
+
+
+Log is 'D:\packages\board-a\fac\port_trace.txt'
+

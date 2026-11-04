@@ -3102,3 +3102,80 @@ Python 3.11 的 asyncio 自己已改成等待者队列(`asyncio/streams.py:132` 
 - 端到端测试约 3.4 s,标了 `slow`。
 
 **关联**: ADR-056(烧录作业通道)· ADR-062(WebSocket 默认不压缩)
+
+---
+
+## ADR-066 · 高通 9008(EDL)烧录做进台架 agent:三个操作,包按 `edl_root` 下的相对目录点名
+
+**日期**: 2026-11-04 · **状态**: 已实现(假工具单测 + 9 个削弱版反跑);真板未跑
+
+### 这是什么
+
+台架 Windows agent 的操作表(ADR-059)多三行,group `edl`,needs `edl-device`:
+
+| 操作 | 跑什么 | 参数 |
+|---|---|---|
+| `edl-sahara` | `QSaharaServer -p \\.\COMnn -s 13:<programmer>` | `dir`,`programmer`(不填 = 目录里唯一的 `prog_*firehose*`),`port` |
+| `edl-program` | `fh_loader --port=\\.\COMnn --sendxml=<a.xml,…> --search_path=<包目录> --memoryname=<emmc> --noprompt` | `dir`,`xml`,`memory`(默认 emmc),`port` |
+| `edl-reset` | `fh_loader --port=\\.\COMnn --reset --noprompt` | `port` |
+
+agent.conf 加三个键 `edl_sahara` / `edl_firehose` / `edl_root`,三个都配了且文件 / 目录存在才有这三行。
+hub 不用改:`src/alb/remote/bench_ops.py` 对 group / needs 原样收,`flash.py` 只在 group 是 fastboot 时要求 fastboot。
+另加 5 个错误码进 `src/alb/infra/errors.py`:`EDL_NO_DEVICE` / `EDL_PORT_AMBIGUOUS` / `EDL_PACKAGE_REJECTED` /
+`EDL_SAHARA_FAILED` / `EDL_FIREHOSE_FAILED`。
+
+### 没有它会怎样
+
+板子 XBL 报错后会自己进 9008,UEFI panic 时要人短接测试点进 9008;进去以后 adb、fastboot、串口控制台都没有。
+2026-11-03 台架上一次换分区表,9008 是人 ssh 到台架机手敲两条命令完成的(原始输出在那个产品项目自己的归档里,
+不进本仓),alb 自己做不了。user 11-03 定要做,不设白名单(原话见本机项目记忆 `project_edl_9008`)。
+
+### 为什么这么设计
+
+| 做法 | 为什么没选 |
+|---|---|
+| hub 发 Windows 绝对路径 | 违反 ADR-056 决定 5「hub 不发文件路径」:收绝对路径的 agent 能读这台机器上任何文件 |
+| 包名白名单(像 `flash_partitions`) | user 定不设白名单;根目录就是边界,根下哪个包都能用 |
+| hub 推 zip、agent 解压 | 工厂包 1~3 GB,当时推大文件会偶发 1011(ADR-065 已修);user 11-04 定先做「镜像先放台架」 |
+| argv 模板行(像 fastboot) | `-s 13:<文件>`、`--port=\\.\COMnn` 要把值拼进一个更大的 argv 元素,模板规则故意禁止;口号又要运行时找。所以写成 builtin,值都先过形状检查,拼的位置固定 |
+| Sahara 和写闪存合成一个操作 | 板子已加载 programmer 时再跑 Sahara 会失败;分开才能「Sahara 成功一次,写好几轮」 |
+| 工作目录用 agent 临时目录、清单给绝对路径或靠 `--search_path` 找 | 这台机器上的 fh_loader 没这样跑过。11-03 手工跑通的唯一方式是工作目录 = 包目录、文件按名字给,照抄它。代价是 `port_trace.txt` 写进包目录(手工那次也是)。reset 不读文件,放临时目录,跑完删掉 |
+
+**为什么判成功要「退出码 0 + 成功标志」两个都要**:11-03 的实测只证明了成功时退出码是 0,
+失败时退出码没测过。只看退出码,一个退出 0 但没干完活的情况会被当成功;成功标志是实测输出里的原文
+(Sahara 的 `File transferred successfully` + `Sahara protocol completed`,fh_loader 的 `{All Finished Successfully}`)。
+fh_loader 整包时会打 4 条 zero.bin 的 WARNING 和 `NOTE: There were WARNINGS!!`,11-03 实测是正常的,
+结果里只报 `warnings: true`,不算失败。
+
+**为什么 `port=` 只能在 9008 口里挑**:台架上调试串口(COM27)和安卓起来后的虚拟串口也是 COM 口,
+往调试串口发 firehose 协议会把串口控制台搞乱。所以口号只从 05c6:9008 设备的名字里取,调用方给的口不在里面就拒。
+
+### 机制
+
+- `dir` 形状:最多 8 段,每段以字母或数字开头(所以不会是 `.` / `..`),段间 `/` 或 `\`。
+  拼到 `edl_root` 后 `resolve()`(链接和 junction 都跟进去),不在根目录里面就拒(`EDL_PACKAGE_REJECTED`)。
+  路径里有逗号也拒:`--sendxml` 用逗号分隔。
+- `xml` 是逗号分隔的文件名(只能是 `*.xml`,不带目录),每个都要是包目录里的普通文件;programmer 同理。
+- 找口:复用 usb-list 的 PowerShell 查询(`_usb_list_windows`),挑 vid 05c6 pid 9008,
+  从 Name 末尾的 `(COMnn)` 取口。有这个设备但名字里没有 COM 口,报「驱动没装好」,不报「没有板子」。
+  依据:11-03 那次 `alb bench usb` 显示 `QDLoader 9008 (COM53)`(记在那个产品项目的归档说明里)。
+- 跑工具:stdout 和 stderr 合在一起,每行转成 progress 发回 hub;先按 UTF-8 解,失败按 GBK 解;
+  超时(sahara 60 s / program 1500 s / reset 60 s)杀掉子进程。program 的 1500 s 小于 hub 的 30 分钟作业上限,
+  所以先到的是 agent 自己的超时,报得出是哪个工具卡住。
+- done 帧:成功带工具输出最后 80 行 + `data`(口、目录、文件、耗时);失败带工具的退出码和最后 80 行
+  (这次给 `_JobRejected` 加了 `rc` / `stdout`,`_job_fail` 原来失败时 stdout 恒为空)。
+- 没配 EDL 的 agent 收到 `edl-*`:`BENCH_OP_UNKNOWN`,文字写明要配哪三个键;配了一半的,启动日志打 WARNING 说缺哪个。
+- 测试 `tests/remote/test_agent_edl.py`(49 条):假工具打印 11-03 的真实输出(`tests/remote/edl_outputs/`,
+  路径和芯片序列号换成通用值),并像真工具一样按工作目录找文件,所以走的是 agent 真的子进程路径。
+  9 个削弱版各自至少挂一条:根目录检查放空、只看退出码、不按 VID/PID 认口、Sahara 换工作目录、
+  失败丢输出(两处)、超时不杀、只按 UTF-8 解码、点名的口不核对。
+
+### 代价
+
+- 板子身份不核对:9008 里没有 fastboot,`fastboot_product` 那一步用不上。线上接的是哪块板,
+  只靠「这台机器上只有一个 9008 口」。fh_loader 能读到芯片序列号(`Chip serial num`),以后可以拿它核对。
+- `port_trace.txt` 留在包目录里,每次覆盖。
+- 只支持 Windows 台架:口号从 Windows 的设备名里取。
+- 真板未跑。第一步只做找口 + Sahara + reset,不写闪存;失败退出码、工具输出里非 ASCII 字符的实际编码,都等真板。
+
+**关联**: ADR-056(作业通道 · 决定 5 不发路径)· ADR-059(操作表)· ADR-065(推大文件 1011)

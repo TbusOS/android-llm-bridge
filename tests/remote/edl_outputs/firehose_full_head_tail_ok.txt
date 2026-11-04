@@ -1,0 +1,62 @@
+
+Base Version: 18.04.05.15.00
+Binary build date: Apr  5 2018 @ 15:00:19
+Incremental Build version: 18.04. 5.15.00.19
+
+17:21:56: INFO: FH_LOADER WAS CALLED EXACTLY LIKE THIS
+************************************************
+D:\edl\tools\fh_loader.exe --port=\\.\COM53 --sendxml=rawprogram0_develop.xml,patch0.xml --search_path=D:\packages\board-a\fac --memoryname=emmc --noprompt 
+************************************************
+
+17:21:56: INFO: Current working dir (cwd): D:\packages\board-a\fac\
+17:21:56: INFO: Showing network mappings to allow debugging
+17:21:56: INFO: 
+[... 1366 lines of per-partition output left out ...]
+
+	                         (_)            
+	__      ____ _ _ __ _ __  _ _ __   __ _ 
+	\ \ /\ / / _` | '__| '_ \| | '_ \ / _` |
+	 \ V  V / (_| | |  | | | | | | | | (_| |
+	  \_/\_/ \__,_|_|  |_| |_|_|_| |_|\__, |
+	                                   __/ |
+	                                  |___/ 
+
+
+17:23:12: INFO: ==============================================================
+17:23:12: INFO: NOTE: There were WARNINGS!! Repeated here, but please see log for more detail
+User requested to ONLY program num_partition_sectors 2048 of 'zero.bin' (1.00 MB).
+To load this file completely would require 3072 sectors (1.50 MB) and SectorSizeInBytes=512.
+This is usually a MISTAKE but there is a use case where you want to write only part of the image!
+
+User requested to ONLY program num_partition_sectors 8 of 'zeros_33sectors.bin' (4.00 KB).
+To load this file completely would require 33 sectors (16.50 KB) and SectorSizeInBytes=512.
+This is usually a MISTAKE but there is a use case where you want to write only part of the image!
+
+User requested to ONLY program num_partition_sectors 64 of 'zero.bin' (32.00 KB).
+To load this file completely would require 3072 sectors (1.50 MB) and SectorSizeInBytes=512.
+This is usually a MISTAKE but there is a use case where you want to write only part of the image!
+
+User requested to ONLY program num_partition_sectors 64 of 'zero.bin' (32.00 KB).
+To load this file completely would require 3072 sectors (1.50 MB) and SectorSizeInBytes=512.
+This is usually a MISTAKE but there is a use case where you want to write only part of the image!
+
+NOTE: There were WARNINGS!! Repeated above, but please see log for more detail
+
+
+
+17:23:12: INFO: ==============================================================
+17:23:12: INFO:      _             (done)
+17:23:12: INFO:     | |                 
+17:23:12: INFO:   __| | ___  _ __   ___ 
+17:23:12: INFO:  / _` |/ _ \| '_ \ / _ \
+17:23:12: INFO: | (_| | (_) | | | |  __/
+17:23:12: INFO:  \__,_|\___/|_| |_|\___|
+17:23:12: INFO: {All Finished Successfully}
+
+17:23:12: INFO: Overall to target 76.110 seconds (39.14 MBps)
+
+Writing log to 'D:\packages\board-a\fac\port_trace.txt', might take a minute
+
+
+Log is 'D:\packages\board-a\fac\port_trace.txt'
+
