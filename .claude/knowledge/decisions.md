@@ -3031,3 +3031,74 @@ Web 界面整体换成 Google 的设计规范 Material 3(M3):颜色角色、字�
 - 后端的 agent 循环没有「改动板子前先问人」这一步,Agent 模式现在就是「允许调用工具」。
 - 板上模型只有探测(经设备端口通道找 llama.cpp / Ollama 服务),还不能直接对话。
 - 字体子集要在界面文字变化后重跑 `web/scripts/build_v3_fonts.py`,不然新出现的生僻字会退回系统字体。
+
+## ADR-065 · hub 的 WebSocket 允许多个协程同时等发送缓冲:替换 websockets 旧版的 `_drain_helper`
+
+**日期**: 2026-11-04 · **状态**: 已实现
+
+### 这是什么
+
+hub 启动时(lifespan,在接受第一个连接之前)把 websockets 旧版协议类
+`websockets.legacy.protocol.WebSocketCommonProtocol` 的 `_drain_helper` 换成另一个写法:
+发送缓冲满了要等的时候,所有等的协程共用同一个 future,外面套 `asyncio.shield`。
+只换这一个方法;`resume_writing` / `connection_lost` 不动,它们本来就去唤醒(或报错)那个 future,
+现在一次唤醒所有等的人。代码 `src/alb/api/ws_drain_fix.py`,接线 `src/alb/api/server.py` `_lifespan`。
+
+### 没有它会怎样
+
+2026-11-03 台架推 super.img(2229840572 字节)到 80% 断开,hub 日志 `ERROR: data transfer failed`,
+agent 日志 `ConnectionClosedError(Close(code=1011))`;`--from-line` 续跑就过。
+板子没受影响(fastboot 还没开始写)。
+
+经过:hub 推镜像(`src/alb/remote/flash.py` 64 KiB 一帧)时发送缓冲大多数时候是满的,发镜像的协程在等;
+这时 agent 的 keepalive ping 到了,读协程回 pong,写 pong 也要等缓冲。旧版的写法只允许一个等待者,
+第二个直接撞上 `assert waiter is None or waiter.cancelled()`,读协程挂掉,连接以 1011 关闭。
+要传得够久才撞得上,所以只在大镜像上偶发。
+
+这个方法的注释写着「Copied from asyncio.FlowControlMixin」,抄的是只有一个等待者的老 asyncio;
+Python 3.11 的 asyncio 自己已改成等待者队列(`asyncio/streams.py:132` `_drain_waiters = collections.deque()`)。
+
+| 测法 | 结果 |
+|---|---|
+| 原版,两个协程同时等(单元测试,不靠时序) | 第二个必定 `AssertionError` |
+| 原版,真 uvicorn + 20 ms ping + 小缓冲推 96 MiB(端到端测试的削弱版) | 3/3 断在 1011,日志与台架同样两行 |
+| 替换后,同一个端到端测试 | 5/5 过,约 3.4 s |
+
+### 为什么这么设计
+
+| 做法 | 为什么没选 |
+|---|---|
+| 关掉 keepalive ping | 去掉了第二个写的人,也去掉了 hub 发现「台架 agent 没打招呼就消失」的唯一办法,而且影响所有 WebSocket,不止推镜像 |
+| uvicorn 换 `ws="websockets-sansio"` | 11-03 本地复现:同样的传输开着 ping 也断(报 no close frame),是另一个毛病;关 ping 才过 |
+| 照 asyncio 3.11 改成等待者队列 | 要同时换 `_drain_helper`、`resume_writing`、`connection_lost` 三个方法,uvicorn 还覆盖了 `connection_lost`;共用一个 future 只换一个方法,行为一样 |
+| 不修,撞上就续跑 | 每次都要人看日志、算行号;9008(EDL)以后若走 hub 推 zip 也会撞上 |
+
+**为什么要 shield**:没有它,一个等的协程被取消(比如发送方放弃了)会把共用的 future 一起取消,
+其他等的协程平白收到 `CancelledError`。测试 `test_patched_cancelling_one_waiter_keeps_the_other` 锁住这一点,
+去掉 shield 的削弱版会挂在这条上。
+
+**为什么要核对源码指纹才装**:改的是别人包里的私有方法,只有它还是我们读过的那份代码时才安全。
+装之前对 `_drain_helper`、`resume_writing`、`connection_lost` 三个方法的源码算 sha256,
+只认人工比对过的三个:12.0、13.1 到 15.0.1、16.0(差别只有日志开关和类型注解,等待者的处理一模一样)。
+对不上就不装,启动时打一条 WARNING。这样坏的方向是「退回原来的偶发 1011」,不会是「所有 WebSocket 都坏」。
+
+### 机制
+
+- `install_ws_drain_fix()` 返回 `installed` / `already-installed` / `not-applicable`(没装 websockets)/ `skipped`(指纹对不上或读不到源码)。
+  装上时 hub 日志有一行 `ws drain fix installed (websockets legacy source as in 16.0)`。
+- 重复调用不会重复装(每个 `create_app()` 的 lifespan 都会调一次)。
+- 只对 uvicorn 选旧版实现时有用:uvicorn 0.44 的 `ws="auto"` 只要装了 websockets 就选它
+  (`uvicorn/protocols/websockets/auto.py`)。台架 agent 用的是 websockets 新版客户端(`websockets.asyncio.client`),不经过这段代码。
+- 测试 `tests/api/test_ws_drain_fix.py`:原版必须断言(证明测试造出了真条件)、指纹必须在已核对表里、
+  两个等待者都放行、取消一个不影响另一个、断线时每个等待者都收到错误、hub 启动后已装上、
+  真 uvicorn 端到端(数「有人在等时又来一个」的次数,必须大于 0,否则这条测试没造出条件)。
+  三个削弱版(去掉 shield / 每次新建 future / 端到端不装补丁)各自挂在对应的测试上。
+
+### 代价
+
+- websockets 旧版协议已标废弃(14.0 起),哪天删掉或改写,这里就不装了。
+  `test_installed_websockets_source_is_one_we_checked` 会在升级 websockets 时先挂,
+  提醒去读新源码:等待者的处理没变才把新指纹加进表,变了就重新评估。
+- 端到端测试约 3.4 s,标了 `slow`。
+
+**关联**: ADR-056(烧录作业通道)· ADR-062(WebSocket 默认不压缩)

@@ -80,6 +80,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ADR-057: without this, alb's own INFO lines are dropped before they are
     # formatted — the hub log carries uvicorn requests and alb warnings only.
     install_alb_logging()
+    # ADR-065: before the first WebSocket is served (uvicorn runs lifespan
+    # startup before it accepts connections), and after alb logging so the
+    # one line saying whether it went in reaches the hub log.
+    from alb.api.ws_drain_fix import install_ws_drain_fix
+
+    install_ws_drain_fix()
     get_metric_store().attach(get_bus())
     warm = _start_warm_up(app)
     try:
