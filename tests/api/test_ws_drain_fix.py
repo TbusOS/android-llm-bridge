@@ -146,10 +146,19 @@ def test_unknown_source_is_left_alone(caplog: pytest.LogCaptureFixture) -> None:
             return None
 
     original = Other.__dict__["_drain_helper"]
-    with caplog.at_level(logging.WARNING, logger="alb.api.ws_drain_fix"):
+    # Hook the module logger itself: once any create_app() lifespan has run,
+    # the `alb` logger stops propagating (log_setup.py), so caplog's root
+    # handler would see nothing and this assertion would depend on test order.
+    logger = logging.getLogger("alb.api.ws_drain_fix")
+    logger.addHandler(caplog.handler)
+    try:
         assert install_ws_drain_fix(Other) == SKIPPED
+    finally:
+        logger.removeHandler(caplog.handler)
     assert Other.__dict__["_drain_helper"] is original
-    assert "NOT installed" in caplog.text
+    assert any(
+        r.levelno == logging.WARNING and "NOT installed" in r.getMessage() for r in caplog.records
+    )
 
 
 def test_hub_startup_installs_it(legacy_cls: type[WebSocketCommonProtocol]) -> None:
