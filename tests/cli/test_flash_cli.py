@@ -78,6 +78,17 @@ def test_every_flash_code_carries_a_remedy(code):
     assert advice != message
 
 
+def test_a_refused_oem_command_is_not_told_to_re_flash() -> None:
+    """FLASH_FAILED covers every fastboot op. A bootloader refusing an oem
+    command wrote nothing, so the advice must not tell the reader to re-flash
+    unconditionally; it points at the bootloader's own line, and limits the
+    half-written warning to flash / erase (2026-11-05)."""
+    _, advice = _explain("FLASH_FAILED", "FAILED (remote: 'not allowed on this device')")
+    assert "bootloader's own answer" in advice
+    assert "Only a failed flash or erase" in advice
+    assert "if the board is now half-written" not in advice
+
+
 # ── alb flash plan ──────────────────────────────────────────────────────
 
 _ROWS = [

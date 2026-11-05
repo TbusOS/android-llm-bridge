@@ -340,8 +340,15 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "FLASH_FAILED",
         "transport",
         "fastboot ran but reported a failure",
-        "Read the captured fastboot output; if the board is now half-written, "
-        "re-flash before rebooting it",
+        # Every fastboot op fails with this code (oem / getvar / reboot /
+        # set-active too), so the advice must hold for all of them. It used
+        # to say "if the board is now half-written, re-flash" unconditionally,
+        # which sent a refused `oem` command off to re-flash a board nothing
+        # had been written to (2026-11-05).
+        "Read the captured fastboot output: a `FAILED (remote: '...')` line is "
+        "the bootloader's own answer — it refused or could not do the command, "
+        "which alb passed on as is. Only a failed flash or erase can leave a "
+        "partition half-written; re-flash that partition before rebooting",
     ),
     "FLASH_AGENT_NO_SPACE": ErrorSpec(
         "FLASH_AGENT_NO_SPACE",
