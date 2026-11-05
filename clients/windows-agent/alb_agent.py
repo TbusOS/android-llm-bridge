@@ -876,21 +876,25 @@ def _getvar_allowed(name: str) -> bool:
     return name == "" or bool(_GETVAR_RE.match(name))
 
 
-# `oem` 命令的白名单。跟 getvar 相反,这里**必须**有白名单:getvar 只是问,
-# oem 会改设备,而且 oem 命令做什么是厂商自己定义的 —— 有的是单向的
-# (有的 bootloader 文档列了 `oem at-disable-unlock-vboot`,永久禁止解锁)。
-# 所以只放行查过「可逆」的命令,检查放在拼 argv 的这一侧(ADR-056)。
-# 现有两条:u-boot fastboot 实现里的 AVB 锁定 / 解锁(f_fastboot.c 里的两个 oem
-# 分支),互为逆操作,解锁不需要授权;锁定只写 lock_state,不碰刷机锁
-# flash_lock_state,锁着也照样能 flash(按代码读的,2026-09-30)。
-# 要加别的,先查清它可不可逆。
-_OEM_COMMANDS = frozenset({"at-lock-vboot", "at-unlock-vboot"})
+# `oem` 命令只查形状,不设白名单(2026-11-05 起)。
+# 以前只放行 at-lock-vboot / at-unlock-vboot 两条(c7a1a83,10-07,理由是有的 oem
+# 命令不可逆)。10-23 定了板子侧命令全部放开、权限只防 Windows 主机上的文件
+# (23aa5f6),这张白名单当时没跟着放开:bootloader 本来允许的 oem 命令(比如让板子
+# 进下载模式的那条),alb 先拦了,板子根本收不到。oem 命令做什么、准不准做,由板子的 bootloader 定,
+# 拒了就把它的原话带回来。
+# 剩下的形状规则只为让命令原样到板子,不为限制做什么:
+#   · 不以 `-` 开头:fastboot 会把它当成自己的选项(`-w` 是清 userdata),
+#     命令就没发到板子;
+#   · 不以空白开头、不含控制字符:argv 里传不了 NUL,换行会让日志和回显错行;
+#   · 中间可以有空格(`off-mode-charge 0`):整串是一个 argv 元素,fastboot 拼成
+#     `oem off-mode-charge 0` 发出去,和分两个元素一样;不经过 shell,`;` `|` 只是字符。
+#   · 限长 256:只防误粘一大段,不是协议上限 —— 太长的由 fastboot 自己报错。
+_OEM_RE = re.compile(r"[^\s\x00-\x1f\x7f-][^\x00-\x1f\x7f]{0,255}")
 
 
 def _oem_allowed(command: str) -> bool:
-    """只认白名单里一字不差的命令:不做大小写折叠、不去空白 ——
-    设备那边也不会替你折叠,多一个空格就会变成两个 argv 元素。"""
-    return command in _OEM_COMMANDS
+    """形状对就放行,不做大小写折叠、不去空白 —— 板子收到的就是这一串。"""
+    return bool(_OEM_RE.fullmatch(command))
 
 
 def _partition_allowed(name: str, board: Any = None) -> bool:
@@ -1960,13 +1964,16 @@ def _fastboot_rows(fastboot: str) -> list[OpSpec]:
             "oem",
             "fastboot",
             "fastboot oem <command>",
-            # Transport only, like getvar: whether the lock took is read from
-            # the device afterwards, not inferred from OKAY.
+            # Transport only, like getvar: whether the command took is read
+            # from the device afterwards, not inferred from OKAY; a refusal
+            # (`FAILED (remote: '...')`) goes back verbatim. Any command —
+            # the bootloader decides what it allows (see _OEM_RE).
             params=(
                 ParamSpec(
                     "command",
-                    "enum",
-                    choices=tuple(sorted(_OEM_COMMANDS)),
+                    "text",
+                    pattern=_OEM_RE.pattern,
+                    max_len=256,
                     code="FLASH_OEM_REJECTED",
                     label="oem command",
                 ),

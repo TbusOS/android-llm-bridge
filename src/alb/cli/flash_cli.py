@@ -285,14 +285,18 @@ def cmd_reboot(
 
 @app.command("oem")
 def cmd_oem(
-    command: str = typer.Argument(..., help="e.g. at-lock-vboot / at-unlock-vboot"),
+    command: str = typer.Argument(
+        ..., help="any oem command, e.g. device-info; quote one with spaces"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
 ) -> None:
-    """`fastboot oem <command>` — only commands on the agent's allowlist.
+    """`fastboot oem <command>` — any command; the bootloader decides.
 
-    The agent refuses anything not checked to be reversible: oem commands
-    change the device and some vendor ones are one-way. Whether the change
-    took is read from the device afterwards, not from this command's OKAY.
+    The agent sends it as is and brings the board's answer back word for
+    word, a refusal included. It only refuses text that would not arrive
+    intact (empty, a leading '-' or whitespace, control characters, over 256
+    characters). Whether the change took is read from the device afterwards,
+    not from this command's OKAY.
     """
     if not yes:
         typer.echo(f"about to run `fastboot oem {command}` on the board")

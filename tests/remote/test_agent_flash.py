@@ -464,23 +464,29 @@ async def test_getvar_rejects_a_malformed_name_without_running_anything(monkeypa
     assert ws.done()["code"] == "FLASH_VAR_REJECTED"
 
 
-# ── oem: an allowlist, unlike getvar ────────────────────────────────────
+# ── oem: any command, checked only for shape (2026-11-05) ─────────────────
 #
-# getvar has no allowlist because it only asks. `oem` CHANGES the device, and
-# what an oem command does is vendor-defined — some are one-way (some bootloader
-# docs list `oem at-disable-unlock-vboot`, which permanently forbids unlocking).
-# So the agent passes only commands someone has checked are reversible, and the
-# check lives here, on the side that builds the argv (ADR-056).
+# Board-side commands are all open (2026-10-23); the bootloader decides what
+# it allows and its refusal comes back verbatim. The old allowlist of two
+# commands kept an oem command the bootloader allows (one that puts the board
+# into download mode, say) from ever reaching it. What is left only keeps the text one argv element fastboot sends
+# as-is.
 
 
-def test_oem_allowlist_is_exactly_the_reversible_lock_pair():
-    """Exact equality on purpose: widening this list must be a reviewed change,
-    not something that slips in next to another edit."""
-    assert agent._OEM_COMMANDS == frozenset({"at-lock-vboot", "at-unlock-vboot"})
-
-
-@pytest.mark.parametrize("command", ["at-lock-vboot", "at-unlock-vboot"])
-def test_oem_commands_accepted(command):
+@pytest.mark.parametrize(
+    "command",
+    [
+        "at-lock-vboot",
+        "at-unlock-vboot",
+        "reboot-to-download",
+        "device-info",
+        "AT-LOCK-VBOOT",  # no case folding either way: the board gets this text
+        "off-mode-charge 0",  # one argv element; fastboot joins it the same way
+        "a;b|c",  # no shell on the way, so these are just characters
+        "x" * 256,
+    ],
+)
+def test_oem_commands_accepted(command: str) -> None:
     assert agent._oem_allowed(command)
 
 
@@ -488,20 +494,30 @@ def test_oem_commands_accepted(command):
     "command",
     [
         "",
-        "at-disable-unlock-vboot",  # one-way where implemented — must never pass
-        "unlock",
-        "AT-LOCK-VBOOT",  # no case folding: the device would not fold it either
-        "at-lock-vboot extra",  # a space would add an argv element
-        "at-lock-vboot;reboot",
-        "-w",
+        "-w",  # fastboot would take it as its own wipe option
         " at-lock-vboot",
+        "\tat-lock-vboot",
+        "at-lock-vboot\nreboot",
+        "at\x00x",
+        "x" * 257,
     ],
 )
-def test_oem_commands_rejected(command):
+def test_oem_commands_rejected(command: str) -> None:
     assert not agent._oem_allowed(command)
 
 
-async def test_oem_rejects_an_unlisted_command_without_running_anything(monkeypatch):
+def test_oem_param_is_text_in_the_op_table() -> None:
+    """The hub and the web page read the rule from `hello`: a text param with
+    this pattern, not a list of choices."""
+    spec = _ops()["oem"]
+    (param,) = spec.params
+    assert (param.kind, param.pattern, param.max_len) == ("text", agent._OEM_RE.pattern, 256)
+    assert not param.choices
+
+
+async def test_oem_rejects_a_bad_shape_without_running_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ran: list[list[str]] = []
 
     async def fake_run(_ws, argv, op=""):
@@ -513,11 +529,34 @@ async def test_oem_rejects_an_unlisted_command_without_running_anything(monkeypa
 
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
     monkeypatch.setattr(agent, "_device_present", yes)
-    ws = _FakeWs(_req(op="oem", command="at-disable-unlock-vboot"))
+    ws = _FakeWs(_req(op="oem", command="-w"))
     await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["code"] == "FLASH_OEM_REJECTED"
     assert not ws.events("accepted"), "a rejected job must not be accepted first"
+
+
+async def test_oem_bootloader_refusal_comes_back_verbatim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A command the agent passes but the bootloader refuses: fastboot exits 1
+    and its `FAILED (remote: ...)` line reaches the caller word for word."""
+    ran: list[list[str]] = []
+    said = "FAILED (remote: 'reboot-to-download is not allowed on this device')\n"
+
+    async def fake_run(_ws, argv, op=""):
+        ran.append(argv)
+        return 1, "", said
+
+    async def yes(_fastboot):
+        return True
+
+    monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
+    ws = _FakeWs(_req(op="oem", command="reboot-to-download"))
+    await agent._run_job(ws, _ops())
+    assert ran == [["/opt/fastboot", "oem", "reboot-to-download"]]
+    done = ws.done()
+    assert done["ok"] is False
+    assert said.strip() in done["stderr"]
 
 
 async def test_oem_refuses_when_no_device_is_in_fastboot(monkeypatch):

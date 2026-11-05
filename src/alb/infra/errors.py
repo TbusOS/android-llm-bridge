@@ -321,10 +321,13 @@ ERROR_CODES: dict[str, ErrorSpec] = {
     "FLASH_OEM_REJECTED": ErrorSpec(
         "FLASH_OEM_REJECTED",
         "transport",
-        "The agent refused the oem command — it is not on the agent's allowlist",
-        "Only commands checked to be reversible are allowed (see _OEM_COMMANDS in "
-        "alb_agent.py); some vendor oem commands are one-way, so widen that list "
-        "only after confirming the command can be undone",
+        "The agent refused the oem command before sending it — the text does not "
+        "have a shape that reaches the board intact",
+        "Any oem command is passed on; only these are refused: empty, starting "
+        "with '-' (fastboot would read it as its own option) or whitespace, "
+        "control characters, or longer than 256 characters (see _OEM_RE in "
+        "alb_agent.py). An agent older than 2026-11-05 still only passes "
+        "at-lock-vboot / at-unlock-vboot — update it with `alb bench agent-update`",
     ),
     "FLASH_VAR_REJECTED": ErrorSpec(
         "FLASH_VAR_REJECTED",

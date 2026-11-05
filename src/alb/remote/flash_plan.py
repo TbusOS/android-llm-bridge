@@ -69,12 +69,15 @@ UNRUNNABLE = {
     "setvar": "fastboot on the agent host has no setvar command",
 }
 
-# Same shapes the agent enforces (alb_agent._PARTITION_RE / _GETVAR_RE).
-# Checked here too so a bad name refuses the whole plan up front instead of
-# being refused by the agent halfway through it.
+# Same shapes the agent enforces (alb_agent._PARTITION_RE / _GETVAR_RE /
+# _OEM_RE). Checked here too so a bad name refuses the whole plan up front
+# instead of being refused by the agent halfway through it.
 # PARTITION_RE is imported from bench_ops — one copy for the hub side.
 VAR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
-OEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+# oem: any command the board may take (2026-11-05, board-side commands are
+# open). A manifest row is split on whitespace, so here it is one token; the
+# agent's rule also allows inner spaces for commands typed by hand.
+OEM_RE = re.compile(r"^[^\s\x00-\x1f\x7f-][^\s\x00-\x1f\x7f]{0,255}\Z")
 
 # Sanity ceilings: a manifest is a few dozen short lines. Anything far
 # larger is the wrong file, and reading it whole would be the first mistake.

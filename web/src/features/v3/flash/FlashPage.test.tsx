@@ -396,6 +396,38 @@ describe("Flash page: what the v2 tab had", () => {
     expect(dialog.textContent).toContain("(bootloader) product:board_x");
   });
 
+  it("oem takes any command from a new agent and shows the board's refusal word for word (2026-11-05)", async () => {
+    const said = "FAILED (remote: 'reboot-to-download is not allowed on this device')";
+    const oemOp = (param: object) => ({ name: "oem", group: "fastboot", summary: "fastboot oem <command>", needs: "fastboot-device", params: [{ name: "command", required: true, ...param }] });
+    mockHub((url) => {
+      if (url.startsWith("/api/bench/ops")) return { ok: true, agent: { id: "a", name: "bench-01", build: "abc" }, bundle_build: "abc", reported: true, ops: [oemOp({ kind: "text" })] };
+      if (url.startsWith("/api/flash/oem")) return ndjson([{ ev: "done", ok: false, code: "FLASH_FAILED", stdout: "", stderr: `${said}\n` }]);
+      return undefined;
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /fastboot commands/ }));
+    const box = await within(cmdCard()).findByRole("textbox", { name: "oem" });
+    const run = within(cmdCard()).getByRole("button", { name: "Run" });
+    expect(run).toBeDisabled();
+    fireEvent.change(box, { target: { value: " reboot-to-download " } });
+    await waitFor(() => expect(run).not.toBeDisabled());
+    fireEvent.click(run);
+    fireEvent.click(await screen.findByRole("button", { name: "Run it" }));
+    await within(cmdCard()).findByText((_, el) => el?.tagName === "PRE" && (el.textContent ?? "").includes(said));
+    expect(calls.find((c) => c.url.startsWith("/api/flash/oem"))?.body).toEqual({ command: "reboot-to-download" });
+  });
+
+  it("oem still offers the two listed commands from an agent older than 2026-11-05", async () => {
+    mockHub((url) => {
+      if (url.startsWith("/api/bench/ops")) return { ok: true, agent: { id: "a", name: "bench-01", build: "abc" }, bundle_build: "abc", reported: true, ops: [{ name: "oem", group: "fastboot", summary: "", needs: "fastboot-device", params: [{ name: "command", kind: "enum", required: true, choices: ["at-lock-vboot", "at-unlock-vboot"] }] }] };
+      return undefined;
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /fastboot commands/ }));
+    const pick = await within(cmdCard()).findByRole("combobox", { name: "oem" });
+    await waitFor(() => expect([...pick.querySelectorAll("option")].map((o) => o.textContent)).toEqual(["at-lock-vboot", "at-unlock-vboot"]));
+  });
+
   it("unavailable, agent connected without fastboot: says to set fastboot_path in agent.conf and restart", async () => {
     mockHub(undefined, { status: { available: false }, agents: { ...AGENTS_OK, agents: [{ ...AGENTS_OK.agents[0], caps: ["adb"] }] } });
     renderPage();

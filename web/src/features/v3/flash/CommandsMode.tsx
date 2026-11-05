@@ -22,13 +22,18 @@ export function CommandsMode({ run, available, disabledReason }: { run: FlashRun
   const ops = useBenchOps();
   const table = ops.data?.ops ?? [];
   const find = (name: string, param: string) => table.find((o) => o.name === name)?.params.find((p) => p.name === param);
-  const oemChoices = find("oem", "command")?.choices ?? [];
+  // An agent from 2026-11-05 on takes any oem command (a text param); an
+  // older one still lists the two it allowed, so keep the picker for it.
+  const oemParam = find("oem", "command");
+  const oemFree = oemParam?.kind === "text";
+  const oemChoices = oemParam?.choices ?? [];
   const slotChoices = find("set-active", "slot")?.choices ?? [];
   const rebootChoices = ["", ...(find("reboot", "target")?.choices ?? [])];
   const has = (n: string) => table.some((o) => o.name === n);
 
   const [name, setName] = useState("all");
   const [oem, setOem] = useState("");
+  const oemValue = oemFree ? oem.trim() : oem || oemChoices[0] || "";
   const [slot, setSlot] = useState("");
   const [target, setTarget] = useState("");
   const [pending, setPending] = useState<Pending>(null);
@@ -79,15 +84,21 @@ export function CommandsMode({ run, available, disabledReason }: { run: FlashRun
               </button>
             </div>
           </label>
-          <label className="field">
+          {/* div, not label: the control is one of two (text box or picker),
+              and each names itself with aria-label. */}
+          <div className="field">
             <span className="field__label">oem</span>
             <div className="row">
-              <select className="select grow" value={oem || oemChoices[0] || ""} onChange={(e) => setOem(e.target.value)} disabled={!has("oem") || oemChoices.length === 0} aria-label="oem">
-                {oemChoices.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <button type="button" className="btn btn--outlined btn--sm" disabled={off || !(oem || oemChoices[0])} onClick={() => setPending({ kind: "oem", value: oem || oemChoices[0] || "" })}>{t("执行", "Run")}</button>
+              {oemFree ? (
+                <input className="input grow" value={oem} onChange={(e) => setOem(e.target.value)} disabled={!has("oem")} placeholder={t("任意 oem 命令,如 device-info", "any oem command, e.g. device-info")} aria-label="oem" />
+              ) : (
+                <select className="select grow" value={oem || oemChoices[0] || ""} onChange={(e) => setOem(e.target.value)} disabled={!has("oem") || oemChoices.length === 0} aria-label="oem">
+                  {oemChoices.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              )}
+              <button type="button" className="btn btn--outlined btn--sm" disabled={off || !oemValue} onClick={() => setPending({ kind: "oem", value: oemValue })}>{t("执行", "Run")}</button>
             </div>
-          </label>
+          </div>
           <label className="field">
             <span className="field__label">set_active</span>
             <div className="row">

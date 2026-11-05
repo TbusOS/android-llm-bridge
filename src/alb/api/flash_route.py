@@ -12,9 +12,10 @@ Endpoints:
                                Passes the device's answer through untouched —
                                the verb is protocol level, the meaning of the
                                values is not (see FlashService.getvar).
-    POST /api/flash/oem        Body: {"command": "at-lock-vboot" | "at-unlock-vboot"}
-                               The agent owns the allowlist (oem commands
-                               change the device; some are one-way).
+    POST /api/flash/oem        Body: {"command": "<any oem command>"}
+                               Passed to the board as is; the bootloader
+                               decides what it allows and its refusal comes
+                               back verbatim. The agent checks only the shape.
     POST /api/flash/reboot     Body: {"target": "" | "bootloader" | ...}
     POST /api/flash/flash      Body: {"partition": str, "image": <workspace path>}
     POST /api/flash/plan       Body: {"manifest": <workspace path>, "skip": [...],
@@ -207,10 +208,10 @@ async def flash_getvar(body: GetvarBody) -> StreamingResponse:
 
 
 class OemBody(BaseModel):
-    # Required, no default: an empty oem request is a mistake. The allowlist
+    # Required, no default: an empty oem request is a mistake. The shape rule
     # lives on the AGENT, next to the argv it builds — this bound is only a
-    # sanity ceiling, same reasoning as GetvarBody.
-    command: str = Field(..., min_length=1, max_length=64, description="e.g. at-lock-vboot")
+    # sanity ceiling, the same as the agent's (alb_agent._OEM_RE).
+    command: str = Field(..., min_length=1, max_length=256, description="e.g. device-info")
 
 
 @router.post("/oem")

@@ -477,7 +477,7 @@ async def test_fastboot_op_on_a_table_without_fastboot_is_unknown(monkeypatch):
             {"op": "flash", "partition": "a b", "size": 4, "sha256": "00" * 32},
             "FLASH_PARTITION_REJECTED",
         ),
-        ({"op": "oem", "command": "unlock"}, "FLASH_OEM_REJECTED"),
+        ({"op": "oem", "command": "-w"}, "FLASH_OEM_REJECTED"),
         ({"op": "getvar", "name": "-w"}, "FLASH_VAR_REJECTED"),
         ({"op": "set-active", "slot": "c"}, "BENCH_PARAM_REJECTED"),
         ({"op": "set-active"}, "BENCH_PARAM_REJECTED"),

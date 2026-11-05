@@ -143,13 +143,21 @@ def test_getvar_and_oem_rows_parse():
 
 
 def test_malformed_getvar_and_oem_rows_are_problems():
-    text = "tool getvar -x\ntool oem a;b\ntool oem at-lock-vboot now\ntool getvar\n"
+    text = "tool getvar -x\ntool oem -w\ntool oem at-lock-vboot now\ntool getvar\n"
     _, problems = parse_manifest(text)
     joined = "\n".join(problems)
     assert "line 1: getvar name" in joined
     assert "line 2: oem command" in joined
     assert "line 3: oem takes 1 argument(s), got 2" in joined
     assert "line 4: getvar takes 1 argument(s), got 0" in joined
+
+
+def test_oem_rows_take_any_command_the_board_may_take() -> None:
+    """2026-11-05: no list of allowed oem commands; only a token fastboot would
+    not send as-is (a leading '-' is its own option) is a problem."""
+    rows, problems = parse_manifest("tool oem reboot-to-download\ntool oem a;b\ntool oem AT-LOCK-VBOOT\n")
+    assert problems == []
+    assert [r.command for r in rows] == ["reboot-to-download", "a;b", "AT-LOCK-VBOOT"]
 
 
 # ── skips ───────────────────────────────────────────────────────────────
