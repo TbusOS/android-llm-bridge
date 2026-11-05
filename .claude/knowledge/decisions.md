@@ -3107,7 +3107,7 @@ Python 3.11 的 asyncio 自己已改成等待者队列(`asyncio/streams.py:132` 
 
 ## ADR-066 · 高通 9008(EDL)烧录做进台架 agent:三个操作,包按 `edl_root` 下的相对目录点名
 
-**日期**: 2026-11-04 · **状态**: 已实现(假工具单测 + 9 个削弱版反跑);2026-11-04 真板整包跑通一次(成功路径),失败路径未跑
+**日期**: 2026-11-04 · **状态**: 已实现(假工具单测 + 9 个削弱版反跑);2026-11-04 真板整包跑通一次(成功路径);2026-11-05 真板跑过 Sahara 失败一次,fh_loader 失败未跑
 
 ### 这是什么
 
@@ -3138,7 +3138,7 @@ hub 不用改:`src/alb/remote/bench_ops.py` 对 group / needs 原样收,`flash.p
 | 包名白名单(像 `flash_partitions`) | user 定不设白名单;根目录就是边界,根下哪个包都能用 |
 | hub 推 zip、agent 解压 | 工厂包 1~3 GB,当时推大文件会偶发 1011(ADR-065 已修);user 11-04 定先做「镜像先放台架」 |
 | argv 模板行(像 fastboot) | `-s 13:<文件>`、`--port=\\.\COMnn` 要把值拼进一个更大的 argv 元素,模板规则故意禁止;口号又要运行时找。所以写成 builtin,值都先过形状检查,拼的位置固定 |
-| Sahara 和写闪存合成一个操作 | 板子已加载 programmer 时再跑 Sahara 会失败;分开才能「Sahara 成功一次,写好几轮」 |
+| Sahara 和写闪存合成一个操作 | 板子已加载 programmer 时再跑 Sahara 会失败(2026-11-05 真板实测:1.8 秒失败、退出码 1,programmer 不受影响);分开才能「Sahara 成功一次,写好几轮」 |
 | 工作目录用 agent 临时目录、清单给绝对路径或靠 `--search_path` 找 | 这台机器上的 fh_loader 没这样跑过。11-03 手工跑通的唯一方式是工作目录 = 包目录、文件按名字给,照抄它。代价是 `port_trace.txt` 写进包目录(手工那次也是)。reset 不读文件,放临时目录,跑完删掉 |
 
 **为什么判成功要「退出码 0 + 成功标志」两个都要**:11-03 的实测只证明了成功时退出码是 0,
@@ -3180,6 +3180,13 @@ fh_loader 整包时会打 4 条 zero.bin 的 WARNING 和 `NOTE: There were WARNI
   依次跑 edl-sahara(1.7 秒,programmer 自动选中)、edl-program(develop 清单 + patch0,77.7 秒,
   1105 行输出,`warnings: true` 都是 zero 文件那类)、edl-reset(1.7 秒),三步退出码都是 0,
   alb 都判成功,和工具实际结果一致;reset 的临时目录跑完已删(台架上核过)。
-  没碰到的:工具失败时的退出码、工具输出里非 ASCII 字符的实际编码。
+- 真板失败路径只跑过 Sahara 一种。2026-11-05 同一块板进 9008(14 秒),edl-sahara 成功后紧接着再跑一次:
+  1.8 秒失败,QSaharaServer 退出码 1,没等到 60 秒超时;输出三行 ERROR,第一行是
+  `sahara_rx_data:287 Command packet length 1702240364 too large to fit`。alb 报 `EDL_SAHARA_FAILED`,
+  CLI 退出码 1,和工具实际结果一致。1702240364 = `0x6576206C`,按小端拆字节是 `l ve`,正是 `<?xml version`
+  的第 5~8 个字节 —— 推断:programmer 已在跑、发出 XML,QSaharaServer 把它当成 Sahara 包头读了(拆字节是算出来的,
+  线上的字节没抓)。之后 edl-reset 照样成功(退出码 0),开机 55 秒,槽位和启动校验状态都没变。
+  仍没碰到的:fh_loader(edl-program / edl-reset)失败时的退出码和输出;工具输出里的非 ASCII 字符
+  (这两次工具输出里一个都没有,所以「先 UTF-8、失败按 GBK」那条在真板上还没走到)。
 
 **关联**: ADR-056(作业通道 · 决定 5 不发路径)· ADR-059(操作表)· ADR-065(推大文件 1011)
