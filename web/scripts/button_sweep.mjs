@@ -19,6 +19,12 @@
 // chat send) or start long jobs (recordings, bugreports) are never clicked.
 // Confirm buttons inside a confirmation are never clicked either.
 //
+// Log rows (`button.log` in a `.logs` list) are one control repeated: only
+// the first row of each list is clicked, the rest are SKIP. With a board on
+// adb the logcat list never ends and keeps scrolling — 2026-11-05 the sweep
+// spent 13 minutes clicking 218 rows of /logs, and rows that had scrolled
+// away by the time of the click read as "click failed" (not a page bug).
+//
 // usage:
 //   node web/scripts/button_sweep.mjs            # click everything allowed
 //   node web/scripts/button_sweep.mjs --list     # only list what it would click
@@ -177,6 +183,9 @@ async function controls() {
           !!el.closest('[aria-current="true"], [aria-current="page"]'),
         // a history row or a tab / segment: selects what is shown
         selects: el.matches(".log, .list__item--action, [role=tab]") || !!el.closest(".seg, [role=tablist], .list__title"),
+        // which log list this row belongs to (-1: not a log row); only the
+        // first row of each list is clicked
+        logList: el.matches("button.log") ? [...document.querySelectorAll(".logs")].indexOf(el.closest(".logs")) : -1,
         href: el.tagName === "A" ? el.getAttribute("href") : null,
         external: el.tagName === "A" ? !!el.href && new URL(el.href).origin !== location.origin : false,
       });
@@ -202,8 +211,11 @@ async function openPage(path) {
 
 /** Click one control and record what it caused; "gone" if it is not on the page now. */
 async function clickOne(path, c0) {
-  // find it again in the current DOM (earlier clicks may have moved things)
-  const now = (await controls()).find((c) => c.key === c0.key);
+  // find it again in the current DOM (earlier clicks may have moved things);
+  // a live log list scrolls, so the row listed a moment ago may be gone —
+  // any row of the same list stands for it
+  const all = await controls();
+  const now = all.find((c) => c.key === c0.key) ?? (c0.logList >= 0 ? all.find((c) => c.logList === c0.logList) : undefined);
   if (!now) return "gone";
   if (now.disabled) { record("SKIP", path, c0.name, "disabled now"); return "done"; }
   // a snackbar from the previous click hides an identical one from this
@@ -218,8 +230,33 @@ async function clickOne(path, c0) {
   const blockedBefore = blocked.length;
   // a checkbox flips a property, not an attribute: no DOM mutation to see
   const checkedBefore = now.tag === "input" ? await loc.isChecked().catch(() => null) : null;
+  const logRow = now.logList >= 0;
+  // the open / selected row of that list, by text (null: none)
+  const markedRow = () =>
+    page
+      .evaluate((i) => document.querySelectorAll(".logs")[i]?.querySelector('button.log[aria-expanded="true"], button.log[aria-pressed="true"]')?.textContent ?? null, now.logList)
+      .catch(() => null);
+  const markedBefore = logRow ? await markedRow() : null;
+  let clickedRow = null; // text of the log row that was clicked
   try {
-    await loc.click({ timeout: 4000 });
+    if (logRow) {
+      // A live log list replaces its row elements while Playwright waits for
+      // the one it found to hold still (11-05 /logs: "click failed: Timeout"
+      // on every try). Find a row and click it in one step: the LAST row —
+      // a live list drops its oldest rows, so the first one is gone (and its
+      // open state with it) by the time the check below looks.
+      const clicked = await page.evaluate((i) => {
+        const rows = document.querySelectorAll(".logs")[i]?.querySelectorAll("button.log") ?? [];
+        const b = rows[rows.length - 1];
+        if (!b) return null;
+        b.click();
+        return b.textContent ?? "";
+      }, now.logList);
+      if (clicked === null) throw new Error("the log list has no row any more");
+      clickedRow = clicked;
+    } else {
+      await loc.click({ timeout: 4000 });
+    }
   } catch (e) {
     record("FAIL", path, c0.name, `click failed: ${String(e.message).split("\n")[0]}`);
     await openPage(path);
@@ -231,7 +268,16 @@ async function clickOne(path, c0) {
   if (page.url() !== urlBefore) effects.push(`→ ${new URL(page.url()).pathname.replace(/^\/app/, "")}`);
   if (requests > reqBefore) effects.push(`${requests - reqBefore} req`);
   if (downloads > dlBefore) effects.push("download");
-  if (mut > 0) effects.push(`${mut} DOM changes`);
+  let alreadySelected = now.selected;
+  if (logRow) {
+    // a live list changes the DOM on its own, so the count says nothing here:
+    // a row click opens (logcat) or selects (timeline) a row of that list
+    // only the clicked row counts: another row the page selected by itself
+    // (the timeline opens on its first problem line) proves nothing
+    const markedAfter = await markedRow();
+    if (markedAfter === clickedRow && markedBefore !== clickedRow) effects.push("the clicked row opened / got selected");
+    else if (markedAfter === clickedRow) alreadySelected = true;
+  } else if (mut > 0) effects.push(`${mut} DOM changes`);
   if (checkedBefore !== null) {
     const checkedAfter = await loc.isChecked().catch(() => null);
     if (checkedAfter !== null && checkedAfter !== checkedBefore) effects.push(checkedAfter ? "checked" : "unchecked");
@@ -240,7 +286,7 @@ async function clickOne(path, c0) {
     record("FAIL", path, c0.name, `tried a board-changing request: ${blocked.slice(blockedBefore).join(" | ")}`);
   } else if (errors.length > errBefore) {
     record("FAIL", path, c0.name, `page error: ${errors.slice(errBefore).join(" | ")}`);
-  } else if (effects.length === 0 && now.selected) {
+  } else if (effects.length === 0 && alreadySelected) {
     record("PASS", path, c0.name, "already selected — nothing to change");
   } else if (effects.length === 0) {
     record("DEAD", path, c0.name, "no request, no page change, no navigation");
@@ -258,9 +304,18 @@ for (const path of PAGES) {
   await openPage(path);
   const first = await controls();
   console.log(`\n${path}: ${first.length} controls`);
+  // the first row of each log list stands for the rest of that list
+  const logRowsSeen = new Set();
+  const moreLogRow = (c) => {
+    if (c.logList < 0) return false;
+    if (logRowsSeen.has(c.logList)) return true;
+    logRowsSeen.add(c.logList);
+    return false;
+  };
+  const MORE_LOG_ROW = "another row of a log list the first row already stands for";
   if (LIST_ONLY) {
     for (const c of first) {
-      const why = c.selects ? undefined : NEVER.find(([re]) => re.test(c.name));
+      const why = moreLogRow(c) ? [null, MORE_LOG_ROW] : c.selects ? undefined : NEVER.find(([re]) => re.test(c.name));
       console.log(`  ${why ? "skip " : "click"} ${c.tag.padEnd(6)} «${c.name}»${c.disabled ? " (disabled)" : ""}${why ? ` — ${why[1]}` : ""}`);
     }
     continue;
@@ -270,6 +325,7 @@ for (const path of PAGES) {
   for (const c0 of first) {
     if (done.has(c0.key)) continue;
     done.add(c0.key);
+    if (moreLogRow(c0)) { record("SKIP", path, c0.name, MORE_LOG_ROW); continue; }
     const why = c0.selects ? undefined : NEVER.find(([re]) => re.test(c0.name));
     if (why) { record("SKIP", path, c0.name, why[1]); continue; }
     if (c0.inConfirm) { record("SKIP", path, c0.name, "confirm button"); continue; }
