@@ -204,6 +204,22 @@ describe("SystemInfoTab info panels (ARCH-2)", () => {
     expect(row.querySelector(".sys-table__opts")!.getAttribute("title")).toBe("ro,dirsync");
   });
 
+  it("thermal names take the row, temperatures line up on the right; partitions keep the split (2026-11-05)", () => {
+    system.data.system.partitions = [{ name: "boot_a", target: "/dev/block/mmcblk0p15" }];
+    system.data.system.thermal = [{ zone: "thermal_zone21", type: "emmc-ufs-therm", temp_c: 38.5 }];
+    render(<SystemInfoTab />);
+    const listOf = (name: RegExp) =>
+      screen.getByRole("heading", { name }).closest(".sys-card")!.querySelector("dl") as HTMLElement;
+    const thermal = listOf(/^Thermal zones · 1$/);
+    expect(thermal.className).toBe("sys-pairs sys-pairs--short-values");
+    expect([...thermal.querySelectorAll("dt, dd")].map((el) => el.textContent)).toEqual([
+      "thermal_zone21 · emmc-ufs-therm",
+      "38.5°C",
+    ]);
+    // Device paths are long values: the partitions list keeps the default split.
+    expect(listOf(/^Partitions \(by-name\) · 1$/).className).toBe("sys-pairs");
+  });
+
   it("shows the no-device card and no panels when nothing is selected", () => {
     appState.device = null;
     render(<SystemInfoTab />);

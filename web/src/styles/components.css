@@ -2617,6 +2617,17 @@ html[lang^="zh"] h3 {
 }
 .sys-pairs__item dt { flex: 0 1 45%; color: var(--anth-text-secondary); overflow-wrap: anywhere; }
 .sys-pairs__item dd { flex: 1; margin: 0; color: var(--anth-text); overflow-wrap: anywhere; }
+/* Short values (thermal zones): "thermal_zoneNN · <type>" names run 24-31
+   characters while the values are at most 7, so the 45% cap above folded
+   most names onto two lines next to a mostly empty value column. Here the
+   name takes the rest of the row and the values line up on the right. */
+.sys-pairs--short-values .sys-pairs__item dt { flex: 1 1 auto; min-width: 0; }
+.sys-pairs--short-values .sys-pairs__item dd {
+  flex: 0 0 auto;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* PR-G additions: screenshot + ui dump tabs */
 .screenshot-tab {

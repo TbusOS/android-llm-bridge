@@ -233,6 +233,7 @@ function Snapshot({
           title={`${zh ? "温度（thermal zones）" : "Thermal zones"} · ${system.thermal.length}`}
           pairs={system.thermal.map((t) => [`${t.zone} · ${t.type}`, `${t.temp_c}°C`])}
           empty={zh ? "无温度传感器读数" : "no thermal readings"}
+          shortValues
         />
       </div>
     </>
@@ -463,15 +464,20 @@ function MountsCard({
   );
 }
 
-/** A long name → value list laid out in as many columns as the width holds. */
+/** A long name → value list laid out in as many columns as the width holds.
+ *  `shortValues`: every value is a few characters (a temperature), so the
+ *  name takes the rest of the row and the values form a right-aligned
+ *  column, instead of the default split that caps names at 45%. */
 function PairsCard({
   title,
   pairs,
   empty,
+  shortValues = false,
 }: {
   title: string;
   pairs: [string, string][];
   empty: string;
+  shortValues?: boolean;
 }) {
   return (
     <div className="sys-card">
@@ -480,7 +486,7 @@ function PairsCard({
         <p className="section-sub" style={{ marginBottom: 0 }}>{empty}</p>
       ) : (
         <div className="sys-scroll">
-          <dl className="sys-pairs">
+          <dl className={shortValues ? "sys-pairs sys-pairs--short-values" : "sys-pairs"}>
             {pairs.map(([k, v], i) => (
               <div className="sys-pairs__item" key={`${k}-${i}`}>
                 <dt>{k}</dt>
