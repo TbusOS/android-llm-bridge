@@ -845,6 +845,7 @@ def test_long_result_keeps_start_and_end_and_says_what_was_cut() -> None:
     assert out.endswith(full[-1000:])  # newest lines
     assert f"cut {len(full) - 3000} of {len(full)} characters" in out
     assert "narrower arguments" in out
+    assert "may be incomplete" in out  # a cut list must not pass for the whole list
     assert len(out) < 3000 + 400
 
 

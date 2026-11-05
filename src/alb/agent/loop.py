@@ -95,11 +95,15 @@ _OUTPUT_TRUNCATED_SUGGESTION = (
 DEFAULT_TOOL_RESULT_MAX_CHARS = 4000
 _TOOL_RESULT_ENV = "ALB_AGENT_TOOL_RESULT_MAX_CHARS"
 
+# The last sentence is there because a cut list reads like a whole one:
+# 2026-11-05, asked for the serial error codes, the model answered with the 3
+# that were in the kept part (of 6) and did not say anything was missing.
 _TOOL_RESULT_CUT_NOTE = (
     " …[alb cut {cut} of {total} characters here to keep the model fast; the "
     "person sees the whole result on the page. If what you need is in the cut "
     "part, call the tool again with narrower arguments (a filter, a pattern, "
-    "fewer lines) instead of guessing]… "
+    "fewer lines) instead of guessing. If you answer from the part shown, "
+    "tell the person the result was cut and the answer may be incomplete]… "
 )
 
 

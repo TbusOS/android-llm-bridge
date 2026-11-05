@@ -39,12 +39,18 @@ def register(mcp) -> None:  # noqa: ANN001
         }
 
     @mcp.tool()
-    async def alb_describe_errors(code: str | None = None) -> dict[str, Any]:
+    async def alb_describe_errors(
+        code: str | None = None, search: str | None = None
+    ) -> dict[str, Any]:
         """Look up error codes from the alb catalog.
 
         Args:
             code: optional exact code name (e.g. "DEVICE_OFFLINE").
-                  If None, returns the full catalog.
+            search: optional word; keeps only the codes whose name or
+                  category contains it, ignoring case (e.g. "serial",
+                  "flash", "edl"). Prefer it to the full catalog, which is
+                  long.
+            With neither, returns the full catalog.
         """
         if code:
             spec = lookup(code)
@@ -53,9 +59,25 @@ def register(mcp) -> None:  # noqa: ANN001
             return {"ok": True, "code": spec.code, "category": spec.category,
                     "default_message": spec.default_message,
                     "default_suggestion": spec.default_suggestion}
+        specs = list(ERROR_CODES.values())
+        if search and search.strip():
+            # 2026-11-05: the whole catalog is ~23 KB. Asked about serial
+            # errors, the web assistant got it all, and once results were
+            # cut to keep the CPU-hosted model fast it saw only part of the
+            # list and answered with 3 of the 6 serial codes. A filter lets
+            # it ask for exactly that part.
+            word = search.strip().lower()
+            specs = [s for s in specs if word in s.code.lower() or word in s.category.lower()]
+            if not specs:
+                return {
+                    "ok": True,
+                    "codes": [],
+                    "note": f"no code name or category contains {search.strip()!r}; "
+                    "omit search for the full catalog",
+                }
         return {
             "ok": True,
-            "codes": [asdict(s) for s in ERROR_CODES.values()],
+            "codes": [asdict(s) for s in specs],
         }
 
     @mcp.tool()
