@@ -24,6 +24,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -81,6 +82,64 @@ _OUTPUT_TRUNCATED_SUGGESTION = (
     "until the limit is the model looping, a new session usually helps"
 )
 
+# How much of one tool result the model reads (characters of its JSON).
+# On the CPU-only LLM host the model reads ~80 tokens/s, so a long result is
+# where a turn's time goes: 2026-11-05, ling3-tiny through the hub, a 22.5 KB
+# `alb_describe_errors` result took 64.6 s to read and a 15.4 KB
+# `alb_log_search` result 78.4 s, while turns whose results stayed under 1 KB
+# finished in 8-13 s. 4000 characters is about 1000 tokens, ~12 s to read.
+# Only the model's copy is cut: the tool_call_end event (what the page shows)
+# carries the whole result. The session keeps the cut copy, because a later
+# turn sends the history again and the model would re-read it in full.
+# ALB_AGENT_TOOL_RESULT_MAX_CHARS overrides it; 0 passes results whole.
+DEFAULT_TOOL_RESULT_MAX_CHARS = 4000
+_TOOL_RESULT_ENV = "ALB_AGENT_TOOL_RESULT_MAX_CHARS"
+
+_TOOL_RESULT_CUT_NOTE = (
+    " …[alb cut {cut} of {total} characters here to keep the model fast; the "
+    "person sees the whole result on the page. If what you need is in the cut "
+    "part, call the tool again with narrower arguments (a filter, a pattern, "
+    "fewer lines) instead of guessing]… "
+)
+
+
+def tool_result_max_chars_from_env() -> int:
+    """The limit from ALB_AGENT_TOOL_RESULT_MAX_CHARS, or the default.
+
+    A value that is not a whole number >= 0 is ignored with a warning: a
+    typo must not silently turn the limit off (or into something absurd)."""
+    raw = os.environ.get(_TOOL_RESULT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_TOOL_RESULT_MAX_CHARS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        _log.warning(
+            "%s=%r is not a whole number >= 0; using %d",
+            _TOOL_RESULT_ENV, raw, DEFAULT_TOOL_RESULT_MAX_CHARS,
+        )
+        return DEFAULT_TOOL_RESULT_MAX_CHARS
+    return value
+
+
+def tool_result_for_model(result: dict[str, Any], max_chars: int) -> str:
+    """The tool result as the model reads it: its JSON, cut to `max_chars`
+    characters when longer (0 = never cut).
+
+    Keeps the start and the end — two thirds and one third. The start holds
+    `ok` / `error` and the first entries; the end holds the newest log lines,
+    which is what a log question is usually about. A note in the gap says how
+    much was cut and how to get the rest."""
+    full = json.dumps(result, ensure_ascii=False, default=str)
+    if max_chars <= 0 or len(full) <= max_chars:
+        return full
+    head = max_chars * 2 // 3
+    tail = max_chars - head
+    note = _TOOL_RESULT_CUT_NOTE.format(cut=len(full) - head - tail, total=len(full))
+    return full[:head] + note + (full[-tail:] if tail else "")
+
 
 class AgentLoop:
     """Drive a conversation with tool calling.
@@ -121,6 +180,7 @@ class AgentLoop:
         system_prompt: str | None = None,
         user_note: str | None = None,
         max_output_tokens: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
+        tool_result_max_chars: int | None = None,
     ) -> None:
         """`user_note` is appended to every user message the model sees,
         e.g. "(请用简体中文回答)".  The session keeps what the person typed.
@@ -129,7 +189,11 @@ class AgentLoop:
         can reuse what it has already read.
 
         `max_output_tokens` caps each model turn (see
-        DEFAULT_MAX_OUTPUT_TOKENS); None leaves it to the backend."""
+        DEFAULT_MAX_OUTPUT_TOKENS); None leaves it to the backend.
+
+        `tool_result_max_chars` caps how much of one tool result the model
+        reads (see DEFAULT_TOOL_RESULT_MAX_CHARS); None reads it from
+        ALB_AGENT_TOOL_RESULT_MAX_CHARS, 0 passes results whole."""
         self.backend = backend
         self.tools = tools
         self.tool_executor = tool_executor
@@ -137,6 +201,11 @@ class AgentLoop:
         self.system_prompt = system_prompt
         self.user_note = user_note
         self.max_output_tokens = max_output_tokens
+        self.tool_result_max_chars = (
+            tool_result_max_chars_from_env()
+            if tool_result_max_chars is None
+            else max(0, tool_result_max_chars)
+        )
 
     def _for_model(self, msg: Message) -> Message:
         if msg.role != "user" or not self.user_note:
@@ -222,12 +291,7 @@ class AgentLoop:
                 tool_result = await self._dispatch(tc)
                 artifacts.extend(_extract_artifacts(tool_result))
 
-                tool_msg = Message(
-                    role="tool",
-                    content=json.dumps(tool_result, ensure_ascii=False, default=str),
-                    tool_call_id=tc.id,
-                    name=tc.name,
-                )
+                tool_msg = _tool_message(tc, tool_result, self.tool_result_max_chars)
                 messages.append(tool_msg)
                 if session is not None:
                     session.append(tool_msg)
@@ -417,7 +481,7 @@ class AgentLoop:
                     yield start_ev
                     tool_result = await self._dispatch(tc)
                     artifacts.extend(_extract_artifacts(tool_result))
-                    tool_msg = _tool_message(tc, tool_result)
+                    tool_msg = _tool_message(tc, tool_result, self.tool_result_max_chars)
                     messages.append(tool_msg)
                     if session is not None:
                         session.append(tool_msg)
@@ -532,10 +596,10 @@ def repair_tool_name(name: str, known: set[str]) -> str | None:
     return best
 
 
-def _tool_message(tc: ToolCall, tool_result: dict[str, Any]) -> Message:
+def _tool_message(tc: ToolCall, tool_result: dict[str, Any], max_chars: int = 0) -> Message:
     return Message(
         role="tool",
-        content=json.dumps(tool_result, ensure_ascii=False, default=str),
+        content=tool_result_for_model(tool_result, max_chars),
         tool_call_id=tc.id,
         name=tc.name,
     )

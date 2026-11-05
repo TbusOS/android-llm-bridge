@@ -16,7 +16,13 @@ from alb.agent.backend import (
     ToolCall,
     ToolSpec,
 )
-from alb.agent.loop import AgentLoop, repair_tool_name
+from alb.agent.loop import (
+    DEFAULT_TOOL_RESULT_MAX_CHARS,
+    AgentLoop,
+    repair_tool_name,
+    tool_result_for_model,
+    tool_result_max_chars_from_env,
+)
 from alb.agent.session import ChatSession
 
 
@@ -810,3 +816,99 @@ def test_output_truncated_is_a_registered_error_code() -> None:
     from alb.infra.errors import ERROR_CODES
 
     assert ERROR_CODES["LLM_OUTPUT_TRUNCATED"].category == "system"
+
+
+# ─── Long tool results: the model reads a cut copy (2026-11-05) ───────
+
+
+def _long_result(n: int = 20000) -> dict[str, Any]:
+    lines = [f"line {i:05d} E crash-or-not" for i in range(n // 28 + 1)]
+    return {"ok": True, "data": {"lines": lines}, "artifacts": []}
+
+
+def test_short_result_reaches_the_model_whole() -> None:
+    r = {"ok": True, "data": {"level": 87}}
+    assert tool_result_for_model(r, 4000) == json.dumps(r, ensure_ascii=False)
+
+
+def test_result_exactly_at_the_limit_is_not_cut() -> None:
+    r = {"ok": True, "data": "x" * 100}
+    full = json.dumps(r, ensure_ascii=False)
+    assert tool_result_for_model(r, len(full)) == full
+
+
+def test_long_result_keeps_start_and_end_and_says_what_was_cut() -> None:
+    r = _long_result()
+    full = json.dumps(r, ensure_ascii=False)
+    out = tool_result_for_model(r, 3000)
+    assert out.startswith(full[:2000])  # ok / first entries
+    assert out.endswith(full[-1000:])  # newest lines
+    assert f"cut {len(full) - 3000} of {len(full)} characters" in out
+    assert "narrower arguments" in out
+    assert len(out) < 3000 + 400
+
+
+def test_zero_means_never_cut() -> None:
+    r = _long_result()
+    assert tool_result_for_model(r, 0) == json.dumps(r, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ("", DEFAULT_TOOL_RESULT_MAX_CHARS),
+        ("0", 0),
+        ("1500", 1500),
+        ("abc", DEFAULT_TOOL_RESULT_MAX_CHARS),  # a typo must not turn it off
+        ("-5", DEFAULT_TOOL_RESULT_MAX_CHARS),
+    ],
+)
+def test_limit_from_env(monkeypatch: pytest.MonkeyPatch, raw: str, want: int) -> None:
+    monkeypatch.setenv("ALB_AGENT_TOOL_RESULT_MAX_CHARS", raw)
+    assert tool_result_max_chars_from_env() == want
+
+
+async def test_run_stream_model_reads_the_cut_copy_page_gets_the_whole(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model's next request carries the cut result, the tool_call_end
+    event (what the page shows) the whole one, and the session the cut one
+    (a later turn sends the history again)."""
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    big = _long_result()
+    b = FakeBackend([_calls(_tc("alb_logcat", {}, tc_id="tc_1")), _final("没有崩溃")])
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return big
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_, tool_result_max_chars=3000)
+    session = ChatSession.create(backend="fake")
+    events = [ev async for ev in loop.run_stream("有没有崩溃", session=session)]
+
+    end = next(e for e in events if e["type"] == "tool_call_end")
+    assert end["result"] == big
+    sent = next(m for m in b.calls[1] if m.role == "tool").content
+    assert sent == tool_result_for_model(big, 3000)
+    assert len(sent) < len(json.dumps(big, ensure_ascii=False))
+    stored = next(m for m in ChatSession.load(session.session_id).messages() if m.role == "tool")
+    assert stored.content == sent
+
+
+async def test_run_model_reads_the_cut_copy_too() -> None:
+    big = _long_result()
+    b = FakeBackend([_calls(_tc("alb_logcat", {}, tc_id="tc_1")), _final("ok")])
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return big
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_, tool_result_max_chars=3000)
+    r = await loop.run("x")
+    assert r.ok
+    sent = next(m for m in b.calls[1] if m.role == "tool").content
+    assert sent == tool_result_for_model(big, 3000)
+
+
+async def test_default_limit_applies_when_not_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALB_AGENT_TOOL_RESULT_MAX_CHARS", raising=False)
+    loop = AgentLoop(FakeBackend([]), tools=[_TOOL], tool_executor=_no_tools)
+    assert loop.tool_result_max_chars == DEFAULT_TOOL_RESULT_MAX_CHARS
