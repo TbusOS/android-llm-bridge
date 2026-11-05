@@ -133,6 +133,35 @@ describe("TimelinePage", () => {
     expect(screen.getByText(/into the recording/)).toHaveTextContent("+63.20 s");
   });
 
+  it("a search covers the whole recording, and a match outside the range brings the range to it (2026-11-05)", async () => {
+    const urls: string[] = [];
+    const MATCH = { t: 5, ts: null, src: "uart", text: "alb-mark-1", level: null, tag: null, pid: null };
+    mockFetch({
+      ...full,
+      "/lines": (url) => {
+        urls.push(url);
+        const lines = new URL(url, "http://x").searchParams.get("grep") ? [MATCH] : LINES;
+        return json({ ok: true, data: { lines, truncated: false } });
+      },
+    });
+    renderPage();
+    const range = (u: string) => {
+      const p = new URL(u, "http://x").searchParams;
+      return [Number(p.get("t0")), Number(p.get("t1"))];
+    };
+    // once the markers are in, it opens on the 10 s around the panic at 63.2 s
+    await waitFor(() => expect(screen.getByText(/, 10\.0 s of 90 s/)).toHaveTextContent(/^09:31:57 – 09:32:07/));
+    await waitFor(() => expect(range(urls.at(-1) as string)).toEqual([59.2, 69.2]));
+    fireEvent.change(screen.getByRole("textbox", { name: "search" }), { target: { value: "alb-mark-1" } });
+    expect(await screen.findByText("Matches in the whole recording")).toBeInTheDocument();
+    const searched = urls.filter((u) => u.includes("grep=alb-mark-1"));
+    expect(searched.length).toBeGreaterThan(0);
+    expect(range(searched.at(-1) as string)).toEqual([0, 90]);
+    const row = (await screen.findAllByText("alb-mark-1")).find((el) => el.closest("button.log")) as HTMLElement;
+    fireEvent.click(row);
+    expect(await screen.findByText(/, 10\.0 s of 90 s/)).toHaveTextContent(/^09:30:58 – 09:31:08/);
+  });
+
   it("opens the assistant with the lines around the selection", async () => {
     mockFetch(full);
     renderPage();

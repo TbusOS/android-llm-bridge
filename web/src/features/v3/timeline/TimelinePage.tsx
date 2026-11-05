@@ -213,10 +213,17 @@ export function TimelinePage() {
   };
 
   const chosen = (["logcat", "dmesg", "uart", "job"] as const).filter((s) => srcs[s]);
+  // A search covers the whole recording, as its placeholder says; without one
+  // the list is the range on screen. (2026-11-05: the search sent the range,
+  // so a recording with a problem marker opened on the 10 s around it and a
+  // line 20 s earlier read as "0 lines match" although it was recorded.)
+  const searching = grep !== "";
+  const q0 = searching ? 0 : r0;
+  const q1 = searching ? total : r1;
   const linesQ = useDashboardQuery({
-    queryKey: ["tl-lines", device, name, chosen.join(","), grep, r0.toFixed(2), r1.toFixed(2)],
+    queryKey: ["tl-lines", device, name, chosen.join(","), grep, q0.toFixed(2), q1.toFixed(2)],
     queryFn: ({ signal }) =>
-      captureLines(name as string, { device, sources: chosen.length === 4 ? undefined : chosen.join(","), grep, t0: r0, t1: r1, limit: 2000 }, signal),
+      captureLines(name as string, { device, sources: chosen.length === 4 ? undefined : chosen.join(","), grep, t0: q0, t1: q1, limit: 2000 }, signal),
     refetchMs: 3_600_000,
     enabled: !!name && chosen.length > 0,
   });
@@ -502,7 +509,7 @@ export function TimelinePage() {
             </div>
             <label className="input--search">
               <Icon name="search" size="sm" />
-              <input value={grepIn} onChange={(e) => setGrepIn(e.target.value)} placeholder={t("在这段里搜索(支持正则)", "Search this recording (regex)")} aria-label={t("搜索", "search")} />
+              <input value={grepIn} onChange={(e) => setGrepIn(e.target.value)} placeholder={t("在整段录制里搜索(支持正则)", "Search this recording (regex)")} aria-label={t("搜索", "search")} />
             </label>
             <button type="button" className="chip" aria-pressed={onlyProblems} onClick={() => setOnlyProblems((v) => !v)}>
               {t("只看问题", "Problems only")}
@@ -647,13 +654,13 @@ export function TimelinePage() {
         <section className="grid tl-split">
           <article className="card card--flush span-8">
             <CardHead
-              title={t("这段时间的日志", "Lines in this range")}
+              title={searching ? t("整段录制里的匹配", "Matches in the whole recording") : t("这段时间的日志", "Lines in this range")}
               sub={
                 linesQ.isLoading
                   ? t("读取中…", "loading…")
-                  : grep
-                    ? t(`${lines.length} 行含 “${grep}”`, `${lines.length} lines match “${grep}”`)
-                    : t(`${lines.length} 行`, `${lines.length} lines`) + (linesQ.data?.data?.truncated ? t(",只取前 2000 行", ", first 2000 only") : "")
+                  : (grep
+                      ? t(`${lines.length} 行含 “${grep}”`, `${lines.length} lines match “${grep}”`)
+                      : t(`${lines.length} 行`, `${lines.length} lines`)) + (linesQ.data?.data?.truncated ? t(",只取前 2000 行", ", first 2000 only") : "")
               }
             />
             {linesQ.isError ? (
@@ -665,7 +672,7 @@ export function TimelinePage() {
             ) : chosen.length === 0 ? (
               <Empty icon="filter" title={t("没有选日志来源", "No log source selected")}>{t("在上面至少打开串口、dmesg、logcat 中的一个。", "Turn on at least one of serial, dmesg or logcat above.")}</Empty>
             ) : lines.length === 0 && !linesQ.isLoading ? (
-              <Empty icon="logs" title={t("这个范围里没有日志", "No lines in this range")}>{grep || onlyProblems ? t("去掉搜索词或「只看问题」试试。", "Clear the search or Problems only.") : t("拖动概览条换一个范围。", "Drag on the overview to pick another range.")}</Empty>
+              <Empty icon="logs" title={searching ? t("整段录制里没有匹配的行", "No line in this recording matches") : t("这个范围里没有日志", "No lines in this range")}>{grep || onlyProblems ? t("去掉搜索词或「只看问题」试试。", "Clear the search or Problems only.") : t("拖动概览条换一个范围。", "Drag on the overview to pick another range.")}</Empty>
             ) : (
               <div className="logs" style={{ "--log-cols": "112px 58px 22px 128px minmax(0, 1fr)", maxHeight: 460 } as CSSProperties}>
                 {shown.map((l, i) => {
@@ -677,7 +684,11 @@ export function TimelinePage() {
                       key={`${l.t}-${idx}`}
                       className={`log${bad ? ` log--${bad}` : ""}`}
                       aria-pressed={idx === selIdx}
-                      onClick={() => setSelT({ key: name ?? "", t: l.t, line: l })}
+                      onClick={() => {
+                        setSelT({ key: name ?? "", t: l.t, line: l });
+                        // a search match can lie outside the range: bring the range to it
+                        if (l.t < r0 || l.t > r1) setRange(l.t - (r1 - r0) / 2, l.t + (r1 - r0) / 2);
+                      }}
                     >
                       <span className="log__t">{clock(base, l.t, true)}</span>
                       {srcTag(l.src)}
