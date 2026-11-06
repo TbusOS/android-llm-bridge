@@ -214,9 +214,10 @@ async def probe_ondevice(
         raise HTTPException(status_code=400, detail="ports must be 1-65535")
     ports = list(dict.fromkeys(body.ports))  # keep order, drop repeats
     try:
-        # resolve_endpoint may ask the hub over HTTP when the forwarder is not
-        # bound in this process; from the event loop that would wait on
-        # ourselves, so it runs on a worker thread.
+        # Inside alb-api resolve_endpoint reads this process's forwarder
+        # (adb_endpoint.mark_hub_process) and no longer asks the hub over HTTP.
+        # Still on a worker thread: should that ever change, a request from the
+        # event loop to ourselves would wait on itself.
         resolved = await asyncio.to_thread(resolve_endpoint, _config_socket())
         endpoint = parse_endpoint(resolved.socket)
         target = await resolve_target(endpoint, device, timeout_s=_CONNECT_TIMEOUT_S)

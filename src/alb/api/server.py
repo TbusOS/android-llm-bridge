@@ -87,10 +87,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     install_ws_drain_fix()
     get_metric_store().attach(get_bus())
+    # Before any request is served: a /devices that lands before the bench
+    # agent connects must not leave this process on the wrong adb server.
+    from alb.infra.adb_endpoint import mark_hub_process
+
+    mark_hub_process(True)
     warm = _start_warm_up(app)
     try:
         yield
     finally:
+        mark_hub_process(False)
         if warm is not None and not warm.done():
             warm.cancel()
         from alb.capabilities.metrics import shutdown_all_streamers

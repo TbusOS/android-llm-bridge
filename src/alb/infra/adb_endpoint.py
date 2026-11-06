@@ -65,6 +65,7 @@ __all__ = [
     "HubAdbView",
     "endpoint_conflict",
     "hub_adb_view",
+    "mark_hub_process",
     "reset_hub_cache",
     "resolve_endpoint",
 ]
@@ -76,13 +77,30 @@ _HUB_TIMEOUT_S = 0.4
 
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
-# Per-process memo. Commands are short-lived, so "once per process" is the same
-# as "once", while long-lived callers (the agent loop) keep paying nothing.
-# Two variables rather than a sentinel value, because "probed, and there is no
-# hub" must not re-probe on every command — that is the case a plain `None`
-# cache would get wrong, and it is the common one on a laptop.
+# Per-process memo, of a BOUND forwarder only. Commands are short-lived, so
+# "once per process" is the same as "once", while long-lived callers (the agent
+# loop, an MCP server) keep paying nothing once a forwarder is found.
+#
+# "No hub" and "hub, forwarder not bound yet" are not memoised (2026-11-06).
+# They are what a probe sees while a hub restarts: the forwarder binds only
+# when the bench agent connects (agent_route._safe_attach). Memoised, they stuck
+# a process to adb's default server — zero devices, no error — until it was
+# restarted; on 2026-11-06 a page polling /devices during a hub restart did it
+# to the hub itself. Re-probing costs a refused connection on loopback.
 _HUB_PROBED = False
 _HUB_CACHE: HubAdbView | None = None
+
+# Set by alb-api while it runs (server._lifespan). Inside the hub the answer is
+# the forwarder singleton, read on every call: no memo to go stale, and no HTTP
+# request to itself (see _in_process_view).
+_IN_HUB = False
+
+
+def mark_hub_process(in_hub: bool = True) -> None:
+    """alb-api calls this at startup (True) and shutdown (False)."""
+    global _IN_HUB
+    _IN_HUB = in_hub
+    reset_hub_cache()
 
 
 @dataclass(frozen=True)
@@ -210,6 +228,8 @@ def hub_adb_view(*, refresh: bool = False) -> HubAdbView | None:
     nothing beyond a missed hint.
     """
     global _HUB_CACHE, _HUB_PROBED
+    if _IN_HUB:
+        return _in_process_view()
     if _HUB_PROBED and not refresh:
         return _HUB_CACHE
 
@@ -225,8 +245,9 @@ def hub_adb_view(*, refresh: bool = False) -> HubAdbView | None:
                     view = _view_from_status(r.json())
             except Exception:  # absence of a hub is the normal case, not an error
                 view = None
-    _HUB_CACHE = view
-    _HUB_PROBED = True
+    if view is not None and view.socket:
+        _HUB_CACHE = view
+        _HUB_PROBED = True
     return view
 
 

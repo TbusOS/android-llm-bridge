@@ -8,6 +8,8 @@ one case that produced a lost day on 2026-08-10".
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from alb.infra import adb_endpoint as ae
@@ -22,6 +24,7 @@ def _no_ambient_state(monkeypatch):
     monkeypatch.delenv("ALB_API_URL", raising=False)
     monkeypatch.delenv("ALB_API_HOST", raising=False)
     monkeypatch.delenv("ALB_API_PORT", raising=False)
+    monkeypatch.setattr(ae, "_IN_HUB", False)
     ae.reset_hub_cache()
     yield
     ae.reset_hub_cache()
@@ -197,16 +200,116 @@ def test_probe_failure_is_not_an_error(monkeypatch):
     assert ae.hub_adb_view() is None
 
 
-def test_probe_is_memoised(monkeypatch):
-    calls = []
-    monkeypatch.setattr(ae, "_in_process_view", lambda: (calls.append(1), None)[1])
-    monkeypatch.setattr("httpx.get", lambda *_a, **_k: (_ for _ in ()).throw(OSError()))
+def _record_http(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+
+    def get(url: object, *_a: object, **_k: object) -> object:
+        calls.append(str(url))
+        raise OSError("no HTTP in this test")
+
+    monkeypatch.setattr("httpx.get", get)
+    return calls
+
+
+class _Status:
+    """A /agent/status answer whose adb forwarder is bound or not."""
+
+    status_code = 200
+
+    def __init__(self, bound: bool) -> None:
+        self._bound = bound
+
+    def json(self) -> dict[str, Any]:
+        return {"forwarders": {"adb": {"bound": self._bound, "port": 15037}}, "agents": []}
+
+
+def _answers(monkeypatch: pytest.MonkeyPatch, *answers: object) -> list[int]:
+    """httpx.get returns these in turn (an exception instance is raised)."""
+    calls: list[int] = []
+    left = list(answers)
+
+    def get(*_a: object, **_k: object) -> object:
+        calls.append(1)
+        a = left.pop(0) if len(left) > 1 else left[0]
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    monkeypatch.setattr(ae, "_in_process_view", lambda: None)
+    monkeypatch.setattr("httpx.get", get)
+    return calls
+
+
+def test_a_bound_forwarder_is_memoised(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _answers(monkeypatch, _Status(bound=True))
     ae.hub_adb_view()
     ae.hub_adb_view()
     ae.hub_adb_view()
-    assert len(calls) == 1, "one probe per process, not one per command"
+    assert len(calls) == 1, "one probe per process once a forwarder is found"
     ae.hub_adb_view(refresh=True)
     assert len(calls) == 2, "refresh must actually re-probe"
+
+
+def test_no_hub_is_not_memoised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A long-lived process (an MCP server) that probed while the hub was
+    restarting must find it once it is back, not stay on adb's default server
+    — zero devices and no error — until it is restarted itself (2026-11-06)."""
+    _answers(monkeypatch, OSError("connection refused"), _Status(bound=True))
+    assert ae.resolve_endpoint().source == "default"
+    assert ae.resolve_endpoint().socket == "tcp:127.0.0.1:15037"
+
+
+def test_an_unbound_forwarder_is_not_memoised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The forwarder binds when the bench agent connects, seconds after the
+    hub starts; a probe in between sees it unbound."""
+    _answers(monkeypatch, _Status(bound=False), _Status(bound=True))
+    assert ae.resolve_endpoint().source == "default"
+    assert ae.resolve_endpoint().socket == "tcp:127.0.0.1:15037"
+
+
+def test_inside_the_hub_the_forwarder_is_read_every_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No memo and no HTTP to itself: the forwarder singleton is the answer."""
+    import alb.remote.forwarder as fw
+
+    adb = {"bound": False, "port": 15037}
+    monkeypatch.setattr(fw, "forwarder_status", lambda: {"adb": dict(adb)})
+    # Recorded, not raised: the probe swallows exceptions by design.
+    http = _record_http(monkeypatch)
+    ae.mark_hub_process(True)
+    try:
+        assert ae.resolve_endpoint().source == "default"
+        adb["bound"] = True
+        assert ae.resolve_endpoint().socket == "tcp:127.0.0.1:15037"
+    finally:
+        ae.mark_hub_process(False)
+    assert http == [], "the hub must not issue HTTP to itself"
+
+
+def test_a_devices_request_before_the_agent_connects_does_not_stick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 2026-11-06 15:39 restart: a page on the bench host asked the new hub
+    for /devices before the bench agent was back, and the hub showed zero
+    devices until it was restarted again. alb-api marks itself as the hub at
+    startup, so the forwarder that binds later is found."""
+    from fastapi.testclient import TestClient
+
+    import alb.remote.forwarder as fw
+    from alb.api.server import create_app
+
+    monkeypatch.setenv("ALB_ADB_FORWARD_PORT", "0")
+    adb = {"bound": False, "port": 15037}
+    monkeypatch.setattr(fw, "forwarder_status", lambda: {"adb": dict(adb)})
+    # Also keeps this test off a real hub that may be listening on 8765.
+    http = _record_http(monkeypatch)
+    with TestClient(create_app()) as c:
+        assert ae._IN_HUB is True, "startup marks the hub"
+        c.get("/devices")  # the early request
+        assert ae.resolve_endpoint().source == "default"
+        adb["bound"] = True  # the agent connected
+        assert ae.resolve_endpoint().socket == "tcp:127.0.0.1:15037"
+    assert ae._IN_HUB is False, "shutdown clears the mark"
+    assert http == [], "the hub must not issue HTTP to itself"
 
 
 def test_status_payload_is_parsed_from_the_real_shape():
