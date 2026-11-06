@@ -174,10 +174,30 @@ export async function fetchDevices(signal?: AbortSignal): Promise<DevicesRespons
   return (await r.json()) as DevicesResponse;
 }
 
+export interface ApiCpuCluster {
+  count: number;
+  cpus: number[];
+  /** Kernel name for the core, e.g. "Cortex-A55"; "" when not in the hub's table. */
+  core: string;
+  /** "implementer/part" from /proc/cpuinfo, e.g. "0x41/0xd05". */
+  part: string;
+  max_khz: number;
+}
+
 export interface ApiDeviceDetailsExtras {
   soc: string;
   cpu_cores: number;
+  /** The fastest core's top frequency (cpu0's before 2026-11-06). */
   cpu_max_khz: number;
+  // Added 2026-11-06; absent from an older hub.
+  soc_model?: string;
+  soc_manufacturer?: string;
+  board_platform?: string;
+  soc_id?: string;
+  cpu_arch?: string;
+  cpu_clusters?: ApiCpuCluster[];
+  abi_list?: string;
+  abi_list64?: string;
   ram_total_kb: number;
   ram_avail_kb: number;
   display: { size?: string; density?: string };

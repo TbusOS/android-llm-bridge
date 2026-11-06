@@ -205,8 +205,9 @@ class _DevinfoTransport(_FakeAdbTransport):
         if cmd.startswith("cat /sys/class/thermal"):
             return ShellResult(ok=True, exit_code=0, stdout="47350\n",
                                stderr="", duration_ms=1)
-        if cmd.startswith("cat /sys/devices/system/cpu"):
-            return ShellResult(ok=True, exit_code=0, stdout="2802000\n",
+        if cmd.startswith('echo "soc_id='):
+            return ShellResult(ok=True, exit_code=0,
+                               stdout="soc_id=\ncpu0=2802000\ncpu1=2802000\n",
                                stderr="", duration_ms=1)
         return ShellResult(ok=False, exit_code=1, stderr="unhandled",
                            duration_ms=0, error_code="ADB_COMMAND_FAILED")
@@ -234,6 +235,8 @@ def test_device_details_happy(monkeypatch, tmp_path) -> None:
     assert dev["extras"]["soc"] == "Tensor G2"
     assert dev["extras"]["cpu_cores"] == 2
     assert dev["extras"]["cpu_max_khz"] == 2802000
+    assert dev["extras"]["cpu_clusters"][0]["count"] == 2
+    assert dev["extras"]["cpu_clusters"][0]["max_khz"] == 2802000
     assert dev["extras"]["ram_total_kb"] == 7929164
     assert dev["extras"]["display"]["size"] == "1080x2400"
     assert dev["extras"]["temp_c"] == pytest.approx(47.35)

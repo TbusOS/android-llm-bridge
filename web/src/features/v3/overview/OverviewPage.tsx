@@ -32,6 +32,7 @@ import { type MetricSample, useMetricsStream } from "../../inspect/useMetricsStr
 import { BackendsCard, LiveSessionCard, SummaryCard } from "./AssistantCards";
 import { deviceListCopy, deviceListState, transportLabel } from "../../../lib/overviewData";
 import { DevicesCard, showDeviceStrip, useRefreshDevices } from "./DevicesCard";
+import { archLine, chipLine, cpuLine, type FactLine } from "./hardwareText";
 
 type RebootKind = RebootRequest["mode"] | "breakin";
 
@@ -138,6 +139,20 @@ export function OverviewPage() {
 }
 
 /* ---------------- board state ---------------- */
+
+/** One fact in the device card: the value, and under it in small type what
+ *  else the board goes by (hardwareText.ts). */
+function Fact({ label, line, mono = false, wide = false }: { label: string; line: FactLine; mono?: boolean; wide?: boolean }) {
+  return (
+    <div className={wide ? "kv--wide" : undefined}>
+      <dt>{label}</dt>
+      <dd className={mono ? "mono" : undefined}>
+        {line.main}
+        {line.sub ? <small className="kv__sub">{line.sub}</small> : null}
+      </dd>
+    </div>
+  );
+}
 
 function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
   const t = useT();
@@ -260,7 +275,7 @@ function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
           {d ? (
             <dl className="kv facts">
               <div><dt>{t("型号", "Model")}</dt><dd>{d.brand} {d.model}</dd></div>
-              <div><dt>{t("硬件", "Hardware")}</dt><dd className="mono">{d.hardware || d.extras.soc}</dd></div>
+              <Fact label={t("芯片", "Chip")} line={chipLine(d, t)} mono />
               <div>
                 <dt>Android</dt>
                 <dd>
@@ -277,9 +292,9 @@ function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
                   </abbr>
                 </dd>
               </div>
-              <div><dt>ABI</dt><dd className="mono">{d.abi}</dd></div>
+              <Fact label={t("架构", "Architecture")} line={archLine(d, t)} />
               <div className="kv--wide"><dt>{t("构建指纹", "Build fingerprint")}</dt><dd className="mono">{d.build_fingerprint}</dd></div>
-              <div><dt>CPU</dt><dd className="num">{d.extras.cpu_cores} {t("核", "cores")} · {(d.extras.cpu_max_khz / 1e6).toFixed(2)} GHz</dd></div>
+              <Fact label="CPU" line={cpuLine(d, t)} wide />
               <div><dt>{t("内存", "Memory")}</dt><dd className="num">{(d.extras.ram_total_kb / 1048576).toFixed(1)} GiB</dd></div>
               <div><dt>{t("电池", "Battery")}</dt><dd className="num">{d.battery_level}%{d.extras.temp_c ? ` · ${d.extras.temp_c.toFixed(1)} °C` : ""}</dd></div>
               <div><dt>{t("屏幕", "Display")}</dt><dd className="num">{d.extras.display.size ?? "—"}</dd></div>

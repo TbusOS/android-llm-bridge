@@ -43,7 +43,7 @@ function DeviceTile({ d, selected, onPick }: { d: ApiDevice; selected: boolean; 
   const x = q.data?.device ?? null;
   const ramPct = x && x.extras.ram_total_kb > 0 ? Math.round(((x.extras.ram_total_kb - x.extras.ram_avail_kb) / x.extras.ram_total_kb) * 100) : null;
   const facts: [string, string][] = [
-    [t("芯片", "SoC"), x ? x.extras.soc || x.hardware || "—" : "—"],
+    [t("芯片", "SoC"), x ? x.extras.soc_model || x.extras.soc || x.hardware || "—" : "—"],
     [t("内存", "Memory"), x && ramPct !== null ? `${ramPct}% · ${(x.extras.ram_total_kb / 1048576).toFixed(1)} GiB` : "—"],
     [t("电池", "Battery"), x && x.battery_level >= 0 ? `${x.battery_level}%` : "—"],
     [t("温度", "Temp"), x && x.extras.temp_c > 0 ? `${x.extras.temp_c.toFixed(1)} °C` : "—"],

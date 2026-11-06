@@ -228,7 +228,7 @@ async def test_devinfo_extras_full() -> None:
     wm_size = "Physical size: 1080x2400\n"
     wm_density = "Physical density: 420\n"
     thermal = "47350\n"  # millicelsius → 47.35 C
-    cpufreq = "2802000\n"  # max 2.802 GHz
+    cpufreq = "soc_id=\n" + "".join(f"cpu{i}=2802000\n" for i in range(4))  # 2.802 GHz
 
     t = _mk_transport({
         "getprop": ShellResult(ok=True, exit_code=0, stdout=props_output, stderr="", duration_ms=1),
@@ -236,8 +236,7 @@ async def test_devinfo_extras_full() -> None:
         "cat /proc/uptime": ShellResult(ok=False, exit_code=1, stderr="", duration_ms=1),
         "df /data": ShellResult(ok=False, exit_code=1, stderr="", duration_ms=1),
         "cat /proc/cpuinfo": ShellResult(ok=True, exit_code=0, stdout=cpuinfo, stderr="", duration_ms=1),
-        "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq": ShellResult(
-            ok=True, exit_code=0, stdout=cpufreq, stderr="", duration_ms=1),
+        'echo "soc_id=': ShellResult(ok=True, exit_code=0, stdout=cpufreq, stderr="", duration_ms=1),
         "cat /proc/meminfo": ShellResult(ok=True, exit_code=0, stdout=meminfo, stderr="", duration_ms=1),
         "wm size": ShellResult(ok=True, exit_code=0, stdout=wm_size, stderr="", duration_ms=1),
         "wm density": ShellResult(ok=True, exit_code=0, stdout=wm_density, stderr="", duration_ms=1),
@@ -310,3 +309,98 @@ async def test_devinfo_soc_fallback_chain() -> None:
     r = await devinfo(t)
     assert r.ok
     assert r.data.extras["soc"] == "SM8650"
+
+
+# ─── chip and CPU layout (2026-11-06) ──────────────────────────────
+# The overview said "qcom" and "8 cores · 1.80 GHz" for a board with a named
+# chip and two clusters: ro.hardware instead of the chip, cpu0's frequency
+# (the slow cluster) instead of the top one. The cpuinfo below is the format a
+# 64-bit kernel prints to a shell in 32-bit mode (that board's adb shell);
+# the layout lines have the shape _CPU_LAYOUT_CMD printed there (numbers
+# changed).
+
+_BIG_LITTLE_CPUINFO = "".join(
+    f"processor\t: {i}\n"
+    "model name\t: ARMv8 Processor rev 4 (v8l)\n"
+    "Features\t: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt lpae\n"
+    "CPU implementer\t: 0x51\n"
+    "CPU architecture: 8\n"
+    "CPU variant\t: 0xa\n"
+    f"CPU part\t: {'0x801' if i < 4 else '0x800'}\n"
+    f"CPU revision\t: {4 if i < 4 else 2}\n\n"
+    for i in range(8)
+)
+_BIG_LITTLE_LAYOUT = "soc_id=123\n" + "".join(
+    f"cpu{i}={1800000 if i < 4 else 2000000}\n" for i in range(8)
+)
+_CHIP_PROPS = (
+    "[ro.product.model]: [Board X]\n"
+    "[ro.hardware]: [qcom]\n"
+    "[ro.board.platform]: [platform-x]\n"
+    "[ro.soc.manufacturer]: [QTI]\n"
+    "[ro.soc.model]: [SM0000]\n"
+    "[ro.product.cpu.abi]: [armeabi-v7a]\n"
+    "[ro.product.cpu.abilist]: [armeabi-v7a,armeabi]\n"
+    "[ro.product.cpu.abilist64]: []\n"
+)
+
+
+def _ok(stdout: str) -> ShellResult:
+    return ShellResult(ok=True, exit_code=0, stdout=stdout, stderr="", duration_ms=1)
+
+
+@pytest.mark.asyncio
+async def test_devinfo_names_the_chip_and_each_cluster() -> None:
+    t = _mk_transport({
+        "getprop": _ok(_CHIP_PROPS),
+        "cat /proc/cpuinfo": _ok(_BIG_LITTLE_CPUINFO),
+        'echo "soc_id=': _ok(_BIG_LITTLE_LAYOUT),
+    })
+    r = await devinfo(t)
+    assert r.ok and r.data is not None
+    x = r.data.extras
+    assert (x["soc_manufacturer"], x["soc_model"], x["board_platform"], x["soc_id"]) == (
+        "QTI", "SM0000", "platform-x", "123",
+    )
+    assert x["cpu_max_khz"] == 2000000, "the big cluster, not cpu0"
+    assert x["cpu_arch"] == "ARMv8"
+    assert x["cpu_clusters"] == [
+        {"count": 4, "cpus": [0, 1, 2, 3], "core": "Kryo 2xx Silver",
+         "part": "0x51/0x801", "max_khz": 1800000},
+        {"count": 4, "cpus": [4, 5, 6, 7], "core": "Kryo 2xx Gold",
+         "part": "0x51/0x800", "max_khz": 2000000},
+    ]
+    assert (x["abi_list"], x["abi_list64"]) == ("armeabi-v7a,armeabi", "")
+
+
+def test_cpu_layout_ignores_an_echoed_command_and_empty_values() -> None:
+    """A serial console echoes the command line back; cores without cpufreq
+    print `cpuN=`."""
+    from alb.capabilities.diagnose import _CPU_LAYOUT_CMD, _parse_cpu_layout
+
+    # No soc_id line after the echo (a board without soc0 prints `soc_id=`, a
+    # cut-off capture may print nothing): the echo's own "soc_id=$(cat" must
+    # not be read as the answer.
+    out = f"console:/ $ {_CPU_LAYOUT_CMD}\ncpu0=1000\ncpu1=\n"
+    assert _parse_cpu_layout(out) == {"soc_id": "", "max_khz": {0: 1000}}
+
+
+def test_an_unknown_core_is_shown_by_its_numbers() -> None:
+    from alb.capabilities.diagnose import _cpu_clusters, _parse_cpuinfo_cores
+
+    cores = _parse_cpuinfo_cores(
+        "processor\t: 0\nCPU implementer\t: 0x41\nCPU part\t: 0xd03\n\n"
+        "processor\t: 1\nCPU implementer\t: 0x99\nCPU part\t: 0x123\n"
+    )
+    groups = _cpu_clusters(cores, {0: 1000, 1: 2000})
+    assert [(g["core"], g["part"]) for g in groups] == [
+        ("Cortex-A53", "0x41/0xd03"), ("", "0x99/0x123"),
+    ]
+
+
+def test_no_clusters_when_nothing_tells_cores_apart() -> None:
+    """x86 emulators print neither part numbers nor, often, cpufreq."""
+    from alb.capabilities.diagnose import _cpu_clusters, _parse_cpuinfo_cores
+
+    cores = _parse_cpuinfo_cores("processor\t: 0\nvendor_id\t: GenuineIntel\n")
+    assert _cpu_clusters(cores, {}) == []

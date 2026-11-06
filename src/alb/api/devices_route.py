@@ -116,7 +116,15 @@ async def device_details(serial: str) -> dict[str, Any]:
             "storage": {"/data": "used=... avail=..."},
             "extras": {
               "soc": "Tensor G2", "cpu_cores": 8,
-              "cpu_max_khz": 2802000,
+              "cpu_max_khz": 2802000,          # the fastest core
+              "soc_model": "...", "soc_manufacturer": "...",
+              "board_platform": "...", "soc_id": "",
+              "cpu_arch": "ARMv8",
+              "cpu_clusters": [{"count": 4, "cpus": [0, 1, 2, 3],
+                                "core": "Cortex-A55", "part": "0x41/0xd05",
+                                "max_khz": 1803000}, ...],
+              "abi_list": "arm64-v8a,armeabi-v7a,armeabi",
+              "abi_list64": "arm64-v8a",
               "ram_total_kb": 7929164, "ram_avail_kb": 5500000,
               "display": {"size": "1080x2400", "density": "420"},
               "temp_c": 47.35

@@ -263,6 +263,26 @@ describe("OverviewPage devices strip", () => {
     expect(api.getAttribute("title")).toContain("Build.VERSION.SDK_INT");
     expect(api.closest("dd")?.textContent).toBe("14 · API 34");
   });
+
+  it("names the chip and each CPU cluster, not just ro.hardware and cpu0 (2026-11-06)", async () => {
+    const d = details("qcom", 80, 40);
+    Object.assign(d.device.extras, {
+      soc_model: "SM0000", soc_manufacturer: "QTI", board_platform: "platform-x", soc_id: "123",
+      cpu_max_khz: 2_000_000, cpu_arch: "ARMv8",
+      cpu_clusters: [
+        { count: 4, cpus: [0, 1, 2, 3], core: "Kryo 2xx Silver", part: "0x51/0x801", max_khz: 1_800_000 },
+        { count: 4, cpus: [4, 5, 6, 7], core: "Kryo 2xx Gold", part: "0x51/0x800", max_khz: 2_000_000 },
+      ],
+      abi_list: "armeabi-v7a,armeabi", abi_list64: "",
+    });
+    vi.stubGlobal("fetch", vi.fn(stubFetch({ ...TWO, "/devices": { ok: true, transport: "AdbTransport", devices: [{ serial: A, state: "device", model: "Board_X" }] }, [`/devices/${A}/details`]: d })));
+    await renderPage(<OverviewPage />);
+    const dd = (label: string) => screen.getByText(label, { selector: "dl.facts dt" }).nextElementSibling;
+    await screen.findByText("QTI SM0000");
+    expect(dd("Chip")?.textContent).toBe("QTI SM0000platform platform-x · ro.hardware qcom · soc_id 123");
+    expect(dd("CPU")?.textContent).toBe("8 cores · 4 × Kryo 2xx Silver 1.80 GHz + 4 × Kryo 2xx Gold 2.00 GHz");
+    expect(dd("Architecture")?.textContent).toBe("ARMv8 · 32-bit apps onlyABI armeabi-v7a, armeabi");
+  });
 });
 
 describe("OverviewPage assistant and service cards", () => {

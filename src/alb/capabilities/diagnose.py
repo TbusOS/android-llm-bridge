@@ -269,8 +269,15 @@ async def devinfo(transport: Transport) -> Result[DeviceInfo]:
     storage = _parse_df(df_r.stdout if df_r.ok else "")
 
     cpu_r = await transport.shell("cat /proc/cpuinfo 2>/dev/null", timeout=5)
-    cpu_cores = _count_cpu_cores(cpu_r.stdout if cpu_r.ok else "")
-    cpu_max_khz = await _read_cpu_max_khz(transport)
+    cpuinfo = cpu_r.stdout if cpu_r.ok else ""
+    cpu_cores = _count_cpu_cores(cpuinfo)
+    per_core = _parse_cpuinfo_cores(cpuinfo)
+    layout = await _read_cpu_layout(transport)
+    core_khz = layout["max_khz"]
+    # The fastest core, not cpu0: on a big.LITTLE board cpu0 is usually in
+    # the slow cluster, and "8 cores · <cpu0's GHz>" under-reports a board
+    # whose big cores run faster (seen 2026-11-06).
+    cpu_max_khz = max(core_khz.values(), default=0)
 
     mem_r = await transport.shell("cat /proc/meminfo 2>/dev/null", timeout=5)
     ram_total_kb, ram_avail_kb = _parse_meminfo(mem_r.stdout if mem_r.ok else "")
@@ -288,8 +295,26 @@ async def devinfo(transport: Transport) -> Result[DeviceInfo]:
 
     extras: dict[str, Any] = {
         "soc": soc,
+        # What the system says the chip is (Android 12+ fills these from the
+        # vendor); `soc` above stays the old fallback chain, which ends at the
+        # board platform name rather than the chip.
+        "soc_model": props.get("ro.soc.model", ""),
+        "soc_manufacturer": props.get("ro.soc.manufacturer", ""),
+        "board_platform": props.get("ro.board.platform", ""),
+        # The kernel's number for the chip (Qualcomm boards). Shown raw: the
+        # kernel's own name table may not list it, and a number beats a guess.
+        "soc_id": layout["soc_id"],
         "cpu_cores": cpu_cores,
         "cpu_max_khz": cpu_max_khz,
+        "cpu_arch": _cpu_arch(per_core),
+        "cpu_clusters": _cpu_clusters(per_core, core_khz),
+        # Which binaries the system runs. abi_list64 empty = 32-bit apps only,
+        # whatever the CPU could do. Read from props on purpose, not from
+        # `uname -m`: a 64-bit kernel answers `armv8l` to a shell running in
+        # 32-bit mode (arch/arm64/include/asm/compat.h COMPAT_UTS_MACHINE), so
+        # uname cannot tell the kernel's width.
+        "abi_list": props.get("ro.product.cpu.abilist", ""),
+        "abi_list64": props.get("ro.product.cpu.abilist64", ""),
         "ram_total_kb": ram_total_kb,
         "ram_avail_kb": ram_avail_kb,
         "display": display,
@@ -595,18 +620,137 @@ async def _collect_thermal(transport: Transport) -> list[dict[str, str]]:
 
 
 # ─── extra collectors (DEBT-022 PR-A · device card 丰富化) ─────────
-async def _read_cpu_max_khz(transport: Transport) -> int:
-    """Best-effort: read max CPU freq from cpufreq sysfs. 0 if unavailable."""
-    r = await transport.shell(
-        "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null",
-        timeout=5,
-    )
-    if not r.ok or not r.stdout.strip():
-        return 0
-    try:
-        return int(r.stdout.strip())
-    except ValueError:
-        return 0
+# One round trip for every core's top frequency and the kernel's SoC number.
+# Each value on its own `key=value` line, so a serial console that echoes the
+# command (the echo starts with `echo`) cannot be mistaken for an answer.
+_CPU_LAYOUT_CMD = (
+    'echo "soc_id=$(cat /sys/devices/soc0/soc_id 2>/dev/null)"; '
+    "for c in /sys/devices/system/cpu/cpu[0-9]*; do "
+    'echo "${c##*/}=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null)"; done'
+)
+_CPU_LAYOUT_LINE_RE = re.compile(r"^(soc_id|cpu(\d+))=(\S*)$")
+
+
+async def _read_cpu_layout(transport: Transport) -> dict[str, Any]:
+    """{"soc_id": str, "max_khz": {cpu index: kHz}}. Best effort: a core
+    without cpufreq is left out, a board without soc0 gives soc_id ""."""
+    r = await transport.shell(_CPU_LAYOUT_CMD, timeout=10)
+    return _parse_cpu_layout(r.stdout if r.ok else "")
+
+
+def _parse_cpu_layout(stdout: str) -> dict[str, Any]:
+    soc_id = ""
+    max_khz: dict[int, int] = {}
+    for line in stdout.splitlines():
+        m = _CPU_LAYOUT_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        if m.group(1) == "soc_id":
+            soc_id = m.group(3)
+        elif m.group(3).isdigit() and int(m.group(3)) > 0:
+            max_khz[int(m.group(2))] = int(m.group(3))
+    return {"soc_id": soc_id, "max_khz": max_khz}
+
+
+# Core names by (CPU implementer, CPU part) from /proc/cpuinfo, as the kernel
+# names them in arch/arm64/include/asm/cputype.h (ARM_CPU_PART_* and
+# QCOM_CPU_PART_*). cpuinfo gives only the two numbers; a pair missing here is
+# shown raw ("0x51/0x9ff") rather than guessed.
+_CPU_CORE_NAMES: dict[tuple[str, str], str] = {
+    ("0x41", "0xd03"): "Cortex-A53",
+    ("0x41", "0xd04"): "Cortex-A35",
+    ("0x41", "0xd05"): "Cortex-A55",
+    ("0x41", "0xd07"): "Cortex-A57",
+    ("0x41", "0xd08"): "Cortex-A72",
+    ("0x41", "0xd09"): "Cortex-A73",
+    ("0x41", "0xd0a"): "Cortex-A75",
+    ("0x41", "0xd0b"): "Cortex-A76",
+    ("0x41", "0xd0c"): "Neoverse-N1",
+    ("0x41", "0xd0d"): "Cortex-A77",
+    ("0x41", "0xd40"): "Neoverse-V1",
+    ("0x41", "0xd41"): "Cortex-A78",
+    ("0x41", "0xd44"): "Cortex-X1",
+    ("0x41", "0xd46"): "Cortex-A510",
+    ("0x41", "0xd47"): "Cortex-A710",
+    ("0x41", "0xd48"): "Cortex-X2",
+    ("0x41", "0xd49"): "Neoverse-N2",
+    ("0x41", "0xd4b"): "Cortex-A78C",
+    ("0x41", "0xd4c"): "Cortex-X1C",
+    ("0x41", "0xd4d"): "Cortex-A715",
+    ("0x41", "0xd4e"): "Cortex-X3",
+    ("0x41", "0xd80"): "Cortex-A520",
+    ("0x41", "0xd81"): "Cortex-A720",
+    ("0x41", "0xd82"): "Cortex-X4",
+    ("0x51", "0x200"): "Kryo",
+    # 0x800 is also QCOM_CPU_PART_FALKOR_V1, a server core no Android board has.
+    ("0x51", "0x800"): "Kryo 2xx Gold",
+    ("0x51", "0x801"): "Kryo 2xx Silver",
+    ("0x51", "0x802"): "Kryo 3xx Gold",
+    ("0x51", "0x803"): "Kryo 3xx Silver",
+    ("0x51", "0x804"): "Kryo 4xx Gold",
+    ("0x51", "0x805"): "Kryo 4xx Silver",
+    ("0x51", "0xc00"): "Falkor",
+}
+
+
+def _parse_cpuinfo_cores(stdout: str) -> dict[int, dict[str, str]]:
+    """{processor index: {"implementer", "part", "architecture"}} from
+    /proc/cpuinfo, lower-cased. Fields a kernel does not print are absent."""
+    keys = {
+        "cpu implementer": "implementer",
+        "cpu part": "part",
+        "cpu architecture": "architecture",
+    }
+    cores: dict[int, dict[str, str]] = {}
+    current: int | None = None
+    for line in stdout.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key, value = key.strip().lower(), value.strip().lower()
+        if key == "processor":
+            current = int(value) if value.isdigit() else None
+            if current is not None:
+                cores.setdefault(current, {})
+        elif current is not None and key in keys and value:
+            cores[current][keys[key]] = value
+    return cores
+
+
+def _cpu_arch(cores: dict[int, dict[str, str]]) -> str:
+    """"ARMv8" from `CPU architecture: 8`; "" when cpuinfo has no such field."""
+    for core in cores.values():
+        arch = core.get("architecture", "")
+        if arch:
+            return f"ARMv{arch}" if arch.isdigit() else arch
+    return ""
+
+
+def _cpu_clusters(
+    cores: dict[int, dict[str, str]], max_khz: dict[int, int]
+) -> list[dict[str, Any]]:
+    """Cores grouped by kind and top frequency, in core order:
+    [{"count": 4, "cpus": [0, 1, 2, 3], "core": "Kryo 2xx Silver",
+      "part": "0x51/0x801", "max_khz": 1800000}, ...].
+    Empty when there is nothing to tell the cores apart by."""
+    groups: list[dict[str, Any]] = []
+    where: dict[tuple[str, int], dict[str, Any]] = {}
+    for cpu in sorted(set(cores) | set(max_khz)):
+        info = cores.get(cpu, {})
+        imp, part = info.get("implementer", ""), info.get("part", "")
+        raw = f"{imp}/{part}" if imp and part else ""
+        name = _CPU_CORE_NAMES.get((imp, part), "")
+        key = (raw, max_khz.get(cpu, 0))
+        group = where.get(key)
+        if group is None:
+            group = {"count": 0, "cpus": [], "core": name, "part": raw, "max_khz": key[1]}
+            where[key] = group
+            groups.append(group)
+        group["count"] += 1
+        group["cpus"].append(cpu)
+    if not any(g["part"] or g["max_khz"] for g in groups):
+        return []
+    return groups
 
 
 async def _collect_display(transport: Transport) -> dict[str, str]:
