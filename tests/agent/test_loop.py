@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable
 from typing import Any
 
@@ -19,6 +20,7 @@ from alb.agent.backend import (
 from alb.agent.loop import (
     DEFAULT_TOOL_RESULT_MAX_CHARS,
     AgentLoop,
+    cut_tool_result,
     repair_tool_name,
     tool_result_for_model,
     tool_result_max_chars_from_env,
@@ -893,6 +895,49 @@ async def test_run_stream_model_reads_the_cut_copy_page_gets_the_whole(
     assert len(sent) < len(json.dumps(big, ensure_ascii=False))
     stored = next(m for m in ChatSession.load(session.session_id).messages() if m.role == "tool")
     assert stored.content == sent
+
+
+def test_cut_info_says_how_much_the_model_sees() -> None:
+    r = _long_result()
+    full = json.dumps(r, ensure_ascii=False)
+    text, cut = cut_tool_result(r, 3000)
+    assert text == tool_result_for_model(r, 3000)
+    assert cut == {"kept": 3000, "total": len(full)}
+    # kept + cut = total: the numbers on the card match the note the model reads
+    assert f"cut {cut['total'] - cut['kept']} of {cut['total']} characters" in text
+    # the page finds the note in session history with this pattern
+    # (cutInStored in web/src/features/v3/chat/toolText.ts)
+    m = re.search(r"…\[alb cut (\d+) of (\d+) characters here", text)
+    assert m is not None
+    assert (int(m[2]) - int(m[1]), int(m[2])) == (cut["kept"], cut["total"])
+
+
+@pytest.mark.parametrize("limit", [0, 10**6])
+def test_cut_info_is_none_when_nothing_is_cut(limit: int) -> None:
+    r = _long_result()
+    text, cut = cut_tool_result(r, limit)
+    assert cut is None
+    assert text == json.dumps(r, ensure_ascii=False)
+
+
+async def test_run_stream_tool_call_end_says_when_the_model_saw_a_cut_copy() -> None:
+    """The page shows the whole result, so without this it cannot tell
+    that the answer was made from part of it (2026-11-06)."""
+    big = _long_result()
+    small = {"ok": True, "data": {"level": 87}}
+    b = FakeBackend([
+        _calls(_tc("alb_logcat", {}, tc_id="tc_1"), _tc("alb_logcat", {"n": 1}, tc_id="tc_2")),
+        _final("ok"),
+    ])
+
+    async def exec_(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return small if args else big
+
+    loop = AgentLoop(b, tools=[_TOOL], tool_executor=exec_, tool_result_max_chars=3000)
+    ends = [e async for e in loop.run_stream("x") if e["type"] == "tool_call_end"]
+
+    assert ends[0]["cut"] == {"kept": 3000, "total": len(json.dumps(big, ensure_ascii=False))}
+    assert "cut" not in ends[1]  # a result that fits carries no flag
 
 
 async def test_run_model_reads_the_cut_copy_too() -> None:

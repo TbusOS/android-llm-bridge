@@ -144,7 +144,7 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
           ...t,
           toolCalls: t.toolCalls.map((tc) =>
             tc.id === ev.id
-              ? { ...tc, result: ev.result, status: "done", endedAt: Date.now() }
+              ? { ...tc, result: ev.result, status: "done", endedAt: Date.now(), ...(ev.cut ? { cut: ev.cut } : {}) }
               : tc,
           ),
         }));

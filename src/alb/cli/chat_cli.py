@@ -261,6 +261,12 @@ async def _stream_turn(loop: AgentLoop, user_input: str, session: ChatSession) -
             elif ok is False:
                 err = (result.get("error") or {}).get("code", "FAIL")
                 console.print(f"[dim red]  ← {err}[/]")
+            cut = ev.get("cut")
+            if cut:
+                console.print(
+                    f"[yellow]  the model saw {cut['kept']} of {cut['total']} characters "
+                    "of this result (start and end); the answer may miss the middle[/]"
+                )
         elif etype == "done":
             if printed_prefix:
                 console.print()  # close token line

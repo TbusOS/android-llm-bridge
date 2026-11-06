@@ -30,7 +30,7 @@ import { useT } from "../../../lib/i18n";
 import { useApp } from "../../../stores/app";
 import { useShell } from "../../../stores/shell";
 import { ToolCard } from "./ToolCard";
-import { parseResult } from "./toolText";
+import { cutInStored, parseResult } from "./toolText";
 import "./chat.css";
 
 const API_BACKENDS = new Set(["openai-compat", "anthropic", "openai"]);
@@ -410,7 +410,16 @@ function Messages({ messages, model }: { messages: SessionMessage[]; model: stri
         {calls.length ? text : null}
         {calls.map((c, j) => {
           const out = c.id ? results.get(c.id) : undefined;
-          return <ToolCard key={c.id ?? j} name={c.name ?? "tool"} args={c.arguments} result={out ? parseResult(out) : undefined} />;
+          const cut = out ? cutInStored(out) : null;
+          return (
+            <ToolCard
+              key={c.id ?? j}
+              name={c.name ?? "tool"}
+              args={c.arguments}
+              result={out ? parseResult(out) : undefined}
+              {...(cut ? { cut, cutStored: true } : {})}
+            />
+          );
         })}
         {calls.length ? null : text}
       </div>

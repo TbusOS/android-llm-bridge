@@ -12,6 +12,7 @@ import { LogDialog } from "../../../components/v3/LogDialog";
 import { toast } from "../../../components/v3/ui";
 import { copyText } from "../../../lib/clipboard";
 import { useT } from "../../../lib/i18n";
+import type { ToolCut } from "../../chat/types";
 import { argsSummary, firstOutputLine, logText, parseResult, pretty, toLines, toolError } from "./toolText";
 import "./assistant.css";
 
@@ -25,9 +26,16 @@ export interface ToolCardProps {
   secs?: string | null;
   /** The garbled name the model sent, when the hub repaired it to `name`. */
   requestedName?: string;
+  /** The model read only part of the result (results over the hub's limit,
+   *  default 4000 characters). Its answer may miss what was in the middle,
+   *  and it often does not say so, so the card does. */
+  cut?: ToolCut;
+  /** `result` is that cut copy too (session history keeps only what the
+   *  model read); otherwise `result` is whole. */
+  cutStored?: boolean;
 }
 
-export function ToolCard({ name, args, result, running = false, secs, requestedName }: ToolCardProps) {
+export function ToolCard({ name, args, result, running = false, secs, requestedName, cut, cutStored = false }: ToolCardProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [large, setLarge] = useState(false);
@@ -82,6 +90,17 @@ export function ToolCard({ name, args, result, running = false, secs, requestedN
           {t(",已按 ", "; ran ")}
           <code>{name}</code>
           {t(" 执行。", " instead.")}
+        </small>
+      ) : null}
+      {cut ? (
+        <small className="tool__cut">
+          {t(
+            `模型只看到这份输出的 ${cut.kept} / ${cut.total} 字符(开头和结尾),回答可能漏掉中间的内容`,
+            `The model saw ${cut.kept} of ${cut.total} characters of this output (the start and the end); the answer may miss what was in the middle`,
+          )}
+          {cutStored
+            ? t(";会话记录里也只存了这部分。", ". The session kept only that part.")
+            : t(";下面「参数和输出」里是全文。", ". The whole output is under Arguments and output.")}
         </small>
       ) : null}
       <div className="tool__bar">

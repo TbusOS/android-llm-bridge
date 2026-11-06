@@ -185,7 +185,7 @@ function LiveToolCard({ call }: { call: ToolCallEntry }) {
           <Markdown text={call.lead} />
         </div>
       ) : null}
-      <ToolCard name={call.name} requestedName={call.requestedName} args={call.arguments} result={call.result} running={call.status === "running"} secs={secs} />
+      <ToolCard name={call.name} requestedName={call.requestedName} cut={call.cut} args={call.arguments} result={call.result} running={call.status === "running"} secs={secs} />
     </>
   );
 }

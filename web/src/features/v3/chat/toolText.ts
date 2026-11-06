@@ -41,6 +41,21 @@ export function pretty(v: unknown): string {
   }
 }
 
+/**
+ * The session keeps the copy of a tool result the model read, so a long one
+ * is stored cut, with the hub's note in the gap ("…[alb cut 18512 of 22512
+ * characters here …"). Returns how much was kept, or null when the stored
+ * result is whole. The note's wording is _TOOL_RESULT_CUT_NOTE in
+ * src/alb/agent/loop.py; change both together.
+ */
+export function cutInStored(content: string): { kept: number; total: number } | null {
+  const m = /…\[alb cut (\d+) of (\d+) characters here/.exec(content);
+  if (!m) return null;
+  const cut = Number(m[1]);
+  const total = Number(m[2]);
+  return cut > 0 && cut <= total ? { kept: total - cut, total } : null;
+}
+
 /** Session history stores a tool result as a JSON string; give back the value. */
 export function parseResult(content: string): unknown {
   const s = content.trim();

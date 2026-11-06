@@ -426,6 +426,24 @@ describe("streamed answers (2026-11-03)", () => {
     expect(screen.getByText("alb_devalb_devices")).toBeTruthy();
   });
 
+  it("a call whose result the model read cut says so on the card (2026-11-06)", () => {
+    chat.state.turns = [
+      user("u1", "有崩溃吗"),
+      ai("a1", {
+        content: "没有崩溃",
+        toolCalls: [
+          { id: "c1", name: "alb_logcat", arguments: {}, result: { ok: true }, status: "done", startedAt: 0, endedAt: 5, cut: { kept: 4000, total: 22512 } },
+          { id: "c2", name: "alb_battery", arguments: {}, result: { ok: true }, status: "done", startedAt: 0, endedAt: 5 },
+        ],
+      }),
+    ];
+    const { container } = render(tree());
+    const notes = container.querySelectorAll(".tool__cut");
+    expect(notes).toHaveLength(1); // only the cut one
+    expect(notes[0]?.textContent).toContain("模型只看到这份输出的 4000 / 22512 字符");
+    expect(notes[0]?.textContent).toContain("下面「参数和输出」里是全文");
+  });
+
   it("after the tools ran, it says it is thinking until the answer starts", () => {
     const call = { id: "c1", name: "alb_status", arguments: {}, result: { ok: true }, status: "done", startedAt: 0, endedAt: 5 };
     chat.state.turns = [user("u1", "q"), ai("a1", { status: "streaming", toolCalls: [call] })];

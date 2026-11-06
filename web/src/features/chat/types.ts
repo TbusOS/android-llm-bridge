@@ -16,6 +16,13 @@ export interface ChatError {
 
 export type ToolCallStatus = "running" | "done";
 
+/** The model read only part of a tool result: `kept` of the `total`
+ *  characters of its JSON, the start and the end (hub cut_tool_result). */
+export interface ToolCut {
+  kept: number;
+  total: number;
+}
+
 export interface ToolCallEntry {
   /** id assigned by the backend; stable across start/end events. */
   id: string;
@@ -32,6 +39,8 @@ export interface ToolCallEntry {
   /** The name the model sent when the hub had to repair it (a backend
    *  glued a stray prefix onto it); `name` is the one that ran. */
   requestedName?: string;
+  /** Set when the model was given a cut copy of `result` (which is whole). */
+  cut?: ToolCut;
 }
 
 export type TurnStatus =
@@ -78,7 +87,7 @@ export type StreamEvent =
       arguments: Record<string, unknown>;
       requested_name?: string;
     }
-  | { type: "tool_call_end"; id: string; name: string; result: unknown }
+  | { type: "tool_call_end"; id: string; name: string; result: unknown; cut?: ToolCut }
   | { type: "tool_confirm_request"; id: string; name: string; arguments: Record<string, unknown> }
   | {
       type: "done";

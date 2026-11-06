@@ -244,6 +244,33 @@ describe("Chat page", () => {
     expect(within(screen.getByRole("dialog")).getByText("401 行")).toBeInTheDocument();
   });
 
+  it("a stored result the model read cut says so: the session kept only that part (2026-11-06)", async () => {
+    const stored =
+      '{"ok": true, "data": {"lines": ["line 00000' +
+      " …[alb cut 18512 of 22512 characters here to keep the model fast; the person sees the whole result on the page.]… " +
+      'line 00803"]}}';
+    mockFetch({
+      detail: (id) =>
+        id === "20261027-bbbb2222"
+          ? Response.json({
+              ...DETAIL[id],
+              messages: [
+                { role: "user", content: "Why is boot slow?" },
+                { role: "assistant", content: "", tool_calls: [{ id: "c9", name: "alb_logcat", arguments: "{}" }, { id: "c8", name: "alb_battery", arguments: "{}" }] },
+                { role: "tool", tool_call_id: "c9", name: "alb_logcat", content: stored },
+                { role: "tool", tool_call_id: "c8", name: "alb_battery", content: '{"ok": true}' },
+                { role: "assistant", content: "Two services start serially." },
+              ],
+            })
+          : Response.json(DETAIL[id] ?? {}),
+    });
+    const { container } = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Why is boot slow?" }));
+    expect(await screen.findByText(/会话记录里也只存了这部分/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".tool__cut")).toHaveLength(1);
+    expect(container.querySelector(".tool__cut")?.textContent).toContain("4000 / 22512");
+  });
+
   it("an unreadable session says so with a retry", async () => {
     mockFetch({
       sessions: () => Response.json({ ok: true, sessions: SESSIONS.map((x) => (x.session_id === "20261010-cccc3333" ? { ...x, title: "" } : x)) }),

@@ -95,6 +95,9 @@ _OUTPUT_TRUNCATED_SUGGESTION = (
 DEFAULT_TOOL_RESULT_MAX_CHARS = 4000
 _TOOL_RESULT_ENV = "ALB_AGENT_TOOL_RESULT_MAX_CHARS"
 
+# The web page finds this note in session history (cutInStored in
+# web/src/features/v3/chat/toolText.ts matches "…[alb cut N of M characters
+# here"); change both together.
 # The last sentence is there because a cut list reads like a whole one:
 # 2026-11-05, asked for the serial error codes, the model answered with the 3
 # that were in the kept part (of 6) and did not say anything was missing.
@@ -128,21 +131,36 @@ def tool_result_max_chars_from_env() -> int:
     return value
 
 
-def tool_result_for_model(result: dict[str, Any], max_chars: int) -> str:
-    """The tool result as the model reads it: its JSON, cut to `max_chars`
-    characters when longer (0 = never cut).
+def cut_tool_result(
+    result: dict[str, Any], max_chars: int
+) -> tuple[str, dict[str, int] | None]:
+    """The tool result as the model reads it, and how much of it that is.
 
-    Keeps the start and the end — two thirds and one third. The start holds
-    `ok` / `error` and the first entries; the end holds the newest log lines,
-    which is what a log question is usually about. A note in the gap says how
-    much was cut and how to get the rest."""
+    The text is the result's JSON, cut to `max_chars` characters when longer
+    (0 = never cut). It keeps the start and the end — two thirds and one
+    third. The start holds `ok` / `error` and the first entries; the end
+    holds the newest log lines, which is what a log question is usually
+    about. A note in the gap says how much was cut and how to get the rest.
+
+    The second value is None when nothing was cut, else
+    ``{"kept": <characters the model sees>, "total": <characters of the JSON>}``.
+    run_stream puts it on the tool_call_end event, so the page can say the
+    model saw only part of the output: the model does not reliably say so
+    itself (2026-11-05, ling3-tiny answered 3 of 6 error codes and did not
+    mention the rest even with the note's last sentence)."""
     full = json.dumps(result, ensure_ascii=False, default=str)
     if max_chars <= 0 or len(full) <= max_chars:
-        return full
+        return full, None
     head = max_chars * 2 // 3
     tail = max_chars - head
     note = _TOOL_RESULT_CUT_NOTE.format(cut=len(full) - head - tail, total=len(full))
-    return full[:head] + note + (full[-tail:] if tail else "")
+    text = full[:head] + note + (full[-tail:] if tail else "")
+    return text, {"kept": head + tail, "total": len(full)}
+
+
+def tool_result_for_model(result: dict[str, Any], max_chars: int) -> str:
+    """Only the text of cut_tool_result()."""
+    return cut_tool_result(result, max_chars)[0]
 
 
 class AgentLoop:
@@ -295,7 +313,9 @@ class AgentLoop:
                 tool_result = await self._dispatch(tc)
                 artifacts.extend(_extract_artifacts(tool_result))
 
-                tool_msg = _tool_message(tc, tool_result, self.tool_result_max_chars)
+                tool_msg = _tool_message(
+                    tc, tool_result_for_model(tool_result, self.tool_result_max_chars)
+                )
                 messages.append(tool_msg)
                 if session is not None:
                     session.append(tool_msg)
@@ -330,7 +350,11 @@ class AgentLoop:
              "requested_name": "..."}
                 `requested_name` is present only when the model's tool name
                 was repaired (see _repair_tool_names).
-            {"type": "tool_call_end",   "id": "...", "name": "...", "result": {...}}
+            {"type": "tool_call_end",   "id": "...", "name": "...", "result": {...},
+             "cut": {"kept": N, "total": M}}
+                `result` is always the whole result.  `cut` is present only
+                when the model got a cut copy (see cut_tool_result): it read
+                N of the M characters of the result's JSON.
 
             {"type": "done", "ok": true, "data": "...", "session_id": "...",
              "artifacts": ["..."], "timing_ms": N, "model": "...", "usage": {...}}
@@ -485,24 +509,28 @@ class AgentLoop:
                     yield start_ev
                     tool_result = await self._dispatch(tc)
                     artifacts.extend(_extract_artifacts(tool_result))
-                    tool_msg = _tool_message(tc, tool_result, self.tool_result_max_chars)
+                    text, cut = cut_tool_result(tool_result, self.tool_result_max_chars)
+                    tool_msg = _tool_message(tc, text)
                     messages.append(tool_msg)
                     if session is not None:
                         session.append(tool_msg)
                     unanswered.pop(0)
-                    yield {
+                    end_ev: dict[str, Any] = {
                         "type": "tool_call_end",
                         "id": tc.id,
                         "name": tc.name,
                         "result": tool_result,
                     }
+                    if cut is not None:
+                        end_ev["cut"] = cut
+                    yield end_ev
             except (asyncio.CancelledError, GeneratorExit):
                 # Stopped in the middle of the calls (the page's Stop). Give
                 # each call that has no result one, so the session's next
                 # turn sends a history where every tool call is answered.
                 if session is not None:
                     for tc in unanswered:
-                        session.append(_tool_message(tc, _STOPPED_RESULT))
+                        session.append(_tool_message(tc, tool_result_for_model(_STOPPED_RESULT, 0)))
                 raise
 
         # max_turns exhausted
@@ -600,13 +628,8 @@ def repair_tool_name(name: str, known: set[str]) -> str | None:
     return best
 
 
-def _tool_message(tc: ToolCall, tool_result: dict[str, Any], max_chars: int = 0) -> Message:
-    return Message(
-        role="tool",
-        content=tool_result_for_model(tool_result, max_chars),
-        tool_call_id=tc.id,
-        name=tc.name,
-    )
+def _tool_message(tc: ToolCall, content: str) -> Message:
+    return Message(role="tool", content=content, tool_call_id=tc.id, name=tc.name)
 
 
 def _extract_artifacts(tool_result: dict[str, Any]) -> list[Path]:

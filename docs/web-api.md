@@ -119,7 +119,7 @@ Streaming agent chat.
 | S → C | `{"type":"tool_confirm_request","id":"...","name":"...","arguments":{...}}` | Only with `"confirm_tools": true` in the request: the call waits for an answer |
 | C → S | `{"type":"tool_confirm","id":"...","approve":true}` | Answer to one `tool_confirm_request` |
 | S → C | `{"type":"tool_call_start","id":"...","name":"...","arguments":{...}}` | Tool about to run. Has `"requested_name"` when the hub repaired a name the backend garbled (a known tool name with the start of itself glued in front, e.g. `alb_describealb_describe_errors`); `name` is the tool that runs |
-| S → C | `{"type":"tool_call_end","name":"...","result":{...}}` | Tool completed |
+| S → C | `{"type":"tool_call_end","name":"...","result":{...}}` | Tool completed. `result` is the whole result. Has `"cut":{"kept":N,"total":M}` when the model was given a cut copy (results over `ALB_AGENT_TOOL_RESULT_MAX_CHARS`, default 4000): it read N of the M characters of the result's JSON, the start and the end. The web UI says so on the tool card, because the answer may miss what was in the middle |
 | S → C | `{"type":"done","content":"...","session_id":"...","model":"...","backend":"...","usage":{...}}` | Terminal; always present |
 
 Client closes after `done`. Server closes on disconnect.
