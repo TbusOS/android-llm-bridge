@@ -193,10 +193,25 @@ Some boards only take an image in Qualcomm's emergency download mode (USB
 lines in `agent.conf` add three ops:
 
 ```
-edl_sahara=D:\edl\tools\QSaharaServer.exe
-edl_firehose=D:\edl\tools\fh_loader.exe
-edl_root=D:\edl\packages
+edl_sahara=D:\flash\board-a\tools\QSaharaServer.exe
+edl_firehose=D:\flash\board-a\tools\fh_loader.exe
+edl_root=D:\flash\board-a\packages
 ```
+
+A suggested layout: one directory per board, named as in the hub's board
+table, holding everything that board's flashing needs. The root is not named
+after one vendor's mode, because other vendors' tools go under it too.
+
+```text
+D:\flash\board-a\
+├─ tools\       vendor tools, plus a note of where they came from and their md5
+├─ packages\    unpacked packages, one directory each, original names
+├─ drivers\     driver installers, for a reinstall
+└─ README.txt   how to enter the mode, which XML to use
+```
+
+The three lines are one set for the whole host and cannot be set per board:
+with one kind of 9008 board on the host, point them at that board's directory.
 
 | op | what |
 |---|---|
@@ -204,7 +219,8 @@ edl_root=D:\edl\packages
 | `edl-program dir=<package dir> xml=<a.xml,patch0.xml> [memory=emmc]` | fh_loader writes what the XML files list |
 | `edl-reset` | reset the board out of 9008 |
 
-- `dir` is relative to `edl_root` (e.g. `board-a\fac`). The hub sends only
+- `dir` is relative to `edl_root` (e.g. `pkg-v1/fac`; `/` and `\` both work,
+  and a `\` typed in bash needs quotes). The hub sends only
   that name; the full path is built here, and anything that resolves outside
   `edl_root` (links included) is refused. Any package under the root works —
   there is no list of packages.

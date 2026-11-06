@@ -81,9 +81,18 @@ log_file=logs/agent.log
 #                  root (`dir=<package>\<subdir>`); anything that resolves
 #                  outside it is refused. Any package under it can be used.
 # The 9008 COM port is found from the USB device list; never set here.
-#   edl_sahara=D:\edl\tools\QSaharaServer.exe
-#   edl_firehose=D:\edl\tools\fh_loader.exe
-#   edl_root=D:\edl\packages
+# Suggested layout: one directory per board, named as in the hub's board
+# table, holding everything that board's flashing needs. The root is not
+# named after one vendor's mode: other vendors' tools go under it too.
+#   D:\flash\board-a\tools\       vendor tools, plus a note of where they came from
+#   D:\flash\board-a\packages\    unpacked packages, one directory each, original names
+#   D:\flash\board-a\drivers\     driver installers, for a reinstall
+#   D:\flash\board-a\README.txt    how to enter the mode, which XML to use
+# The three keys are one set for the whole host and cannot be set per board:
+# with one kind of 9008 board on the host, point them at that board's directory.
+#   edl_sahara=D:\flash\board-a\tools\QSaharaServer.exe
+#   edl_firehose=D:\flash\board-a\tools\fh_loader.exe
+#   edl_root=D:\flash\board-a\packages
 #edl_sahara=
 #edl_firehose=
 #edl_root=

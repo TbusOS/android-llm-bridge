@@ -251,10 +251,23 @@ flash_partitions.board-b=boot_a,boot_b
 「Qualcomm HS-USB QDLoader 9008 (COMnn)」）。在 `agent.conf` 里配三行，agent 就多出三个操作：
 
 ```
-edl_sahara=D:\edl\tools\QSaharaServer.exe
-edl_firehose=D:\edl\tools\fh_loader.exe
-edl_root=D:\edl\packages
+edl_sahara=D:\flash\board-a\tools\QSaharaServer.exe
+edl_firehose=D:\flash\board-a\tools\fh_loader.exe
+edl_root=D:\flash\board-a\packages
 ```
+
+目录建议按板子分：一块板（名字和 hub 板子表里的一样）一个目录，烧录要用的东西都放在里面。
+根目录不按某一家的下载模式起名，别的厂商的工具以后也放在这下面。
+
+```text
+D:\flash\board-a\
+├─ tools\       厂商工具，旁边放一个说明写来源和 md5
+├─ packages\    解压后的刷机包，一个包一个目录，保留原名
+├─ drivers\     驱动安装包，重装时用
+└─ README.txt   怎么进下载模式、用哪个清单
+```
+
+这三行整台机器只有一套，不能按板子分别配：机器上只接一种要走 9008 的板子时，指向那块板的目录就行。
 
 | 操作 | 做什么 |
 |---|---|
@@ -262,7 +275,7 @@ edl_root=D:\edl\packages
 | `edl-program dir=<包目录> xml=<a.xml,patch0.xml> [memory=emmc]` | 用 fh_loader 按清单写 |
 | `edl-reset` | 让板子从 9008 重启出来 |
 
-- `dir` 是 `edl_root` 下的相对目录（比如 `board-a\fac`），hub 只发这个名字，
+- `dir` 是 `edl_root` 下的相对目录（比如 `pkg-v1/fac`，`/` 和 `\` 都认；在 bash 里写 `\` 要加引号），hub 只发这个名字，
   完整路径在这台机器上拼；拼出来跑到 `edl_root` 外面的（包括链接指出去的）一律拒绝。
   根目录下哪个包都能用，没有包名单。
 - `programmer` 不写就用目录里唯一的 `prog_*firehose*` 文件，有两个就拒绝、列出来让你选。
