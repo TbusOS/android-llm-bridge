@@ -316,7 +316,10 @@ logcat / dmesg / echo / printf / true / false / exit / clear /
 history / alias / which / type / help / cd / pwd`.
 
 **Audit trail**: every input line, hitl request, approval, and denial
-is appended to `workspace/sessions/<session_id>/terminal.jsonl`.
+is appended to `workspace/sessions/<session_id>/terminal.jsonl`. The
+directory is made on the first record, so a terminal opened and closed
+without a command leaves nothing behind. Terminal directories are not
+chat sessions: `GET /sessions` does not list them.
 
 ## Remote device agent (dial-home)
 

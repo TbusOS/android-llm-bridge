@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -105,8 +105,41 @@ def _summarize(session_dir: Path) -> dict[str, Any]:
     }
 
 
+def _is_chat_session(session_dir: Path) -> bool:
+    """A chat session has meta.json (ChatSession.create writes it) or, from
+    before meta existed, messages.jsonl. The web terminal keeps its command
+    record in the same tree (`term-<time>/terminal.jsonl`, read by the
+    timeline) and until 2026-11-06 left an empty directory for every
+    terminal it opened; neither is a conversation."""
+    return (session_dir / "meta.json").is_file() or (session_dir / "messages.jsonl").is_file()
+
+
+def _started_at(session_dir: Path, created: Any) -> float:
+    """When the session started, for sorting: meta.created when it parses,
+    else the directory's mtime (when its first file appeared).
+
+    Before 2026-11-06 the key was ``created or session_id`` — an ISO time
+    compared with a directory name. A name like ``term-2026-…`` sorts after
+    every ``2026…`` time, so 100 terminal directories filled the list and
+    the chat page's history (limit 60) showed no conversation at all."""
+    if isinstance(created, str) and created:
+        try:
+            dt = datetime.fromisoformat(created)
+        except ValueError:
+            dt = None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt.timestamp()
+    try:
+        return session_dir.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _scan_sessions_in_thread(sessions_root: Path, limit: int) -> list[dict[str, Any]]:
-    """Sync helper: bulk-scan sessions/ and return summaries (newest first).
+    """Sync helper: bulk-scan sessions/ and return chat session summaries
+    (newest first).
 
     All FS calls (`exists` / `iterdir` / `is_dir` / `stat` / `read_text` /
     binary `open`) live here so the caller pays ONE thread hop instead of
@@ -115,23 +148,22 @@ def _scan_sessions_in_thread(sessions_root: Path, limit: int) -> list[dict[str, 
     """
     if not sessions_root.exists():
         return []
-    summaries = [_summarize(p) for p in sessions_root.iterdir() if p.is_dir()]
-    summaries.sort(
-        key=lambda s: s.get("created") or s["session_id"],
-        reverse=True,
-    )
-    return summaries[:limit]
+    dirs = [p for p in sessions_root.iterdir() if p.is_dir() and _is_chat_session(p)]
+    keyed = [(p, _summarize(p)) for p in dirs]
+    keyed.sort(key=lambda ps: _started_at(ps[0], ps[1].get("created")), reverse=True)
+    return [s for _, s in keyed[:limit]]
 
 
 @router.get("/sessions")
 async def list_sessions(
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """Return up to `limit` most recent sessions, newest first.
+    """Return up to `limit` most recent chat sessions, newest first.
 
-    Sort key: `meta.created` (ISO 8601 sorts lexicographically); falls
-    back to the directory name when meta.json is missing or malformed
-    (session_id format `<utc-date>-<short-uuid>` also sorts by time).
+    Only chat sessions are listed (see _is_chat_session): the web
+    terminal's directories under sessions/ are not conversations. Sort
+    key: when the session started — `meta.created`, or the directory's
+    mtime when meta.json is missing or malformed (see _started_at).
 
     L-033: scan delegates to a worker thread so 4×N sync FS calls don't
     stall the event loop. One thread hop per request regardless of N.

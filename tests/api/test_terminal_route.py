@@ -317,6 +317,39 @@ def test_terminal_command_publishes_to_event_bus(client, tmp_path) -> None:
     assert any(e["session_id"] == sid for e in cmd_events)
 
 
+def test_terminal_without_a_command_leaves_no_session_directory(client: Any, tmp_path: Any) -> None:
+    """2026-11-06: every terminal opened left an empty sessions/term-<time>/
+    (69 of them), and the session list showed them as conversations."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({})
+        sid = ws.receive_json()["session_id"]
+        ws.send_json({"type": "control", "action": "close"})
+        for _ in range(30):
+            msg = ws.receive()
+            if msg.get("text") and '"closed"' in msg["text"]:
+                break
+    assert not (tmp_path / "sessions" / sid).exists()
+
+
+def test_terminal_command_record_is_written(client: Any, tmp_path: Any) -> None:
+    """The directory is made on the first record instead; the timeline
+    still finds terminal.jsonl."""
+    with client.websocket_connect("/terminal/ws") as ws:
+        ws.send_json({})
+        sid = ws.receive_json()["session_id"]
+        ws.send_json({"type": "input", "data": "uptime\n"})
+        seen = b""
+        for _ in range(50):
+            msg = ws.receive()
+            if msg.get("bytes"):
+                seen += msg["bytes"]
+                if b"uptime" in seen:
+                    break
+    record = tmp_path / "sessions" / sid / "terminal.jsonl"
+    assert record.exists()
+    assert "uptime" in record.read_text()
+
+
 def test_terminal_deny_publishes_to_event_bus(guarded_client, tmp_path) -> None:
     """A denied (HITL) command should land as `terminal/<event>` —
     actual kind depends on TerminalGuard's audit payload schema."""

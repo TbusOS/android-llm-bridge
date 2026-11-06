@@ -97,7 +97,10 @@ async def terminal_ws(ws: WebSocket) -> None:
     # See L-035 caller-side-wrap rule: validate at trust boundary, before
     # any side-effect.
     try:
-        audit_path = session_path(session_id, "terminal.jsonl")
+        # ensure_dir=False: the directory is made on the first record (see
+        # on_audit). Making it here left an empty sessions/term-<time>/ for
+        # every terminal opened, 69 of them by 2026-11-06.
+        audit_path = session_path(session_id, "terminal.jsonl", ensure_dir=False)
     except InvalidSessionId as e:
         await ws.send_json({
             "type": "closed",
@@ -176,6 +179,7 @@ async def terminal_ws(ws: WebSocket) -> None:
         if payload.get("event") == "command":
             last_command["line"] = str(payload.get("line") or "") or None
         try:
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
             with audit_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps({"ts": iso_timestamp(), **payload}, ensure_ascii=False))
                 f.write("\n")

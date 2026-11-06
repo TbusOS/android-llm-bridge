@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,40 @@ def test_lists_sessions_newest_first(client, workspace) -> None:
     assert bbbb["backend"] == "ollama"
     assert bbbb["model"] == "qwen2.5:7b"
     assert bbbb["last_event_ts"] is not None  # mtime of messages.jsonl
+
+
+def _make_terminal_dir(workspace: Path, sid: str, *, record: bool) -> Path:
+    """What the web terminal leaves under sessions/: terminal.jsonl when a
+    command ran, or (before 2026-11-06) an empty directory."""
+    tdir = workspace / "sessions" / sid
+    tdir.mkdir(parents=True)
+    if record:
+        (tdir / "terminal.jsonl").write_text('{"event": "command", "line": "ls"}\n')
+    return tdir
+
+
+def test_terminal_directories_are_not_chat_sessions(client: TestClient, workspace: Path) -> None:
+    """2026-11-06: 100 terminal directories (named term-<time>, sorting after
+    every date) filled the chat page's history and no conversation showed."""
+    _make_session(workspace, "20261106-aaaa", created="2026-11-06T02:00:00+00:00", turns=2)
+    for i in range(70):
+        _make_terminal_dir(workspace, f"term-2026-11-05T03-19-{i:02d}", record=i % 2 == 0)
+    r = client.get("/sessions?limit=60")
+    assert [s["session_id"] for s in r.json()["sessions"]] == ["20261106-aaaa"]
+
+
+def test_sessions_without_created_sort_by_time_not_by_name(client: TestClient, workspace: Path) -> None:
+    """No (or broken) meta.created: the directory's time decides, never its
+    name compared with an ISO time."""
+    _make_session(workspace, "20261106-meta", created="2026-11-06T02:00:00+00:00", turns=1)
+    old = _make_session(workspace, "zz-old", created="x", bad_meta=True, turns=1)
+    os.utime(old, (1767225600, 1767225600))  # 2026-01-01
+    new = workspace / "sessions" / "aa-new"  # from before meta.json existed
+    new.mkdir()
+    (new / "messages.jsonl").write_text('{"role": "user", "content": "hi"}\n')
+    os.utime(new, (1794268800, 1794268800))  # 2026-11-10
+    r = client.get("/sessions")
+    assert [s["session_id"] for s in r.json()["sessions"]] == ["aa-new", "20261106-meta", "zz-old"]
 
 
 def test_limit_param(client, workspace) -> None:

@@ -80,7 +80,7 @@ REST_ENDPOINTS: list[EndpointSpec] = [
     {
         "method": "GET",
         "path": "/sessions",
-        "description": "List recent ChatSession dirs (Dashboard feed)",
+        "description": "List recent chat sessions, newest first (web terminal dirs are not listed)",
     },
     {
         "method": "GET",
