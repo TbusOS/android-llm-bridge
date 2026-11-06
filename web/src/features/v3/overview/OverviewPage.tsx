@@ -261,7 +261,22 @@ function BoardStateCard({ onBootloader }: { onBootloader: () => void }) {
             <dl className="kv facts">
               <div><dt>{t("型号", "Model")}</dt><dd>{d.brand} {d.model}</dd></div>
               <div><dt>{t("硬件", "Hardware")}</dt><dd className="mono">{d.hardware || d.extras.soc}</dd></div>
-              <div><dt>Android</dt><dd>{d.release} · API {d.sdk}</dd></div>
+              <div>
+                <dt>Android</dt>
+                <dd>
+                  {d.release} ·{" "}
+                  {/* Asked 2026-11-06: what "API 36" means. The browser's dotted
+                      underline on abbr[title] shows there is an explanation. */}
+                  <abbr
+                    title={t(
+                      "API level:系统接口的版本号,是个整数,代码里读 Build.VERSION.SDK_INT。应用靠它判断系统有没有某个接口;系统接口每变一次就加 1。Android 版本号是给人看的,两者是两套编号。",
+                      "API level: the version of the system's programming interface, an integer (Build.VERSION.SDK_INT in code). Apps check it to know which interfaces the system has; it goes up by one each time those interfaces change. The Android version is the name for people; the two are separate numbers.",
+                    )}
+                  >
+                    API {d.sdk}
+                  </abbr>
+                </dd>
+              </div>
               <div><dt>ABI</dt><dd className="mono">{d.abi}</dd></div>
               <div className="kv--wide"><dt>{t("构建指纹", "Build fingerprint")}</dt><dd className="mono">{d.build_fingerprint}</dd></div>
               <div><dt>CPU</dt><dd className="num">{d.extras.cpu_cores} {t("核", "cores")} · {(d.extras.cpu_max_khz / 1e6).toFixed(2)} GHz</dd></div>

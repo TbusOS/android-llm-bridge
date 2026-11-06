@@ -254,6 +254,15 @@ describe("OverviewPage devices strip", () => {
     await waitFor(() => expect(screen.getByText(/Android 14/)).toBeTruthy());
     expect(document.querySelector(".devs")).toBeNull();
   });
+
+  it("says what the API number next to the Android version means (2026-11-06)", async () => {
+    vi.stubGlobal("fetch", vi.fn(stubFetch({ ...TWO, "/devices": { ok: true, transport: "AdbTransport", devices: [{ serial: A, state: "device", model: "Board_X" }] } })));
+    await renderPage(<OverviewPage />);
+    const api = await screen.findByText("API 34");
+    expect(api.tagName).toBe("ABBR");
+    expect(api.getAttribute("title")).toContain("Build.VERSION.SDK_INT");
+    expect(api.closest("dd")?.textContent).toBe("14 · API 34");
+  });
 });
 
 describe("OverviewPage assistant and service cards", () => {
