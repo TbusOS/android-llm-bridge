@@ -13,6 +13,7 @@ command is a client of it.
     alb flash reboot [target]
     alb flash oem <command>
     alb flash write <partition> <image>
+    alb flash erase <partition>
     alb flash plan <manifest> [--skip p1,p2] [--skip-action a] [--from-line N] [--dry-run] [--yes]
 
 `write`, not `flash flash`: the verb reads as what it does to the device.
@@ -319,6 +320,26 @@ def cmd_write(
         typer.echo(f"about to write {image} to partition {partition}")
         typer.confirm("proceed?", abort=True)
     _report(_run_job("flash", {"partition": partition, "image": str(image)}))
+
+
+@app.command("erase")
+def cmd_erase(
+    partition: str = typer.Argument(..., help="target partition name"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+) -> None:
+    """`fastboot erase <partition>` — the same checks as `write`.
+
+    Runs the agent's `erase` op through /api/bench/ops, the path
+    `alb bench run erase partition=<p>` already takes, so there is no second
+    copy of the checks: the hub holds the name against the chosen board's
+    partition list, the agent checks the list again and, when agent.conf gives
+    the board a fastboot_product, compares it with the board on the cable.
+    Nothing to undo afterwards, hence the confirmation.
+    """
+    if not yes:
+        typer.echo(f"about to erase partition {partition} — this cannot be undone")
+        typer.confirm("proceed?", abort=True)
+    _report(_run_job("ops/erase", {"params": {"partition": partition}}, base="/api/bench"))
 
 
 # ── plan: a whole flashing manifest, checked first, run once ───────────

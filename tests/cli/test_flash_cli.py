@@ -10,6 +10,7 @@ wrong subsystem: go find out yourself.
 from __future__ import annotations
 
 import json
+import struct
 from collections.abc import Sequence
 from typing import Any
 
@@ -363,3 +364,98 @@ def test_status_prints_why_flashing_is_unavailable(monkeypatch: pytest.MonkeyPat
     assert "alb bench agent-start" in r.output
     # the old wording blamed fastboot_path, which is the wrong fix here
     assert "fastboot_path" not in r.output
+
+
+# ── erase (2026-11-06): `alb flash erase` runs the bench `erase` op ──
+#
+# Wired through the real app and the real FlashService, with only the agent
+# faked: a mocked hub would accept whatever path the command posts to, and the
+# point of these is that the command reaches the same checks as `write`.
+
+
+class _EraseAgent:
+    def __init__(self) -> None:
+        from tests.remote.bench_tables import new_agent_ops
+
+        self.agent_id = "agent-1"
+        self.name = "bench"
+        self.caps = ["adb", "fastboot"]
+        self.flash_partitions = ["boot_a", "misc"]
+        self.op_table = new_agent_ops()
+        self.ops_reported = True
+        self.opened: list[dict[str, Any]] = []
+        self.sent: list[bytes] = []
+
+    async def open_data_channel(
+        self, *, ctype: str, role: str, params: dict[str, Any], timeout: float  # noqa: ASYNC109
+    ) -> _EraseAgent:
+        self.opened.append(params)
+        return self
+
+    async def send(self, data: bytes) -> None:
+        self.sent.append(data)
+
+    async def recv(self) -> bytes:
+        from alb.remote.jobframe import KIND_CONTROL
+
+        payload = json.dumps({"ev": "done", "ok": True, "rc": 0, "stdout": "", "stderr": ""})
+        return struct.pack(">cI", KIND_CONTROL, len(payload)) + payload.encode()
+
+    async def aclose(self) -> None:
+        pass
+
+    def request(self) -> dict[str, Any]:
+        _, length = struct.unpack(">cI", self.sent[0][:5])
+        req: dict[str, Any] = json.loads(self.sent[0][5 : 5 + length])
+        return req
+
+
+@pytest.fixture
+def erase_hub(monkeypatch: pytest.MonkeyPatch) -> _EraseAgent:
+    from fastapi.testclient import TestClient
+
+    import alb.api.bench_route as bench_route
+    import alb.remote.flash as flash_mod
+    from alb.api.server import create_app
+    from alb.remote.flash import FlashService
+
+    monkeypatch.setenv("ALB_ADB_FORWARD_PORT", "0")
+    agent = _EraseAgent()
+    service = FlashService(lambda: agent)
+
+    async def no_timeline(
+        label: str, request: dict[str, Any], *, enabled: bool, watch_uart: bool
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(flash_mod, "_open_timeline", no_timeline)
+    monkeypatch.setattr(bench_route, "get_flash_service", lambda: service)
+    app = create_app()
+    monkeypatch.setattr(httpx, "Client", lambda **kw: TestClient(app))
+    return agent
+
+
+def test_erase_sends_the_bench_erase_op(erase_hub: _EraseAgent) -> None:
+    r = CliRunner().invoke(flash_cli.app, ["erase", "misc", "--yes"])
+    assert r.exit_code == 0, r.output
+    assert "[ok]" in r.output
+    assert erase_hub.opened == [{"op": "erase"}]
+    req = erase_hub.request()
+    assert (req["op"], req["partition"]) == ("erase", "misc")
+
+
+def test_erase_of_an_unlisted_partition_is_refused_before_the_agent(
+    erase_hub: _EraseAgent,
+) -> None:
+    """The hub's partition list applies, as it does to `write`."""
+    r = CliRunner().invoke(flash_cli.app, ["erase", "super", "--yes"])
+    assert r.exit_code == 1
+    assert "FLASH_PARTITION_REJECTED" in r.output
+    assert erase_hub.opened == []
+
+
+def test_erase_asks_first_and_a_no_sends_nothing(erase_hub: _EraseAgent) -> None:
+    r = CliRunner().invoke(flash_cli.app, ["erase", "misc"], input="n\n")
+    assert r.exit_code != 0
+    assert "cannot be undone" in r.output
+    assert erase_hub.opened == []
