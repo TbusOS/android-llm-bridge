@@ -657,6 +657,49 @@ class _CtxSpy(_PromptSpy):
     num_ctx = 16384
 
 
+# ─── The board selected in the page (2026-11-05: two calls to find it) ───
+
+
+def test_chat_user_message_names_the_selected_board(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The board goes in the note on the user message; the system prompt is
+    the same with or without one, so warm-up's prefix still matches."""
+    _PromptSpy.seen = []
+    _PromptSpy.last_user = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _PromptSpy())
+    body: dict[str, Any] = {"message": "电量多少", "tools": False}
+    assert client.post("/chat", json=body).status_code == 200
+    r = client.post("/chat", json={**body, "device": "board-a"})
+    assert r.status_code == 200 and r.json()["ok"] is True, r.text
+    without, with_board = _PromptSpy.last_user
+    assert "board-a" not in without
+    assert with_board.startswith("电量多少\n\n(请用简体中文回答。")
+    assert "当前板子 board-a" in with_board
+    assert _PromptSpy.seen[0] == _PromptSpy.seen[1]
+
+
+def test_chat_session_records_the_selected_board(client: TestClient, fake_backend_patch: Any) -> None:
+    from alb.agent.session import ChatSession
+
+    r = client.post("/chat", json={"message": "hi", "tools": False, "device": "board-a"})
+    assert ChatSession.load(r.json()["session_id"]).device == "board-a"
+
+
+def test_chat_rejects_a_malformed_board_without_echoing_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _PromptSpy.last_user = []
+    monkeypatch.setattr("alb.api.chat_route.get_backend", lambda name, **kw: _PromptSpy())
+    r = client.post("/chat", json={"message": "hi", "tools": False, "device": "../etc"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "INVALID_DEVICE_SERIAL"
+    assert "../etc" not in r.text
+    assert _PromptSpy.last_user == []  # the model was never asked
+
+
 def test_chat_system_prompt_names_model_and_context(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """2026-11-03: asked "which model are you", the model said it has no
     model ID — the prompt never told it."""

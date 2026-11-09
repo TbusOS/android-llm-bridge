@@ -68,7 +68,7 @@ async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
         )
 
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        args = coerce_string_args(schemas.get(name, {}), args)
+        args = drop_blank_device(coerce_string_args(schemas.get(name, {}), args))
         try:
             _, structured = await mcp.call_tool(name, args)
         except Exception as e:  # noqa: BLE001 — executor must never crash AgentLoop
@@ -87,6 +87,25 @@ async def make_agent_tools() -> tuple[list[ToolSpec], ToolExecutor]:
         return {"ok": True, "data": structured}
 
     return specs, executor
+
+
+def drop_blank_device(args: dict[str, Any]) -> dict[str, Any]:
+    """``device=""`` counts as no device given: the tool runs on the default
+    board, exactly as when the model leaves ``device`` out.
+
+    Seen 2026-11-05: asked for the battery level, Ling-3.0-tiny called
+    ``alb_battery(device="")``. An empty string is not a serial, so it failed
+    the serial check (TOOL_CALL_FAILED) and the model spent two more calls
+    finding the serial. Only a blank string is dropped, so a tool still sees
+    ``device`` as missing (None) and keeps what it does then — alb_reboot
+    retries over the serial console, alb_log_search searches every board.
+    With two boards and no ``device``, adb refuses ("more than one
+    device/emulator") rather than picking one.
+    """
+    value = args.get("device")
+    if isinstance(value, str) and not value.strip():
+        return {k: v for k, v in args.items() if k != "device"}
+    return args
 
 
 def coerce_string_args(schema: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:

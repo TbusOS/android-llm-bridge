@@ -271,32 +271,54 @@ _MODEL_NOTE_TAIL = {
 }
 
 
+# The board selected in the web page. Without it the model did not know
+# which board it was on: asked for the battery level it first called
+# alb_battery(device=""), which failed, then alb_status to find the serial,
+# then alb_battery again — 3 tool calls where 1 does (2026-11-05, 8.1 s).
+# It goes here and not in the system prompt: the chat template puts the
+# ~6k-token tool list after the system prompt, so a serial there would make
+# the model re-read the tool list whenever the board changes, and the
+# hub's warm-up (which runs before any board is known) would no longer
+# match the first chat.
+_DEVICE_NOTES = {
+    "zh": "当前板子 {device}:工具的 device 参数填它,不用先调 alb_status 或 alb_devices 查。",
+    "en": "The current board is {device}: pass it as the device argument; no need to call alb_status or alb_devices first.",
+}
+
+
 def agent_user_note(
     reply_language: str,
     *,
     model: str | None = None,
     context_tokens: int | None = None,
+    device: str | None = None,
 ) -> str | None:
     """Note for AgentLoop(user_note=...): the reply language request and,
-    when `model` is known, which model this is.
+    when known, which model this is and which board the page has selected.
 
-        zh → "(请用简体中文回答。你是语言模型 X,上下文 N token;问到…不用调工具。)"
+        zh → "(请用简体中文回答。你是语言模型 X,上下文 N token;问到…不用调工具。当前板子 S:…)"
 
     "auto" has no note at all, as before: a sentence in either language
     pulls the reply toward it."""
     lang = reply_language if reply_language in REPLY_LANGUAGE_NOTES else DEFAULT_REPLY_LANGUAGE
     base = REPLY_LANGUAGE_NOTES[lang]
-    if base is None or not model or lang not in _MODEL_NOTES:
+    if base is None or lang not in _MODEL_NOTES:
         return base
-    who, ctx = _MODEL_NOTES[lang]
-    text = who.format(model=model)
-    if context_tokens:
-        text += ctx.format(ctx=context_tokens)
-    text += _MODEL_NOTE_TAIL[lang]
-    # base is "(…)" or "(…)"; put the model part inside the same brackets
+    parts: list[str] = []
+    if model:
+        who, ctx = _MODEL_NOTES[lang]
+        text = who.format(model=model)
+        if context_tokens:
+            text += ctx.format(ctx=context_tokens)
+        parts.append(text + _MODEL_NOTE_TAIL[lang])
+    if device:
+        parts.append(_DEVICE_NOTES[lang].format(device=device))
+    if not parts:
+        return base
+    # base is "(…)" or "(…)"; put the rest inside the same brackets
     if lang == "zh":
-        return f"{base[:-1]}。{text})"
-    return f"{base[:-1]} {text})"
+        return f"{base[:-1]}。{''.join(parts)})"
+    return f"{base[:-1]} {' '.join(parts)})"
 
 DEFAULT_TOOL_NORMS = """\
 Tool usage norms:

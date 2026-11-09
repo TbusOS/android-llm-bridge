@@ -1,4 +1,5 @@
-"""Numbers the model sends where a tool takes a string (2026-11-03)."""
+"""What the model sends that a tool would refuse: numbers where a tool takes
+a string (2026-11-03), and ``device=""`` (2026-11-05)."""
 
 from __future__ import annotations
 
@@ -6,7 +7,8 @@ from typing import Any
 
 import pytest
 
-from alb.mcp.executor import coerce_string_args, make_agent_tools
+from alb.infra.result import ok
+from alb.mcp.executor import coerce_string_args, drop_blank_device, make_agent_tools
 
 _SHELL = {
     "properties": {
@@ -57,3 +59,43 @@ async def test_the_executor_hands_the_tool_a_string(monkeypatch: pytest.MonkeyPa
     _, execute = await make_agent_tools()
     assert await execute("alb_shell", {"cmd": "getprop", "device": 11223344}) == {"ok": True}
     assert seen == [{"cmd": "getprop", "device": "11223344"}]
+
+
+# ─── device="" (2026-11-05: alb_battery(device="") failed, two more calls) ──
+
+
+def test_a_blank_device_is_left_out() -> None:
+    assert drop_blank_device({"cmd": "getprop", "device": ""}) == {"cmd": "getprop"}
+    assert drop_blank_device({"device": "  "}) == {}
+
+
+def test_a_named_or_missing_device_is_kept() -> None:
+    named = {"cmd": "getprop", "device": "board-a"}
+    assert drop_blank_device(named) is named
+    assert drop_blank_device({"device": None}) == {"device": None}
+    assert drop_blank_device({"cmd": "getprop"}) == {"cmd": "getprop"}
+
+
+@pytest.mark.asyncio
+async def test_a_blank_device_runs_the_tool_on_the_default_board(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real tool registry: the tool sees no device, as when the
+    model leaves it out, instead of failing the serial check."""
+    import alb.mcp.tools.power as power
+
+    seen: list[str | None] = []
+
+    def fake_build_transport(*, override: str | None = None, device_serial: str | None = None) -> Any:
+        seen.append(device_serial)
+        return object()
+
+    async def fake_battery(transport: Any) -> Any:
+        return ok(data={"level": 80})
+
+    monkeypatch.setattr(power, "build_transport", fake_build_transport)
+    monkeypatch.setattr(power, "battery", fake_battery)
+    _, execute = await make_agent_tools()
+    result = await execute("alb_battery", {"device": ""})
+    assert result["ok"] is True, result
+    assert seen == [None]

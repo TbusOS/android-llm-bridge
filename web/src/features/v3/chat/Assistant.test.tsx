@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const chat = vi.hoisted(() => ({
   state: { turns: [], sessionId: null, isStreaming: false } as { turns: unknown[]; sessionId: string | null; isStreaming: boolean; confirmRequest?: unknown },
   answerConfirm: vi.fn(),
+  /** What the provider asked useChatStream for, newest last. */
+  args: [] as Record<string, unknown>[],
   send: vi.fn(),
   reset: vi.fn(),
   cancel: vi.fn(),
@@ -20,7 +22,7 @@ const chat = vi.hoisted(() => ({
 const clip = vi.hoisted(() => ({ copyText: vi.fn(async (_: string) => true) }));
 
 vi.mock("../../chat/useChatStream", () => ({
-  useChatStream: () => ({ ...chat.state, send: chat.send, reset: chat.reset, cancel: chat.cancel, retry: chat.retry, answerConfirm: chat.answerConfirm }),
+  useChatStream: (args: Record<string, unknown>) => (chat.args.push(args), { ...chat.state, send: chat.send, reset: chat.reset, cancel: chat.cancel, retry: chat.retry, answerConfirm: chat.answerConfirm }),
 }));
 vi.mock("../../../lib/clipboard", () => clip);
 
@@ -70,6 +72,7 @@ const ai = (id: string, over: object) => ({ id, role: "assistant", content: "", 
 beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   chat.state = { turns: [], sessionId: null, isStreaming: false, confirmRequest: null };
+  chat.args = [];
   for (const f of [chat.send, chat.reset, chat.cancel, chat.retry, chat.answerConfirm, clip.copyText]) f.mockClear();
   useApp.setState({ lang: "zh", device: "board-a", backend: "ollama", model: null });
   useShell.setState({ source: "host", agentMode: true, context: null, sheetOpen: false });
@@ -535,5 +538,16 @@ describe("reading settings: sheet width and text size (2026-11-03)", () => {
     );
     expect(cssVar("--alb-sheet-w")).toBe("960px");
     expect(cssVar("--alb-chat-font")).toBe("12px");
+  });
+});
+
+describe("the board the model is told about", () => {
+  it("is the board selected in the page, and follows a change", () => {
+    // 2026-11-05: without it the model spent two tool calls finding the serial.
+    mockFetch();
+    render(tree());
+    expect(chat.args.at(-1)).toMatchObject({ device: "board-a" });
+    act(() => useApp.setState({ device: "board-b" }));
+    expect(chat.args.at(-1)).toMatchObject({ device: "board-b" });
   });
 });

@@ -43,6 +43,9 @@ interface UseChatStreamArgs {
   confirmTools?: boolean;
   /** UI language; the model is told to answer in it. */
   lang?: "zh" | "en";
+  /** Board selected in the page; the hub tells the model its serial so it
+   *  does not spend a tool call looking it up. */
+  device?: string | null;
 }
 
 /** A tool call the server is holding until the person answers. */
@@ -74,7 +77,7 @@ function clampReason(raw: string, max = 200): string {
 }
 
 export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
-  const { backend, model, tools = true, maxTurns = 8, confirmTools = false, lang } = args;
+  const { backend, model, tools = true, maxTurns = 8, confirmTools = false, lang, device } = args;
 
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -256,10 +259,11 @@ export function useChatStream(args: UseChatStreamArgs): UseChatStreamResult {
         max_turns: maxTurns,
         ...(confirmTools && tools ? { confirm_tools: true } : {}),
         ...(lang ? { lang } : {}),
+        ...(device ? { device } : {}),
       };
       stream.start(payload);
     },
-    [backend, model, tools, maxTurns, confirmTools, lang, stream],
+    [backend, model, tools, maxTurns, confirmTools, lang, device, stream],
   );
 
   const answerConfirm = useCallback(

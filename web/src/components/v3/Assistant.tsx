@@ -46,8 +46,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const agentMode = useShell((s) => s.agentMode);
   const confirmTools = useShell((s) => s.confirmTools);
   const lang = useApp((s) => s.lang);
+  const device = useApp((s) => s.device);
   const backend = source === "api" ? (API_BACKENDS.has(appBackend) ? appBackend : "openai-compat") : API_BACKENDS.has(appBackend) ? "ollama" : appBackend;
-  const chat = useChatStream({ backend, model, tools: agentMode, confirmTools, lang });
+  const chat = useChatStream({ backend, model, tools: agentMode, confirmTools, lang, device });
   const context = useShell((s) => s.context);
   const clearContext = useShell((s) => s.clearContext);
   const api = useMemo<AssistantApi>(

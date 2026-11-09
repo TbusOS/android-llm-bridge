@@ -75,6 +75,8 @@ export interface ChatRequestPayload {
   confirm_tools?: boolean;
   /** Language the model answers in (the page's UI language). */
   lang?: "zh" | "en";
+  /** Serial of the board selected in the page. */
+  device?: string;
 }
 
 /** A single event from the server stream. Shape mirrors loop.run_stream. */

@@ -239,6 +239,19 @@ describe("useChatStream", () => {
     expect(currentClients[1]?.sentMessages[0]).not.toHaveProperty("lang");
   });
 
+  it("the board selected in the page goes with the request when there is one", () => {
+    // 2026-11-05: without it the model spent two tool calls finding the serial.
+    const one = renderHook(() => useChatStream({ backend: "ollama", model: null, device: "board-a" }));
+    act(() => one.result.current.send("电量多少"));
+    act(() => emit(0, { kind: "open" }));
+    expect(currentClients[0]?.sentMessages[0]).toMatchObject({ device: "board-a" });
+
+    const none = renderHook(() => useChatStream({ backend: "ollama", model: null, device: null }));
+    act(() => none.result.current.send("电量多少"));
+    act(() => emit(1, { kind: "open" }));
+    expect(currentClients[1]?.sentMessages[0]).not.toHaveProperty("device");
+  });
+
   it("done(ok=true, session_id) → turn done + sessionId set + isStreaming=false", () => {
     const { result } = renderHook(() =>
       useChatStream({ backend: "ollama", model: "qwen" }),

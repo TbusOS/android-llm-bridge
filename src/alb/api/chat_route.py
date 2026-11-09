@@ -61,7 +61,7 @@ from alb.infra.prompt_builder import (
     agent_user_note,
     default_agent_prompt,
 )
-from alb.infra.workspace import InvalidSessionId
+from alb.infra.workspace import InvalidSessionId, is_safe_device
 
 _SUMMARY_MAX = 120
 # SEC-2: bound how long the chat WS waits for its first (request) frame.
@@ -88,6 +88,13 @@ class ChatRequest(BaseModel):
         None,
         description="Language the model answers in; the web page sends its UI "
         "language. Omitted means Simplified Chinese.",
+    )
+    device: str | None = Field(
+        None,
+        max_length=128,
+        description="Serial of the board selected in the page. Each user message "
+        "the model sees names it, so the model passes it to tools instead of "
+        "looking it up first. Omitted: the model is told nothing about the board.",
     )
 
 
@@ -366,6 +373,17 @@ async def _agent_parts(
     """(llm, tool specs, executor, system prompt, user note) for a request,
     or an error dict. Shared by the chat endpoints and warm_up(), so the
     warm-up sends byte for byte the prefix a chat will send."""
+    if req.device and not is_safe_device(req.device):
+        # L-051: the rejected value is not echoed back.
+        return {
+            "error": {
+                "code": "INVALID_DEVICE_SERIAL",
+                "message": "invalid device serial",
+                "suggestion": "Use a serial returned by alb devices",
+            },
+            "session_id": "",
+        }
+
     # Env-var defaults (mirror CLI behaviour)
     model = req.model or os.environ.get("ALB_OLLAMA_MODEL")
     ollama_url = req.ollama_url or os.environ.get("ALB_OLLAMA_URL")
@@ -398,8 +416,14 @@ async def _agent_parts(
         backend=llm.name,
         context_tokens=_context_tokens(llm),
     )
+    # The board goes in the note on each user message, not in the system
+    # prompt above: that stays the same for every board, so warm_up() and
+    # the model server's cache of it still match (see _DEVICE_NOTES).
     note = agent_user_note(
-        req.lang or DEFAULT_REPLY_LANGUAGE, model=llm.model, context_tokens=_context_tokens(llm)
+        req.lang or DEFAULT_REPLY_LANGUAGE,
+        model=llm.model,
+        context_tokens=_context_tokens(llm),
+        device=req.device or None,
     )
     return llm, specs, executor, prompt.as_text(), note
 
@@ -439,7 +463,9 @@ async def _build_agent(
                 "session_id": req.session_id,
             }
     else:
-        session = ChatSession.create(backend=llm.name, model=llm.model, source="web")
+        session = ChatSession.create(
+            backend=llm.name, model=llm.model, device=req.device or None, source="web"
+        )
 
     loop = AgentLoop(
         backend=llm,

@@ -313,6 +313,31 @@ def test_agent_user_note_without_a_model_is_the_language_note() -> None:
     assert agent_user_note("auto", model="ling3-tiny", context_tokens=16384) is None
 
 
+def test_agent_user_note_names_the_selected_board() -> None:
+    """2026-11-05: not knowing the board, the model spent two tool calls
+    finding its serial before it could answer."""
+    from alb.infra.prompt_builder import agent_user_note
+
+    zh = agent_user_note("zh", model="ling3-tiny", context_tokens=16384, device="board-a")
+    assert zh is not None
+    assert zh.startswith("(请用简体中文回答。") and zh.endswith(")")
+    assert "当前板子 board-a" in zh and "ling3-tiny" in zh
+    assert zh.count("(") == 1 and zh.count(")") == 1  # one note, not two
+
+    en = agent_user_note("en", device="board-a")
+    assert en is not None
+    assert en.startswith("(Please answer in English. The current board is board-a")
+    assert en.endswith(")")
+
+    # without a board the note is what it was, byte for byte (the model
+    # server's cache of earlier messages still matches)
+    assert agent_user_note("zh", model="m", context_tokens=1, device=None) == agent_user_note(
+        "zh", model="m", context_tokens=1
+    )
+    assert agent_user_note("zh", device="") == "(请用简体中文回答)"
+    assert agent_user_note("auto", device="board-a") is None
+
+
 # ─── Model line (2026-11-03: "which model are you" got "I have no model ID") ─
 
 
