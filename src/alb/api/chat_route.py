@@ -482,8 +482,10 @@ async def _build_agent(
 # chat page sends (web/src/features/chat/useChatStream.ts, its UI
 # language). Each has its own system prompt (REPLY_LANGUAGE_RULES), and
 # the model server reads a prompt it has not seen from scratch: on
-# 2026-11-09 the first English question after a restart waited 33.4 s
-# while Chinese, warmed, took 0.1 s. Chinese first, the language most
+# 2026-11-09 the first English question after a restart took 36.5 s in
+# all; the unseen "auto" prompt (as long, ~6k tokens with the tool list)
+# took 33.4 s to read the first time and 0.1 s the second, and warmed
+# Chinese 0.1-0.9 s. Chinese first, the language most
 # people here use. "auto" is left out: only direct API calls send it, and
 # warming it would hold the model another ~33 s at every start.
 WARM_UP_LANGS: tuple[str, ...] = ("zh", "en")

@@ -786,8 +786,9 @@ async def test_warm_up_reports_a_backend_error(monkeypatch: pytest.MonkeyPatch, 
 @pytest.mark.asyncio
 async def test_warm_up_covers_each_language_a_chat_page_sends(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """2026-11-09: only Chinese was warmed, and the first English question
-    after a hub restart waited 33.4 s for the model server to read the
-    English system prompt."""
+    after a hub restart took 36.5 s; the model server had to read the
+    English system prompt and the tool list after it from scratch (an
+    unseen prompt of that length: 33.4 s)."""
     from alb.api import chat_route
 
     monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
