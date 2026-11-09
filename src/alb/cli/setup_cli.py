@@ -13,7 +13,9 @@ side (that's inherently manual). What it does:
 
 from __future__ import annotations
 
+import json
 import os
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -21,12 +23,14 @@ from typing import Any
 import tomli_w
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
 from alb.cli._probes import check_binary as _check_binary
 from alb.cli._probes import check_tcp_listen as _check_tcp_listen
 from alb.cli.common import load_active_friendly, run_async
+from alb.infra import host_deps
 from alb.infra.adb_endpoint import resolve_endpoint
 from alb.infra.config import global_config_path, load_config
 from alb.transport.adb import AdbTransport
@@ -363,3 +367,95 @@ def setup_serial(
             border_style="green",
         )
     )
+
+
+# ─── deps ─────────────────────────────────────────────────────────
+_TIER_TITLES = {
+    "required": "required",
+    "optional": "optional (one feature each)",
+    "dev": "for running the tests (--dev)",
+    "dev-optional": "nice to have for developers",
+}
+
+
+@app.command("deps")
+def setup_deps(
+    install: bool = typer.Option(
+        False, "--install",
+        help="Install what can be installed without root: Android Platform-Tools, "
+             "and with --dev the npm packages, Playwright's Chromium, pytest and mksh.",
+    ),
+    dev: bool = typer.Option(
+        False, "--dev", help="Also cover the tools for running the tests (Node.js, Playwright, ...).",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask before downloading."),
+    platform_tools_zip: Path | None = typer.Option(
+        None, "--platform-tools-zip",
+        help="A Platform-Tools zip you downloaded yourself; unpacked instead of downloading.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as JSON."),
+) -> None:
+    """Check the outside tools alb needs — pip / uv cannot install these.
+
+    Exit code 1 when a required tool (or, with --dev, a test tool) is missing.
+    """
+    tiers = host_deps.BASE_TIERS + (host_deps.DEV_TIERS if dev else ())
+    install = install or platform_tools_zip is not None
+
+    def confirm(question: str) -> bool:
+        # JSON mode must keep stdout clean: no prompt, pass --yes instead.
+        return not as_json and sys.stdin.isatty() and typer.confirm(question, default=False)
+
+    def echo(line: str) -> None:
+        console.print(f"      [dim]{escape(line)}[/]")
+
+    def log(msg: str) -> None:
+        console.print(f"  [cyan]→[/] {escape(msg)}")
+
+    env = host_deps.default_env(
+        assume_yes=yes, confirm=confirm, platform_tools_zip=platform_tools_zip,
+        echo=None if as_json else echo, log=(lambda _m: None) if as_json else log,
+    )
+    if not as_json:
+        console.print(Panel.fit(
+            "Outside tools alb needs (pip / uv cannot install these)", border_style="blue",
+        ))
+    results = host_deps.install_missing(tiers, env) if install else host_deps.check_all(tiers, env)
+    bad = host_deps.blocking(results, tiers)
+    if as_json:
+        print(json.dumps({"ok": not bad, "results": [r.to_dict() for r in results]}, indent=2))
+    else:
+        _render_deps(results, install)
+    raise typer.Exit(1 if bad else 0)
+
+
+def _render_deps(results: list[host_deps.DepResult], installed: bool) -> None:
+    for tier, title in _TIER_TITLES.items():
+        rows = [r for r in results if r.tier == tier]
+        if not rows:
+            continue
+        console.print(f"\n[bold]{title}[/]")
+        hard = tier in ("required", "dev")
+        for r in rows:
+            if r.ok:
+                mark = "[green]✓[/]"
+            elif hard:
+                mark = "[red]✗[/]"
+            else:
+                mark = "[yellow]○[/]"
+            extra = ""
+            if r.status == "installed":
+                extra = " [green](installed just now)[/]"
+            elif not r.ok and r.auto and not installed:
+                extra = " [cyan](--install can fetch it)[/]"
+            console.print(f"  {mark} {r.name:<20} [dim]{escape(r.detail)}[/]{extra}")
+    missing = [r for r in results if not r.ok]
+    if not missing:
+        console.print("\n[green]Everything listed is in place.[/]")
+        return
+    console.print("\n[bold]How to install what is missing[/]")
+    for r in missing:
+        console.print(f"\n  [bold]{r.name}[/] [dim]({r.tier}) — {escape(r.purpose)}[/]")
+        for line in r.manual:
+            console.print(f"    • {escape(line)}")
+

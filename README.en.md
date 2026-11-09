@@ -126,18 +126,26 @@ See [`docs/architecture.md`](./docs/architecture.md) for the details.
 
 ### Requirements
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv)
+- Python 3.11+ and [uv](https://github.com/astral-sh/uv) — `scripts/install.sh` installs both into your home directory
+- adb (Android SDK Platform-Tools) — `alb setup deps --install` downloads it if missing
 - An Android device reachable via at least one channel
 
-### Install (after M1)
+### Install
 
 ```bash
 git clone https://github.com/<your>/android-llm-bridge
 cd android-llm-bridge
-uv sync
+./scripts/install.sh              # add --dev to also set up what the tests need
 uv run alb --help
 ```
+
+The last step of `install.sh` is `alb setup deps --install`, which checks the outside tools pip
+cannot install. Missing adb / fastboot are downloaded (Android SDK Platform-Tools) into your home
+directory — it asks first, `--yes` skips the question. ssh, rsync, picocom and socat need sudo,
+and Ollama usually runs on another machine, so for those it prints the install commands.
+`--dev` also installs the npm packages in `web/` and Playwright's Chromium. When a download fails,
+the command prints how to install by hand. Already have uv? `uv sync && uv run alb setup deps
+--install` does the same. Full list: [`docs/install.md`](./docs/install.md) (Chinese), section 外部工具.
 
 ### Set up a transport
 

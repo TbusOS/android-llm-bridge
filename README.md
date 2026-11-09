@@ -142,8 +142,14 @@ hub 上一样。完整链路与逐跳排障：[docs/dial-home-runbook.md](./docs
 ```bash
 git clone https://github.com/<your>/android-llm-bridge
 cd android-llm-bridge
-./scripts/install.sh
+./scripts/install.sh              # 要跑测试再加 --dev
 ```
+
+install.sh 最后一步是 `alb setup deps --install`，查 pip 装不了的外部工具：
+缺 adb / fastboot 就下载 Android Platform-Tools 装进家目录（下载前问一次，`--yes` 不问）；
+ssh、rsync、picocom、socat 要 sudo，Ollama 常装在别的机器上，这几样只列出安装命令。
+加 `--dev` 再装跑测试要的 `web/` npm 包和 Playwright 的 Chromium。
+下载失败时命令会打印手动安装的办法；完整清单见 [`docs/install.md`](./docs/install.md)「外部工具」。
 
 装好后：
 ```bash
@@ -167,6 +173,7 @@ uv run alb devices           # 列连接的设备
 ```bash
 cd android-llm-bridge
 uv sync                    # 装依赖
+uv run alb setup deps --install   # 查 / 装 adb 等外部工具（加 --dev 连测试工具）
 uv run alb --help          # 看看能做什么
 uv run pytest -q           # 跑测试（60+ 用例）
 ```

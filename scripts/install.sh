@@ -34,6 +34,8 @@ indent()   { sed 's/^/       /'; }
 # ─── Args ────────────────────────────────────────────────────────
 MODIFY_PATH=0
 SKIP_SMOKE=0
+WITH_DEV=0
+ASSUME_YES=0
 PYTHON_VERSION="3.11"
 
 usage() {
@@ -48,6 +50,10 @@ Options:
                        Only affects YOUR user; other users are untouched.
   --skip-smoke-test    Skip post-install smoke tests.
   --python VERSION     Python version uv should install (default: 3.11).
+  --dev                Also install what running the tests needs: the npm
+                       packages in web/ and Playwright's Chromium (needs
+                       Node.js; the script says how to get it if missing).
+  --yes, -y            Do not ask before downloading Android Platform-Tools.
   -h, --help           Show this help.
 
 What this script does (nothing outside your home directory):
@@ -56,7 +62,11 @@ What this script does (nothing outside your home directory):
   3. Ask uv to fetch Python ${PYTHON_VERSION} into ~/.local/share/uv/python/.
   4. Run 'uv sync' in the project repo to create .venv/ with all deps.
   5. Run a pytest smoke test (tests/test_smoke.py).
-  6. Print next-step hints.
+  6. Check the outside tools pip cannot install ('alb setup deps --install'):
+     adb / fastboot are downloaded into ~/.local/share/alb and linked into
+     ~/.local/bin when missing; tools that need sudo (ssh, rsync, picocom,
+     socat) or another machine (Ollama) are listed with how to install them.
+  7. Print next-step hints.
 
 Isolation guarantees:
   - System /usr/bin/python3 is NOT modified.
@@ -72,6 +82,8 @@ while [[ $# -gt 0 ]]; do
         --with-uv-in-path) MODIFY_PATH=1; shift ;;
         --skip-smoke-test) SKIP_SMOKE=1; shift ;;
         --python) PYTHON_VERSION="${2:?missing value for --python}"; shift 2 ;;
+        --dev) WITH_DEV=1; shift ;;
+        --yes|-y) ASSUME_YES=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_err "unknown option: $1"; echo; usage; exit 1 ;;
     esac
@@ -156,7 +168,15 @@ log_ok "Python ${PYTHON_VERSION} ready (managed by uv, under ~/.local/share/uv/p
 # ─── Step 4 · uv sync ────────────────────────────────────────────
 cd "${REPO_ROOT}"
 log_info "Running 'uv sync' (creates .venv/ and installs all project dependencies)..."
-"${UV_BIN}" sync 2>&1 | indent
+if ! "${UV_BIN}" sync 2>&1 | indent; then
+    log_err "uv sync failed — the Python packages (typer, fastapi, pyserial, ...) did not install."
+    log_err "Usual causes and fixes:"
+    log_err "  behind a proxy:     export HTTPS_PROXY=http://<proxy>:<port>   then re-run this script"
+    log_err "  PyPI unreachable:   export UV_DEFAULT_INDEX=<a PyPI mirror URL> then re-run (older uv: UV_INDEX_URL)"
+    log_err "  see the full error: cd ${REPO_ROOT} && ${UV_BIN} sync -v"
+    log_err "More: docs/install.md (troubleshooting)."
+    exit 1
+fi
 if [[ ! -d "${REPO_ROOT}/.venv" ]]; then
     log_err "uv sync finished but .venv/ was not created. Check the output above."
     exit 1
@@ -175,9 +195,24 @@ else
     log_info "Skipping smoke tests (--skip-smoke-test)"
 fi
 
-# ─── Success summary ─────────────────────────────────────────────
+# ─── Step 6 · outside tools (adb, ssh, ... — pip cannot install these) ──
+DEPS_ARGS=(--install)
+[[ ${WITH_DEV} -eq 1 ]] && DEPS_ARGS+=(--dev)
+[[ ${ASSUME_YES} -eq 1 ]] && DEPS_ARGS+=(--yes)
+log_info "Checking outside tools: alb setup deps ${DEPS_ARGS[*]}"
+DEPS_OK=1
+"${UV_BIN}" run --project "${REPO_ROOT}" alb setup deps "${DEPS_ARGS[@]}" || DEPS_OK=0
+
+# ─── Summary ─────────────────────────────────────────────────────
 echo
-log_ok "android-llm-bridge installed successfully."
+if [[ ${DEPS_OK} -eq 1 ]]; then
+    log_ok "android-llm-bridge installed successfully."
+else
+    log_warn "android-llm-bridge's Python part is installed, but a tool it needs is missing."
+    log_warn "The list above says how to install each one. A download that broke off often"
+    log_warn "works on the next try; to try the installs again, or to check after fixing by hand:"
+    log_warn "  cd ${REPO_ROOT} && uv run alb setup deps --install$( [[ ${WITH_DEV} -eq 1 ]] && echo ' --dev')"
+fi
 echo
 cat <<NEXT
 ${GREEN}Next steps:${NC}
@@ -204,3 +239,4 @@ ${GREEN}Next steps:${NC}
 ${DIM}Docs:      ${REPO_ROOT}/docs/
 Uninstall: ${REPO_ROOT}/scripts/uninstall.sh${NC}
 NEXT
+[[ ${DEPS_OK} -eq 1 ]] || exit 1

@@ -2,7 +2,7 @@
 title: 安装 / 卸载指南
 type: user-guide
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-11-09
 owner: sky
 tags: [install, uninstall, uv, python, isolation]
 ---
@@ -63,9 +63,10 @@ cd android-llm-bridge
 | 0 | 检查不是 root；确认在正确的 repo | — |
 | 1 | 装 `uv`（如果没装） | `~/.local/bin/uv` |
 | 2 | 用 uv 下载 Python 3.11 | `~/.local/share/uv/python/cpython-3.11.*/` |
-| 3 | `uv sync` 建 venv + 装所有依赖 | `<repo>/.venv/` |
+| 3 | `uv sync` 建 venv + 装所有依赖；失败时打印代理 / 镜像的办法 | `<repo>/.venv/` |
 | 4 | 跑 smoke test（`pytest tests/test_smoke.py`） | 临时 |
-| 5 | 打印下一步提示 | — |
+| 5 | 查 pip 装不了的外部工具（`alb setup deps --install`）：缺 adb / fastboot 就下载；要 sudo 的列出命令。见下面「外部工具」 | `~/.local/share/alb/`，链接在 `~/.local/bin/` |
+| 6 | 打印下一步提示；有必需的工具没装上，退出码 1 | — |
 
 ### 选项
 
@@ -86,8 +87,75 @@ cd android-llm-bridge
 ```
 
 ```bash
+./scripts/install.sh --dev
+# 再装跑测试要的：web/ 的 npm 包、Playwright 的 Chromium（要先有 Node.js，没有会告诉你怎么装）
+```
+
+```bash
+./scripts/install.sh --yes
+# 下载 Android Platform-Tools 前不再询问（无人值守安装用）
+```
+
+```bash
 ./scripts/install.sh --help   # 完整帮助
 ```
+
+### 外部工具：pip / uv 装不了的那些
+
+alb 和它的测试还要用到一些不是 Python 包的程序。pip / uv 安装 Python 包时不能顺带执行别的安装步骤，
+所以由 install.sh 的最后一步 `alb setup deps --install` 来查，不用 root 能装的就装上。
+用别的方式装了 alb 的人，自己跑一次 `alb setup deps`（加 `--install` 装，加 `--dev` 连测试工具一起查）。
+`alb doctor` 的 binaries 那一层查的是同一份清单（`src/alb/infra/host_deps.py`）。
+
+| 名字 | 档 | 干什么用 | 自动装吗 | 自己装 |
+|---|---|---|---|---|
+| `adb` | 必需 | 经 adb 连板子，alb 的主要通道 | 是：下载 Android SDK Platform-Tools 到 `~/.local/share/alb/platform-tools`，链接进 `~/.local/bin`。下载前问一次（要同意 Google 的许可），`--yes` 不问 | 见下面「adb 下载失败」 |
+| `fastboot` | 可选 | 本机直连板子时烧录（台架烧录在 Windows 那头做） | 是，和 adb 一起装 | 同 adb |
+| `ssh` | 可选 | ssh 通道（板子上跑 sshd），含 ssh 和 scp | 否，要 sudo | `sudo apt install openssh-client` |
+| `rsync` | 可选 | `alb fs rsync` | 否，要 sudo | `sudo apt install rsync` |
+| `picocom` | 可选 | alb 之外的交互串口终端，alb 本身不用它 | 否，要 sudo | `sudo apt install picocom` |
+| `socat` | 可选 | 手动把串口桥到 pty / TCP，alb 本身不用它 | 否，要 sudo | `sudo apt install socat` |
+| `ollama` | 可选 | 网页助手和 `alb chat` 的模型后端，可以装在另一台机器 | 否：官方安装要 root，而且常装在别的机器上 | <https://ollama.com/download>；在另一台机器就 `export ALB_OLLAMA_URL=http://<host>:11434` |
+| `node` | 测试 | 跑网页测试、重新打包网页，版本要 `^20.19.0 \|\| ^22.12.0 \|\| >=24.0.0` | 否：开发者常用 nvm 等工具自己管 Node 版本 | 用 nvm（不要 root）：`nvm install 22`；或把官方压缩包解压到 `~/.local` |
+| `web-packages` | 测试 | `web/node_modules` 里的 vitest 和钉死版本的 `@playwright/test` | 是：`npm ci` | `cd web && npm ci` |
+| `playwright-browsers` | 测试 | Playwright 的 Chromium，完整版和精简版（headless shell）各一份 | 是：`npx playwright install chromium` | 见下面「浏览器下载失败」 |
+| `browser-libs` | 测试 | Chromium 启动要的系统库（只查 Linux） | 否，要 sudo | `cd web && sudo npx playwright install-deps chromium` |
+| `python-dev-tools` | 测试 | pytest、ruff、mypy | 是：`uv sync` | `uv sync` |
+| `mksh` | 测试·可缺 | 一条 pytest 要用 Android 的 shell，没有就跳过 | 是，只在 Debian / Ubuntu 上：`apt-get download` 加 `dpkg-deb -x`，不要 root | `sudo apt install mksh` |
+| `playwright-cli` | 测试·可缺 | 让 AI 编程助手操作浏览器 | 否 | `npm install -g @playwright/cli`；`playwright-cli install --skills` 要在家目录跑，它会往当前目录写 `.claude/skills/` |
+
+「必需」缺了，`alb setup deps` 退出码 1；加 `--dev` 时，「测试」档缺了也是 1；
+「可选」和「测试·可缺」只列出来，不影响退出码。每一项缺了，命令都会打印上表最后一列那样的安装办法。
+
+#### adb 下载失败怎么办
+
+```bash
+# 1. 自己下载 zip（用浏览器下也行），交给 alb 解压和链接
+#    https://dl.google.com/android/repository/platform-tools-latest-linux.zip   （macOS 把 linux 换成 darwin）
+alb setup deps --install --platform-tools-zip ~/Downloads/platform-tools-latest-linux.zip
+
+# 2. 走代理，或者从镜像下载
+export HTTPS_PROXY=http://<proxy>:<port>             # 然后再跑 alb setup deps --install
+export ALB_PLATFORM_TOOLS_URL=<镜像上那个 zip 的地址>
+
+# 3. 解压到任意位置，告诉 alb 用哪个 adb
+export ALB_ADB_PATH=/path/to/platform-tools/adb
+
+# 4. 发行版自带的包（版本常常偏旧）
+sudo apt install adb fastboot
+```
+
+PATH 里已经有 adb 时，不会在它前面再放一个：版本不同的 adb 客户端会让它连上的 adb server 重启，
+而经隧道连的 server 往往是别人正在用的那个。
+
+#### 浏览器下载失败怎么办
+
+- 走代理：`export HTTPS_PROXY=http://<proxy>:<port>`；从镜像下：`export PLAYWRIGHT_DOWNLOAD_HOST=<镜像地址>`
+- 手动下：`cd web && npx playwright install chromium --dry-run` 会列出每个 zip 的下载地址和安装目录；
+  下载后解压到对应目录，再在那个目录里建一个空文件 `INSTALLATION_COMPLETE`
+- 报 `does not support chromium on <系统>`：这一版 Playwright 不再为这个系统出包。`web/` 钉的 1.59.1
+  还支持 Ubuntu 20.04；以后升级碰到这个，用 `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu22.04-x64`
+  下通用的 Linux 包（系统 glibc 够新才能运行）
 
 ### 装好后的第一步
 
@@ -159,6 +227,13 @@ uv run pytest -q               # 跑完整测试
 ```
 
 ```bash
+./scripts/uninstall.sh --remove-host-tools
+# 删 alb setup deps --install 放进家目录的东西：~/.local/share/alb/（Platform-Tools、mksh）
+# 和 ~/.local/bin 里指向它的链接。web/node_modules 和 Playwright 的浏览器
+# （~/.cache/ms-playwright，别的项目也可能在用）不动
+```
+
+```bash
 ./scripts/uninstall.sh --force
 # 跳过交互确认
 ```
@@ -166,7 +241,7 @@ uv run pytest -q               # 跑完整测试
 ### 终极清理
 
 ```bash
-./scripts/uninstall.sh --force --purge-workspace --remove-uv --remove-uv-python
+./scripts/uninstall.sh --force --purge-workspace --remove-uv --remove-uv-python --remove-host-tools
 rm -rf android-llm-bridge
 # 现在你的账户上完全没有 alb / uv / uv-managed Python 的痕迹
 ```
@@ -218,6 +293,10 @@ uv sync -v
 
 # 常见：网络 / 某 C 扩展需要系统库（比如 python-serial 极少情况下）
 # 按报错安装对应 -dev 包（如果你有 sudo）或换版本
+
+# 网络不通：走代理，或换 PyPI 镜像，再跑一次 install.sh
+export HTTPS_PROXY=http://<proxy>:<port>
+export UV_DEFAULT_INDEX=<PyPI 镜像地址>     # 旧版 uv 用 UV_INDEX_URL
 ```
 
 ### 问题 5 · 装完 `uv run alb` 报 command not found

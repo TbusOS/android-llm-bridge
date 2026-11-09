@@ -126,7 +126,7 @@ def test_probe_binaries_bad_alb_adb_path_names_the_path(monkeypatch: pytest.Monk
     monkeypatch.setenv("ALB_ADB_PATH", str(missing))
     by_name = {c.name: c for c in probe_binaries().checks}
     assert by_name["adb"].status == "err"
-    assert by_name["adb"].detail == f"{missing}: not found or not executable"
+    assert by_name["adb"].detail.startswith(f"{missing}: not found or not executable")
 
 
 # ─── config layer ──────────────────────────────────────────────────

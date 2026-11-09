@@ -33,6 +33,8 @@ FORCE=0
 PURGE_WORKSPACE=0
 REMOVE_UV=0
 REMOVE_UV_PYTHON=0
+REMOVE_HOST_TOOLS=0
+ALB_DATA="${HOME}/.local/share/alb"
 
 usage() {
     cat <<USAGE
@@ -57,6 +59,11 @@ Options:
   --remove-uv-python   Delete ~/.local/share/uv/ entirely (uv cache + all
                        uv-managed Python installations).
                        ${YELLOW}⚠ Only if you won't use uv again.${NC}
+  --remove-host-tools  Delete what 'alb setup deps --install' put in your home:
+                       ~/.local/share/alb/ (Platform-Tools, mksh) and the links
+                       in ~/.local/bin that point into it. web/node_modules and
+                       Playwright's browsers (~/.cache/ms-playwright, shared with
+                       other projects) are left alone.
 
   -h, --help           Show this help.
 
@@ -75,6 +82,7 @@ while [[ $# -gt 0 ]]; do
         --purge-workspace) PURGE_WORKSPACE=1; shift ;;
         --remove-uv) REMOVE_UV=1; shift ;;
         --remove-uv-python) REMOVE_UV_PYTHON=1; shift ;;
+        --remove-host-tools) REMOVE_HOST_TOOLS=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_err "unknown option: $1"; echo; usage; exit 1 ;;
     esac
@@ -104,6 +112,8 @@ if [[ ${FORCE} -eq 0 ]]; then
         echo "  • ~/.local/bin/uv and ~/.local/bin/uvx"
     [[ ${REMOVE_UV_PYTHON} -eq 1 && -d "${HOME}/.local/share/uv" ]] && \
         echo "  • ~/.local/share/uv/ (${RED}ALL uv-managed Pythons${NC})"
+    [[ ${REMOVE_HOST_TOOLS} -eq 1 && -d "${ALB_DATA}" ]] && \
+        echo "  • ${ALB_DATA}/ and its links in ~/.local/bin (adb, fastboot, mksh installed by alb)"
     echo
     read -rp "Continue? [y/N] " ans
     if [[ ! "${ans}" =~ ^[Yy]$ ]]; then
@@ -170,7 +180,25 @@ if [[ ${REMOVE_UV_PYTHON} -eq 1 ]]; then
     fi
 fi
 
-# ─── Step 6 · PATH notice ────────────────────────────────────────
+# ─── Step 6 · tools 'alb setup deps --install' fetched (optional) ─
+if [[ ${REMOVE_HOST_TOOLS} -eq 1 ]]; then
+    # Only links that point into ~/.local/share/alb are ours; anything else
+    # in ~/.local/bin with the same name belongs to the user.
+    for link in "${HOME}/.local/bin/"*; do
+        if [[ -L "${link}" && "$(readlink "${link}")" == "${ALB_DATA}/"* ]]; then
+            rm -f "${link}"
+            log_ok "Removed link ${link}"
+        fi
+    done
+    if [[ -d "${ALB_DATA}" ]]; then
+        rm -rf "${ALB_DATA}"
+        log_ok "Removed ${ALB_DATA}/"
+    else
+        log_info "${ALB_DATA}/ not present — skipping"
+    fi
+fi
+
+# ─── Step 7 · PATH notice ────────────────────────────────────────
 for rc in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
     if [[ -f "${rc}" ]] && grep -q 'android-llm-bridge installer' "${rc}" 2>/dev/null; then
         log_warn "${rc} still contains a PATH line added by the installer:"
@@ -191,6 +219,7 @@ ${DIM}What was NOT touched:${NC}
   - workspace/ (unless --purge-workspace)
   - uv itself (unless --remove-uv)
   - uv-managed Pythons (unless --remove-uv-python)
+  - adb / fastboot / mksh fetched by alb (unless --remove-host-tools)
 
 ${DIM}To fully remove the repo too:${NC}
     rm -rf "${REPO_ROOT}"

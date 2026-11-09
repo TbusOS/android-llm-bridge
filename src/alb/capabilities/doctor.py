@@ -8,7 +8,7 @@ truth for "what counts as healthy".
 
 Layers (in order, same as the CLI's text render):
     1. env       — ALB_WORKSPACE / ADB_SERVER_SOCKET / ALB_CONFIG / ALB_PROFILE
-    2. binaries  — adb (required) / picocom / socat (optional)
+    2. binaries  — the required + optional tools of infra.host_deps (adb, ssh, ...)
     3. config    — global config.toml + active profile load
     4. adb       — server reachable + visible devices
     5. serial    — TCP endpoint listening + transport.health()
@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from alb.cli._probes import check_binary, check_tcp_listen
+from alb.infra import host_deps
 from alb.infra.adb_endpoint import resolve_endpoint
 from alb.infra.config import global_config_path, load_active, load_config
 from alb.transport.adb import AdbTransport
@@ -91,19 +92,19 @@ def probe_env() -> Layer:
 
 
 def probe_binaries() -> Layer:
+    """The required + optional tools of :mod:`alb.infra.host_deps` — the
+    same list ``alb setup deps`` and ``scripts/install.sh`` use. The adb
+    check follows bin_path (ALB_ADB_PATH included), the adb the transport
+    runs. These checks only look things up; nothing is run or downloaded.
+    """
     layer = Layer("binaries")
-    # adb is required; picocom/socat are nice-to-have for serial.
-    # The adb check follows bin_path (ALB_ADB_PATH included), the same
-    # path the transport runs, not a bare PATH lookup.
-    ok, detail = check_binary(load_config().adb.bin_path)
-    layer.add("adb", "ok" if ok else "err", detail)
-    for binary in ("picocom", "socat"):
-        ok, detail = check_binary(binary)
-        layer.add(
-            binary,
-            "ok" if ok else "skip",
-            detail if ok else "(optional; only needed for `picocom` / `socat` paths)",
-        )
+    for r in host_deps.check_all(host_deps.BASE_TIERS, host_deps.default_env()):
+        if r.ok:
+            layer.add(r.name, "ok", r.detail)
+        elif r.tier == "required":
+            layer.add(r.name, "err", f"{r.detail} — `alb setup deps` shows how to install")
+        else:
+            layer.add(r.name, "skip", f"(optional; {r.purpose}) — `alb setup deps` shows how to install")
     return layer
 
 
