@@ -33,7 +33,7 @@ from typing import Any
 
 from alb.cli._probes import check_binary, check_tcp_listen
 from alb.infra.adb_endpoint import resolve_endpoint
-from alb.infra.config import global_config_path, load_active
+from alb.infra.config import global_config_path, load_active, load_config
 from alb.transport.adb import AdbTransport
 from alb.transport.serial import SerialTransport
 
@@ -93,7 +93,9 @@ def probe_env() -> Layer:
 def probe_binaries() -> Layer:
     layer = Layer("binaries")
     # adb is required; picocom/socat are nice-to-have for serial.
-    ok, detail = check_binary("adb")
+    # The adb check follows bin_path (ALB_ADB_PATH included), the same
+    # path the transport runs, not a bare PATH lookup.
+    ok, detail = check_binary(load_config().adb.bin_path)
     layer.add("adb", "ok" if ok else "err", detail)
     for binary in ("picocom", "socat"):
         ok, detail = check_binary(binary)
@@ -146,7 +148,7 @@ def probe_ssh() -> Layer:
 # ─── Per-layer probes (async) ──────────────────────────────────────
 async def probe_adb_async() -> Layer:
     layer = Layer("adb")
-    ok_bin, _ = check_binary("adb")
+    ok_bin, _ = check_binary(load_config().adb.bin_path)
     if not ok_bin:
         layer.add("transport", "skip", "(adb binary missing — see binaries layer)")
         return layer

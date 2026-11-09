@@ -363,7 +363,7 @@ root = "~/alb-workspace"
 
 [transport.adb]
 server_socket = "tcp:localhost:5037"       # 场景 A 专用
-bin_path = "adb"
+bin_path = "adb"                           # 不在 PATH 里就写绝对路径;环境变量 ALB_ADB_PATH 优先
 
 [transport.ssh]
 default_user = "root"

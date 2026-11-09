@@ -8,13 +8,14 @@ Env overrides:
     ALB_CONFIG   — absolute path to alternative config.toml
     ALB_PROFILE  — profile name to activate (default: "default")
     ALB_WORKSPACE — workspace root (see infra.workspace)
+    ALB_ADB_PATH — adb executable to use; wins over [transport.adb] bin_path
 """
 
 from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +131,22 @@ def profile_path(name: str) -> Path:
 
 # ─── Loaders ───────────────────────────────────────────────────────
 def load_config() -> Config:
-    """Load the global config. Returns defaults if file missing."""
+    """Load the global config. Returns defaults if file missing.
+
+    ``ALB_ADB_PATH`` (path to the adb executable), when set, wins over
+    ``[transport.adb] bin_path``. A script that pins PATH to the system
+    directories can then point alb at its adb without writing a config
+    file. The transport, ``alb doctor`` and ``alb setup`` all take the adb
+    path from ``bin_path``, so applying the variable here covers them all.
+    """
+    cfg = _load_config_file()
+    adb_path = os.environ.get("ALB_ADB_PATH")
+    if adb_path:
+        cfg = replace(cfg, adb=replace(cfg.adb, bin_path=os.path.expanduser(adb_path)))
+    return cfg
+
+
+def _load_config_file() -> Config:
     path = global_config_path()
     if not path.exists():
         return Config()

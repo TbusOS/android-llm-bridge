@@ -59,7 +59,7 @@ tags: [errors, reference, llm-friendly]
 | `TRANSPORT_NOT_CONFIGURED` | 无活跃 transport | `Run: alb setup adb (or ssh / serial)` |
 | `TRANSPORT_NOT_SUPPORTED` | 请求的 transport 未实现 | `Use one of: adb, ssh, serial` |
 | `TRANSPORT_HEALTH_CHECK_FAILED` | health check 失败 | `Run: alb status --verbose` |
-| `ADB_BINARY_NOT_FOUND` | 找不到 adb 可执行文件 | `Install platform-tools or set ALB_ADB_PATH` |
+| `ADB_BINARY_NOT_FOUND` | 找不到 adb 可执行文件 | `Put adb on PATH, or set ALB_ADB_PATH to the adb executable` |
 | `ADB_SERVER_UNREACHABLE` | adb server 连不上 | `Check Xshell tunnel; run: ss -tlnp \| grep 5037` |
 | `ADB_VERSION_MISMATCH` | client/server 版本不匹配 | `Sync adb versions on both sides` |
 | `SSH_KEY_NOT_FOUND` | SSH key 文件不存在 | `Generate key: ssh-keygen -t ed25519` |

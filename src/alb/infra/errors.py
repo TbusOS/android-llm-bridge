@@ -35,8 +35,8 @@ ERROR_CODES: dict[str, ErrorSpec] = {
     "ADB_BINARY_NOT_FOUND": ErrorSpec(
         "ADB_BINARY_NOT_FOUND",
         "transport",
-        "adb binary not found in PATH",
-        "Install platform-tools or set ALB_ADB_PATH",
+        "adb binary not found",
+        "Put adb on PATH, or set ALB_ADB_PATH to the adb executable",
     ),
     "ADB_SERVER_UNREACHABLE": ErrorSpec(
         "ADB_SERVER_UNREACHABLE",

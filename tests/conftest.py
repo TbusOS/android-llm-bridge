@@ -56,6 +56,13 @@ def _workspace_tripwire(tmp_path_factory: pytest.TempPathFactory) -> Iterator[No
 
 
 @pytest.fixture(autouse=True)
+def _no_adb_path_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's own ALB_ADB_PATH would replace every test's adb
+    ``bin_path`` (see ``load_config``); tests that want it set it."""
+    monkeypatch.delenv("ALB_ADB_PATH", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_workspace(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,

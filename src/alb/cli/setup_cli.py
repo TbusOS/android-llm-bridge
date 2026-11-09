@@ -28,7 +28,7 @@ from alb.cli._probes import check_binary as _check_binary
 from alb.cli._probes import check_tcp_listen as _check_tcp_listen
 from alb.cli.common import load_active_friendly, run_async
 from alb.infra.adb_endpoint import resolve_endpoint
-from alb.infra.config import global_config_path
+from alb.infra.config import global_config_path, load_config
 from alb.transport.adb import AdbTransport
 from alb.transport.serial import SerialTransport
 
@@ -92,8 +92,8 @@ def setup_adb() -> None:
     """Verify adb setup (USB, method A; optionally via SSH reverse tunnel)."""
     console.print(Panel.fit("Checking adb / method A setup", border_style="blue"))
 
-    ok_bin, detail = _check_binary("adb")
-    _probe("adb binary in PATH", ok_bin, detail)
+    ok_bin, detail = _check_binary(load_config().adb.bin_path)
+    _probe("adb binary", ok_bin, detail)
 
     server_sock = os.environ.get("ADB_SERVER_SOCKET", "")
     if server_sock:
@@ -145,6 +145,7 @@ def setup_adb() -> None:
         Panel.fit(
             "[bold]Next steps if something is off:[/]\n\n"
             "  1. Install platform-tools: https://developer.android.com/tools/adb\n"
+            "     (adb not on PATH? set ALB_ADB_PATH to the adb executable)\n"
             "  2. On the device: Settings → Developer options → USB debugging\n"
             "  3. Remote bench (alb forwarder): leave ADB_SERVER_SOCKET UNSET —\n"
             "     alb reads the port from the running hub, so it stays correct\n"
@@ -166,7 +167,7 @@ def setup_wifi(
     """Switch a USB-connected device into TCP mode and connect over WiFi."""
     console.print(Panel.fit(f"Setting up adb-WiFi to {host}:{port}", border_style="blue"))
 
-    ok_bin, _ = _check_binary("adb")
+    ok_bin, _ = _check_binary(load_config().adb.bin_path)
     _probe("adb binary", ok_bin)
     if not ok_bin:
         raise typer.Exit(1)

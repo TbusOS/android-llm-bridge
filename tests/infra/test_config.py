@@ -156,3 +156,32 @@ def test_load_active_composes(monkeypatch, tmp_path: Path) -> None:
     assert active.config.default_profile == "default"
     assert active.profile.name == "default"
     assert active.primary_transport == "adb"
+
+
+# ─── ALB_ADB_PATH (2026-11-09) ─────────────────────────────────────
+# The error hint for ADB_BINARY_NOT_FOUND told people to set ALB_ADB_PATH,
+# but nothing read it: a script with PATH pinned to /usr/bin:/bin set it and
+# still got ADB_BINARY_NOT_FOUND.
+def test_adb_path_env_wins_over_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[transport.adb]\nbin_path = "/opt/adb"\nserver_socket = "tcp:localhost:5037"\n')
+    monkeypatch.setenv("ALB_CONFIG", str(cfg_file))
+    monkeypatch.setenv("ALB_ADB_PATH", "/tools/platform-tools/adb")
+    cfg = load_config()
+    assert cfg.adb.bin_path == "/tools/platform-tools/adb"
+    assert cfg.adb.server_socket == "tcp:localhost:5037"  # the rest of [transport.adb] stays
+
+
+def test_adb_path_env_applies_without_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "does_not_exist.toml"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ALB_ADB_PATH", "~/platform-tools/adb")
+    assert load_config().adb.bin_path == str(tmp_path / "platform-tools" / "adb")
+
+
+def test_adb_path_env_empty_is_unset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[transport.adb]\nbin_path = "/opt/adb"\n')
+    monkeypatch.setenv("ALB_CONFIG", str(cfg_file))
+    monkeypatch.setenv("ALB_ADB_PATH", "")
+    assert load_config().adb.bin_path == "/opt/adb"

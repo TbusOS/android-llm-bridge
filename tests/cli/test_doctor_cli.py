@@ -106,6 +106,29 @@ def test_probe_binaries_adb_present(monkeypatch) -> None:
     assert layer.worst == "ok"
 
 
+def test_probe_binaries_adb_follows_alb_adb_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """adb outside PATH but named by ALB_ADB_PATH is the adb alb runs, so
+    doctor must not report it missing (it used to look up "adb" on PATH)."""
+    adb = tmp_path / "adb"
+    adb.write_text("#!/bin/sh\n")
+    adb.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "no-config.toml"))
+    monkeypatch.setenv("ALB_ADB_PATH", str(adb))
+    by_name = {c.name: c for c in probe_binaries().checks}
+    assert by_name["adb"].status == "ok"
+    assert by_name["adb"].detail == str(adb)
+
+
+def test_probe_binaries_bad_alb_adb_path_names_the_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    missing = tmp_path / "nope" / "adb"
+    monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "no-config.toml"))
+    monkeypatch.setenv("ALB_ADB_PATH", str(missing))
+    by_name = {c.name: c for c in probe_binaries().checks}
+    assert by_name["adb"].status == "err"
+    assert by_name["adb"].detail == f"{missing}: not found or not executable"
+
+
 # ─── config layer ──────────────────────────────────────────────────
 
 

@@ -8,6 +8,8 @@ well-formed serials are always allowed.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from alb.infra.workspace import InvalidDeviceSerial
@@ -77,3 +79,36 @@ def test_serial_fallback_off_when_default_is_not_adb(monkeypatch) -> None:
         lambda force_reload=False: type("S", (), {"primary_transport": "serial"})(),
     )
     assert factory.serial_fallback_for() is None
+
+
+# ─── ALB_ADB_PATH reaches the adb that actually runs (2026-11-09) ──
+def _fake_adb(tmp_path: Path) -> Path:
+    adb = tmp_path / "platform-tools" / "adb"
+    adb.parent.mkdir()
+    adb.write_text('#!/bin/sh\necho "fake-adb $*"\n')
+    adb.chmod(0o755)
+    return adb
+
+
+def test_adb_path_env_runs_that_adb_with_pinned_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The reported case: PATH pinned to the system dirs, adb named only by
+    ALB_ADB_PATH. Before the fix this was ADB_BINARY_NOT_FOUND."""
+    import asyncio
+
+    from alb.transport import factory
+    from alb.transport.adb import AdbTransport
+
+    adb = _fake_adb(tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("ALB_CONFIG", str(tmp_path / "no-config.toml"))
+    monkeypatch.setenv("ALB_ADB_PATH", str(adb))
+    monkeypatch.setattr(factory, "_cached_settings", None)
+
+    t = build_transport(override="adb")
+    assert isinstance(t, AdbTransport)
+    r = asyncio.run(t._run(["version"], timeout=5))
+    assert r.ok, (r.error_code, r.stderr)
+    assert r.stdout.startswith("fake-adb ")
+    assert r.stdout.rstrip().endswith("version")
