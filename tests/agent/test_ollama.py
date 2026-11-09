@@ -609,3 +609,77 @@ def test_timeout_default_and_environment(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("ALB_OLLAMA_TIMEOUT", "ten minutes")
     with pytest.raises(ValueError, match="ALB_OLLAMA_TIMEOUT"):
         get_backend("ollama", model="m")
+
+
+# ─── connect timeout (2026-11-09) ─────────────────────────────────────
+
+
+def test_connect_timeout_is_short_and_apart_from_the_reply_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With one number httpx waited the whole 600 s to connect: an Ollama
+    machine that is off held a chat page question that long before any
+    error."""
+    from alb.agent.backends import get_backend
+
+    t = OllamaBackend()._get_client().timeout
+    assert (t.connect, t.read, t.write, t.pool) == (10.0, 600.0, 600.0, 600.0)
+    monkeypatch.setenv("ALB_OLLAMA_TIMEOUT", "900")
+    t = get_backend("ollama", model="m")._get_client().timeout  # type: ignore[attr-defined]
+    assert (t.connect, t.read) == (10.0, 900.0)  # raising the reply wait does not stretch the connect
+
+
+@pytest.mark.asyncio
+async def test_a_connect_timeout_is_unreachable_not_a_slow_reply() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=req)
+
+    b = OllamaBackend(base_url="http://ollama-host.internal:11434", transport=_mock_transport(handler))
+    with pytest.raises(BackendError) as ei:
+        await b.chat([Message(role="user", content="hi")])
+    assert ei.value.code == "BACKEND_UNREACHABLE"
+    assert "ollama-host.internal" in str(ei.value) and "10s" in str(ei.value)
+    assert "machine is on" in (ei.value.suggestion or "")
+
+    with pytest.raises(BackendError) as ei:
+        async for _ in b.stream([Message(role="user", content="hi")]):
+            pass
+    assert ei.value.code == "BACKEND_UNREACHABLE"
+
+
+@pytest.mark.asyncio
+async def test_a_slow_first_byte_is_not_cut_off_by_the_connect_timeout() -> None:
+    """A real socket: Ollama accepts at once and sends nothing until the
+    prompt is read (33 s for the tool list on the bench's CPU). Only the
+    connection is held to connect_timeout."""
+    import asyncio
+
+    body = json.dumps(
+        {"model": "m", "message": {"role": "assistant", "content": "ok"}, "done": True, "done_reason": "stop"}
+    ).encode()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        head = await reader.readuntil(b"\r\n\r\n")
+        length = next(
+            int(line.split(b":", 1)[1]) for line in head.split(b"\r\n") if line.lower().startswith(b"content-length:")
+        )
+        await reader.readexactly(length)
+        await asyncio.sleep(0.6)  # three times the connect timeout below
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    # an explicit transport: no proxy from the environment in between
+    b = OllamaBackend(
+        base_url=f"http://127.0.0.1:{port}", connect_timeout=0.2, timeout=5.0, transport=httpx.AsyncHTTPTransport()
+    )
+    try:
+        async with server:
+            resp = await b.chat([Message(role="user", content="hi")])
+    finally:
+        await b.aclose()
+    assert resp.content == "ok"

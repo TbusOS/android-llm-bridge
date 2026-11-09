@@ -59,6 +59,15 @@ DEFAULT_MODEL = "qwen2.5:3b"
 # the old 120 s cut every tool chat off (2026-11-02). The Stop button ends a
 # turn that takes too long. Env ALB_OLLAMA_TIMEOUT through get_backend.
 DEFAULT_TIMEOUT = 600.0
+# Seconds to wait for Ollama to accept the connection, apart from the
+# timeout above. With one number httpx waits that long to connect too:
+# when the Ollama machine is off and nothing answers, a chat page question
+# would wait 600 s for its error (2026-11-09, a hub warming up against an
+# address that drops packets was still connecting after 15 s). Connecting
+# is not the slow part (hub machine to Ollama machine 0.2-0.5 ms, the first
+# time 95.6 ms, 2026-11-09); the long wait is for the first streamed byte,
+# which DEFAULT_TIMEOUT covers.
+DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_THINK = False  # reasoning models (gpt-oss, qwen3-thinking) — skip chain-of-thought by default for agent/tool use
 # Context window asked of Ollama on every request. Its own default (4096 on
 # the bench's 0.21) is shorter than the agent's tool list alone: with the 36
@@ -75,6 +84,9 @@ class OllamaBackend(LLMBackend):
         model: Ollama model tag (e.g. "qwen2.5:3b", "llama3.2:3b").
         base_url: Ollama daemon URL; default http://localhost:11434.
         timeout: per-request timeout in seconds; CPU inference is slow.
+        connect_timeout: seconds to wait for the connection itself; a
+            machine that is off fails with BACKEND_UNREACHABLE after this
+            instead of after `timeout`.
         default_options: extra fields for the `options` object
             (see Ollama API ModelFile options).
         think: whether to enable the model's chain-of-thought / reasoning
@@ -103,6 +115,7 @@ class OllamaBackend(LLMBackend):
         model: str = DEFAULT_MODEL,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         default_options: dict[str, Any] | None = None,
         think: bool = DEFAULT_THINK,
         num_ctx: int | None = DEFAULT_NUM_CTX,
@@ -112,6 +125,7 @@ class OllamaBackend(LLMBackend):
         self.num_ctx = num_ctx
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
         self.default_options: dict[str, Any] = default_options or {}
         self.think = think
         # Testing hook: inject httpx.MockTransport to avoid real network.
@@ -225,6 +239,8 @@ class OllamaBackend(LLMBackend):
                 f"ollama daemon not reachable at {self.base_url}: {e}",
                 suggestion="start ollama (`ollama serve`) or set base_url",
             ) from e
+        except httpx.ConnectTimeout as e:
+            raise self._connect_timed_out() from e
         except httpx.TimeoutException as e:
             raise BackendError(
                 "BACKEND_TIMEOUT",
@@ -308,9 +324,18 @@ class OllamaBackend(LLMBackend):
         """
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                timeout=self.timeout, transport=self._transport
+                timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
+                transport=self._transport,
             )
         return self._client
+
+    def _connect_timed_out(self) -> BackendError:
+        return BackendError(
+            "BACKEND_UNREACHABLE",
+            f"ollama at {self.base_url} did not accept a connection within "
+            f"{self.connect_timeout:g}s",
+            suggestion="check that the Ollama machine is on and reachable, or set base_url",
+        )
 
     async def aclose(self) -> None:
         """Close the shared httpx client. Idempotent + post-close
@@ -332,6 +357,8 @@ class OllamaBackend(LLMBackend):
                 f"ollama daemon not reachable at {self.base_url}: {e}",
                 suggestion="start ollama (`ollama serve`) or set base_url",
             ) from e
+        except httpx.ConnectTimeout as e:
+            raise self._connect_timed_out() from e
         except httpx.TimeoutException as e:
             raise BackendError(
                 "BACKEND_TIMEOUT",
