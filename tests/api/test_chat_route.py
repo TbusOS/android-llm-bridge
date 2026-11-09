@@ -783,17 +783,74 @@ async def test_warm_up_reports_a_backend_error(monkeypatch: pytest.MonkeyPatch, 
     assert r["ok"] is False and r["error"]["code"] == "BACKEND_UNREACHABLE"
 
 
+@pytest.mark.asyncio
+async def test_warm_up_covers_each_language_a_chat_page_sends(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """2026-11-09: only Chinese was warmed, and the first English question
+    after a hub restart waited 33.4 s for the model server to read the
+    English system prompt."""
+    from alb.api import chat_route
+
+    monkeypatch.setenv("ALB_WORKSPACE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    tool = ToolSpec(name="alb_status", description="s", parameters={"type": "object"})
+
+    async def tools() -> Any:
+        async def run(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            raise AssertionError("warm-up must not run tools")
+
+        return [tool], run
+
+    monkeypatch.setattr("alb.mcp.executor.make_agent_tools", tools)
+    monkeypatch.setattr(chat_route, "get_backend", lambda name, **kw: _WarmSpy())
+    assert chat_route.WARM_UP_LANGS == ("zh", "en")  # Chinese first
+
+    prompts: dict[str, str] = {}
+    for lang in chat_route.WARM_UP_LANGS:
+        _WarmSpy.calls = []
+        assert (await chat_route.warm_up(chat_route.warm_up_request(lang)))["ok"] is True
+        # what the page sends: its UI language and the selected board
+        page = chat_route.ChatRequest.model_validate(
+            {"message": "电量多少", "backend": "ollama", "tools": True, "lang": lang, "device": "board-a"}
+        )
+        built = await chat_route._build_agent(page)
+        assert not isinstance(built, dict)
+        system_prompt = built[0].system_prompt
+        assert system_prompt is not None
+        assert _WarmSpy.calls[0]["messages"][0].content == system_prompt  # same cached prefix
+        prompts[lang] = system_prompt
+    assert prompts["zh"] != prompts["en"]  # one warm-up would not cover both
+
+
+def test_warm_up_langs_are_the_ones_the_page_sends() -> None:
+    """A language added to the page without a warm-up brings the 33 s back."""
+    import re
+    from pathlib import Path
+
+    from alb.api import chat_route
+
+    src = (Path(__file__).resolve().parents[2] / "web/src/features/chat/useChatStream.ts").read_text(encoding="utf-8")
+    m = re.search(r"^\s*lang\?:\s*([^;]+);", src, re.M)
+    assert m is not None
+    assert set(re.findall(r'"([a-z]+)"', m.group(1))) == set(chat_route.WARM_UP_LANGS)
+
+
 @pytest.mark.parametrize(
-    ("flag", "env", "expect"),
+    ("flag", "env", "fail", "expect"),
     [
-        (False, {"ALB_OLLAMA_MODEL": "m"}, 0),  # an app a test builds
-        (True, {"ALB_OLLAMA_MODEL": "m"}, 1),  # the hub main() starts
-        (True, {"ALB_OLLAMA_MODEL": "m", "ALB_WARMUP": "0"}, 0),  # turned off
-        (True, {}, 0),  # no configured model: do not load some default one
+        (False, {"ALB_OLLAMA_MODEL": "m"}, "", []),  # an app a test builds
+        (True, {"ALB_OLLAMA_MODEL": "m"}, "", ["zh", "en"]),  # the hub main() starts
+        (True, {"ALB_OLLAMA_MODEL": "m", "ALB_WARMUP": "0"}, "", []),  # turned off
+        (True, {}, "", []),  # no configured model: do not load some default one
+        (True, {"ALB_OLLAMA_MODEL": "m"}, "zh", ["zh"]),  # backend down: do not wait again
     ],
 )
 def test_warm_up_runs_only_for_the_hub_with_a_model(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, flag: bool, env: dict[str, str], expect: int
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    flag: bool,
+    env: dict[str, str],
+    fail: str,
+    expect: list[str],
 ) -> None:
     import asyncio
 
@@ -804,10 +861,13 @@ def test_warm_up_runs_only_for_the_hub_with_a_model(
     monkeypatch.delenv("ALB_WARMUP", raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
-    calls: list[int] = []
+    calls: list[str | None] = []
 
-    async def fake() -> dict[str, Any]:
-        calls.append(1)
+    async def fake(req: chat_route.ChatRequest | None = None) -> dict[str, Any]:
+        assert req is not None
+        calls.append(req.lang)
+        if req.lang == fail:
+            return {"ok": False, "error": {"code": "BACKEND_UNREACHABLE"}}
         return {"ok": True, "model": "m", "seconds": 0.0, "tools": 0}
 
     monkeypatch.setattr(chat_route, "warm_up", fake)
@@ -817,4 +877,4 @@ def test_warm_up_runs_only_for_the_hub_with_a_model(
         c.get("/health")
         assert c.portal is not None
         c.portal.call(asyncio.sleep, 0.05)  # let a background task run
-    assert len(calls) == expect
+    assert calls == expect

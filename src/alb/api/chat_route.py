@@ -478,17 +478,35 @@ async def _build_agent(
     return loop, session, llm
 
 
+# The reply languages the hub warms at start, in this order: the ones a
+# chat page sends (web/src/features/chat/useChatStream.ts, its UI
+# language). Each has its own system prompt (REPLY_LANGUAGE_RULES), and
+# the model server reads a prompt it has not seen from scratch: on
+# 2026-11-09 the first English question after a restart waited 33.4 s
+# while Chinese, warmed, took 0.1 s. Chinese first, the language most
+# people here use. "auto" is left out: only direct API calls send it, and
+# warming it would hold the model another ~33 s at every start.
+WARM_UP_LANGS: tuple[str, ...] = ("zh", "en")
+
+
+def warm_up_request(lang: str) -> ChatRequest:
+    """The request a chat page in this UI language starts with, as far as
+    the prompt prefix goes."""
+    return ChatRequest.model_validate({"message": "你好", "backend": "ollama", "tools": True, "lang": lang})
+
+
 async def warm_up(req: ChatRequest | None = None) -> dict[str, Any]:
     """Have the model server load the model and read the prompt prefix
     (system prompt + tool list) before anybody asks.
 
     A CPU model needs ~45 s to read that prefix from scratch; after that it
     is reused and a question costs a second or two (bench, 2026-11-03).
-    The hub calls this once at start (server.main → lifespan), with the
-    request a chat page sends by default, so the cached prefix is the one
-    real chats begin with. Nothing is stored: no session, no tool runs.
+    The hub calls this at start (server.main → lifespan) once for each of
+    WARM_UP_LANGS, with the request a chat page in that language sends, so
+    the cached prefixes are the ones real chats begin with. Nothing is
+    stored: no session, no tool runs.
     """
-    req = req or ChatRequest.model_validate({"message": "你好", "backend": "ollama", "tools": True})
+    req = req or warm_up_request(DEFAULT_REPLY_LANGUAGE)
     parts = await _agent_parts(req)
     if isinstance(parts, dict):
         return {"ok": False, "error": parts.get("error")}

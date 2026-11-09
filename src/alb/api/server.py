@@ -125,24 +125,35 @@ def _start_warm_up(app: FastAPI) -> asyncio.Task[None] | None:
 
     Only when ALB_OLLAMA_MODEL names the model: warming some default model
     nobody chats with would push the real one out of the model server's
-    memory. ALB_WARMUP=0 turns it off."""
+    memory. ALB_WARMUP=0 turns it off.
+
+    One warm-up per reply language a chat page sends (WARM_UP_LANGS), one
+    after the other, each logged when it is done."""
     if not getattr(app.state, "warm_model", False):
         return None
     if os.environ.get("ALB_WARMUP", "1").strip() == "0" or not os.environ.get("ALB_OLLAMA_MODEL"):
         return None
 
     async def run() -> None:
-        from alb.api.chat_route import warm_up
+        from alb.api.chat_route import WARM_UP_LANGS, warm_up, warm_up_request
 
-        try:
-            r = await warm_up()
-        except Exception as e:  # a failed warm-up must not touch the hub
-            _log.warning("model warm-up failed: %s: %s", type(e).__name__, e)
-            return
-        if r.get("ok"):
-            _log.info("model warm-up: %s ready in %.1f s (%s tools)", r.get("model"), r.get("seconds", 0.0), r.get("tools"))
-        else:
-            _log.warning("model warm-up failed: %s", r.get("error"))
+        for lang in WARM_UP_LANGS:
+            try:
+                r = await warm_up(warm_up_request(lang))
+            except Exception as e:  # a failed warm-up must not touch the hub
+                _log.warning("model warm-up (%s) failed: %s: %s", lang, type(e).__name__, e)
+                return
+            if not r.get("ok"):
+                # the next language would only wait on the same broken backend
+                _log.warning("model warm-up (%s) failed: %s", lang, r.get("error"))
+                return
+            _log.info(
+                "model warm-up (%s): %s ready in %.1f s (%s tools)",
+                lang,
+                r.get("model"),
+                r.get("seconds", 0.0),
+                r.get("tools"),
+            )
 
     return asyncio.create_task(run(), name="alb-model-warm-up")
 
