@@ -468,9 +468,9 @@ export ALB_OLLAMA_MODEL=gemma4:26b
               <ul>
                 <li><strong data-i18n="road.now.i1.t">4 transports</strong><span data-i18n="road.now.i1.b">adb (USB · Wi-Fi) · ssh · UART · hybrid router</span></li>
                 <li><strong data-i18n="road.now.i2.t">11 capabilities</strong><span data-i18n="road.now.i2.b">shell · logging (with UART) · filesync · diagnose · power · app · adbd · breakin (stop in the bootloader) · timeline · port · bench</span></li>
-                <li><strong data-i18n="road.now.i3.t">36 MCP tools + 2,908 tests</strong><span data-i18n="road.now.i3.b">2,507 pytest + 401 vitest · structured errors, permission gate, workspace artifacts</span></li>
+                <li><strong data-i18n="road.now.i3.t">36 MCP tools + 3,227 tests</strong><span data-i18n="road.now.i3.b">2,765 pytest + 462 vitest · structured errors, permission gate, workspace artifacts</span></li>
                 <li><strong data-i18n="road.now.i4.t">Agent loop (M2)</strong><span data-i18n="road.now.i4.b">ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws streaming</span></li>
-                <li><strong data-i18n="road.now.i5.t">Ollama backend</strong><span data-i18n="road.now.i5.b">think-field parser · 5-category error mapping · tool calls · streaming</span></li>
+                <li><strong data-i18n="road.now.i5.t">Model backends</strong><span data-i18n="road.now.i5.b">Ollama · OpenAI-compatible (vLLM · LM Studio · OpenRouter …) · Anthropic · tool calls · streaming</span></li>
                 <li><strong data-i18n="road.now.i6.t">Config and env</strong><span data-i18n="road.now.i6.b">~/.config/alb/config.toml · .env.local · cross-project MCP export</span></li>
                 <li><strong data-i18n="road.now.i7.t">Web UI v3 (M3)</strong><span data-i18n="road.now.i7.b">Material 3, light and dark, Chinese and English · board overview · console · logs · timeline · flash · bench · assistant · perf curves · file browser · sessions</span></li>
               </ul>
@@ -480,9 +480,9 @@ export ALB_OLLAMA_MODEL=gemma4:26b
               <span class="status-pill status-pill--wip" data-i18n="road.status.wip">In progress</span>
               <h3 style="margin-top:var(--space-3);" data-i18n="road.wip.title">M2 step 4 · M3 opening</h3>
               <ul>
-                <li><strong data-i18n="road.wip.i1.t">OpenAI-compatible backend</strong><span data-i18n="road.wip.i1.b">one backend for GPT · Claude via OpenRouter · vLLM · LM Studio · MLX · DeepSeek</span></li>
+                <li><strong data-i18n="road.wip.i1.t">Assistant quality on a CPU model</strong><span data-i18n="road.wip.i1.b">English greetings call a tool first · long tool results are cut short · tool rounds still take seconds each</span></li>
                 <li><strong data-i18n="road.wip.i3.t">Long-task framework</strong><span data-i18n="road.wip.i3.b">SSE / BackgroundTask for perf captures, bugreports, multi-minute agent jobs</span></li>
-                <li><strong data-i18n="road.wip.i4.t">perf · benchmark · network · ui</strong><span data-i18n="road.wip.i4.b">fresh capability families on top of M1 transports</span></li>
+                <li><strong data-i18n="road.wip.i4.t">benchmark · network</strong><span data-i18n="road.wip.i4.b">perf capture and UI (screenshot / UI tree) shipped; benchmark and network capture next</span></li>
                 <li><strong data-i18n="road.wip.i5.t">Undo &amp; snapshots</strong><span data-i18n="road.wip.i5.b">roll back file pushes, app installs, permission changes</span></li>
               </ul>
             </div>
@@ -666,15 +666,15 @@ export ALB_OLLAMA_MODEL=gemma4:26b
         "road.now.title":"M1 · M2 step 3",
         "road.now.i1.t":"4 transports","road.now.i1.b":"adb (USB · Wi-Fi) · ssh · UART · hybrid router",
         "road.now.i2.t":"11 capabilities","road.now.i2.b":"shell · logging (with UART) · filesync · diagnose · power · app · adbd · breakin (stop in the bootloader) · timeline · port · bench",
-        "road.now.i3.t":"36 MCP tools + 2,908 tests","road.now.i3.b":"2,507 pytest + 401 vitest · structured errors, permission gate, workspace artifacts",
+        "road.now.i3.t":"36 MCP tools + 3,227 tests","road.now.i3.b":"2,765 pytest + 462 vitest · structured errors, permission gate, workspace artifacts",
         "road.now.i4.t":"Agent loop (M2)","road.now.i4.b":"ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws streaming",
-        "road.now.i5.t":"Ollama backend","road.now.i5.b":"think-field parser · 5-category error mapping · tool calls · streaming",
+        "road.now.i5.t":"Model backends","road.now.i5.b":"Ollama · OpenAI-compatible (vLLM · LM Studio · OpenRouter …) · Anthropic · tool calls · streaming",
         "road.now.i6.t":"Config and env","road.now.i6.b":"~/.config/alb/config.toml · .env.local · cross-project MCP export",
         "road.now.i7.t":"Web UI v3 (M3)","road.now.i7.b":"Material 3, light and dark, Chinese and English · board overview · console · logs · timeline · flash · bench · assistant · perf curves · file browser · sessions",
         "road.wip.title":"M2 step 4 · M3 opening",
-        "road.wip.i1.t":"OpenAI-compatible backend","road.wip.i1.b":"one backend for GPT · Claude via OpenRouter · vLLM · LM Studio · MLX · DeepSeek",
+        "road.wip.i1.t":"Assistant quality on a CPU model","road.wip.i1.b":"English greetings call a tool first · long tool results are cut short · tool rounds still take seconds each",
         "road.wip.i3.t":"Long-task framework","road.wip.i3.b":"SSE / BackgroundTask for perf captures, bugreports, multi-minute agent jobs",
-        "road.wip.i4.t":"perf · benchmark · network · ui","road.wip.i4.b":"fresh capability families on top of M1 transports",
+        "road.wip.i4.t":"benchmark · network","road.wip.i4.b":"perf capture and UI (screenshot / UI tree) shipped; benchmark and network capture next",
         "road.wip.i5.t":"Undo & snapshots","road.wip.i5.b":"roll back file pushes, app installs, permission changes",
         "road.plan.title":"M3 late · M4+ vision",
         "road.plan.i1.t":"🌟 On-device agent","road.plan.i1.b":"alb-mobile Android app + Gemini Nano / AICore. Host brain, device reflex — jump to the deep dive below.",
@@ -731,15 +731,15 @@ export ALB_OLLAMA_MODEL=gemma4:26b
         "road.now.title":"M1 · M2 step 3",
         "road.now.i1.t":"4 种传输","road.now.i1.b":"adb（USB · Wi-Fi）· ssh · UART · hybrid 路由",
         "road.now.i2.t":"11 类能力","road.now.i2.b":"shell · logging（含 UART）· filesync · diagnose · power · app · adbd · breakin（停在 bootloader）· timeline · port · bench",
-        "road.now.i3.t":"36 个 MCP tool + 2908 条测试","road.now.i3.b":"pytest 2507 条 + vitest 401 条 · 结构化错误、权限闸门、产物落盘",
+        "road.now.i3.t":"36 个 MCP tool + 3227 条测试","road.now.i3.b":"pytest 2765 条 + vitest 462 条 · 结构化错误、权限闸门、产物落盘",
         "road.now.i4.t":"Agent loop（M2）","road.now.i4.b":"ReAct-lite · alb chat REPL · POST /chat · WebSocket /chat/ws 流式",
-        "road.now.i5.t":"Ollama 后端","road.now.i5.b":"think 字段解析 · 5 种错误映射 · tool call · 流式",
+        "road.now.i5.t":"模型后端","road.now.i5.b":"Ollama · OpenAI 兼容(vLLM · LM Studio · OpenRouter …) · Anthropic · tool call · 流式",
         "road.now.i6.t":"配置 + 环境","road.now.i6.b":"~/.config/alb/config.toml · .env.local · 跨项目 MCP 导出",
         "road.now.i7.t":"Web 界面 v3（M3）","road.now.i7.b":"Material 3，浅色 / 深色，中文 / 英文 · 板子总览 · 控制台 · 日志 · 时间轴 · 烧录 · 台架 · 助手 · 性能曲线 · 文件浏览 · 会话记录",
         "road.wip.title":"M2 step 4 · M3 起步",
-        "road.wip.i1.t":"OpenAI 兼容后端","road.wip.i1.b":"一个后端对接 GPT · OpenRouter 上的 Claude · vLLM · LM Studio · MLX · DeepSeek",
+        "road.wip.i1.t":"CPU 模型上的助手质量","road.wip.i1.b":"英文打招呼先调工具 · 长工具结果被截短 · 带工具的每一步仍要几秒",
         "road.wip.i3.t":"长任务框架","road.wip.i3.b":"SSE / BackgroundTask 跑 perf 采集、bugreport、多分钟 agent 任务",
-        "road.wip.i4.t":"perf · benchmark · network · ui","road.wip.i4.b":"基于 M1 传输层的新能力族",
+        "road.wip.i4.t":"benchmark · network","road.wip.i4.b":"性能采集和 UI(截图 / 控件树)已上线;跑分和抓包还没做",
         "road.wip.i5.t":"Undo & 快照","road.wip.i5.b":"回滚 push 的文件、装过的 app、改过的权限",
         "road.plan.title":"M3 后期 · M4+ 愿景",
         "road.plan.i1.t":"🌟 设备端 Agent","road.plan.i1.b":"alb-mobile 安卓 app + Gemini Nano / AICore。宿主当大脑、设备当反射 —— 下方详细展开。",

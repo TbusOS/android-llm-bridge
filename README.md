@@ -133,7 +133,7 @@ hub 上一样。完整链路与逐跳排障：[docs/dial-home-runbook.md](./docs
 
 ## 快速开始
 
-> ⚠️ **当前状态：M1 核心完成**。四种传输（A adb USB / B adb WiFi / C sshd / G UART）全部 beta；六个能力（shell / logging / filesync / diagnose / power / app）可用；21 个 MCP tool 注册完毕。详见 [`docs/project-plan.md`](./docs/project-plan.md) 和 [`CHANGELOG.md`](./CHANGELOG.md)。
+> **当前状态(2026-11-09)**:四种传输(adb USB / adb 网络 / sshd / 串口)、16 个能力模块、28 个 `alb` 命令组、36 个 MCP 工具、Web 界面 v3,以及远程调试台架(板子插在另一台 Windows 上，经 adb / 串口 / fastboot / 高通 9008 调试)都能用。详见 [`docs/project-plan.md`](./docs/project-plan.md)。
 
 ### 一键部署（推荐，完全用户态）
 
@@ -246,8 +246,9 @@ uv run alb serial shell "dmesg | tail"
 |-------|---------|-----|
 | **M0** | 仓库骨架 + 完整技术方案文档 + 架构图 + 里程碑规划 | ✅ 完成 |
 | **M1** | 四种传输（A/B/C/G）+ 六能力（shell/logging/filesync/diagnose/power/app）+ 权限系统 + CLI + MCP 骨架 | ✅ 完成 |
-| **M2** | Web API ✅ + 长任务框架（流式 logcat ✅ / 大文件传输 ✅）+ 子 Agent 并行 📋 + 性能能力（perf）📋 + 跑分（benchmark）📋 | 🚧 部分完成 |
+| **M2** | Web API ✅ + 长任务框架（流式 logcat ✅ / 大文件传输 ✅）+ 模型后端与 `alb chat` ✅ + 性能采集 ✅ + 子 Agent 并行 📋 + 跑分（benchmark）📋 | 🚧 部分完成 |
 | **M3** | Web UI v3（Material 3：板子总览 / 控制台 / 日志 / 时间轴 / 烧录 / 台架 / 助手 / 性能曲线）✅ + LLM-assisted 日志分析（助手调用 alb 工具）✅ + 方案 D/E/F 📋 | 🚧 部分完成 |
+| **远程台架** | 板子插在 Windows 上，Linux 侧经 hub 用 adb / 串口 / fastboot / 高通 9008 调试;台架 agent 远程换版、远程拉起(原计划没有这一项) | ✅ |
 
 详见 [`docs/project-plan.md`](./docs/project-plan.md)。
 

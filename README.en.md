@@ -122,7 +122,7 @@ See [`docs/architecture.md`](./docs/architecture.md) for the details.
 
 ## Quick start
 
-> ⚠️ **Current state: M0 (skeleton + full design docs).** Code implementation is scheduled for M1. See [`docs/project-plan.md`](./docs/project-plan.md) for the roadmap.
+> **Current state (2026-11-09):** four transports (adb USB / adb over the network / sshd / UART), 16 capability modules, 28 `alb` command groups, 36 MCP tools, the v3 web UI, and the remote debug bench (the board is plugged into another Windows machine and debugged over adb / UART / fastboot / Qualcomm 9008) all work. See [`docs/project-plan.md`](./docs/project-plan.md) (Chinese) for the roadmap.
 
 ### Requirements
 
@@ -190,8 +190,9 @@ uv run alb setup wifi        # Method B
 |-----------|--------------|--------|
 | **M0** | Skeleton + complete design docs + architecture + roadmap | ✅ done |
 | **M1** | 4 transports (A/B/C/G) + 6 capabilities + permissions + CLI + MCP skeleton | ✅ done |
-| **M2** | Web API ✅ + streaming / long-task framework (streaming logcat ✅ / large file transfer ✅) + sub-agent parallel 📋 + perf 📋 + benchmark 📋 | 🚧 partly done |
+| **M2** | Web API ✅ + streaming / long-task framework (streaming logcat ✅ / large file transfer ✅) + model backends and `alb chat` ✅ + perf capture ✅ + sub-agent parallel 📋 + benchmark 📋 | 🚧 partly done |
 | **M3** | Web UI v3 (Material 3: board overview / console / logs / timeline / flash / bench / assistant / perf charts) ✅ + LLM-assisted log analysis (the assistant runs alb tools) ✅ + methods D/E/F 📋 | 🚧 partly done |
+| **Remote bench** | The board sits on a Windows machine; Linux reaches it through the hub over adb / UART / fastboot / Qualcomm 9008; the bench agent can be updated and started remotely (not in the original plan) | ✅ done |
 
 ---
 

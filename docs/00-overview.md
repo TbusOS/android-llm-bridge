@@ -201,10 +201,11 @@ CLI                MCP Server             Web API
 
 | 里程碑 | 目标 | 状态 |
 |-------|------|-----|
-| **M0** 设计阶段 | 仓库骨架 + 完整技术方案 + 架构图 | ✅ 当前 |
-| **M1** 第一版可用 | 4 传输 + 6 能力 + 权限 + CLI + MCP 骨架 + 单元测试 | 🚧 |
-| **M2** Web + 长任务 | Web API / 流式日志 / 大文件 / 子 Agent 并行 / perf & benchmark | 📋 |
-| **M3** Web UI + 智能 | 设备看板 / 实时图表 / LLM 日志分析 / 方案 D/E/F | 📋 |
+| **M0** 设计阶段 | 仓库骨架 + 完整技术方案 + 架构图 | ✅ |
+| **M1** 第一版可用 | 4 传输 + 6 能力 + 权限 + CLI + MCP 骨架 + 单元测试 | ✅ |
+| **M2** Web + 长任务 | Web API / 流式日志 / 大文件 / 模型后端 / perf ✅;子 Agent 并行 / benchmark 📋 | 🚧 |
+| **M3** Web UI + 智能 | Web 界面 v3 / 实时图表 / 助手调用 alb 工具 ✅;方案 D/E/F 📋 | 🚧 |
+| **远程台架**(原计划没有) | 板子插在 Windows 上，经 hub 用 adb / 串口 / fastboot / 高通 9008 调试 | ✅ |
 
 详见 [`project-plan.md`](./project-plan.md)。
 
