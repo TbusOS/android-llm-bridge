@@ -2,7 +2,7 @@
 title: 安装 / 卸载指南
 type: user-guide
 created: 2026-04-15
-updated: 2026-11-09
+updated: 2026-11-10
 owner: sky
 tags: [install, uninstall, uv, python, isolation]
 ---
@@ -10,6 +10,39 @@ tags: [install, uninstall, uv, python, isolation]
 # 安装 / 卸载指南
 
 > **核心承诺**：不需要 root、不碰系统 Python、在共享服务器上零影响其他用户。
+
+---
+
+## 先说 uv：是什么、为什么用、必须要吗
+
+**uv 是 Python 的安装工具**，一个预先编译好的程序（Astral 出品，用 Rust 写的），不需要从源码编译。
+本项目用它代替「装 Python、建虚拟环境、用 pip 装依赖」这三步。
+
+| uv 在这里做什么 | 没有 uv 会怎样 |
+|---|---|
+| 不用 root 下载一份 Python 3.11 | alb 要求 Python 3.11 以上（`pyproject.toml` 的 `requires-python`）。很多服务器的系统 Python 更旧（Ubuntu 20.04 是 3.8），没有 root 装不了新版本，alb 就装不上 |
+| 建 `.venv/`，按 `uv.lock` 装依赖 | pip 也能装，但装的是满足最低版本要求的最新版，和 `uv.lock` 里测过的版本不一定一样 |
+| `uv run alb …` 直接用项目环境 | 要写 `.venv/bin/alb` 的路径，或者先 `source .venv/bin/activate` |
+| MCP 登记命令里的 `uv run --project … alb-mcp` | 改成登记 `.venv/bin/alb-mcp` 的绝对路径 |
+
+**为什么选 uv**：不用 root 拿到新版 Python 是硬需求，几种做法对比：
+
+- 系统包管理器（apt 等）：要 sudo，老系统的软件源里常常没有 3.11
+- pyenv：从源码编译 Python，要 gcc 和一串开发库，这些多半也要 sudo 装
+- conda：能免 root，但体积大、启动慢
+- uv：下载预编译的 Python，全在家目录里。2026-11-10 实测下载 29.2 MiB、安装 11.8 秒
+
+**必须要吗**：不必须。机器上已经有 Python 3.11 以上，可以不用 uv，见下面「[不用 uv 安装](#不用-uv-安装已经有-python-311-以上)」。
+代价是依赖版本不再锁定，命令要带 `.venv/bin/` 路径。
+
+**怎么装**：不用自己先装，`./scripts/install.sh` 会按顺序试三种办法：
+
+1. 已经装了（`~/.local/bin/uv`，或者 PATH 里有 `uv`），直接用
+2. 官方安装脚本：从 astral.sh 下载安装脚本，再从 releases.astral.sh 或 github.com 下载 uv
+3. 用 pip 从 PyPI 下载同一个 uv：只把 `uv` 和 `uvx` 两个文件复制进 `~/.local/bin/`，不往任何 Python 里装包。
+   pip 会用 `PIP_INDEX_URL` 和 pip 配置文件里的镜像；Debian / Ubuntu 新版本不让 `pip install` 装到系统 Python，但 `pip download` 不受影响
+
+三种都失败时，脚本会打印每种办法失败的原因和对应的解决命令，见「[问题 2](#问题-2--装-uv-失败)」。
 
 ---
 
@@ -61,9 +94,9 @@ cd android-llm-bridge
 | 步骤 | 做什么 | 落地在哪 |
 |-----|--------|---------|
 | 0 | 检查不是 root；确认在正确的 repo | — |
-| 1 | 装 `uv`（如果没装） | `~/.local/bin/uv` |
-| 2 | 用 uv 下载 Python 3.11 | `~/.local/share/uv/python/cpython-3.11.*/` |
-| 3 | `uv sync` 建 venv + 装所有依赖；失败时打印代理 / 镜像的办法 | `<repo>/.venv/` |
+| 1 | 装 `uv`（如果没装）：先用官方安装脚本，失败了用 pip 从 PyPI 下载；都失败就打印原因和解决办法 | `~/.local/bin/uv` |
+| 2 | 找机器上现成的 Python 3.11，没有才让 uv 下载；下载失败打印原因和解决办法 | `~/.local/share/uv/python/cpython-3.11.*/` |
+| 3 | `uv sync` 建 venv + 装所有依赖；失败时打印原因和代理 / 镜像 / 超时的办法 | `<repo>/.venv/` |
 | 4 | 跑 smoke test（`pytest tests/test_smoke.py`） | 临时 |
 | 5 | 查 pip 装不了的外部工具（`alb setup deps --install`）：缺 adb / fastboot 就下载；要 sudo 的列出命令。见下面「外部工具」 | `~/.local/share/alb/`，链接在 `~/.local/bin/` |
 | 6 | 打印下一步提示；有必需的工具没装上，退出码 1 | — |
@@ -182,6 +215,36 @@ codex mcp add alb -- uv run --project "$PWD" alb-mcp    # Codex CLI
 Claude Code 加 `-s project` 会写进项目根的 `.mcp.json`;Codex 写进 `~/.codex/config.toml`。
 重启客户端后，它会启动 `alb-mcp` 子进程，拿到全部 MCP 工具(`alb describe` 可列出)。
 
+### 不用 uv 安装（已经有 Python 3.11 以上）
+
+装不上 uv，或者不想用，而机器上已经有 Python 3.11 以上时：
+
+```bash
+cd android-llm-bridge
+python3.11 -m venv .venv                 # 用你机器上的 Python 3.11+
+.venv/bin/pip install -e .               # 装 alb 和依赖；PyPI 镜像用 PIP_INDEX_URL 或 -i <镜像地址>
+.venv/bin/alb setup deps --install       # 查 / 装 adb 等外部工具
+.venv/bin/alb --help
+```
+
+MCP 登记写 `alb-mcp` 的绝对路径：
+
+```bash
+claude mcp add alb -- "$PWD/.venv/bin/alb-mcp"   # Claude Code
+codex mcp add alb -- "$PWD/.venv/bin/alb-mcp"    # Codex CLI
+```
+
+要知道的：
+
+- **要用 `-e`（可编辑安装）**。网页界面文件和台架 agent 的更新包是按仓库目录找的；
+  不加 `-e` 时 alb 被复制进 `.venv` 的 site-packages，找不到仓库，网页打不开（2026-11-10 实测：
+  不加 `-e` 跑全量测试，网页界面 3 条、agent 更新包 2 条失败；加 `-e` 后这两个测试文件 33 条全过）。
+- 依赖是 pip 当时解析出的版本，不是 `uv.lock` 里的。2026-11-10 用这种方式（Python 3.11、pip 24.0、`-e`）装出来跑全量测试：2806 过、1 跳过。
+  以后遇到依赖版本引起的问题，改用 `./scripts/install.sh`。
+- 2026-11-10 在 Linux 上实测过这条路：`pip install -e .` 装上，`alb version` 输出 v0.0.1，`alb-mcp` 能回应 MCP 握手。
+- 跑测试要另装测试依赖：`.venv/bin/pip install pytest pytest-asyncio pytest-mock pytest-cov`，再 `.venv/bin/python -m pytest -q`。
+- `./scripts/uninstall.sh` 照样能删掉 `.venv/`。
+
 ---
 
 ## 三、一键卸载
@@ -251,34 +314,52 @@ rm -rf android-llm-bridge
 chmod +x ./scripts/install.sh ./scripts/uninstall.sh
 ```
 
-### 问题 2 · `curl: command not found` / `wget: command not found`
+### 问题 2 · 装 uv 失败
 
-脚本需要其中一个下载 uv。共享服务器一般两个都装了。如果真没有：
+`install.sh` 先用官方安装脚本，失败了再用 pip 从 PyPI 下载；两种都失败才停下，打印类似这样的信息：
 
-```bash
-# 手动下载 uv 到 ~/.local/bin/
-mkdir -p ~/.local/bin
-# 参考 https://github.com/astral-sh/uv/releases 下载对应平台二进制
-# 然后：
-chmod +x ~/.local/bin/uv
-./scripts/install.sh   # 会检测到已存在
+```
+[FAIL] Could not install uv. The rest of this script uses it to set up Python and the project's packages.
+[FAIL] Why:
+[FAIL]   official installer: could not download the installer from astral.sh: curl: (7) Failed to connect to ...
+[FAIL]   pip (PyPI):         pip could not download uv from PyPI: ProxyError('Cannot connect to proxy.', ...
 ```
 
-### 问题 3 · `uv python install 3.11` 失败
+`Why` 下面两行是两种办法各自失败的原因，取自下载工具自己的报错。按原因选一种办法，然后重跑 `./scripts/install.sh`：
 
-通常是网络问题（uv 要从 GitHub 下预编译 Python）。解决：
+| 原因里看到 | 办法 |
+|---|---|
+| 连不上：`Failed to connect`、`timed out`、`ProxyError` 等，公司网络要走代理 | `export HTTPS_PROXY=http://<代理>:<端口> HTTP_PROXY=http://<代理>:<端口>` |
+| 只有 PyPI 镜像能用（国内常见，比如清华、阿里云的 PyPI 镜像） | `export PIP_INDEX_URL=<PyPI 镜像地址>`，脚本的 pip 那一步会走镜像 |
+| github.com 只能经镜像访问 | `export UV_INSTALLER_GITHUB_BASE_URL=<能转发 https://github.com 路径的镜像>` |
+| `has no pip` 或 `python3 is not installed` | Debian / Ubuntu：`sudo apt install python3-pip`；没有 sudo 就用别的办法 |
+| `neither curl nor wget is installed` | 装 curl 或 wget；或者靠 pip 那一步；都不行就手动装（下一行） |
+| 这台机器完全不能上网 | 在别的机器下载 `https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz`（ARM 的 Linux 把 `x86_64` 换成 `aarch64`；macOS 是 `uv-aarch64-apple-darwin.tar.gz` 或 `uv-x86_64-apple-darwin.tar.gz`），拷过来后：<br>`tar -xzf uv-*.tar.gz && mkdir -p ~/.local/bin && cp uv-*/uv uv-*/uvx ~/.local/bin/` |
+
+uv 不需要从源码编译，上面每种办法都只是把一个现成的程序放进 `~/.local/bin/`。脚本打印的手动下载地址已经按当前机器的系统和 CPU 填好。
+实在装不上 uv、而机器上有 Python 3.11 以上，走「[不用 uv 安装](#不用-uv-安装已经有-python-311-以上)」。
+
+### 问题 3 · 下载 Python 3.11 失败
+
+`install.sh` 先找机器上现成的 Python 3.11（以前 uv 下载过的，或者系统里的 `/usr/bin/python3.11`），找到就不下载。
+找不到才让 uv 从 github.com（python-build-standalone 项目）下载预编译的 Python。失败时打印原因（`Why:` 那一行）和下面这些办法，选一种后重跑 `./scripts/install.sh`：
 
 ```bash
-# 看看 uv 尝试连哪
-uv python install 3.11 -v
+# 1. 走代理
+export HTTPS_PROXY=http://<代理>:<端口> HTTP_PROXY=http://<代理>:<端口>
 
-# 公司网络有代理？
-export HTTPS_PROXY=http://proxy.company.com:8080
+# 2. github.com 只能经镜像访问
+export UV_PYTHON_INSTALL_MIRROR=<镜像地址，对应 https://github.com/astral-sh/python-build-standalone/releases/download>
 
-# 离线环境？手动下载：
-# https://github.com/indygreg/python-build-standalone/releases
-# 解压到 ~/.local/share/uv/python/cpython-3.11.x-*/
+# 3. 这台机器不能上网：报错里有 uv 要下载的完整地址，形如
+#    .../releases/download/20261026/cpython-3.11.18%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+#    在别的机器下载这个文件，拷到 <目录>/20261026/ 下，文件名里的 %2B 写成 +，然后：
+export UV_PYTHON_INSTALL_MIRROR=file://<目录>
+
+# 4. 用系统包管理器装 Python 3.11，下次运行脚本会找到它，不再下载
 ```
+
+第 2、3 种 2026-11-10 实测过：`UV_PYTHON_INSTALL_MIRROR` 在 uv 0.11.6 和 0.13.7 上都生效；按第 3 种放好文件后，uv 0.13.7 用 0.4 秒装好。
 
 ### 问题 4 · `uv sync` 安装某依赖失败
 
@@ -292,6 +373,10 @@ uv sync -v
 # 网络不通：走代理，或换 PyPI 镜像，再跑一次 install.sh
 export HTTPS_PROXY=http://<proxy>:<port>
 export UV_DEFAULT_INDEX=<PyPI 镜像地址>     # 旧版 uv 用 UV_INDEX_URL
+
+# 网络慢，报 operation timed out：把每次请求的超时调长（单位秒），再跑一次
+export UV_HTTP_TIMEOUT=120
+# 已经下载完的包在 uv 缓存里，重跑会接着装，不会从头下载
 ```
 
 ### 问题 5 · 装完 `uv run alb` 报 command not found
@@ -363,6 +448,7 @@ ls ./.venv/                            # 项目 venv
 |-----|------|------|---------|
 | **`./scripts/install.sh`** | 零污染 / 自动 / 可卸载 | 单机器 | 绝大多数场景 |
 | 手动 `uv sync` | 灵活 | 要自己先装 uv + Python 3.11 | 已有 uv 用户 |
+| venv + pip（不用 uv） | 不需要 uv | 要已有 Python 3.11+；依赖版本不锁定 | 装不上 uv、又已有 Python 3.11 |
 | `pip install -e .` (到系统) | 简单 | 污染系统 site-packages | **不推荐** |
 | Docker image | 完全隔离 | 有 daemon / 镜像体积 | CI / 分发 |
 | conda env | 隔离 | 启动慢 / 工程依赖重 | 已是 conda 用户 |

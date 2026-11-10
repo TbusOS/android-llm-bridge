@@ -142,7 +142,13 @@ See [`docs/architecture.md`](./docs/architecture.md) for the details.
 
 ### Requirements
 
-- Python 3.11+ and [uv](https://github.com/astral-sh/uv) — `scripts/install.sh` installs both into your home directory
+- Python 3.11+ and [uv](https://github.com/astral-sh/uv) — `scripts/install.sh` installs both into your home directory.
+  uv is the Python installer the script relies on: one prebuilt program (nothing is compiled) that fetches
+  Python 3.11 without root and installs the locked dependencies from `uv.lock`. If uv is missing the script
+  installs it (official installer, falling back to pip from PyPI); if both fail it prints why and the commands
+  that fix it (proxy, mirrors, offline copy). Already have Python 3.11+? uv is optional:
+  `python3.11 -m venv .venv && .venv/bin/pip install -e .`, then run `.venv/bin/alb` and register
+  `.venv/bin/alb-mcp` (absolute path) with your MCP client. Details: [`docs/install.md`](./docs/install.md) (Chinese).
 - adb (Android SDK Platform-Tools) — `alb setup deps --install` downloads it if missing
 - An Android device reachable via at least one channel
 

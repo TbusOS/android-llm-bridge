@@ -154,6 +154,8 @@ hub 上一样。从 hub 到板子每一跳的连接说明和排障：[docs/dial-
 
 **不需要 root，不碰系统 Python**。uv 和 Python 3.11 装到 `~/.local/`，其他用户和其他项目完全不受影响。
 
+uv 是 Python 的安装工具（一个现成的程序，不用编译），install.sh 用它免 root 拿到 Python 3.11、按 `uv.lock` 装依赖。没装 uv 时脚本自动装：官方安装脚本不通就改用 pip 从 PyPI 下载；都失败会打印原因和解决命令（代理、镜像、离线手动装）。机器上已经有 Python 3.11 也可以不用 uv。uv 的作用、不用 uv 怎么装、各种失败怎么办，见 [`docs/install.md`](./docs/install.md)「先说 uv」和「故障排查」。
+
 ```bash
 git clone https://github.com/<your>/android-llm-bridge
 cd android-llm-bridge
@@ -192,6 +194,9 @@ uv run alb setup deps --install   # 查 / 装 adb 等外部工具（加 --dev �
 uv run alb --help          # 看看能做什么
 uv run pytest -q           # 跑测试（60+ 用例）
 ```
+
+不用 uv（已有 Python 3.11+）：`python3.11 -m venv .venv && .venv/bin/pip install -e .`，之后命令写成 `.venv/bin/alb …`，
+MCP 登记 `.venv/bin/alb-mcp` 的绝对路径。详见 [`docs/install.md`](./docs/install.md)「不用 uv 安装」。
 
 ### 配一种传输方案
 
