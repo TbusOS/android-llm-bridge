@@ -36,7 +36,8 @@ changes for remote vs local.
 
 - **Linux hub**: alb installed (`alb-api`, `alb`, `alb-mcp` on PATH), reachable
   from the Windows host at some `wss://<hub>/agent/connect` (terminate TLS at
-  your reverse proxy, or use `ws://` only on a trusted LAN).
+  your reverse proxy, or use `ws://` only on a trusted LAN). The two machines
+  need not share a subnet — see [5. Across networks](#5-across-networks).
 - **Windows host**: Python 3.11+, the device on USB (for adb) and/or a serial
   port (for UART), and outbound network to the hub. `adb` on PATH if you want
   adb. The agent is `clients/windows-agent/` (`alb_agent.py` + `requirements.txt`).
@@ -154,6 +155,115 @@ Walk down the chain; each hop has an unambiguous "good" signal.
 | the board is in fastboot (UART shows the bootloader processing commands) but `alb flash devices` lists nothing | agent host USB | `alb bench usb` lists what the agent host itself sees on USB and the mode each board is in: a board shown with `driver: missing` needs the Android bootloader (WinUSB) driver on that host; no board at all means the cable is not on that host or the board is not enumerating. Needs an agent from the op-table era (`alb bench ops` says so if it is older) |
 | `alb power reboot fastboot` then flashing fails with `Download is not allowed on locked devices` | — | that command lands in **fastbootd** (userspace, dynamic partitions only). Use `alb power reboot bootloader --allow-dangerous --no-wait-boot` for the bootloader's fastboot |
 | need the agent host's own log, or the driver-install log | agent host | `alb bench log agent` / `alb bench log setupapi` (by source name; `-n` lines, `-g` text). `alb bench ops` lists the sources this agent offers |
+
+## 5. Across networks
+
+The hub and the bench PC do **not** have to share a subnet. The agent opens
+every connection itself — the signaling socket to `hub_url` and each data
+channel to `/agent/channel` on the same host and port
+(`clients/windows-agent/alb_agent.py`, `_channel_url`) — and the hub never
+connects back. So the one requirement is:
+
+> the bench PC can open a TCP connection to the hub's address and port
+> (`8765` unless `ALB_API_PORT` says otherwise).
+
+The bench needs no inbound port. If only the bench side is reachable from
+outside, that does not help: the direction is fixed, agent → hub.
+
+```
+ bench PC (any network)                       build server
+ alb_agent.py ── opens ws:// or wss:// ──▶ reverse proxy / VPN ──▶ alb-api :8765
+   /agent/connect   signaling, one socket
+   /agent/channel   adb, serial, flash data, one socket each
+```
+
+### Pick a setup
+
+| where the two machines are | `hub_url` on the bench | what to set up |
+|---|---|---|
+| same LAN | `ws://<hub-ip>:8765/agent/connect` | nothing |
+| different subnets, routed (office VLANs, two buildings) | `ws://<hub-ip>:8765/agent/connect` | let bench → hub:8765 through the firewall |
+| different sites over the internet — **VPN** (recommended) | `ws://<hub-vpn-ip>:8765/agent/connect` | WireGuard, Tailscale or the company VPN on both machines; the hub stays off the public internet |
+| different sites — **reverse proxy with TLS** | `wss://hub.example.com/agent/connect` | a proxy in front of the hub (example below), login on everything except the two agent endpoints |
+| different sites — **port relay** (frp and similar) | `ws://<relay>:<port>/agent/connect` | the relay forwards to hub:8765; same login rule as the proxy |
+
+### Do not publish port 8765 as it is
+
+Only the two agent endpoints check `ALB_AGENT_TOKEN`
+(`src/alb/api/agent_route.py`, module docstring). The web UI and the rest of
+the HTTP API have no login — `alb-api` prints a warning about this when it
+binds `0.0.0.0` (`src/alb/api/server.py`). Anyone who can reach the port can
+run shell commands on the boards, write their UART and flash them. Across the
+internet, put the hub behind a VPN, or behind a proxy that makes people log in.
+
+### Reverse proxy example (nginx)
+
+The two agent endpoints carry their own token check, so they skip the proxy
+login. Everything else — the web UI, the HTTP API, and `/agent/status`, which
+is **not** token-checked — sits behind the login.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name hub.example.com;
+    ssl_certificate     /etc/ssl/hub.example.com.crt;
+    ssl_certificate_key /etc/ssl/hub.example.com.key;
+
+    # Agent endpoints: WebSocket, token checked by alb itself.
+    # Exact-match locations; the ?cid=… query on /agent/channel still matches.
+    location = /agent/connect { include /etc/nginx/alb-ws.conf; }
+    location = /agent/channel { include /etc/nginx/alb-ws.conf; }
+
+    # Web UI and HTTP API: people log in.
+    location / {
+        auth_basic           "alb hub";
+        auth_basic_user_file /etc/nginx/alb.htpasswd;
+        client_max_body_size 0;          # file push / image upload
+        include /etc/nginx/alb-ws.conf;  # the UI streams logs and chat over WebSocket
+    }
+}
+```
+
+```nginx
+# /etc/nginx/alb-ws.conf
+proxy_pass         http://127.0.0.1:8765;
+proxy_http_version 1.1;
+proxy_set_header   Upgrade $http_upgrade;
+proxy_set_header   Connection "upgrade";
+proxy_set_header   Host $host;
+proxy_read_timeout 1h;                   # long captures and flashes
+proxy_send_timeout 1h;
+```
+
+With the proxy on the hub machine, keep `alb-api` off the network so nobody
+goes around the login: set `ALB_API_HOST=127.0.0.1` in `hub.env`.
+
+Any other proxy works the same way if it upgrades WebSocket connections,
+leaves the two agent paths unauthenticated and does not cut idle connections
+too early. The web UI switches to `wss://` by itself when it is opened over
+`https://` (`web/src/lib/ws.ts`).
+
+The agent checks the proxy's certificate against the Windows certificate
+store and has no option to skip that, so use a certificate the bench PC
+already trusts — a public one, or your company CA installed on the bench.
+
+### Check it from the bench PC
+
+1. `Test-NetConnection <hub-host> -Port 443` (PowerShell; use the port in your
+   `hub_url`) — `TcpTestSucceeded : True` means the network path is open.
+   `False` is a routing, VPN or firewall problem, not an alb one.
+2. Start the agent and open `http://127.0.0.1:8731`: **connected** means the
+   signaling socket made it through. A TLS error in `last_error` is the
+   certificate; `1008` is the token.
+3. On the hub, `alb devices` — if it lists the board, the data channels made
+   it through as well.
+
+### Not yet tried on a real bench
+
+The bench used so far connects with `ws://` inside one office network. The
+`wss://` path through a proxy, and how a slow or distant link feels — adb
+commands are several round trips each, a multi-GB image crosses the link
+once — have not been measured. Report what you see in an issue.
 
 ## Security
 

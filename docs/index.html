@@ -1119,7 +1119,8 @@ uv run alb shell "uname -a"</pre>
       <div>
         <h3><span class="lang-en">Board plugged into another PC?</span><span class="lang-zh">板子插在另一台电脑上？</span></h3>
         <p class="muted" style="margin-top:10px"><span class="lang-en">Run the hub on your Linux server and the bench agent on the Windows PC next to the board. The agent dials out, so the bench needs no inbound port and no tunnel.</span><span class="lang-zh">在 Linux 服务器上起 hub，在插着板子的 Windows 电脑上起台架 agent。agent 主动连出去，台架不用开入站端口，也不用打隧道。</span></p>
-        <p style="margin-top:14px"><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench runbook →</span><span class="lang-zh">远程台架操作手册 →</span></a></p>
+        <p class="muted" style="margin-top:10px"><span class="lang-en"><b>Different networks work too.</b> The two machines need not share a subnet — the bench only has to reach the hub's address and port. Across the internet, use a VPN or a TLS reverse proxy; never publish port 8765 as it is, because the web UI and HTTP API have no login.</span><span class="lang-zh"><b>不在同一网络也可以。</b>两台机器不用在同一网段，只要台架电脑能连到 hub 的地址和端口。跨公网时用 VPN 或带 TLS 的反向代理；不要把 8765 端口直接暴露到公网，网页和 HTTP 接口没有登录。</span></p>
+        <p style="margin-top:14px; display:flex; flex-wrap:wrap; gap:8px 20px"><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench runbook →</span><span class="lang-zh">远程台架操作手册 →</span></a><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md#5-across-networks"><span class="lang-en">Across networks →</span><span class="lang-zh">跨网络部署 →</span></a></p>
       </div>
 <pre class="code"><span class="c"># Linux (hub)</span>
 cd deploy/hub &amp;&amp; cp hub.env.example hub.env

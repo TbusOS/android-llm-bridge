@@ -96,6 +96,10 @@ adb, the UART console, the web UI and MCP are then all driven from the hub
 side, as if the board were plugged in locally. Full bring-up + per-hop
 troubleshooting: [docs/dial-home-runbook.md](./docs/dial-home-runbook.md).
 
+The two machines **need not share a subnet**: the bench PC only has to reach the hub's address and port.
+Across the internet, use a VPN or a TLS reverse proxy, and never publish port 8765 as it is (the web UI and
+HTTP API have no login). See [Across networks](./docs/dial-home-runbook.md#5-across-networks).
+
 ---
 
 ## Architecture

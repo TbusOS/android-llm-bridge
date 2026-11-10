@@ -107,6 +107,9 @@
 hub 上一样。从 hub 到板子每一跳的连接说明和排障：[docs/dial-home-runbook.md](./docs/dial-home-runbook.md)；
 设备侧操作手册（中文）：[clients/windows-agent/README.md](./clients/windows-agent/README.md)。
 
+两台机器**不用在同一网段**：只要台架电脑能连到 hub 的地址和端口。跨公网用 VPN 或带 TLS 的反向代理，不要把 8765 端口直接暴露到公网（网页和 HTTP 接口没有登录）。做法和反向代理示例见
+[跨网络部署](./docs/dial-home-runbook.md#5-across-networks)。
+
 ---
 
 ## 架构概览
