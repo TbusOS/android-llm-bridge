@@ -44,7 +44,7 @@
 - 跑分、ANR、性能采集这些高级能力每次都要 LLM 自己拼命令
 
 **alb 解决这些问题**：
-- 统一命令（`alb shell` / `alb logcat` / `alb pull` 等），自动选最合适的传输通道
+- 统一命令（`alb shell` / `alb logcat` / `alb fs pull` 等），自动选最合适的传输通道
 - 所有输出 `--json` 可选，返回 `{ok, data, error, artifacts}` 结构化
 - 长日志走 workspace 分层存储 + 换页机制，LLM 按需读取
 - MCP server 原生支持，Claude Code / Cursor 一行配置即可用
@@ -223,7 +223,7 @@ uv run alb serial capture --duration 30       # 抓启动 / panic / u-boot 日�
 uv run alb serial shell "dmesg | tail"
 ```
 
-配置方式详见 [`docs/methods/`](./docs/methods/)。
+配置方式详见 [`docs/methods/`](./docs/methods/)。全部环境变量和配置文件见 [`docs/configuration.md`](./docs/configuration.md)。
 
 ### 接入 Claude Code / Codex（MCP）
 
@@ -242,10 +242,31 @@ Cursor 等用 JSON 配置的客户端见 [`llm/mcp-config-examples/`](./llm/mcp-
 
 ## 文档导航
 
+### 按要做的事找文档(第一次用从这里开始)
+
+| 你要做什么 | 按顺序看 |
+|---|---|
+| 第一次安装 | [docs/install.md](./docs/install.md);装不上看它的「故障排查」,uv 是什么看「先说 uv」 |
+| 板子用 USB 插在本机,走 adb | 本页「配一种传输方案」→ [docs/configuration.md](./docs/configuration.md)「三、USB / adb」;adb 经 ssh 隧道看 [docs/methods/01-ssh-tunnel-adb.md](./docs/methods/01-ssh-tunnel-adb.md) |
+| 板子接串口(UART) | [docs/methods/07-uart-serial.md](./docs/methods/07-uart-serial.md) → [docs/configuration.md](./docs/configuration.md)「二、串口 UART」 |
+| 板子插在另一台 Windows 电脑上(远程台架) | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md)(Linux 这边)→ [clients/windows-agent/README.md](./clients/windows-agent/README.md)(Windows 那边) |
+| 远程烧录(fastboot / 高通 9008) | [clients/windows-agent/README.md](./clients/windows-agent/README.md)「操作表」和「高通 9008」两节、[FASTBOOT-SETUP.md](./clients/windows-agent/FASTBOOT-SETUP.md);命令用法看 `alb flash --help` |
+| 接 Claude Code / Codex / Cursor | [docs/llm-integration.md](./docs/llm-integration.md) |
+| 用网页或 HTTP 接口 | [docs/web-api.md](./docs/web-api.md) |
+| 查某个环境变量、配置项 | [docs/configuration.md](./docs/configuration.md)(全部环境变量和配置文件的键,含「设了无效的项」) |
+| 看到一个错误码 | [docs/errors.md](./docs/errors.md),或命令返回里的 `suggestion` |
+
+**AI 从哪看**:接上 MCP 后先调 `alb_status`、`alb_describe`;出错时读返回里的 `suggestion`,或调
+`alb_describe_errors`;给 AI 的使用规则在 [llm/CLAUDE.md](./llm/CLAUDE.md) 和 [llm/AGENTS.md](./llm/AGENTS.md),
+配置项在 [docs/configuration.md](./docs/configuration.md)「十一、AI 怎么查配置」。
+
+### 全部文档
+
 | 类别 | 文档 | 给谁看 |
 |-----|------|-------|
 | **起步** | [README.md](./README.md) / [README.en.md](./README.en.md) | 所有人 |
 | **安装 / 卸载** | [docs/install.md](./docs/install.md) | 部署 / 运维 |
+| **配置参考** | [docs/configuration.md](./docs/configuration.md) | 查环境变量和配置文件 |
 | **总览** | [docs/00-overview.md](./docs/00-overview.md) | 先看这个 |
 | **架构** | [docs/architecture.md](./docs/architecture.md) | 想了解内部设计 |
 | **设计决策** | [docs/design-decisions.md](./docs/design-decisions.md) | 想知道为啥这么做 |

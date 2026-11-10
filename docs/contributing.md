@@ -132,7 +132,7 @@ class NewProtoTransport(Transport):
 5. src/alb/infra/registry.py        → CapabilitySpec
 6. docs/capabilities/<name>.md      → 能力文档
 7. tests/capabilities/test_<name>.py
-8. 更新 errors.md（如果加了新错误码）
+8. 加了新错误码：登记进 `src/alb/infra/errors.py`，再运行 `uv run python scripts/gen_errors_doc.py` 重新生成 errors.md
 9. PR
 ```
 
@@ -223,7 +223,7 @@ async def test_execute_permission_denied(mock_transport):
 
 - [ ] 新 capability 有 `docs/capabilities/<name>.md`
 - [ ] 新 transport 有 `docs/methods/XX-<name>.md`
-- [ ] 新错误码在 `docs/errors.md` 登记
+- [ ] 新错误码登记进 `ERROR_CODES`，并运行过 `uv run python scripts/gen_errors_doc.py`
 - [ ] 新配置项在对应文档说明
 - [ ] CLAUDE.md 对 LLM 有额外提示的话同步更新
 

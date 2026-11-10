@@ -173,10 +173,12 @@ the command prints how to install by hand. Already have uv? `uv sync && uv run a
 
 ```bash
 uv run alb setup adb         # Method A (USB)
-uv run alb setup ssh         # Method C (on-device sshd)
+uv run alb setup ssh <host>  # Method C (on-device sshd)
 uv run alb setup serial      # Method G (UART)
-uv run alb setup wifi        # Method B
+uv run alb setup wifi <host> # Method B
 ```
+
+Every environment variable and config file: [`docs/configuration.md`](./docs/configuration.md).
 
 ### Hook into Claude Code
 
@@ -195,12 +197,31 @@ uv run alb setup wifi        # Method B
 
 ## Documentation
 
+### Where to start (by task)
+
+| You want to | Read, in order |
+|---|---|
+| Install | [docs/install.md](./docs/install.md) (Chinese) — troubleshooting at the end; what uv is in 「先说 uv」 |
+| Board on USB at this machine (adb) | "Set up a transport" above → [docs/configuration.md](./docs/configuration.md) (Chinese), section 三 USB / adb |
+| Board on a serial console (UART) | [docs/methods/07-uart-serial.md](./docs/methods/07-uart-serial.md) → [docs/configuration.md](./docs/configuration.md), section 二 |
+| Board plugged into another (Windows) machine | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md) (hub side) → [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md) (Windows side) |
+| Flash remotely (fastboot / Qualcomm 9008) | [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md), op table and 9008 sections; `alb flash --help` |
+| Connect Claude Code / Codex / Cursor | [docs/llm-integration.md](./docs/llm-integration.md) |
+| Web UI / HTTP API | [docs/web-api.md](./docs/web-api.md) |
+| Look up an env var or config key | [docs/configuration.md](./docs/configuration.md) — every variable and config-file key, including the ones that currently have no effect |
+| An error code | [docs/errors.md](./docs/errors.md), or the `suggestion` field of the result |
+
+**For AI agents**: after connecting over MCP call `alb_status` and `alb_describe`; on errors read `suggestion` or call
+`alb_describe_errors`; usage rules for agents are in [llm/CLAUDE.md](./llm/CLAUDE.md) and [llm/AGENTS.md](./llm/AGENTS.md).
+
+
 | Category | Doc | Audience |
 |----------|-----|----------|
 | Start here | [README.md](./README.md) / README.en.md | Everyone |
 | Overview | [docs/00-overview.md](./docs/00-overview.md) | Start here |
 | Architecture | [docs/architecture.md](./docs/architecture.md) | Internals |
 | Design decisions | [docs/design-decisions.md](./docs/design-decisions.md) | Why this way |
+| Configuration | [docs/configuration.md](./docs/configuration.md) | Env vars and config files |
 | Remote device debugging | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md) | Board on another machine: bring-up + troubleshooting |
 | Windows device agent | [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md) | Operator of the Windows host holding the board |
 | LLM integration | [docs/llm-integration.md](./docs/llm-integration.md) | Agent devs |

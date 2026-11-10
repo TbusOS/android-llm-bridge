@@ -81,11 +81,33 @@ alb-api
 > stop the hub's adb server (`adb kill-server`) or set `ALB_ADB_FORWARD_PORT`
 > to a free port. On the hub, the forwarder *is* the adb server alb talks to.
 
-The `alb` CLI and `alb-mcp` need **no extra env** for the default ports: adb
-defaults to `127.0.0.1:5037` and serial defaults to `127.0.0.1:9001`, which are
-exactly the forwarders. Only if you overrode a forward port do you point alb at
-it — adb via `ADB_SERVER_SOCKET=tcp:127.0.0.1:<port>`, serial via
-`ALB_SERIAL_TCP=127.0.0.1:<port>`.
+**adb: set nothing, even if you moved the adb forward port.** The `alb` CLI
+and `alb-mcp` ask the running hub for the port (ADR-057,
+`src/alb/infra/adb_endpoint.py`, `resolve_endpoint`). The first match wins:
+
+1. `[transport.adb] server_socket` in `~/.config/alb/config.toml`
+2. `ADB_SERVER_SOCKET` in the environment
+3. the adb forwarder port that the hub on this machine reports at `/agent/status`
+4. adb's own default, `localhost:5037`
+
+So leave `ADB_SERVER_SOCKET` unset. A hand-copied value beats the hub's answer,
+and once it goes stale the only symptom is "0 devices" — the same thing an
+unplugged board shows. `alb setup adb` prints which endpoint alb uses and where
+it came from (`from env` / `from hub` / ...).
+
+Two limits of the lookup: it asks the hub at `http://127.0.0.1:8765` — if the hub
+listens on another port, give the client the same `ALB_API_PORT` (or
+`ALB_API_URL`); and it only finds a forwarder that is bound, that is, after the
+agent has connected.
+
+**serial: not looked up.** alb takes `ALB_SERIAL_DEVICE` (a local tty), else
+`ALB_SERIAL_TCP` (`host:port`), else `default_tcp_host` / `default_tcp_port`
+under `[transport.serial]` in `config.toml` — default `localhost:9001`, which is
+the forwarder's default (`src/alb/transport/factory.py`, serial branch). If you
+moved the serial forward port, point alb at it: set
+`ALB_SERIAL_TCP=127.0.0.1:<port>` in every shell that runs `alb` / `alb-mcp`,
+or save it once with `alb setup serial --tcp-port <port> --save` (it saves only
+after its probe opens the port, so run it while the hub and the agent are up).
 
 ## 2. Agent (Windows host, where the device is)
 
@@ -130,7 +152,7 @@ Walk down the chain; each hop has an unambiguous "good" signal.
    card with its devices, and the forwarder rows show *bound*.
 4. **adb** — on the hub: `alb devices` lists the board; `alb shell getprop ro.product.model`
    returns it. (Both go `alb → 127.0.0.1:5037 → forwarder → agent → adb server`.)
-5. **serial / UART** — `alb uart capture` (or the web UART console) shows live
+5. **serial / UART** — `alb serial capture -d 10` (or the web UART console) shows live
    serial output; typing in the console reaches the board.
 6. **MCP** — from Claude Code / Cursor / Codex pointed at `alb-mcp`:
    `alb_shell` / `alb_devices` / `alb_uart_send` operate the same device.

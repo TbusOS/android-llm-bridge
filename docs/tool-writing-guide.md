@@ -57,7 +57,7 @@ async def collect_logcat(
     LLM notes:
       - Returns summary (count of lines/errors/warnings), not full log
       - Full log is in result.artifacts[0], use alb_log_search or alb_log_tail
-      - For duration > 300s, prefer alb_logcat_watch (background)
+      - For duration > 300s, split into several calls (no background watch tool yet)
 
     Args:
         duration: Capture duration in seconds. Range: 1-3600.
@@ -248,9 +248,9 @@ async def push(local, remote) -> Result[None]:
 
 ### 使用错误码表
 
-所有 `code` 都必须在 [`errors.md`](./errors.md) 里登记。加新 code 时：
+所有 `code` 都必须在 `src/alb/infra/errors.py` 的 `ERROR_CODES` 里登记，[`errors.md`](./errors.md) 由它生成。加新 code 时：
 1. `src/alb/infra/errors.py` 添加到 `ERROR_CODES`
-2. `docs/errors.md` 同步
+2. 运行 `uv run python scripts/gen_errors_doc.py` 重新生成 `docs/errors.md`（`tests/test_docs_errors.py` 会检查它是不是最新的）
 3. 给出 suggestion 范例
 
 ---
@@ -350,7 +350,7 @@ def register(mcp: FastMCP):
         """Collect Android logcat.
 
         When to use: investigating crashes, ANRs.
-        LLM notes: For > 300s use alb_logcat_watch instead.
+        LLM notes: For > 300s split into several calls.
 
         Args:
           duration: 1-3600 seconds

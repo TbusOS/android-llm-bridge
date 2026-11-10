@@ -106,7 +106,7 @@ if not r["ok"]:
 | `alb_push` / `alb_pull` | 文件传输 | —— |
 | `alb_rsync` | 增量同步 | —— 大目录 |
 | `alb_bugreport` | 全量诊断 | —— 疑难杂症 |
-| `alb_anr_pull` / `alb_tombstone` | 拉 crash | —— 事后 |
+| `alb_anr_pull` / `alb_tombstone_pull` | 拉 crash | —— 事后 |
 | `alb_devinfo` | 设备信息 | —— |
 | `alb_battery` | 电池 | —— |
 | `alb_reboot` | 重启 | —— 注意权限流 |

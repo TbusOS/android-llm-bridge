@@ -92,13 +92,13 @@ async def alb_logcat(
       - Reproducing a bug and capturing logs during the repro window
 
     When NOT to use:
-      - Continuous background monitoring → use alb_logcat_watch
+      - Continuous background monitoring → not available yet (planned `alb_logcat_watch`, M2)
       - Need specific log file (e.g., /data/tombstones/) → use alb_tombstone_pull
 
     LLM notes:
       - Returns SUMMARY only (lines/errors/warnings counts).
       - Full log is at result.artifacts[0]. Use alb_log_search or alb_log_tail to read.
-      - For duration > 300s prefer alb_logcat_watch (runs in background).
+      - For duration > 300s split into several calls (background watch is planned for M2, not implemented).
       - filter syntax: "*:E" (only Error), "Tag:I *:S" (only Tag at Info, silence rest)
 
     Args:
@@ -228,7 +228,7 @@ workspace/devices/<serial>/logs/
 3. 分析 panic 栈
 ```
 
-### 工作流 3 · 长时间监控（M2）
+### 工作流 3 · 长时间监控（M2,规划中,尚未实现）
 
 ```
 1. alb_logcat_watch(pattern="ANR", on_match="store-to-workspace")

@@ -20,8 +20,8 @@ tags: [capabilities, overview]
 | [shell](./shell.md) | `capabilities/shell.py` | `alb shell` | `alb_shell` | 执行任意命令，结构化返回 |
 | [logging](./logging.md) | `capabilities/logging.py` | `alb logcat / dmesg / uart-capture / log-search / log-tail` | `alb_logcat / alb_dmesg / alb_uart_capture / ...` | 日志采集、检索、换页 |
 | [filesync](./filesync.md) | `capabilities/filesync.py` | `alb push / pull / rsync` | `alb_push / alb_pull / alb_rsync` | 文件传输（自动选最快通道） |
-| [diagnose](./diagnose.md) | `capabilities/diagnose.py` | `alb bugreport / anr pull / tombstone` | `alb_bugreport / alb_anr_pull / alb_tombstone` | 一键拉诊断信息 |
-| [power](./power.md) | `capabilities/power.py` | `alb reboot / sleep-wake / battery` | `alb_reboot / alb_sleep_wake / alb_battery` | 重启、休眠测试、电池 |
+| [diagnose](./diagnose.md) | `capabilities/diagnose.py` | `alb diag bugreport / anr / tombstone` | `alb_bugreport / alb_anr_pull / alb_tombstone_pull` | 一键拉诊断信息 |
+| [power](./power.md) | `capabilities/power.py` | `alb power reboot / sleep-wake / battery` | `alb_reboot / alb_sleep_wake_test / alb_battery` | 重启、休眠测试、电池 |
 | [app](./app.md) | `capabilities/app.py` | `alb app install/uninstall/start/stop/list` | `alb_app_*` | apk 管理 |
 
 ---

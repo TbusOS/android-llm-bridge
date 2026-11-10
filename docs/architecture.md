@@ -351,46 +351,12 @@ workspace/
 
 两级：
 
-- **config**（`~/.config/alb/config.toml` 或 `$ALB_CONFIG`）：全局默认
-- **profile**（`<workspace>/profiles/<name>.toml` 或 CLI `--profile`）：多设备 / 多场景切换
+- **config**（`~/.config/alb/config.toml` 或 `$ALB_CONFIG`）：本机的全局默认（adb 程序、adb server、ssh、串口端点）
+- **profile**（`<workspace>/profiles/<name>.toml`，由 `ALB_PROFILE` 选）：默认传输和设备列表
 
-```toml
-# ~/.config/alb/config.toml
-default_profile = "work"
+`infra/config.py` 的 `load_active()` 把两级合成一份 `ActiveSettings`。传输只在 `transport/factory.py` 一处构建，CLI / MCP / API 都走它，所以三个入口看到的配置一致；环境变量在这里覆盖文件里的值。`factory.py` 把 `ActiveSettings` 缓存在进程里，常驻的 `alb-mcp` / `alb-api` 改了配置要重启。
 
-[workspace]
-root = "~/alb-workspace"
-
-[transport.adb]
-server_socket = "tcp:localhost:5037"       # 场景 A 专用
-bin_path = "adb"                           # 不在 PATH 里就写绝对路径;环境变量 ALB_ADB_PATH 优先
-
-[transport.ssh]
-default_user = "root"
-key_path = "~/.ssh/id_ed25519"
-
-[permissions]
-mode = "strict"  # strict / standard / permissive
-ask_on_ambiguous = true
-```
-
-```toml
-# workspace/profiles/lab-devices.toml
-[profile]
-name = "lab-devices"
-primary_transport = "adb"
-
-[[devices]]
-serial = "abc123"
-alias = "lab-a"
-transport = "adb"
-
-[[devices]]
-serial = "def456"
-alias = "lab-b"
-transport = "ssh"
-ssh_host = "192.168.1.42"
-```
+每个键、每个环境变量的含义、默认值、谁读，以及哪些键写了也无效，见 [`configuration.md`](./configuration.md)。
 
 ### 权限系统
 
@@ -485,8 +451,8 @@ CAPABILITIES = [...]
 
 效果：
 - `alb describe` 输出全部 schema 供 LLM 预读
-- `alb workspace inspect` 自动生成实现进度矩阵
-- 文档里的方案矩阵 / 能力矩阵从这生成，避免手工维护偏差
+- `alb workspace inspect` 自动生成实现进度表
+- 文档里的方案对照表 / 能力对照表从这生成，避免手工维护偏差
 
 ---
 

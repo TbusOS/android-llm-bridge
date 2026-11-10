@@ -87,8 +87,8 @@ if not st["data"]["devices"]:
 r = await alb_logcat(duration=3600)   # 一小时阻塞
 
 # 对
-r = await alb_logcat_watch(...)       # 后台任务
-# 或分段: 60s + 60s + 60s
+# 分段抓: alb_logcat(duration=60) 调几次,每次看完摘要再决定要不要继续
+# (后台持续监控的工具还没有;要一直抓就请人在终端跑 `alb logcat`)
 ```
 
 ### ❌ 不要硬编码路径
@@ -176,7 +176,8 @@ workspace/devices/<serial>/{logs,anr,bugreports,...}/
 ```
 1. 发现 alb_devices 没设备 / alb_shell 一直 offline
 2. 切串口：
-   alb_setup --method serial
+   没有切换传输的 MCP 工具:alb_uart_* 本来就走串口;要别的工具也走串口,
+   请人设 ALB_TRANSPORT=serial 后重启 alb-mcp
    alb_uart_capture duration=30
 3. alb_log_search pattern="panic|oops|fail|error" path=<artifact>
 4. 给用户看：起到哪个阶段挂的

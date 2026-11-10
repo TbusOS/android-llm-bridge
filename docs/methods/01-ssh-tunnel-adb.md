@@ -2,7 +2,7 @@
 title: 方案 A · adb USB（含 SSH 反向隧道）
 type: method-guide
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-11-10
 owner: sky
 tags: [adb, usb, ssh-tunnel, method-a]
 ---
@@ -75,10 +75,13 @@ adb version
 
 如果网慢，scp/rz 上传也行。
 
-**alb 封装版**（M1 后）：
+**用 alb 装**（不需要 root，装到用户目录）：
 ```bash
-alb setup adb              # 自动检测/下载/配置
+alb setup deps                 # 列出缺哪些外部工具，各自怎么装
+alb setup deps --install       # 自动下载 Android Platform-Tools
 ```
+
+找不到 `adb` 时，可以用环境变量 `ALB_ADB_PATH` 指向 adb 可执行文件。
 
 ### 第 3 步 · Xshell 配反向隧道
 
@@ -120,10 +123,21 @@ adb devices
 ### 第 5 步 · alb 接管
 
 ```bash
-alb setup adb --remote-via-tunnel
+alb setup adb
 alb devices
 alb shell "getprop ro.build.version.sdk"
 ```
+
+`alb setup adb` 没有参数，只检查、不改配置。它做这几件事（`src/alb/cli/setup_cli.py` `setup_adb`）：
+
+- 找 `adb` 可执行文件
+- 读 `ADB_SERVER_SOCKET`；是 `tcp:` 开头就检查那个端口在不在监听（隧道有没有建好）
+- 打印 alb 实际用的 adb server 地址和来源（`from config` / `from env` / `from hub` / `from default`）
+- 列出能看到的设备
+
+> 只有 Xshell 这种 alb 之外建的隧道才需要手动设 `ADB_SERVER_SOCKET`。
+> 如果板子走的是 alb hub + Windows agent（[`../dial-home-runbook.md`](../dial-home-runbook.md)），
+> **不要设**：alb 会从运行中的 hub 读端口，手动设的值反而会盖过它，过期后的表现只是「0 个设备」。
 
 ---
 
@@ -135,7 +149,8 @@ alb shell "getprop ro.build.version.sdk"
 alb devices                                    # 列所有连接的设备
 alb shell "getprop ro.build.version.sdk"       # SDK 版本
 alb shell "getprop ro.product.model"           # 型号
-alb describe-device                             # 汇总信息
+alb diag devinfo                               # 汇总信息（品牌 / 型号 / 版本 / 内核 / 电池 / 存储）
+alb info all                                   # 更全的结构化信息（CPU / 内存 / 存储 / 显示 …）
 ```
 
 ### 日志
@@ -151,9 +166,9 @@ alb dmesg -d 30                       # kernel log
 ### 文件传输
 
 ```bash
-alb push <local> <remote>        # Linux → 板子
-alb pull <remote> <local>        # 板子 → Linux
-alb pull /sdcard/Download/ ~/board-files/
+alb fs push <local> <remote>     # Linux → 板子
+alb fs pull <remote> <local>     # 板子 → Linux（不给 local 时放进 workspace）
+alb fs pull /sdcard/Download/ ~/board-files/
 ```
 
 ### app
@@ -169,18 +184,18 @@ alb app stop com.example
 ### 重启 / 状态
 
 ```bash
-alb reboot                       # 正常重启
-alb reboot recovery              # 进 recovery
-alb reboot bootloader            # 进 bootloader (方案 A 独占能力)
-alb battery                      # 电池状态
+alb power reboot                 # 正常重启（默认等到开机完成）
+alb power reboot recovery        # 进 recovery
+alb power reboot bootloader      # 进 bootloader
+alb power battery                # 电池状态
 ```
 
 ### 诊断
 
 ```bash
-alb bugreport                    # 完整诊断 zip
-alb anr pull                     # 拉 ANR 文件
-alb tombstone pull               # 拉 native crash
+alb diag bugreport               # 完整诊断 zip
+alb diag anr pull                # 拉 ANR 文件
+alb diag tombstone pull          # 拉 native crash
 ```
 
 ---
@@ -192,13 +207,17 @@ alb tombstone pull               # 拉 native crash
 1. Windows 上能看到吗？不能 → 查 USB 线 / PATH / 授权
 2. Xshell 反向隧道生效？`ss -tlnp | grep 5037` 有 LISTEN 吗
 3. `ADB_SERVER_SOCKET` 设了吗？`echo $ADB_SERVER_SOCKET`
+4. `alb setup adb` 打印的 `adb endpoint` 是不是隧道那个端口
 
 ### 2 · 隧道断了后卡住
 ```bash
-adb kill-server      # 清 Linux 侧 client cache
-# Windows 重新启动 adb server（adb devices 触发即可）
-adb devices
+# 1. Xshell 里重新连接会话，隧道跟着重建
+ss -tlnp 2>/dev/null | grep 5037   # 2. 确认 5037 又在 LISTEN
+adb devices                        # 3. 重新列设备
 ```
+
+不要在 Linux 上跑 `adb kill-server`：`ADB_SERVER_SOCKET` 指向隧道时，它停掉的是
+Windows 上的 adb server，不是 Linux 这边的什么缓存。要重启 adb server，在 Windows 上做。
 
 ### 3 · 多用户冲突
 每人建自己的反向隧道即可，端口不会互相覆盖（每 SSH session 独立）。

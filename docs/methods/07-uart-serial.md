@@ -2,7 +2,7 @@
 title: 方案 G · UART 串口调试（含 SSH 反向隧道）
 type: method-guide
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-11-10
 owner: sky
 tags: [uart, serial, method-g, boot-log, u-boot, panic]
 ---
@@ -27,9 +27,9 @@ tags: [uart, serial, method-g, boot-log, u-boot, panic]
 
 ---
 
-## 二、完整链路（远程场景）
+## 二、远程场景：从 Linux 到板子的每一段
 
-这是"Linux 服务器 调试 ⇨ Windows 上的板子"场景，通过 SSH 反向隧道打通：
+这是"Linux 服务器 调试 ⇨ Windows 上的板子"场景，通过 SSH 反向隧道连起来：
 
 ```
 ┌─────────────────┐    Xshell SSH + 反向隧道    ┌─────────────────┐       USB 转串口         UART 口
@@ -105,10 +105,10 @@ com2tcp --baud 115200 \\.\COM3 9001
 ```bash
 # Ubuntu / Debian
 sudo apt install picocom socat minicom   # minicom 备选
-
-# 或用户目录（无 sudo）
-# picocom 源码编译，或 alb install script 自动处理
 ```
+
+这三个都是可选的：alb 自己读写串口不需要它们，只有手动开交互终端（第 5 步）才用到。
+`alb setup deps` 会列出缺了哪个、各发行版怎么装；它不会自动装这两个（要 sudo）。
 
 ### 第 4 步 · 验证隧道
 
@@ -138,15 +138,33 @@ picocom -b 115200 /tmp/ttyV0
 # 退出: Ctrl-A Ctrl-X
 ```
 
-**alb 封装版**（M1 实现后）：
+**用 alb**：alb 直接连 `localhost:9001`，不需要 socat / picocom。
 
 ```bash
-alb setup serial                        # 一键检测并引导配置
-alb serial connect                      # 自动建 PTY + 启动 picocom
-alb serial connect --baud 921600        # 指定波特率
-alb serial log --duration 60 --save     # 后台保存日志 60 秒
-alb serial uboot                        # 进 u-boot 专用模式（持续发 Ctrl-C 中断启动）
+alb setup serial                         # 检查 localhost:9001 在监听，并试着打开一次串口
+alb setup serial --tcp-port 9002 --save  # 端口不是 9001：验证通过后写进 config.toml
+alb serial health                        # 连得上吗，连的是哪个地址
+alb serial status                        # 板子现在处在什么状态：shell / u-boot / 启动中 / panic
+alb serial capture -d 60 -o ./uart.log   # 抓 60 秒串口输出
+alb serial shell 'uname -a'              # 在串口 shell 里跑一条命令，等提示符，拿回输出
+alb serial send 'reboot'                 # 只发字节（末尾加换行），不等输出
+alb serial break-in --reboot adb         # 经 adb 重启，并在 bootloader 倒计时里按键停住
 ```
+
+alb 没有交互式终端命令。要边看边敲，用 Web 界面的 UART 控制台，或者用上面的 socat + picocom。
+
+alb 按这个顺序找串口（`src/alb/transport/factory.py`，serial 分支）：
+
+1. 环境变量 `ALB_SERIAL_DEVICE`（本机串口设备，如 `/dev/ttyUSB0`）
+2. 环境变量 `ALB_SERIAL_TCP`（`主机:端口`，如 `localhost:9002`）
+3. `~/.config/alb/config.toml` 的 `[transport.serial]` 里的 `default_tcp_host` / `default_tcp_port`，
+   默认 `localhost:9001`
+
+`alb serial capture/send/shell/...` 的 `--device` 是给日志目录用的设备名（只能是字母、数字、`._:-`），
+不是串口路径，`--device /dev/ttyUSB0` 会被拒绝。
+
+波特率只对本机串口设备有效（取 `[transport.serial] default_baud`，默认 115200）。
+走 TCP 时波特率由打开 COM 口的一方决定，也就是 Windows 上的 ser2net 配置。
 
 ---
 
@@ -177,7 +195,8 @@ init: Starting service 'adbd'
 console:/ $
 ```
 
-产物：`-o` 指定的路径；不给 `-o` 时落在 `workspace/devices/<serial>/logs/<ts>-uart.log`。
+产物：`-o` 指定的路径；不给 `-o` 时落在 `workspace/logs/<ts>-uart.log`，
+带 `--device <名字>` 时落在 `workspace/devices/<名字>/logs/<ts>-uart.log`。
 
 **两条省时间的性质**：
 
@@ -201,45 +220,56 @@ console:/ $
 需要在启动头几秒中断：
 
 ```bash
-alb serial uboot
-# 这个命令会：
-# 1. 连接串口
-# 2. 持续发 Ctrl-C（或配置的中断按键，如空格/回车）
-# 3. 看到 "=>" 提示符后进入交互
+alb serial break-in --reboot adb    # 经 adb 重启（会先问一次，-y 跳过）
+alb serial break-in --reboot serial # 经串口 shell 重启
+alb serial break-in                 # 不带 --reboot：命令提示你时，手动复位或上电
+```
 
-# u-boot 下可以：
-=> printenv              # 看环境变量
-=> setenv bootargs ...   # 改启动参数
-=> saveenv               # 保存
-=> boot                  # 继续启动
-=> reset                 # 重启
-=> mmc part              # 看分区表
+这个命令先开始读串口，再重启板子，所以不会错过倒计时。它的步骤：
+
+1. 等 `--expect` 匹配到倒计时提示（默认 `Hit any key to stop autoboot|Press any key|autoboot in`）
+2. 反复发 `--send` 里的按键（默认空格），直到行尾出现 `--prompt` 匹配的提示符（默认匹配 `=>` 或 `xxx>`）
+3. 停在提示符时退出码 0。其他结果都是 1：没看到倒计时、看到了但板子继续进了内核、
+   按了键但没等到提示符、连接出错；同时打印最后收到的几行
+4. 整个过程的串口日志都会保存（`-o` 指定位置）
+
+停住以后，用 `alb serial shell` 发 u-boot 命令：
+
+```bash
+alb serial shell 'printenv'            # 看环境变量
+alb serial shell 'mmc part'            # 看分区表
+alb serial shell 'setenv bootargs ...' # 改启动参数
+alb serial shell 'saveenv'             # 保存
+alb serial send 'boot'                 # 继续启动（不等提示符）
 ```
 
 ### 场景 3 · 抓 kernel panic
 
 ```bash
 # 场景：reboot 后偶发 panic
-alb serial log --save --watch-panic &
+# 终端 A：先抓（时长盖住复现过程）
+alb serial capture -d 600 -o ./panic.log
 
-# 触发导致 panic 的操作 ...
-# 一旦捕获到 "Unable to handle kernel NULL pointer dereference" 等关键字
-# 自动停止采集并保存到 workspace/panic-<time>.log
+# 终端 B：触发导致 panic 的操作，然后在抓到的日志里找
+alb log search 'Kernel panic|Unable to handle kernel|Oops' --path ./panic.log
 ```
+
+CLI 没有「抓到 panic 就停」的命令；`alb serial capture` 抓满时长才返回。
+MCP tool `alb_uart_watch_panic` 抓完整段后报告有没有 panic / Oops，并带上崩溃前后的几行。
 
 ### 场景 4 · 板子完全不响应时救场
 
 ```bash
 # adb / ssh 都没，只有串口：
-alb serial connect
+alb serial status
 
-# 如果串口有输出：
-#   → 系统还在跑，只是用户态挂了
-#   → 尝试 echo b > /proc/sysrq-trigger 强制重启
+# 状态是 shell_root / shell_user：
+#   → 系统还在跑，只是 adb / sshd 挂了
+#   → alb serial shell 'echo b > /proc/sysrq-trigger' 强制重启
 
-# 如果串口也没输出：
+# 状态是 idle（没有输出）或 panic：
 #   → 内核挂了，只能硬件复位
-#   → 复位后用 alb serial log 抓启动
+#   → 先起 alb serial capture -d 180，再复位，抓启动过程
 ```
 
 ---
@@ -257,12 +287,17 @@ ss -tlnp | grep 9001
 
 ### 问题 2 · 敲字符没反应 / 乱码
 
+多半是波特率不对。`alb serial status` 报 `corrupted`（输出大多不可打印）就是这种情况。
+
 ```bash
-# 可能：波特率不对
-alb serial connect --baud 9600
-alb serial connect --baud 115200     # 最常见
-alb serial connect --baud 921600     # 高速
-alb serial connect --baud 1500000    # 某些 Rockchip
+# 走 ser2net / 隧道（TCP）：波特率在 Windows 上改，改 ser2net.conf 里那一行再重启 ser2net
+
+# 本机串口设备：让 alb 依次试几种常见波特率，按可读程度排名
+alb serial probe --device /dev/ttyUSB0
+alb serial probe --device /dev/ttyUSB0 --rates 115200,1500000
+
+# 试出来以后写进 config.toml（只写 default_baud，见问题 8）
+alb setup serial --device /dev/ttyUSB0 --baud 1500000 --save
 ```
 
 常见波特率：
@@ -293,25 +328,37 @@ picocom -b 115200 --omap crcrlf /tmp/ttyV0
 
 查询板子文档 / `include/configs/<board>.h` 的 `CONFIG_AUTOBOOT_*` 宏。
 
-`alb serial uboot --interrupt-chars " \r\x03"` 可以自定义。
-
-### 问题 5 · 两个方案同时用，PTY 设备怎么办
+用 `--send` 换按键，用 `--expect` 换倒计时提示的正则：
 
 ```bash
-alb serial connect --device serial-main    # → /tmp/ttyV-main
-alb serial connect --device serial-aux     # → /tmp/ttyV-aux
+alb serial break-in --send '\x03'             # 发 Ctrl-C
+alb serial break-in --send ' \r'              # 空格加回车
+alb serial break-in --expect 'Autoboot in \d+' # 板子的提示文字不一样时
 ```
 
-如果多块板子同时调：`--tcp-port 9002` 用不同端口，Windows 端也配多路 ser2net。
+
+### 问题 5 · 多块板子同时调
+
+每块板子一个 TCP 端口：Windows 端 ser2net 配多行（9001、9002 …），Xshell 也各加一条隧道。
+alb 这边每条命令用 `ALB_SERIAL_TCP` 选端口：
+
+```bash
+ALB_SERIAL_TCP=localhost:9002 alb serial capture -d 60 --device board-b
+```
+
+`--device board-b` 只决定日志放进 `workspace/devices/board-b/`，不选端口。
+走 alb hub + Windows agent 的台架，换板子用 `alb bench board use <名字>`，
+见 [`../dial-home-runbook.md`](../dial-home-runbook.md)。
 
 ### 问题 6 · 串口日志太多怎么办
 
-```bash
-alb serial log --save --rotate-every 10MB --keep 10
-# 日志文件按 10MB 切片，保留最新 10 个
-```
+alb 不切片：`alb serial capture` 每次写一个文件，`-d` 最长 3600 秒。
+长时间抓就分几次跑，然后检索，不要整个打开：
 
-或用 `alb log search` 全文检索（M2）。
+```bash
+alb log search 'panic|Oops|watchdog' --since 2h   # 在 workspace 里所有日志中找
+alb log tail <workspace 里的日志路径>              # 只看结尾一段（只收 workspace 内的路径）
+```
 
 ### 问题 7 · 想用 minicom 不用 picocom
 
@@ -324,13 +371,20 @@ picocom 更轻，推荐。minicom 交互更丰富。
 
 ### 问题 8 · 不走 Xshell，本地接 USB 转串口
 
-如果 Linux 服务器本机接了 USB 转串口，跳过 ser2net + 反向隧道，直接：
+如果 Linux 服务器本机接了 USB 转串口，跳过 ser2net + 反向隧道：
 
 ```bash
-alb setup serial --local
-# 检测 /dev/ttyUSB0 / /dev/ttyACM0
-alb serial connect
+ls /dev/ttyUSB* /dev/ttyACM*                 # 找到设备
+alb setup serial --device /dev/ttyUSB0       # 检查设备在、能打开
+export ALB_SERIAL_DEVICE=/dev/ttyUSB0        # alb serial * 用这个设备
+alb serial status
 ```
+
+打不开多半是权限：把自己加进 `dialout` 组（`sudo usermod -aG dialout $USER`，重新登录生效）。
+
+注意：`alb setup serial --device /dev/ttyUSB0 --save` 只把 `--baud` 写进 `config.toml`，
+**不写设备路径**（`[transport.serial]` 没有存设备路径的字段），尽管 `--help` 说会写。
+所以本机串口要靠 `ALB_SERIAL_DEVICE` 选，每个要用 alb 的 shell 都要设。
 
 ---
 
@@ -349,11 +403,10 @@ alb setup adb       # 方案 A
 alb setup serial    # 方案 G
 
 # 使用：
-alb devices         # 走 adb
-alb logcat          # 走 adb
-alb serial log      # 走 串口
-alb shell "reboot"  # 走 adb
-alb serial log      # 立即看重启过程
+alb devices                              # 走 adb
+alb logcat -d 30                         # 走 adb
+alb serial capture -d 180 -o ./boot.log  # 走串口，先起（另一个终端）
+alb shell "reboot"                       # 走 adb，重启过程在 boot.log 里
 ```
 
 ### 组合：C + G
@@ -362,9 +415,9 @@ alb serial log      # 立即看重启过程
 
 ```bash
 # 新编的 kernel 推进去后 boot 失败，立刻切 UART：
-alb shell "cp /tmp/Image /boot/Image" --via ssh    # 用 C 推
-alb shell "reboot" --via ssh
-alb serial log --follow                             # 切 G 看
+alb serial capture -d 180 -o ./boot.log &           # 先起，切 G 看
+alb --transport ssh shell "cp /tmp/Image /boot/Image"   # 用 C 推
+alb --transport ssh shell "reboot"
 ```
 
 ---
@@ -420,19 +473,33 @@ alb serial log --follow                             # 切 G 看
 
 ---
 
-## 九、alb 的 UART 相关能力（M1）
+## 九、alb 的 UART 相关能力
 
 | 命令 / tool | 说明 |
 |----------|------|
-| `alb setup serial` | 引导配置（检测依赖 / 建 PTY） |
-| `alb serial connect` | 交互式连接（picocom） |
-| `alb serial log --duration N --save` | 后台采集 N 秒并保存 |
-| `alb serial send "<text>"` | 发送字符串到串口（含换行/特殊字符） |
-| `alb serial uboot` | 进 u-boot 模式（持续中断） |
-| `alb serial watch --pattern "panic|oops"` | 监听关键字并触发动作 |
-| MCP: `alb_uart_capture` | LLM 直接调 |
-| MCP: `alb_uart_send` | LLM 发指令 |
-| MCP: `alb_uart_watch_panic` | 后台监听 panic |
+| `alb setup serial` | 检查 TCP 端口或本机设备，试着打开一次；`--save` 写进 config.toml（本机设备只写波特率） |
+| `alb serial health` | 连得上吗，连的是哪个地址 |
+| `alb serial status` | 识别板子当前状态（shell / u-boot / 启动中 / panic / 乱码 / 没输出），不发命令 |
+| `alb serial capture -d N` | 抓 N 秒串口输出（1–3600），写进 workspace 或 `-o` |
+| `alb serial send "<text>"` | 只发字节，末尾加换行（`--no-newline` 不加），不等输出 |
+| `alb serial shell "<cmd>"` | 发一条命令，等提示符，返回输出 |
+| `alb serial break-in` | 在 bootloader 倒计时里按键，停在 u-boot 提示符 |
+| `alb serial probe --device /dev/ttyUSB0` | 本机串口设备：依次试几种波特率，按可读程度排名 |
+| `alb serial learn` | 板子的 shell 提示符认不出来时，从实际输出推出一条正则（见下） |
+| MCP: `alb_uart_capture` | 抓一段串口输出 |
+| MCP: `alb_uart_send` | 发字节，不读回 |
+| MCP: `alb_uart_shell` | 跑一条命令并返回输出 |
+| MCP: `alb_uart_watch_panic` | 抓一段，报告有没有 kernel panic / Oops |
+
+`alb serial learn` 只打印一段 TOML，不写文件。把它贴进 `~/.config/alb/config.toml`：
+
+```toml
+[transport.serial.prompts]
+shell_root = "<learn 打印的正则>"
+```
+
+键名必须是内置状态名之一（如 `shell_root`、`shell_user`）。写错了，alb 建串口连接时直接报
+`unknown serial state pattern key`（`src/alb/transport/serial_state.py`），不会悄悄退回默认值。
 
 ---
 
@@ -447,7 +514,7 @@ alb serial log --follow                             # 切 G 看
 
 ## 参考
 
-- [原版 adb-via-ssh-tunnel-guide.md](../../../adb-via-ssh-tunnel-guide.md)（方案 A 的祖本）
+- [方案 A · adb USB（含 SSH 反向隧道）](./01-ssh-tunnel-adb.md)
 - [ser2net 项目](https://sourceforge.net/projects/ser2net/)
 - [picocom GitHub](https://github.com/npat-efault/picocom)
 - [socat man page](https://linux.die.net/man/1/socat)
