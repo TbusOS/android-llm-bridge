@@ -1,469 +1,504 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Web 界面 Web UI · android-llm-bridge</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web UI · android-llm-bridge</title>
+<meta name="alb-title-en" content="Web UI · android-llm-bridge">
+<meta name="alb-title-zh" content="网页界面 · android-llm-bridge">
 <meta name="description" content="The android-llm-bridge web UI (v3, Material 3): board overview, adb shell and serial console, logs, a shared timeline, fastboot flashing, the bench and an assistant. Screenshots and interactive design pages with sample data. 浏览器里调试安卓板子的网页界面。">
-<!-- Web UI page of the project site. Material 3 styles from assets/v3/alb.css
-     (a generated copy of web/src/styles/v3). Screenshots under assets/v3/shots/
-     are taken from the design pages with sample data, never from a running hub. -->
-<link rel="stylesheet" href="assets/v3/alb.css">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/webui-preview.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="Web UI · android-llm-bridge">
+<meta property="og:description" content="Debug a board from the browser: overview, console, logs, timeline, flashing, the bench and an assistant. Screenshots and interactive design pages.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/webui-preview.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<!-- Web UI page of the project site. Screenshots under assets/v3/shots/ are
+     taken from the v3 design pages with sample data, never from a running hub.
+     Icons are inlined from assets/v3/icons.js (the web UI's own icon set). -->
 <script>
-  /* Apply the stored theme before the first paint (same key as the design pages). */
-  (function () {
-    try {
-      var th = localStorage.getItem("alb-v3-theme");
-      if (th === "light" || th === "dark") document.documentElement.setAttribute("data-theme", th);
-    } catch (e) { /* storage blocked */ }
-  })();
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+})();
 </script>
-<script src="assets/v3/icons.js"></script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
 <style>
-  :root { --wp-max: 1200px; --wp-pad: 24px; }
-  body { min-height: 100vh; display: flex; flex-direction: column; }
-  a { text-underline-offset: 2px; }
+  /* icons: the web UI's 24px stroked set, inlined */
+  svg.ic { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  svg.ic--sm { width: 16px; height: 16px; }
+  svg.ic--lg { width: 24px; height: 24px; }
 
-  /* ---- top app bar ---- */
-  .wp-bar {
-    position: sticky; top: 0; z-index: 20;
-    display: flex; align-items: center; gap: 4px;
-    height: 64px; padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
-    background: var(--md-sys-color-surface);
-    border-bottom: 1px solid var(--alb-color-divider);
+  /* ---------- hero ---------- */
+  .page-hero { position: relative; overflow: hidden; }
+  .page-hero .wrap { position: relative; }
+  .page-hero .shape--cookie { width: 320px; height: 320px; right: -90px; top: -100px; background: var(--md-sys-color-primary-container); animation: site-spin 90s linear infinite; }
+  .page-hero .shape--sunny { width: 140px; height: 140px; right: 14%; bottom: -56px; background: var(--site-uart-container); animation: site-spin 110s linear infinite reverse; }
+  @media (max-width: 860px) { .page-hero .shape { display: none; } }
+  .crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; font-weight: 600; letter-spacing: var(--alb-tracking-small); color: var(--md-sys-color-on-surface-variant); }
+  .crumb a { color: var(--md-sys-color-primary); text-decoration: none; }
+  .crumb a:hover { text-decoration: underline; }
+  .page-hero h1 em { font-style: normal; color: var(--md-sys-color-primary); }
+  .page-hero .lead code { white-space: nowrap; }
+  .hero__cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .note {
+    display: flex; gap: 12px; align-items: flex-start; margin-top: 28px; max-width: 760px;
+    padding: 14px 18px; border-radius: 20px;
+    background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); color: var(--md-sys-color-on-surface-variant);
+    font-size: 15px; line-height: 1.6;
   }
-  .wp-bar .brand { padding-left: 0; }
-  .wp-bar__links { display: flex; align-items: center; gap: 2px; margin-left: 8px; }
-  .wp-bar__links a {
-    padding: 8px 12px; border-radius: var(--md-sys-shape-corner-full);
-    color: var(--md-sys-color-on-surface-variant); text-decoration: none; font-weight: 500;
-  }
-  .wp-bar__links a:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
-  .wp-spacer { flex: 1; min-width: 4px; }
-  .wp-lang { color: var(--md-sys-color-on-surface-variant); }
+  .note svg { margin-top: 2px; color: var(--md-sys-color-primary); }
+  .note code { white-space: nowrap; }
+  .onpage { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .onpage__label { font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-right: 4px; }
+  .onpage a.chip { text-decoration: none; color: var(--md-sys-color-on-surface); }
+  .onpage a.chip:hover { background: var(--md-sys-color-surface-container-high); }
 
-  /* ---- layout ---- */
-  .wp-main { flex: 1; width: 100%; max-width: calc(var(--wp-max) + 2 * var(--wp-pad)); margin: 0 auto; padding: 0 var(--wp-pad) 48px; }
-  .wp-section { margin-top: 56px; scroll-margin-top: 80px; }
-  .wp-section > h2 { font-size: 28px; line-height: 36px; font-weight: 400; }
-  .wp-section > .wp-sub { margin: 6px 0 20px; max-width: 72ch; color: var(--md-sys-color-on-surface-variant); font-size: 16px; line-height: var(--alb-lh-body-large); }
-
-  /* ---- hero ---- */
-  .wp-hero { padding: 40px 0 8px; }
-  .wp-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); }
-  .wp-hero h1 { margin-top: 12px; font-size: 45px; line-height: 52px; font-weight: 400; letter-spacing: 0; }
-  .wp-lead { margin: 16px 0 0; max-width: 68ch; font-size: 18px; line-height: 30px; color: var(--md-sys-color-on-surface-variant); }
-  .wp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
-  .wp-note {
-    display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; max-width: 72ch;
-    padding: 12px 16px; border-radius: var(--md-sys-shape-corner-medium);
-    background: var(--alb-color-well); color: var(--md-sys-color-on-surface-variant);
-  }
-  .wp-note svg { margin-top: 1px; color: var(--md-sys-color-primary); }
-  .wp-note p { margin: 0; }
-  .wp-lead code, .wp-note code { font-size: .9em; white-space: nowrap; }
-  .wp-nowrap { white-space: nowrap; }
-
-  /* ---- gallery ---- */
-  .wp-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-  .wp-shot { padding: 0; gap: 0; overflow: hidden; }
-  .wp-shot__img { display: block; background: var(--alb-color-well); border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-  .wp-shot__img img { display: block; width: 100%; height: auto; aspect-ratio: 1440 / 900; }
-  .wp-shot__img:hover img { opacity: .94; }
-  .wp-shot__body { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 16px; flex: 1; }
-  .wp-shot__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-  .wp-shot__ic {
-    width: 36px; height: 36px; flex: none; display: grid; place-items: center;
-    border-radius: var(--md-sys-shape-corner-medium);
-    background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);
-  }
-  .wp-shot__head h3 { font-size: 22px; line-height: 28px; font-weight: 400; }
-  .wp-shot p { margin: 0; color: var(--md-sys-color-on-surface-variant); }
-  .wp-shot .wp-caveat { font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); }
-  .wp-shot__link { align-self: flex-start; margin: auto 0 0 -12px; }
-  .wp-shot--feature { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-  .wp-shot--feature .wp-shot__img { border-bottom: 0; border-right: 1px solid var(--md-sys-color-outline-variant); }
-  .wp-shot--feature .wp-shot__body { padding: 28px; justify-content: center; }
-  .wp-shot--feature .wp-shot__head h3 { font-size: 28px; line-height: 36px; }
-  .wp-shot--feature p { font-size: 16px; line-height: var(--alb-lh-body-large); }
-  .wp-shot--feature .wp-shot__link { margin-top: 8px; }
-
-  /* language-specific screenshots */
-  html[lang="en"] .wp-zh-only, html:not([lang="en"]) .wp-en-only { display: none; }
-
-  /* ---- common to every page ---- */
-  .wp-common { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-  .wp-common .card { gap: 8px; }
-  .wp-common h3 { display: flex; align-items: center; gap: 10px; font-size: 16px; line-height: 24px; font-weight: 500; }
-  .wp-common h3 svg { color: var(--md-sys-color-primary); }
-  .wp-common p { margin: 0; color: var(--md-sys-color-on-surface-variant); }
-  .wp-common kbd { font-family: var(--md-ref-typeface-mono); font-size: 12px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--md-sys-color-outline-variant); }
-
-  .wp-navmap { margin-top: 16px; }
-  .wp-navmap__groups { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px 20px; }
-  .wp-navmap__device { grid-column: span 2; }
-  .wp-navmap .wp-navmap__device ul { display: block; columns: 2; column-gap: 20px; }
-  .wp-navmap .wp-navmap__device li { break-inside: avoid; }
-  .wp-navmap h4 { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: var(--alb-tracking-caps); color: var(--alb-color-text-muted); margin-bottom: 6px; }
-  .wp-navmap ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-  .wp-navmap li { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; color: var(--md-sys-color-on-surface); }
-  .wp-navmap li svg { margin-top: 2px; color: var(--md-sys-color-on-surface-variant); }
-  .wp-navmap li small { display: block; font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); }
-  .wp-navmap li a { font-weight: 500; }
-  .wp-navmap__foot { margin: 4px 0 0; font-size: 12px; line-height: var(--alb-lh-body-small); color: var(--alb-color-text-muted); }
-
-  /* ---- archive ---- */
-  .wp-archive { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .wp-archive a.chip { text-decoration: none; }
-
-  /* ---- footer ---- */
-  .wp-foot { border-top: 1px solid var(--alb-color-divider); background: var(--md-sys-color-surface-container); }
-  .wp-foot__in {
-    max-width: calc(var(--wp-max) + 2 * var(--wp-pad)); margin: 0 auto; padding: 20px var(--wp-pad);
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; font-size: 13px; color: var(--alb-color-text-muted);
-  }
-  .wp-foot__in a { color: var(--md-sys-color-primary); }
-
-  /* ---- narrower windows ---- */
+  /* ---------- gallery ---------- */
+  .section { scroll-margin-top: var(--site-topbar-h); }
+  .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .shot { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .shot__img { display: block; background: var(--md-sys-color-surface-container-high); border-bottom: 1px solid var(--md-sys-color-outline-variant); overflow: hidden; }
+  .shot__img img { display: block; width: 100%; height: auto; aspect-ratio: 1440 / 900; transition: transform .4s var(--site-ease); }
+  .shot__img:hover img { transform: scale(1.015); }
+  .shot__body { display: flex; flex-direction: column; gap: 12px; padding: 20px 24px 22px; flex: 1; }
+  .shot__head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+  .shot__ic { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 14px;
+    background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+  .shot__ic--flash { background: var(--site-job-container); color: var(--site-on-job-container); }
+  .shot__ic--bench { background: var(--site-uart-container); color: var(--site-on-uart-container); }
+  .shot__ic--assist { background: var(--site-kernel-container); color: var(--site-on-kernel-container); }
+  .shot__head h3 { font-size: 22px; line-height: 28px; }
+  .shot p { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: 15.5px; line-height: 1.6; }
+  .shot .caveat { font-size: 13.5px; line-height: 1.5; padding: 10px 14px; border-radius: 12px; background: var(--alb-color-warning-container); color: var(--alb-color-on-warning-container); }
+  .pill--device { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+  .pill--flash { background: var(--site-job-container); color: var(--site-on-job-container); }
+  .pill--bench { background: var(--site-uart-container); color: var(--site-on-uart-container); }
+  .pill--assist { background: var(--site-kernel-container); color: var(--site-on-kernel-container); }
+  .textlink { align-self: flex-start; margin-top: auto; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px 8px 0;
+    font-weight: 500; font-size: 15px; color: var(--md-sys-color-primary); text-decoration: none; }
+  .textlink:hover { text-decoration: underline; }
+  .textlink svg { transition: transform .2s var(--site-ease-spring); }
+  .textlink:hover svg { transform: translateX(3px); }
+  .shot--feature { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+  .shot--feature .shot__img { border-bottom: 0; border-right: 1px solid var(--md-sys-color-outline-variant); }
+  .shot--feature .shot__body { padding: 32px; justify-content: center; }
+  .shot--feature .shot__head h3 { font-size: 30px; line-height: 36px; }
+  .shot--feature p { font-size: 16.5px; }
+  .shot--feature .textlink { margin-top: 4px; }
   @media (max-width: 1000px) {
-    .wp-common { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .wp-navmap__groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .wp-shot--feature { grid-template-columns: minmax(0, 1fr); }
-    .wp-shot--feature .wp-shot__img { border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-    .wp-shot--feature .wp-shot__body { padding: 16px 20px; }
+    .shot--feature { grid-template-columns: minmax(0, 1fr); }
+    .shot--feature .shot__img { border-right: 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+    .shot--feature .shot__body { padding: 20px 24px 22px; }
+    .shot--feature .shot__head h3 { font-size: 24px; line-height: 30px; }
   }
-  @media (max-width: 760px) {
-    :root { --wp-pad: 16px; }
-    .wp-bar__links, .wp-bar .brand__sub { display: none; }
-    .wp-gallery, .wp-common { grid-template-columns: minmax(0, 1fr); }
-    .wp-hero { padding-top: 24px; }
-    .wp-hero h1 { font-size: 32px; line-height: 40px; }
-    .wp-lead { font-size: 16px; line-height: var(--alb-lh-body-large); }
-    .wp-section { margin-top: 40px; }
-    .wp-section > h2 { font-size: 24px; line-height: 32px; }
-  }
-  @media (max-width: 420px) {
-    .wp-navmap__groups { grid-template-columns: minmax(0, 1fr); }
-    .wp-navmap__device { grid-column: auto; }
-  }
+  @media (max-width: 760px) { .gallery { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ---------- common to every page ---------- */
+  .common .card { padding: 24px; }
+  .common h3 { display: flex; align-items: center; gap: 12px; font-size: 18px; line-height: 1.35; }
+  .common h3 .ic-wrap { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 12px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+  .common code { white-space: nowrap; }
+  .common p { margin-top: 12px; color: var(--md-sys-color-on-surface-variant); font-size: 15px; line-height: 1.6; }
+  kbd { font-size: 12.5px; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); white-space: nowrap; }
+  .nowrap { white-space: nowrap; }
+
+  .navmap { margin-top: 16px; }
+  .navmap > h3 { font-size: 20px; }
+  .navmap__groups { margin-top: 20px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 20px 24px; }
+  .navmap__device { grid-column: span 2; }
+  .navmap .navmap__device ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(6, auto); grid-auto-flow: column; column-gap: 20px; align-content: start; }
+  .navmap h4 { font-size: 12.5px; line-height: 16px; font-weight: 600; letter-spacing: var(--alb-tracking-caps); text-transform: uppercase; color: var(--md-sys-color-primary); margin-bottom: 8px; }
+  :root:lang(zh) .navmap h4 { text-transform: none; letter-spacing: 0; }
+  .navmap ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .navmap li { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; font-size: 15px; line-height: 22px; color: var(--md-sys-color-on-surface); }
+  .navmap li svg { margin-top: 3px; color: var(--md-sys-color-on-surface-variant); }
+  .navmap li small { display: block; font-size: 12.5px; line-height: 18px; color: var(--md-sys-color-on-surface-variant); }
+  .navmap li a { font-weight: 600; }
+  .navmap__foot { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--alb-color-divider); font-size: 13.5px; color: var(--md-sys-color-on-surface-variant); }
+  @media (max-width: 1000px) { .navmap__groups { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 460px) { .navmap__groups { grid-template-columns: minmax(0, 1fr); } .navmap__device { grid-column: auto; } }
+
+  /* ---------- archive ---------- */
+  .archive { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .archive a.chip { height: 36px; padding: 0 14px; font-size: 14px; text-decoration: none; color: var(--md-sys-color-on-surface); }
+  .archive a.chip:hover { background: var(--md-sys-color-surface-container-high); border-color: var(--md-sys-color-outline); }
 </style>
 </head>
 <body>
+<a class="skip" href="#main"><span class="lang-en">Skip to content</span><span class="lang-zh">跳到正文</span></a>
 
-<header class="wp-bar">
-  <a class="brand" href="index.html" aria-label="android-llm-bridge 首页" data-en-label="android-llm-bridge home"><span class="brand__mark"><i data-ic="bridge"></i></span><span class="brand__name">alb</span><span class="brand__sub">android-llm-bridge</span></a>
-  <nav class="wp-bar__links" aria-label="本页" data-en-label="On this page">
-    <a href="#pages" data-en="Pages">页面</a>
-    <a href="#common" data-en="On every page">共同部分</a>
-    <a href="#archive" data-en="Archive">旧设计</a>
-  </nav>
-  <span class="wp-spacer"></span>
-  <button class="btn btn--text wp-lang" id="lang-btn" type="button" lang="en"><i data-ic="lang"></i><span>English</span></button>
-  <button class="icon-btn" id="theme-btn" type="button"></button>
-  <a class="icon-btn" href="https://github.com/TbusOS/android-llm-bridge" aria-label="GitHub 上的源码" data-en-label="Source on GitHub" title="GitHub"><i data-ic="code"></i></a>
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">Topology</span><span class="lang-zh">拓扑</span></a>
+      <a href="./#models"><span class="lang-en">Models</span><span class="lang-zh">模型</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="./#targets"><span class="lang-en">Targets</span><span class="lang-zh">调试对象</span></a>
+      <a href="webui-preview.html" aria-current="page"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="./#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
+      <a href="./#community"><span class="lang-en">Contribute</span><span class="lang-zh">参与</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
 </header>
 
-<main class="wp-main" id="main">
+<main id="main">
 
-  <section class="wp-hero">
-    <div class="wp-eyebrow"><a href="index.html" data-en="android-llm-bridge home">android-llm-bridge 首页</a><span aria-hidden="true">/</span><span data-en="Web UI · v3 · Material 3">Web 界面 · v3 · Material 3</span></div>
-    <h1 data-en="Debug a board from the browser">在浏览器里调试板子</h1>
-    <p class="wp-lead" data-en="The hub serves a web UI at <code>/app/</code>: board state, adb shell and serial console, logs, one timeline for every source, fastboot flashing and the bench machine, with an assistant you can pull out on any page. It follows Google&#39;s Material 3, comes in light and dark, and treats Chinese and English as equals.">hub 在 <code>/app/</code> 提供网页界面:看板子状态、开 adb shell 和串口、查日志、把各路日志对到同一条时间轴、用 fastboot 烧录、管理台架电脑,任何页面都能拉出助手。界面按 Google 的 Material 3 规范做,有浅色和深色,中文和英文同等对待。</p>
-    <div class="wp-actions">
-      <a class="btn btn--filled" href="webui-preview-v3.html"><i data-ic="overview"></i><span data-en="Open the overview design">打开总览设计稿</span></a>
-      <a class="btn btn--outlined" href="webui-preview-v3-styles.html"><i data-ic="sliders"></i><span data-en="7 styles compared">7 套风格对比</span></a>
-      <a class="btn btn--text" href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/web-api.md"><i data-ic="code"></i><span data-en="Web API reference">Web API 参考</span></a>
+<!-- ============================== HERO ============================== -->
+<section class="page-hero">
+  <span class="shape shape--cookie" aria-hidden="true"></span>
+  <span class="shape shape--sunny" aria-hidden="true"></span>
+  <div class="wrap">
+    <div class="crumb">
+      <a href="./"><span class="lang-en">android-llm-bridge home</span><span class="lang-zh">android-llm-bridge 首页</span></a>
+      <span aria-hidden="true">/</span>
+      <span class="lang-en">Web UI · v3 · Material 3</span><span class="lang-zh">网页界面 · v3 · Material 3</span>
     </div>
-    <div class="wp-note"><i data-ic="info"></i><p data-en="The screenshots and design pages below use sample data and are not connected to any board. To use the real UI, start <code>alb-api</code> (port 8765 by default) and open <code>http://&amp;lt;host&amp;gt;:8765/app/</code>.">下面的截图和设计稿用的都是示例数据,不连任何板子。要用真正的界面,启动 <code>alb-api</code>(默认端口 8765),再打开 <code>http://&lt;host&gt;:8765/app/</code>。</p></div>
-  </section>
-
-  <!-- ================= designed pages ================= -->
-  <section class="wp-section" id="pages">
-    <h2 data-en="Seven designed pages">七张设计稿</h2>
-    <p class="wp-sub" data-en="Each picture links to an interactive design page: menus open, tabs switch, the assistant slides out. The real app builds the same pages with the same stylesheet.">每张图都能点开交互设计稿:菜单能展开、页签能切换、助手能拉出来。真正的界面用同一份样式表做出同样的页面。</p>
-
-    <div class="wp-gallery">
-
-      <article class="card card--outlined wp-shot wp-shot--feature">
-        <a class="wp-shot__img" href="webui-preview-v3.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/overview-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="总览设计稿截图:在线设备、板子状态、开机各阶段、四条通道">
-          <img class="wp-en-only" src="assets/v3/shots/overview-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Overview design page: devices online, board state, boot stages, four channels">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="overview"></i></span><h3 data-en="Overview">总览</h3><span class="pill" data-en="Device">设备</span></div>
-          <p data-en="Start here: which devices are online, which boot stage the current board is in, which of the four channels reach it, which part of the last boot was slow, and what crashed lately. Further down is the whole alb service at a glance: which model backends respond and which agent sessions are running.">打开网页先看这里:哪些设备在线、当前板子停在开机的哪一步、四条通道哪几条能连上、上次开机慢在哪一段、最近有哪些崩溃。页面下方是整个 alb 服务的概况:哪些模型后端能用、有没有正在跑的 AI 会话。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
-      <article class="card card--outlined wp-shot">
-        <a class="wp-shot__img" href="webui-preview-v3-console.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/console-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="控制台设计稿截图:adb shell 终端和常用命令">
-          <img class="wp-en-only" src="assets/v3/shots/console-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Console design page: adb shell terminal and saved commands">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="terminal"></i></span><h3 data-en="Console">控制台</h3><span class="pill" data-en="Device">设备</span></div>
-          <p data-en="adb shell and the serial console in the browser, one tab each; saved commands run with one click and every command lands in the audit log. On the serial tab a Typing switch keeps stray keys away from the board, so they cannot stop the boot countdown.">在浏览器里开 adb shell 和串口控制台,一个页签一个;常用命令点一下就跑,每条命令都记进操作记录。串口页签有「键盘输入」开关,关着时按键不发给板子,免得误按停住开机倒计时。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-console.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
-      <article class="card card--outlined wp-shot">
-        <a class="wp-shot__img" href="webui-preview-v3-logs.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/logs-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="日志设计稿截图:按级别着色的 logcat 和每秒行数柱状图">
-          <img class="wp-en-only" src="assets/v3/shots/logs-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Logs design page: logcat coloured by level, with a lines-per-second bar chart">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="logs"></i></span><h3 data-en="Logs">日志</h3><span class="pill" data-en="Device">设备</span></div>
-          <p data-en="Live logcat, kernel messages and serial output, filtered by level, tag or keyword, plus search across everything already recorded. Serial output can be captured to a file and the captures are listed for opening or deleting; from any line, jump to the timeline to see what happened around it.">实时看 logcat、内核日志和串口输出,按级别、tag、关键字过滤,也能在所有已录下的日志里搜。串口输出可以抓一段存成文件,抓过的文件列在页面上,能打开也能删;看中某一行,可以跳到时间轴看它前后发生了什么。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-logs.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
-      <article class="card card--outlined wp-shot">
-        <a class="wp-shot__img" href="webui-preview-v3-timeline.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/timeline-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="时间轴设计稿截图:串口、dmesg、logcat、烧录四条轨道对在同一个时钟上">
-          <img class="wp-en-only" src="assets/v3/shots/timeline-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Timeline design page: serial, dmesg, logcat and flash tracks on one clock">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="timeline"></i></span><h3 data-en="Timeline">时间轴</h3><span class="pill" data-en="Device">设备</span></div>
-          <p data-en="Serial, dmesg, logcat and flash jobs on one clock. When a boot is slow or crashes, this is where you see what went wrong first; one button jumps to the first problem.">串口、dmesg、logcat 和烧录作业放在同一个时钟上。板子开机变慢或崩溃时,在这里看谁先出事,一个按钮跳到第一个问题。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-timeline.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
-      <article class="card card--outlined wp-shot">
-        <a class="wp-shot__img" href="webui-preview-v3-flash.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/flash-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="烧录设计稿截图:选清单、检查计划、执行三步和作业日志">
-          <img class="wp-en-only" src="assets/v3/shots/flash-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Flash design page: pick a manifest, check the plan, run it, with the job log">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="bolt"></i></span><h3 data-en="Flash">烧录</h3><span class="pill" data-en="Flash">烧录</span></div>
-          <p data-en="Flash a whole package or one partition with fastboot, or type fastboot commands. A whole package becomes a plan first: untick the rows you don&#39;t want, then run it. The board is identified before anything is written, and the serial console is recorded throughout.">用 fastboot 烧整包、烧单个分区,或者直接敲 fastboot 命令。整包先出计划,在表格里勾掉不烧的行再执行;写之前先核对板子是谁,全程同时录串口。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-flash.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
-      <article class="card card--outlined wp-shot">
-        <a class="wp-shot__img" href="webui-preview-v3-bench.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/bench-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="台架设计稿截图:板子和串口对照表、USB 设备与驱动状态、台架 agent">
-          <img class="wp-en-only" src="assets/v3/shots/bench-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Bench design page: boards and serial ports, USB devices with driver state, the bench agent">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="usb"></i></span><h3 data-en="Bench">台架</h3><span class="pill" data-en="Bench">台架</span></div>
-          <p data-en="The Windows machine the boards are plugged into: which board sits on which serial port, which USB devices it sees and whether their drivers are installed. Update or start its agent remotely, and read the bench logs in a large view.">板子插着的那台 Windows 电脑:哪块板接在哪个串口、USB 上看到哪些设备、驱动装好没有。那边的 agent 可以远程更新和启动,台架日志可以放大到整屏看。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-bench.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
-      <article class="card card--outlined wp-shot">
-        <a class="wp-shot__img" href="webui-preview-v3-chat.html" tabindex="-1">
-          <img class="wp-zh-only" src="assets/v3/shots/chat-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="对话设计稿截图:助手调用 alb 工具分析一次内核崩溃,工具卡展开显示参数和输出">
-          <img class="wp-en-only" src="assets/v3/shots/chat-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Chat design page: the assistant calls alb tools to look into a kernel panic, with a tool card expanded to show arguments and output">
-        </a>
-        <div class="wp-shot__body">
-          <div class="wp-shot__head"><span class="wp-shot__ic"><i data-ic="chat"></i></span><h3 data-en="Chat">对话</h3><span class="pill" data-en="Assistant">助手</span></div>
-          <p data-en="Ask about the board in plain words and cite a log, a problem or a time range with @. With agent mode on, the model reads logs and runs alb tools itself; each tool call expands to show its arguments and output, and long output opens in a large view. The model can run on the host, behind a cloud API, or on the board.">用大白话问板子的事,用 @ 引用一段日志、一个问题或一段时间。开了 Agent 模式,模型会自己读日志、调用 alb 工具,每次调用都能展开看参数和输出,长输出可以放大查看;模型可以跑在本机、云端 API 或板子上。</p>
-          <p class="wp-caveat" data-en="Not built yet: the backend does not yet ask before a tool changes the board (the draft shows that step), and the on-board option can only look for an inference service so far.">还没做的:后端还不会在工具改动板子前先问你(设计稿里画了这一步);板上模型目前只能探测板子上有没有推理服务。</p>
-          <a class="btn btn--text wp-shot__link" href="webui-preview-v3-chat.html"><span data-en="Open the interactive design">打开交互设计稿</span><i data-ic="arrow-right"></i></a>
-        </div>
-      </article>
-
+    <h1><span class="lang-en">Debug a board <em>from the browser</em></span><span class="lang-zh">在<em>浏览器</em>里调试板子</span></h1>
+    <p class="lead">
+      <span class="lang-en">The hub serves a web UI at <code>/app/</code>: board state, adb shell and serial console, logs, one timeline for every source, fastboot flashing and the bench machine, with an assistant you can pull out on any page. It follows Google's Material 3, comes in light and dark, and treats Chinese and English as equals.</span>
+      <span class="lang-zh">hub 在 <code>/app/</code> 提供网页界面：看板子状态、开 adb shell 和串口、查日志、把各路日志对到同一条时间轴、用 fastboot 烧录、管理台架电脑，任何页面都能拉出助手。界面按 Google 的 Material 3 规范做，有浅色和深色，中文和英文同等对待。</span>
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--filled" href="webui-preview-v3.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x='3' y='3' width='7.5' height='7.5' rx='1.5'/><rect x='13.5' y='3' width='7.5' height='7.5' rx='1.5'/><rect x='3' y='13.5' width='7.5' height='7.5' rx='1.5'/><rect x='13.5' y='13.5' width='7.5' height='7.5' rx='1.5'/></svg><span class="lang-en">Open the overview design</span><span class="lang-zh">打开总览设计稿</span></a>
+      <a class="btn btn--outlined" href="webui-preview-v3-styles.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12'/><circle cx='16' cy='6' r='2'/><circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/></svg><span class="lang-en">7 styles compared</span><span class="lang-zh">7 套风格对比</span></a>
+      <a class="btn btn--tonal" href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/web-api.md"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='m8 7-5 5 5 5M16 7l5 5-5 5'/></svg><span class="lang-en">Web API reference</span><span class="lang-zh">Web API 参考</span></a>
     </div>
-  </section>
+    <div class="note"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx='12' cy='12' r='9'/><path d='M12 11v6M12 7.5h.01'/></svg><p>
+      <span class="lang-en">The screenshots and design pages below use sample data and are not connected to any board. To use the real UI, start <code>alb-api</code> (port 8765 by default) and open <code>http://&lt;host&gt;:8765/app/</code>.</span>
+      <span class="lang-zh">下面的截图和设计稿用的都是示例数据，不连任何板子。要用真正的界面，启动 <code>alb-api</code>（默认端口 8765），再打开 <code>http://&lt;host&gt;:8765/app/</code>。</span>
+    </p></div>
+    <nav class="onpage" aria-label="On this page">
+      <span class="onpage__label"><span class="lang-en">On this page</span><span class="lang-zh">本页</span></span>
+      <a class="chip" href="#pages"><span class="lang-en">Pages</span><span class="lang-zh">页面</span></a>
+      <a class="chip" href="#common"><span class="lang-en">On every page</span><span class="lang-zh">共同部分</span></a>
+      <a class="chip" href="#archive"><span class="lang-en">Archive</span><span class="lang-zh">旧设计</span></a>
+    </nav>
+  </div>
+</section>
 
-  <!-- ================= common to every page ================= -->
-  <section class="wp-section" id="common">
-    <h2 data-en="On every page">每一页都有的</h2>
-    <p class="wp-sub" data-en="The pages share one frame, so the board and its channels stay in view wherever you are.">所有页面共用一个外框,不管在哪一页,当前板子和它的通道状态都在眼前。</p>
-
-    <div class="wp-common">
-      <div class="card card--outlined">
-        <h3><i data-ic="plug"></i><span data-en="Top bar">顶栏</span></h3>
-        <p data-en="Shows the active board and the state of its four channels: adb, serial, fastboot and the bench. Switch boards from the same place.">一直显示当前板子,以及 adb、串口、fastboot、台架四条通道的状态。切换板子也在这里。</p>
-      </div>
-      <div class="card card--outlined">
-        <h3><i data-ic="menu"></i><span data-en="Grouped navigation">分组导航</span></h3>
-        <p data-en="Five groups: Device, Flash, Bench, Assistant, System. <span class=&quot;wp-nowrap&quot;><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd></span> searches the pages; old <code>/inspect/…</code> addresses redirect to the new pages.">分设备、烧录、台架、助手、系统五组。按 <span class="wp-nowrap"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd></span> 搜索页面;旧的 <code>/inspect/…</code> 地址会自动跳到新页面。</p>
-      </div>
-      <div class="card card--outlined">
-        <h3><i data-ic="spark"></i><span data-en="Assistant sheet">助手侧栏</span></h3>
-        <p data-en="Opens from the top bar on any page and shares one conversation with the Chat page. On the overview, logs, timeline and problems pages, a line or a crash can be handed to it with its context.">任何页面都能从顶栏拉出来,和对话页共用同一段对话。总览、日志、时间轴、问题页上的一行日志或一次崩溃,可以带着上下文直接交给它。</p>
-      </div>
-      <div class="card card--outlined">
-        <h3><i data-ic="lang"></i><span data-en="Chinese and English">中文和英文</span></h3>
-        <p data-en="Both are first-class, not one translated from the other. Fonts ship with the page (Roboto Flex, Roboto Mono and a common-character subset of Noto Sans SC); nothing is fetched from the network.">两种语言同等对待,不是一种翻译另一种。字体随页面打包(Roboto Flex、Roboto Mono 和 Noto Sans SC 常用字子集),不从网上加载。</p>
-      </div>
-      <div class="card card--outlined">
-        <h3><i data-ic="moon"></i><span data-en="Light and dark">浅色和深色</span></h3>
-        <p data-en="Follows the system by default, or pin either one. Every colour is an M3 colour role (<code>--md-sys-color-*</code>), so a theme swaps one set of values.">默认跟随系统,也可以固定浅色或深色。颜色都用 M3 的颜色角色(<code>--md-sys-color-*</code>),换主题只换这一组值。</p>
-      </div>
-      <div class="card card--outlined">
-        <h3><i data-ic="phone"></i><span data-en="Works at phone width">手机上也能用</span></h3>
-        <p data-en="A navigation drawer on wide screens, a rail on medium ones, a pop-out menu on phones. Cards stack in one column and wide tables scroll inside their card.">宽屏是导航抽屉,中等宽度变成窄的导航栏,手机上收进菜单按钮。卡片排成一列,宽表格在卡片里横向滚动。</p>
-      </div>
+<!-- ============================== DESIGNED PAGES ============================== -->
+<section class="section" id="pages">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Gallery</span><span class="lang-zh">图集</span></span>
+      <h2><span class="lang-en">Seven designed pages</span><span class="lang-zh">七张设计稿</span></h2>
+      <p class="lead">
+        <span class="lang-en">Each picture links to an interactive design page: menus open, tabs switch, the assistant slides out. The real app builds the same pages with the same stylesheet.</span>
+        <span class="lang-zh">每张图都能点开交互设计稿：菜单能展开、页签能切换、助手能拉出来。真正的界面用同一份样式表做出同样的页面。</span>
+      </p>
     </div>
 
-    <div class="card card--outlined wp-navmap">
-      <div class="card__head"><h3 data-en="Every page in the navigation">导航里的全部页面</h3></div>
-      <div class="wp-navmap__groups">
-        <div class="wp-navmap__device">
-          <h4 data-en="Device">设备</h4>
+    <div class="gallery">
+
+      <article class="card shot shot--feature">
+        <a class="shot__img" href="webui-preview-v3.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/overview-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Overview design page: devices online, board state, boot stages, four channels">
+          <img class="lang-zh" src="assets/v3/shots/overview-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="总览设计稿截图：在线设备、板子状态、开机各阶段、四条通道">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><rect x='3' y='3' width='7.5' height='7.5' rx='1.5'/><rect x='13.5' y='3' width='7.5' height='7.5' rx='1.5'/><rect x='3' y='13.5' width='7.5' height='7.5' rx='1.5'/><rect x='13.5' y='13.5' width='7.5' height='7.5' rx='1.5'/></svg></span><h3><span class="lang-en">Overview</span><span class="lang-zh">总览</span></h3><span class="pill pill--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></div>
+          <p>
+            <span class="lang-en">Start here: which devices are online, which boot stage the current board is in, which of the four channels reach it, which part of the last boot was slow, and what crashed lately. Further down is the whole alb service at a glance: which model backends respond and which agent sessions are running.</span>
+            <span class="lang-zh">打开网页先看这里：哪些设备在线、当前板子停在开机的哪一步、四条通道哪几条能连上、上次开机慢在哪一段、最近有哪些崩溃。页面下方是整个 alb 服务的概况：哪些模型后端能用、有没有正在跑的 AI 会话。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+      <article class="card shot">
+        <a class="shot__img" href="webui-preview-v3-console.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/console-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Console design page: adb shell terminal and saved commands">
+          <img class="lang-zh" src="assets/v3/shots/console-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="控制台设计稿截图：adb shell 终端和常用命令">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><rect x='3' y='4' width='18' height='16' rx='2'/><path d='m7 9 3 3-3 3M12.5 15H17'/></svg></span><h3><span class="lang-en">Console</span><span class="lang-zh">控制台</span></h3><span class="pill pill--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></div>
+          <p>
+            <span class="lang-en">adb shell and the serial console in the browser, one tab each; saved commands run with one click and every command lands in the audit log. On the serial tab a Typing switch keeps stray keys away from the board, so they cannot stop the boot countdown.</span>
+            <span class="lang-zh">在浏览器里开 adb shell 和串口控制台，一个页签一个；常用命令点一下就跑，每条命令都记进操作记录。串口页签有「键盘输入」开关，关着时按键不发给板子，免得误按停住开机倒计时。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3-console.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+      <article class="card shot">
+        <a class="shot__img" href="webui-preview-v3-logs.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/logs-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Logs design page: logcat coloured by level, with a lines-per-second bar chart">
+          <img class="lang-zh" src="assets/v3/shots/logs-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="日志设计稿截图：按级别着色的 logcat 和每秒行数柱状图">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 6h16M4 10h11M4 14h16M4 18h8'/></svg></span><h3><span class="lang-en">Logs</span><span class="lang-zh">日志</span></h3><span class="pill pill--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></div>
+          <p>
+            <span class="lang-en">Live logcat, kernel messages and serial output, filtered by level, tag or keyword, plus search across everything already recorded. Serial output can be captured to a file and the captures are listed for opening or deleting; from any line, jump to the timeline to see what happened around it.</span>
+            <span class="lang-zh">实时看 logcat、内核日志和串口输出，按级别、tag、关键字过滤，也能在所有已录下的日志里搜。串口输出可以抓一段存成文件，抓过的文件列在页面上，能打开也能删；看中某一行，可以跳到时间轴看它前后发生了什么。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3-logs.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+      <article class="card shot">
+        <a class="shot__img" href="webui-preview-v3-timeline.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/timeline-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Timeline design page: serial, dmesg, logcat and flash tracks on one clock">
+          <img class="lang-zh" src="assets/v3/shots/timeline-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="时间轴设计稿截图：串口、dmesg、logcat、烧录四条轨道对在同一个时钟上">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><path d='M3 6h7M13 6h8M3 12h4M10 12h11M3 18h11M17 18h4'/><circle cx='11.5' cy='6' r='1.5'/><circle cx='8.5' cy='12' r='1.5'/><circle cx='15.5' cy='18' r='1.5'/></svg></span><h3><span class="lang-en">Timeline</span><span class="lang-zh">时间轴</span></h3><span class="pill pill--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></div>
+          <p>
+            <span class="lang-en">Serial, dmesg, logcat and flash jobs on one clock. When a boot is slow or crashes, this is where you see what went wrong first; one button jumps to the first problem.</span>
+            <span class="lang-zh">串口、dmesg、logcat 和烧录作业放在同一个时钟上。板子开机变慢或崩溃时，在这里看谁先出事，一个按钮跳到第一个问题。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3-timeline.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+      <article class="card shot">
+        <a class="shot__img" href="webui-preview-v3-flash.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/flash-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Flash design page: pick a manifest, check the plan, run it, with the job log">
+          <img class="lang-zh" src="assets/v3/shots/flash-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="烧录设计稿截图：选清单、检查计划、执行三步和作业日志">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic shot__ic--flash"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><path d='M13 2 4 14h7l-1 8 9-12h-7z'/></svg></span><h3><span class="lang-en">Flash</span><span class="lang-zh">烧录</span></h3><span class="pill pill--flash"><span class="lang-en">Flash</span><span class="lang-zh">烧录</span></span></div>
+          <p>
+            <span class="lang-en">Flash a whole package or one partition with fastboot, or type fastboot commands. A whole package becomes a plan first: untick the rows you don't want, then run it. The board is identified before anything is written, and the serial console is recorded throughout.</span>
+            <span class="lang-zh">用 fastboot 烧整包、烧单个分区，或者直接敲 fastboot 命令。整包先出计划，在表格里勾掉不烧的行再执行；写之前先核对板子是谁，全程同时录串口。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3-flash.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+      <article class="card shot">
+        <a class="shot__img" href="webui-preview-v3-bench.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/bench-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Bench design page: boards and serial ports, USB devices with driver state, the bench agent">
+          <img class="lang-zh" src="assets/v3/shots/bench-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="台架设计稿截图：板子和串口对照表、USB 设备与驱动状态、台架 agent">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic shot__ic--bench"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><path d='M12 3v15M12 3l-2.5 3h5zM12 14l-4-3V8M12 12l4-3V7'/><circle cx='12' cy='19.5' r='1.8'/><rect x='14.8' y='5' width='2.4' height='2.4'/><circle cx='8' cy='7' r='1.2'/></svg></span><h3><span class="lang-en">Bench</span><span class="lang-zh">台架</span></h3><span class="pill pill--bench"><span class="lang-en">Bench</span><span class="lang-zh">台架</span></span></div>
+          <p>
+            <span class="lang-en">The Windows machine the boards are plugged into: which board sits on which serial port, which USB devices it sees and whether their drivers are installed. Update or start its agent remotely, and read the bench logs in a large view.</span>
+            <span class="lang-zh">板子插着的那台 Windows 电脑：哪块板接在哪个串口、USB 上看到哪些设备、驱动装好没有。那边的 agent 可以远程更新和启动，台架日志可以放大到整屏看。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3-bench.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+      <article class="card shot">
+        <a class="shot__img" href="webui-preview-v3-chat.html" tabindex="-1" aria-hidden="true">
+          <img class="lang-en" src="assets/v3/shots/chat-en.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="Chat design page: the assistant calls alb tools to look into a kernel panic, with a tool card expanded to show arguments and output">
+          <img class="lang-zh" src="assets/v3/shots/chat-zh.jpg" width="1440" height="900" loading="lazy" decoding="async" alt="对话设计稿截图：助手调用 alb 工具分析一次内核崩溃，工具卡展开显示参数和输出">
+        </a>
+        <div class="shot__body">
+          <div class="shot__head"><span class="shot__ic shot__ic--assist"><svg class="ic ic--lg" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 5h16v11H9l-5 4z'/></svg></span><h3><span class="lang-en">Chat</span><span class="lang-zh">对话</span></h3><span class="pill pill--assist"><span class="lang-en">Assistant</span><span class="lang-zh">助手</span></span></div>
+          <p>
+            <span class="lang-en">Ask about the board in plain words and cite a log, a problem or a time range with @. With agent mode on, the model reads logs and runs alb tools itself; each tool call expands to show its arguments and output, and long output opens in a large view. The model can run on the host, behind a cloud API, or on the board.</span>
+            <span class="lang-zh">用大白话问板子的事，用 @ 引用一段日志、一个问题或一段时间。开了 Agent 模式，模型会自己读日志、调用 alb 工具，每次调用都能展开看参数和输出，长输出可以放大查看；模型可以跑在本机、云端 API 或板子上。</span>
+          </p>
+          <p class="caveat">
+            <span class="lang-en">Not built yet: the backend does not yet ask before a tool changes the board (the draft shows that step), and the on-board option can only look for an inference service so far.</span>
+            <span class="lang-zh">还没做的：后端还不会在工具改动板子前先问你（设计稿里画了这一步）；板上模型目前只能探测板子上有没有推理服务。</span>
+          </p>
+          <a class="textlink" href="webui-preview-v3-chat.html"><span class="lang-en">Open the interactive design</span><span class="lang-zh">打开交互设计稿</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M5 12h14M13 6l6 6-6 6'/></svg></a>
+        </div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================== COMMON TO EVERY PAGE ============================== -->
+<section class="section section--tone" id="common">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Shared frame</span><span class="lang-zh">共用外框</span></span>
+      <h2><span class="lang-en">On every page</span><span class="lang-zh">每一页都有的</span></h2>
+      <p class="lead">
+        <span class="lang-en">The pages share one frame, so the board and its channels stay in view wherever you are.</span>
+        <span class="lang-zh">所有页面共用一个外框，不管在哪一页，当前板子和它的通道状态都在眼前。</span>
+      </p>
+    </div>
+
+    <div class="grid grid--3 common">
+      <div class="card">
+        <h3><span class="ic-wrap"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4'/></svg></span><span><span class="lang-en">Top bar</span><span class="lang-zh">顶栏</span></span></h3>
+        <p><span class="lang-en">Shows the active board and the state of its four channels: adb, serial, fastboot and the bench. Switch boards from the same place.</span><span class="lang-zh">一直显示当前板子，以及 adb、串口、fastboot、台架四条通道的状态。切换板子也在这里。</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="ic-wrap"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 6h16M4 12h16M4 18h16'/></svg></span><span><span class="lang-en">Grouped navigation</span><span class="lang-zh">分组导航</span></span></h3>
+        <p><span class="lang-en">Five groups: Device, Flash, Bench, Assistant, System. <span class="nowrap"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd></span> searches the pages; old <code>/inspect/…</code> addresses redirect to the new pages.</span><span class="lang-zh">分设备、烧录、台架、助手、系统五组。按 <span class="nowrap"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd></span> 搜索页面；旧的 <code>/inspect/…</code> 地址会自动跳到新页面。</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="ic-wrap"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M12 3c.6 4.2 2.8 6.4 7 7-4.2.6-6.4 2.8-7 7-.6-4.2-2.8-6.4-7-7 4.2-.6 6.4-2.8 7-7z'/></svg></span><span><span class="lang-en">Assistant sheet</span><span class="lang-zh">助手侧栏</span></span></h3>
+        <p><span class="lang-en">Opens from the top bar on any page and shares one conversation with the Chat page. On the overview, logs, timeline and problems pages, a line or a crash can be handed to it with its context.</span><span class="lang-zh">任何页面都能从顶栏拉出来，和对话页共用同一段对话。总览、日志、时间轴、问题页上的一行日志或一次崩溃，可以带着上下文直接交给它。</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="ic-wrap"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 5h9M8.5 3v2M6 5c.5 3.5 2.5 6 6 7.5M11 5c-.8 4-3.2 6.8-7 8.5M13 21l4-9 4 9M14.4 18h5.2'/></svg></span><span><span class="lang-en">Chinese and English</span><span class="lang-zh">中文和英文</span></span></h3>
+        <p><span class="lang-en">Both are first-class, not one translated from the other. Fonts ship with the page (Roboto Flex, Roboto Mono and a common-character subset of Noto Sans SC); nothing is fetched from the network.</span><span class="lang-zh">两种语言同等对待，不是一种翻译另一种。字体随页面打包（Roboto Flex、Roboto Mono 和 Noto Sans SC 常用字子集），不从网上加载。</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="ic-wrap"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d='M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'/></svg></span><span><span class="lang-en">Light and dark</span><span class="lang-zh">浅色和深色</span></span></h3>
+        <p><span class="lang-en">Follows the system by default, or pin either one. Every colour is an M3 colour role (<code>--md-sys-color-*</code>), so a theme swaps one set of values.</span><span class="lang-zh">默认跟随系统，也可以固定浅色或深色。颜色都用 M3 的颜色角色（<code>--md-sys-color-*</code>），换主题只换这一组值。</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="ic-wrap"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x='6.5' y='2.5' width='11' height='19' rx='2.5'/><path d='M10.5 18.5h3'/></svg></span><span><span class="lang-en">Works at phone width</span><span class="lang-zh">手机上也能用</span></span></h3>
+        <p><span class="lang-en">A navigation drawer on wide screens, a rail on medium ones, a pop-out menu on phones. Cards stack in one column and wide tables scroll inside their card.</span><span class="lang-zh">宽屏是导航抽屉，中等宽度变成窄的导航栏，手机上收进菜单按钮。卡片排成一列，宽表格在卡片里横向滚动。</span></p>
+      </div>
+    </div>
+
+    <div class="card navmap">
+      <h3><span class="lang-en">Every page in the navigation</span><span class="lang-zh">导航里的全部页面</span></h3>
+      <div class="navmap__groups">
+        <div class="navmap__device">
+          <h4><span class="lang-en">Device</span><span class="lang-zh">设备</span></h4>
           <ul>
-            <li><i data-ic="overview" class="ic--sm"></i><a href="webui-preview-v3.html" data-en="Overview">总览</a></li>
-            <li><i data-ic="terminal" class="ic--sm"></i><a href="webui-preview-v3-console.html" data-en="Console">控制台</a></li>
-            <li><i data-ic="logs" class="ic--sm"></i><a href="webui-preview-v3-logs.html" data-en="Logs">日志</a></li>
-            <li><i data-ic="timeline" class="ic--sm"></i><a href="webui-preview-v3-timeline.html" data-en="Timeline">时间轴</a></li>
-            <li><i data-ic="chart" class="ic--sm"></i><span data-en="Performance">性能</span></li>
-            <li><i data-ic="folder" class="ic--sm"></i><span data-en="Files">文件</span></li>
-            <li><i data-ic="apps" class="ic--sm"></i><span data-en="Apps">应用</span></li>
-            <li><i data-ic="phone" class="ic--sm"></i><span><span data-en="Screen">屏幕</span><small data-en="screenshots, UI tree">截图、UI 树</small></span></li>
-            <li><i data-ic="bug" class="ic--sm"></i><span><span data-en="Problems">问题</span><small>pstore · ANR · tombstone · bugreport</small></span></li>
-            <li><i data-ic="info" class="ic--sm"></i><span data-en="System info">系统信息</span></li>
-            <li><i data-ic="battery" class="ic--sm"></i><span data-en="Power">电源</span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x='3' y='3' width='7.5' height='7.5' rx='1.5'/><rect x='13.5' y='3' width='7.5' height='7.5' rx='1.5'/><rect x='3' y='13.5' width='7.5' height='7.5' rx='1.5'/><rect x='13.5' y='13.5' width='7.5' height='7.5' rx='1.5'/></svg><a href="webui-preview-v3.html"><span class="lang-en">Overview</span><span class="lang-zh">总览</span></a></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x='3' y='4' width='18' height='16' rx='2'/><path d='m7 9 3 3-3 3M12.5 15H17'/></svg><a href="webui-preview-v3-console.html"><span class="lang-en">Console</span><span class="lang-zh">控制台</span></a></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 6h16M4 10h11M4 14h16M4 18h8'/></svg><a href="webui-preview-v3-logs.html"><span class="lang-en">Logs</span><span class="lang-zh">日志</span></a></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M3 6h7M13 6h8M3 12h4M10 12h11M3 18h11M17 18h4'/><circle cx='11.5' cy='6' r='1.5'/><circle cx='8.5' cy='12' r='1.5'/><circle cx='15.5' cy='18' r='1.5'/></svg><a href="webui-preview-v3-timeline.html"><span class="lang-en">Timeline</span><span class="lang-zh">时间轴</span></a></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M3 20h18M5 16l4-5 4 3 6-8'/></svg><span><span class="lang-en">Performance</span><span class="lang-zh">性能</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/></svg><span><span class="lang-en">Files</span><span class="lang-zh">文件</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx='7' cy='7' r='3'/><circle cx='17' cy='7' r='3'/><circle cx='7' cy='17' r='3'/><circle cx='17' cy='17' r='3'/></svg><span><span class="lang-en">Apps</span><span class="lang-zh">应用</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x='6.5' y='2.5' width='11' height='19' rx='2.5'/><path d='M10.5 18.5h3'/></svg><span><span class="lang-en">Screen</span><span class="lang-zh">屏幕</span><small><span class="lang-en">screenshots, UI tree</span><span class="lang-zh">截图、UI 树</span></small></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x='7' y='7' width='10' height='13' rx='5'/><path d='M9 7a3 3 0 0 1 6 0M3 13h4M17 13h4M4 8l3 2M20 8l-3 2M4 19l3-2M20 19l-3-2M12 11v9'/></svg><span><span class="lang-en">Problems</span><span class="lang-zh">问题</span><small>pstore · ANR · tombstone · bugreport</small></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx='12' cy='12' r='9'/><path d='M12 11v6M12 7.5h.01'/></svg><span><span class="lang-en">System info</span><span class="lang-zh">系统信息</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x='3' y='7' width='16' height='10' rx='2'/><path d='M21 10v4M6 10h6v4H6z'/></svg><span><span class="lang-en">Power</span><span class="lang-zh">电源</span></span></li>
           </ul>
         </div>
         <div>
-          <h4 data-en="Flash">烧录</h4>
+          <h4><span class="lang-en">Flash</span><span class="lang-zh">烧录</span></h4>
           <ul>
-            <li><i data-ic="bolt" class="ic--sm"></i><span><a href="webui-preview-v3-flash.html" data-en="Flash">烧录</a><small data-en="whole package, one partition, fastboot commands">整包、单个分区、fastboot 命令</small></span></li>
-            <li><i data-ic="sliders" class="ic--sm"></i><span data-en="Board config">配置分区</span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M13 2 4 14h7l-1 8 9-12h-7z'/></svg><span><a href="webui-preview-v3-flash.html"><span class="lang-en">Flash</span><span class="lang-zh">烧录</span></a><small><span class="lang-en">whole package, one partition, fastboot commands</span><span class="lang-zh">整包、单个分区、fastboot 命令</span></small></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12'/><circle cx='16' cy='6' r='2'/><circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/></svg><span><span class="lang-en">Board config</span><span class="lang-zh">配置分区</span></span></li>
           </ul>
         </div>
         <div>
-          <h4 data-en="Bench">台架</h4>
+          <h4><span class="lang-en">Bench</span><span class="lang-zh">台架</span></h4>
           <ul>
-            <li><i data-ic="usb" class="ic--sm"></i><span><a href="webui-preview-v3-bench.html" data-en="Bench">台架</a><small data-en="boards, USB, agent, logs, operation table">板子、USB、agent、日志、操作表</small></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M12 3v15M12 3l-2.5 3h5zM12 14l-4-3V8M12 12l4-3V7'/><circle cx='12' cy='19.5' r='1.8'/><rect x='14.8' y='5' width='2.4' height='2.4'/><circle cx='8' cy='7' r='1.2'/></svg><span><a href="webui-preview-v3-bench.html"><span class="lang-en">Bench</span><span class="lang-zh">台架</span></a><small><span class="lang-en">boards, USB, agent, logs, operation table</span><span class="lang-zh">板子、USB、agent、日志、操作表</span></small></span></li>
           </ul>
         </div>
         <div>
-          <h4 data-en="Assistant">助手</h4>
+          <h4><span class="lang-en">Assistant</span><span class="lang-zh">助手</span></h4>
           <ul>
-            <li><i data-ic="chat" class="ic--sm"></i><a href="webui-preview-v3-chat.html" data-en="Chat">对话</a></li>
-            <li><i data-ic="flask" class="ic--sm"></i><span data-en="Playground">模型试验</span></li>
-            <li><i data-ic="history" class="ic--sm"></i><span data-en="Sessions">会话记录</span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M4 5h16v11H9l-5 4z'/></svg><a href="webui-preview-v3-chat.html"><span class="lang-en">Chat</span><span class="lang-zh">对话</span></a></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7 15h10'/></svg><span><span class="lang-en">Playground</span><span class="lang-zh">模型试验</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M3 12a9 9 0 1 0 3-6.7L3 8'/><path d='M3 3v5h5M12 7v5l3 2'/></svg><span><span class="lang-en">Sessions</span><span class="lang-zh">会话记录</span></span></li>
           </ul>
         </div>
         <div>
-          <h4 data-en="System">系统</h4>
+          <h4><span class="lang-en">System</span><span class="lang-zh">系统</span></h4>
           <ul>
-            <li><i data-ic="check-circle" class="ic--sm"></i><span data-en="Health check">环境检查</span></li>
-            <li><i data-ic="shield" class="ic--sm"></i><span data-en="Audit log">操作记录</span></li>
-            <li><i data-ic="link" class="ic--sm"></i><span data-en="Connections">连接</span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><circle cx='12' cy='12' r='9'/><path d='m8 12 3 3 5-6'/></svg><span><span class="lang-en">Health check</span><span class="lang-zh">环境检查</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z'/></svg><span><span class="lang-en">Audit log</span><span class="lang-zh">操作记录</span></span></li>
+            <li><svg class="ic ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/></svg><span><span class="lang-en">Connections</span><span class="lang-zh">连接</span></span></li>
           </ul>
         </div>
       </div>
-      <p class="wp-navmap__foot" data-en="Linked pages have an interactive design. The others keep their existing features and moved into the new style.">带链接的页面有交互设计稿;其余页面保留原来的功能,换成了新样式。</p>
+      <p class="navmap__foot"><span class="lang-en">Linked pages have an interactive design. The others keep their existing features and moved into the new style.</span><span class="lang-zh">带链接的页面有交互设计稿；其余页面保留原来的功能，换成了新样式。</span></p>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ================= archive ================= -->
-  <section class="wp-section" id="archive">
-    <h2 data-en="Older designs (archive)">旧设计(存档)</h2>
-    <p class="wp-sub" data-en="The v2 design pages used a different palette and are replaced by v3. They stay here for comparison only.">v2 设计稿用的是另一套配色,已经被 v3 取代,留在这里只做对照。</p>
-    <ul class="wp-archive">
-      <li><a class="chip" href="webui-preview-v2.html" data-en="Dashboard">总览</a></li>
-      <li><a class="chip" href="webui-preview-v2-inspect-console.html" data-en="Consoles">控制台</a></li>
-      <li><a class="chip" href="webui-preview-v2-log-search.html" data-en="Log search">日志搜索</a></li>
-      <li><a class="chip" href="webui-preview-v2-screenshot.html" data-en="Screenshot">截图</a></li>
-      <li><a class="chip" href="webui-preview-v2-files.html" data-en="Files">文件</a></li>
-      <li><a class="chip" href="webui-preview-v2-app.html" data-en="Apps">应用</a></li>
-      <li><a class="chip" href="webui-preview-v2-diag.html" data-en="Diagnostics">诊断</a></li>
-      <li><a class="chip" href="webui-preview-v2-power.html" data-en="Power">电源</a></li>
-      <li><a class="chip" href="webui-preview-v2-flash.html" data-en="Flash">烧录</a></li>
-      <li><a class="chip" href="webui-preview-v2-playground.html" data-en="Playground">模型试验</a></li>
-      <li><a class="chip" href="webui-preview-v2-sessions.html" data-en="Sessions">会话</a></li>
-      <li><a class="chip" href="webui-preview-v2-session-detail.html" data-en="Session detail">会话详情</a></li>
-      <li><a class="chip" href="webui-preview-v2-doctor.html" data-en="Health check">环境检查</a></li>
-      <li><a class="chip" href="webui-preview-v2-audit.html" data-en="Audit">操作记录</a></li>
-      <li><a class="chip" href="webui-preview-v2-connections.html" data-en="Connections">连接</a></li>
+<!-- ============================== ARCHIVE ============================== -->
+<section class="section" id="archive">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Archive</span><span class="lang-zh">存档</span></span>
+      <h2><span class="lang-en">Older designs (archive)</span><span class="lang-zh">旧设计（存档）</span></h2>
+      <p class="lead">
+        <span class="lang-en">The v2 design pages used a different palette and are replaced by v3. They stay here for comparison only.</span>
+        <span class="lang-zh">v2 设计稿用的是另一套配色，已经被 v3 取代，留在这里只做对照。</span>
+      </p>
+    </div>
+    <ul class="archive">
+      <li><a class="chip" href="webui-preview-v2.html"><span class="lang-en">Dashboard</span><span class="lang-zh">总览</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-inspect-console.html"><span class="lang-en">Consoles</span><span class="lang-zh">控制台</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-log-search.html"><span class="lang-en">Log search</span><span class="lang-zh">日志搜索</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-screenshot.html"><span class="lang-en">Screenshot</span><span class="lang-zh">截图</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-files.html"><span class="lang-en">Files</span><span class="lang-zh">文件</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-app.html"><span class="lang-en">Apps</span><span class="lang-zh">应用</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-diag.html"><span class="lang-en">Diagnostics</span><span class="lang-zh">诊断</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-power.html"><span class="lang-en">Power</span><span class="lang-zh">电源</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-flash.html"><span class="lang-en">Flash</span><span class="lang-zh">烧录</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-playground.html"><span class="lang-en">Playground</span><span class="lang-zh">模型试验</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-sessions.html"><span class="lang-en">Sessions</span><span class="lang-zh">会话</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-session-detail.html"><span class="lang-en">Session detail</span><span class="lang-zh">会话详情</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-doctor.html"><span class="lang-en">Health check</span><span class="lang-zh">环境检查</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-audit.html"><span class="lang-en">Audit</span><span class="lang-zh">操作记录</span></a></li>
+      <li><a class="chip" href="webui-preview-v2-connections.html"><span class="lang-en">Connections</span><span class="lang-zh">连接</span></a></li>
     </ul>
-  </section>
+  </div>
+</section>
 
 </main>
 
-<footer class="wp-foot">
-  <div class="wp-foot__in">
-    <a href="index.html" data-en="← Back to the homepage">← 回到首页</a>
-    <a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
-    <span>© 2026 android-llm-bridge contributors · Apache 2.0</span>
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html" aria-current="page"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
   </div>
 </footer>
 
-<script>
-  /* Language and theme for this page. Same storage keys as the v3 design
-     pages (alb-v3-lang / alb-v3-theme), so a choice made here carries over;
-     the language is also written to the homepage key (alb.lang). */
-  (function () {
-    "use strict";
-    var root = document.documentElement;
-    var ICONS = window.ALB_ICONS || {};
-    var store = {
-      get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-      set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } }
-    };
-    function icon(name, cls) {
-      return '<svg class="ic' + (cls ? " " + cls : "") + '" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || "") + "</svg>";
-    }
-    function hydrateIcons() {
-      document.querySelectorAll("i[data-ic]").forEach(function (el) {
-        var tmp = document.createElement("span");
-        tmp.innerHTML = icon(el.dataset.ic, el.className);
-        el.replaceWith(tmp.firstChild);
-      });
-    }
-
-    var stored = store.get("alb-v3-lang") || store.get("alb.lang");
-    var lang = stored === "en" || stored === "zh" ? stored
-      : ((navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh" : "en");
-    var TITLE = { zh: "Web 界面 · android-llm-bridge", en: "Web UI · android-llm-bridge" };
-
-    function applyLang() {
-      document.querySelectorAll("[data-en]").forEach(function (el) {
-        if (el.dataset.zh === undefined) el.dataset.zh = el.innerHTML;
-        el.innerHTML = lang === "en" ? el.dataset.en : el.dataset.zh;
-      });
-      document.querySelectorAll("[data-en-label]").forEach(function (el) {
-        if (el.dataset.zhLabel === undefined) el.dataset.zhLabel = el.getAttribute("aria-label") || "";
-        el.setAttribute("aria-label", lang === "en" ? el.dataset.enLabel : el.dataset.zhLabel);
-      });
-      root.lang = lang === "en" ? "en" : "zh-CN";
-      document.title = TITLE[lang];
-      var b = document.getElementById("lang-btn");
-      b.setAttribute("lang", lang === "en" ? "zh-CN" : "en");
-      b.innerHTML = icon("lang") + "<span>" + (lang === "en" ? "中文" : "English") + "</span>";
-      b.setAttribute("aria-label", lang === "en" ? "切换到中文" : "Switch to English");
-      hydrateIcons();
-      applyTheme();
-    }
-
-    var themes = ["system", "light", "dark"];
-    var theme = store.get("alb-v3-theme");
-    if (themes.indexOf(theme) < 0) theme = "system";
-    function applyTheme() {
-      if (theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme);
-      var b = document.getElementById("theme-btn");
-      var zh = { system: "主题:跟随系统", light: "主题:浅色", dark: "主题:深色" }[theme];
-      var en = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" }[theme];
-      b.innerHTML = icon({ system: "monitor", light: "sun", dark: "moon" }[theme]);
-      b.setAttribute("aria-label", lang === "en" ? en : zh);
-      b.title = b.getAttribute("aria-label");
-    }
-
-    document.getElementById("lang-btn").addEventListener("click", function () {
-      lang = lang === "en" ? "zh" : "en";
-      store.set("alb-v3-lang", lang);
-      store.set("alb.lang", lang);
-      applyLang();
-    });
-    document.getElementById("theme-btn").addEventListener("click", function () {
-      theme = themes[(themes.indexOf(theme) + 1) % themes.length];
-      store.set("alb-v3-theme", theme);
-      applyTheme();
-    });
-
-    applyLang();
-  })();
-</script>
+<script src="assets/site/site.js" defer></script>
 </body>
 </html>

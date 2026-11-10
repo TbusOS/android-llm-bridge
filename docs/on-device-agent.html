@@ -1,517 +1,752 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>On-device Agent — android-llm-bridge</title>
-    <meta name="description" content="Design notes for pairing alb host with an on-device agent. Gemini Nano / AICore / Gemma-4 via LiteRT. Host brain + device reflex, linked by a WebSocket channel.">
-    <link rel="stylesheet" href="assets/fonts.css">
-    <link rel="stylesheet" href="assets/anthropic.css">
-    <style>
-      .lang-toggle{
-        font-family:var(--font-heading); font-size:13px; font-weight:500;
-        color:var(--anth-text-secondary); background:transparent;
-        border:1px solid var(--anth-light-gray); border-radius:var(--radius-pill);
-        padding:6px 14px; cursor:pointer;
-        transition:border-color var(--duration-sm) var(--ease-anth), color var(--duration-sm) var(--ease-anth);
-      }
-      .lang-toggle:hover{border-color:var(--anth-orange); color:var(--anth-orange);}
-      .phase-card{
-        background:#ffffff; border:1px solid var(--anth-light-gray);
-        border-radius:var(--radius-lg); padding:var(--space-6);
-        box-shadow:var(--shadow-card);
-      }
-      .phase-num{
-        font-family:var(--font-heading); font-weight:700; font-size:32px;
-        color:var(--anth-orange); line-height:1; margin-bottom:var(--space-3); display:block;
-      }
-      html[lang="en"] .lang-zh,
-      html[lang^="zh"] .lang-en { display:none !important; }
-      html[lang^="zh"] body,
-      html[lang^="zh"] p,
-      html[lang^="zh"] li,
-      html[lang^="zh"] h1,
-      html[lang^="zh"] h2,
-      html[lang^="zh"] h3 {
-        font-family:"Poppins","Noto Sans SC","PingFang SC",system-ui,sans-serif;
-      }
-    </style>
-  </head>
-  <body>
-    <header class="anth-nav">
-      <div class="anth-nav-inner">
-        <a href="./" style="font-family:var(--font-heading); font-weight:600; font-size:18px;">android-llm-bridge</a>
-        <nav aria-label="Primary" style="display:flex; align-items:center;">
-          <a href="index.html#features" data-i18n="nav.features">Features</a>
-          <a href="index.html#architecture" data-i18n="nav.architecture">Architecture</a>
-          <a href="index.html#roadmap" data-i18n="nav.roadmap">Roadmap</a>
-          <a href="on-device-agent.html" style="color:var(--anth-orange);" data-i18n="nav.onDevice">On-device Agent</a>
-          <a href="on-device-model-selection.html"><span class="lang-en">Model selection</span><span class="lang-zh">模型选型</span></a>
-        </nav>
-        <div style="display:flex; align-items:center; gap:var(--space-3);">
-          <button class="lang-toggle" onclick="toggleLang()" id="langBtn" aria-label="Toggle language">中文</button>
-          <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge" data-i18n="nav.cta">View on GitHub</a>
-        </div>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-device agent — android-llm-bridge</title>
+<meta name="alb-title-en" content="On-device agent — android-llm-bridge">
+<meta name="alb-title-zh" content="设备端 Agent —— android-llm-bridge">
+<meta name="description" content="Design note, no code yet: pairing the alb host with a small agent on the Android device. Host brain + device reflex, linked by a WebSocket channel; Gemini Nano / AICore / LiteRT / Gemma 4 on the device.">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/on-device-agent.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="On-device agent — android-llm-bridge">
+<meta property="og:description" content="Design note, no code yet: a host brain and a device reflex, linked by one WebSocket channel.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/on-device-agent.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+})();
+</script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<style>
+  /* ---------- page hero ---------- */
+  .page-hero { position: relative; overflow: hidden; }
+  .page-hero .wrap { position: relative; }
+  .page-hero .shape--cookie { width: 320px; height: 320px; right: -90px; top: -80px; background: var(--md-sys-color-primary-container); }
+  .page-hero .shape--clover { width: 150px; height: 150px; right: 15%; bottom: -60px; background: var(--site-uart-container); }
+  @media (max-width: 1000px) { .page-hero .shape { display: none; } }
+  .crumbs { list-style: none; margin: 0 0 20px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
+  .crumbs li + li::before { content: "›"; margin-right: 6px; color: var(--md-sys-color-outline); }
+  .crumbs a { color: var(--md-sys-color-on-surface-variant); text-decoration: none; }
+  .crumbs a:hover { color: var(--md-sys-color-primary); text-decoration: underline; }
+  .hero-meta { margin-top: 14px; font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
+
+  /* status: design only, entry points reserved */
+  .status { margin-top: 32px; max-width: 920px; padding: 20px 22px 22px; border-radius: var(--site-radius-card);
+    background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); }
+  .status__pills { display: flex; flex-wrap: wrap; gap: 8px; }
+  .status__text { margin-top: 12px; font-size: 15.5px; line-height: 1.6; }
+  .status__ports { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .status__ports li { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 16px;
+    background: var(--alb-color-well); font-size: 14px; line-height: 1.45; }
+  .status__ports b { display: block; font-weight: 600; color: var(--md-sys-color-on-surface); }
+  .status__ports .muted { display: block; margin-top: 2px; }
+  .status__ico { flex: none; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center;
+    background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+  .status__ico svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  @media (max-width: 760px) { .status__ports { grid-template-columns: 1fr; } }
+
+  main .section { padding: clamp(56px, 7vw, 96px) 0; }
+  .section__head--tight { margin-bottom: 24px; }
+
+  /* ---------- why: four walls ---------- */
+  .card__icon--uart { background: var(--site-uart-container); color: var(--site-on-uart-container); }
+  .card__icon--kernel { background: var(--site-kernel-container); color: var(--site-on-kernel-container); }
+  .card__icon--job { background: var(--site-job-container); color: var(--site-on-job-container); }
+  .walls .card { padding: 26px; }
+  .walls h3 { margin-top: 2px; }
+  .walls__after { margin-top: 28px; font-size: 18px; line-height: 1.6; max-width: 760px; }
+  .walls__after strong { color: var(--md-sys-color-primary); font-weight: 600; }
+
+  /* ---------- diagram ---------- */
+  .diagram { margin: 0; border-radius: var(--site-radius-panel); background: var(--alb-color-card);
+    border: 1px solid var(--md-sys-color-outline-variant); padding: clamp(8px, 1.6vw, 20px); }
+  .diagram svg { display: block; width: 100%; height: auto; }
+  .diagram .dg-tall { display: none; }
+  @media (max-width: 999px) {
+    .diagram .dg-wide { display: none; }
+    .diagram .dg-tall { display: block; max-width: 440px; margin: 0 auto; }
+  }
+  .diagram figcaption { padding: 14px 8px 6px; font-size: 14px; line-height: 1.5; text-align: center; color: var(--md-sys-color-on-surface-variant); }
+  .dg text { font-family: var(--md-ref-typeface-plain); letter-spacing: 0; }
+  .dg .zone--host { fill: color-mix(in srgb, var(--md-sys-color-primary-container) 50%, var(--md-sys-color-surface-container-low)); }
+  .dg .zone--device { fill: color-mix(in srgb, var(--site-uart-container) 55%, var(--md-sys-color-surface-container-low)); }
+  .dg .box { fill: var(--alb-color-card); stroke: var(--md-sys-color-outline-variant); stroke-width: 1; }
+  .dg .box--bridge { stroke: var(--md-sys-color-primary); stroke-width: 2; }
+  .dg .box--hw { fill: var(--md-sys-color-surface-container-high); stroke: var(--md-sys-color-outline); stroke-width: 1.2; }
+  .dg .box--fb { fill: var(--md-sys-color-surface-container-highest); stroke: none; }
+  .dg .dot--p { fill: var(--md-sys-color-primary); }
+  .dg .dot--k { fill: var(--site-kernel); }
+  .dg .dot--j { fill: var(--site-job); }
+  .dg .dot--u { fill: var(--site-uart); }
+  .dg .dot--g { fill: var(--alb-color-success); }
+  .dg .t-eb { font-size: 14px; font-weight: 600; letter-spacing: .6px; fill: var(--md-sys-color-on-surface-variant); }
+  .dg .t-zone { font-size: 22px; font-weight: 600; fill: var(--md-sys-color-on-surface); }
+  .dg .t-title { font-size: 19px; font-weight: 600; fill: var(--md-sys-color-on-surface); }
+  .dg .t-title--bridge { fill: var(--md-sys-color-primary); }
+  .dg .t-sub { font-size: 15px; fill: var(--md-sys-color-on-surface-variant); }
+  .dg .t-rpc { font-size: 14.5px; font-weight: 600; fill: var(--md-sys-color-primary); }
+  .dg .t-evt { font-size: 14.5px; font-weight: 600; fill: var(--site-uart); }
+  .dg .t-note { font-size: 14px; fill: var(--md-sys-color-on-surface-variant); }
+  .dg .e-rpc { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 2.6; }
+  .dg .e-evt { fill: none; stroke: var(--site-uart); stroke-width: 2.6; }
+  .dg .e-fb { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 1.6; stroke-dasharray: 6 6; }
+  .dg .e-on { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 1.6; }
+  .dg-tall .t-eb { font-size: 12px; }
+  .dg-tall .t-zone { font-size: 17px; }
+  .dg-tall .t-title { font-size: 15px; }
+  .dg-tall .t-sub, .dg-tall .t-rpc, .dg-tall .t-evt { font-size: 12.5px; }
+  .dg-tall .t-note { font-size: 12px; }
+  .mk-p { fill: var(--md-sys-color-primary); }
+  .mk-u { fill: var(--site-uart); }
+  .mk-o { fill: var(--md-sys-color-outline); }
+
+  /* ---------- who does what ---------- */
+  table.t--who { min-width: 640px; }
+  table.t--who td { vertical-align: middle; }
+  .who { display: inline-flex; align-items: center; height: 26px; padding: 0 11px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .who--device { background: var(--site-uart-container); color: var(--site-on-uart-container); }
+  .who--host { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+
+  /* ---------- channel ---------- */
+  .subhead { font-size: 22px; line-height: 1.3; margin: 0 0 18px; }
+  .msg { display: flex; flex-direction: column; gap: 12px; padding: 24px; }
+  .msg h3 { font: 600 17px/1.3 var(--md-ref-typeface-mono); letter-spacing: 0; overflow-wrap: anywhere; }
+  .msg p { margin-top: 0; font-size: 15px; line-height: 1.6; }
+  .dir { align-self: flex-start; display: inline-flex; align-items: center; height: 26px; padding: 0 11px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .dir--up { background: var(--site-uart-container); color: var(--site-on-uart-container); }
+  .dir--down { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+  .note { margin-top: 20px; display: flex; gap: 18px; align-items: flex-start; }
+  .note .card__icon { margin: 0; flex: none; background: var(--md-sys-color-surface-container-lowest); color: var(--md-sys-color-on-tertiary-container); }
+  .note h3 { font-size: 19px; }
+  .note p { margin-top: 6px; font-size: 15.5px; line-height: 1.6; }
+  @media (max-width: 560px) { .note { flex-direction: column; } }
+
+  /* ---------- phases ---------- */
+  .phase { padding: 26px; }
+  .phase__num { width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; margin-bottom: 18px;
+    font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums;
+    background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+  .phase__num--k { background: var(--site-kernel-container); color: var(--site-on-kernel-container); }
+  .phase__num--u { background: var(--site-uart-container); color: var(--site-on-uart-container); }
+  .phase__num--j { background: var(--site-job-container); color: var(--site-on-job-container); }
+  .phase h3 { font-size: 19px; line-height: 1.3; }
+  .phase p { font-size: 15px; line-height: 1.6; }
+
+  /* ---------- FAQ ---------- */
+  .faq { max-width: 860px; border-radius: var(--site-radius-card); background: var(--alb-color-card);
+    border: 1px solid var(--md-sys-color-outline-variant); overflow: hidden; }
+  .faq details + details { border-top: 1px solid var(--alb-color-divider); }
+  .faq summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 18px 24px; font-size: 17px; font-weight: 500; line-height: 1.4; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: ""; flex: none; width: 9px; height: 9px; margin-top: -4px; border-right: 2px solid var(--md-sys-color-on-surface-variant);
+    border-bottom: 2px solid var(--md-sys-color-on-surface-variant); transform: rotate(45deg); transition: transform .2s var(--site-ease); }
+  .faq details[open] summary::after { transform: rotate(-135deg); margin-top: 4px; }
+  .faq summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 5%, transparent); }
+  .faq details p { padding: 0 24px 20px; font-size: 15.5px; line-height: 1.65; color: var(--md-sys-color-on-surface-variant); }
+
+  /* ---------- call to action ---------- */
+  .cta { text-align: center; }
+  .cta h2 { font-size: clamp(28px, 3.6vw, 40px); line-height: 1.2; }
+  .cta p { margin: 14px auto 28px; max-width: 580px; font-size: 17px; line-height: 1.6; color: var(--md-sys-color-on-surface-variant); }
+  .cta__btns { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main"><span class="lang-en">Skip to content</span><span class="lang-zh">跳到正文</span></a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="mk-p" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path class="mk-p" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="mk-u" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path class="mk-u" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="mk-o" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path class="mk-o" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">Topology</span><span class="lang-zh">拓扑</span></a>
+      <a href="./#models"><span class="lang-en">Models</span><span class="lang-zh">模型</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="./#targets"><span class="lang-en">Targets</span><span class="lang-zh">调试对象</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="./#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
+      <a href="./#community"><span class="lang-en">Contribute</span><span class="lang-zh">参与</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ================= hero ================= -->
+<section class="page-hero">
+  <span class="shape shape--cookie shape--spin" aria-hidden="true"></span>
+  <span class="shape shape--clover shape--spin-rev" aria-hidden="true"></span>
+  <div class="wrap">
+    <nav aria-label="Breadcrumb">
+      <ol class="crumbs">
+        <li><a href="./"><span class="lang-en">Home</span><span class="lang-zh">首页</span></a></li>
+        <li aria-current="page"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></li>
+      </ol>
+    </nav>
+    <span class="eyebrow"><span class="lang-en">Vision · M4+</span><span class="lang-zh">愿景 · M4+</span></span>
+    <h1><span class="lang-en">Pairing alb with an on-device agent.</span><span class="lang-zh">alb 与设备端 Agent 的协作方案。</span></h1>
+    <p class="hero-meta"><span class="lang-en">Design note · 2026-04-21 · open for comments</span><span class="lang-zh">设计笔记 · 2026-04-21 · 欢迎讨论</span></p>
+    <p class="lead"><span class="lang-en">This page is a design note, not a shipped feature. It describes how we want alb to evolve past the host-side agent loop — by putting a small agent on the device itself, and keeping both sides talking.</span><span class="lang-zh">这是一份设计笔记，不是已上线的功能。它描述了我们希望 alb 如何从「只在宿主侧跑 agent loop」演进到「宿主 + 设备两端 agent 协作」的路径。</span></p>
+
+    <div class="status" role="note" aria-label="Status">
+      <div class="status__pills">
+        <span class="pill pill--plan"><span class="lang-en">Design only · no code yet</span><span class="lang-zh">只有设计 · 代码还没写</span></span>
+        <span class="pill pill--partial"><span class="lang-en">Entry points reserved</span><span class="lang-zh">已留接入口</span></span>
       </div>
-    </header>
+      <p class="status__text"><span class="lang-en">The on-device agent is a design only; no code has been written for it yet. The current architecture reserves three entry points it can plug into later:</span><span class="lang-zh">设备端 Agent 目前只有设计，代码还没写。架构上留了三个接入口，以后从这里接进来：</span></p>
+      <ol class="status__ports">
+        <li>
+          <span class="status__ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 10h16M10 10v10"/></svg></span>
+          <span><b><span class="lang-en">Bench agent operation table</span><span class="lang-zh">台架 agent 操作表</span></b></span>
+        </li>
+        <li>
+          <span class="status__ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/></svg></span>
+          <span><b><span class="lang-en">Device port channel</span><span class="lang-zh">设备端口通道</span></b><span class="muted"><code>alb port</code></span></span>
+        </li>
+        <li>
+          <span class="status__ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></svg></span>
+          <span><b><span class="lang-en">Model backend registry</span><span class="lang-zh">模型后端注册表</span></b><span class="muted"><span class="lang-en">openai-compat takes a custom address</span><span class="lang-zh">openai-compat 可指定地址</span></span></span>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
 
-    <main>
-      <section class="anth-hero">
-        <div class="anth-container" style="max-width:820px;">
-          <ul class="anth-breadcrumbs" style="margin-bottom:var(--space-4);">
-            <li><a href="index.html" data-i18n="bc.home">Home</a></li>
-            <li data-i18n="bc.now">On-device Agent</li>
-          </ul>
-          <span class="anth-badge" style="background:var(--anth-orange); color:#ffffff;" data-i18n="hero.badge">Vision · M4+</span>
-          <h1 style="margin-top:var(--space-4);">
-            <span class="lang-en">Pairing alb with an on-device agent.</span>
-            <span class="lang-zh">alb 与设备端 Agent 的协作方案。</span>
-          </h1>
-          <p class="anth-caption" data-i18n="hero.meta">Design note · 2026-04-21 · open for comments</p>
-          <p style="font-family:var(--font-body); font-size:20px; line-height:1.6; color:var(--anth-text-secondary); margin-top:var(--space-5);">
-            <span class="lang-en">This page is a design note, not a shipped feature. It describes how we want alb to evolve past the host-side agent loop — by putting a small agent on the device itself, and keeping both sides talking.</span>
-            <span class="lang-zh">这是一份设计笔记，不是已上线的功能。它描述了我们希望 alb 如何从"只在宿主侧跑 agent loop"演进到"宿主 + 设备两端 agent 协作"的路径。</span>
-          </p>
-        </div>
-      </section>
+<!-- ================= why ================= -->
+<section class="section" id="why">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">The problem</span><span class="lang-zh">问题</span></span>
+      <h2><span class="lang-en">Why host-only is not enough.</span><span class="lang-zh">为什么只靠宿主不够。</span></h2>
+      <p class="lead"><span class="lang-en">Today alb runs on Linux hosts — one machine, or a build server plus bench PCs that dial in to it. An LLM reasons on the host, pushes tool calls through adb / ssh / UART, and observes the device from the outside. This works, and the agent loop already streams, but it hits four real walls.</span><span class="lang-zh">现在 alb 跑在 Linux 宿主上 —— 可以是一台机器，也可以是编译机加上主动连回来的台架电脑。LLM 在宿主推理，通过 adb / ssh / UART 发工具调用，从外部观察设备。这套能用，对话循环也已经是流式的，但它撞了四堵墙。</span></p>
+    </div>
 
-      <section class="anth-section">
-        <div class="anth-container anth-container--narrow">
-          <h2 data-i18n="s1.title">Why host-only is not enough.</h2>
-          <p data-i18n="s1.p1">
-            Today alb runs entirely on your Linux (or Mac) host. An LLM reasons on the host, pushes tool calls through adb / ssh / UART, and observes the device from the outside. This works — and M2 just made the loop streaming and cache-friendly — but it hits four real walls.
-          </p>
-          <ol data-i18n-skip>
-            <li data-i18n="s1.l1"><strong>Latency.</strong> adb round-trips are 50–200 ms each. For a trace that walks 30 thread states, that is 3–6 seconds of pure transport — longer than the phenomenon you are trying to observe.</li>
-            <li data-i18n="s1.l2"><strong>Blind spots.</strong> Kernel panics, boot hangs, ramdump windows happen <em>before</em> adb exists. ANR triggers fire in milliseconds; by the time adb says "not responding", you have lost the signal.</li>
-            <li data-i18n="s1.l3"><strong>Cost.</strong> Piping long logcats to a frontier model is expensive and noisy. Most of the tokens are boilerplate the host LLM has already seen a thousand times.</li>
-            <li data-i18n="s1.l4"><strong>Autonomy.</strong> When the device is at a customer site with no dev reachable, nothing on the host can help. The problem reproduces, and no one is there.</li>
-          </ol>
-          <p data-i18n="s1.p2">A small agent on the device closes every one of these gaps — without replacing the host.</p>
-        </div>
-      </section>
+    <div class="grid grid--2 walls">
+      <article class="card">
+        <div class="card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></div>
+        <h3><span class="lang-en">Latency</span><span class="lang-zh">延迟</span></h3>
+        <p><span class="lang-en">adb round-trips are 50–200 ms each. For a trace that walks 30 thread states, that is 3–6 seconds of pure transport — longer than the phenomenon you are trying to observe.</span><span class="lang-zh">一次 adb 往返 50–200 毫秒。看 30 条线程状态的 trace 就是 3–6 秒纯传输开销 —— 比你想观察的现象本身还长。</span></p>
+      </article>
+      <article class="card">
+        <div class="card__icon card__icon--kernel" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/><path d="M4 4l16 16"/></svg></div>
+        <h3><span class="lang-en">Blind spots</span><span class="lang-zh">盲区</span></h3>
+        <p><span class="lang-en">Kernel panics, boot hangs, ramdump windows happen <em>before</em> adb exists. ANR triggers fire in milliseconds; by the time adb says “not responding”, you have lost the signal.</span><span class="lang-zh">内核 panic、启动 hang、ramdump 窗口发生在 adb 起来<em>之前</em>。ANR 触发是毫秒级的；等 adb 报告「not responding」时，信号已经丢了。</span></p>
+      </article>
+      <article class="card">
+        <div class="card__icon card__icon--job" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-6"/></svg></div>
+        <h3><span class="lang-en">Cost</span><span class="lang-zh">成本</span></h3>
+        <p><span class="lang-en">Piping long logcats to a frontier model is expensive and noisy. Most of the tokens are boilerplate the host LLM has already seen a thousand times.</span><span class="lang-zh">把长 logcat 喂给前沿大模型又贵又吵。大部分 token 是宿主 LLM 已经见过一千遍的模板文。</span></p>
+      </article>
+      <article class="card">
+        <div class="card__icon card__icon--uart" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 3l18 18M8.6 16.4a4.8 4.8 0 0 1 6.8 0M5 12.8a9.8 9.8 0 0 1 4.6-2.5M19 12.8a9.8 9.8 0 0 0-2.4-1.8M2 9.2a14.8 14.8 0 0 1 4-2.6M22 9.2A14.8 14.8 0 0 0 10.6 5"/><circle cx="12" cy="19.6" r=".9"/></svg></div>
+        <h3><span class="lang-en">Autonomy</span><span class="lang-zh">离线</span></h3>
+        <p><span class="lang-en">When the device is at a customer site with no dev reachable, nothing on the host can help. The problem reproduces, and no one is there.</span><span class="lang-zh">设备在客户现场、没有开发能接触时，宿主一切能力都白费。问题一直在复现，现场没有人。</span></p>
+      </article>
+    </div>
+    <p class="walls__after"><span class="lang-en">A small agent on the device closes every one of these gaps — <strong>without replacing the host</strong>.</span><span class="lang-zh">在设备上放一个小 agent，把这四个缺口都补上 —— <strong>而且不取代宿主</strong>。</span></p>
+  </div>
+</section>
 
-      <section class="anth-section anth-section--subtle">
-        <div class="anth-container anth-container--wide">
-          <div style="text-align:center; max-width:720px; margin:0 auto var(--space-6);">
-            <h2 data-i18n="s2.title">Host brain, device reflex.</h2>
-            <p style="color:var(--anth-text-secondary); margin-top:var(--space-3);" data-i18n="s2.sub">Two cooperating agents, each doing what it is good at. A shared WebSocket keeps them in lockstep.</p>
-          </div>
+<!-- ================= architecture ================= -->
+<section class="section section--tone" id="architecture">
+  <div class="wrap">
+    <div class="section__head section__head--center">
+      <span class="eyebrow"><span class="lang-en">Architecture</span><span class="lang-zh">架构</span></span>
+      <h2><span class="lang-en">Host brain, device reflex.</span><span class="lang-zh">宿主当大脑，设备管反射。</span></h2>
+      <p class="lead"><span class="lang-en">Two cooperating agents, each doing what it is good at. A shared WebSocket keeps them in lockstep.</span><span class="lang-zh">两个协作 agent，各干各擅长的。一条共享 WebSocket 让它们保持同步。</span></p>
+    </div>
 
-          <figure style="margin:0 auto; max-width:1200px;">
-            <svg role="img" aria-label="Host-device agent collaboration architecture" viewBox="0 0 1200 780" style="display:block; width:100%; height:auto;">
-              <rect x="0" y="0" width="1200" height="780" fill="#faf9f5"/>
+    <figure class="diagram">
+      <!-- ===== wide layout ===== -->
+      <svg class="dg dg-wide" viewBox="0 0 1200 528" role="img" aria-labelledby="dgCap">
+        <!-- host zone -->
+        <rect class="zone--host" x="20" y="20" width="490" height="332" rx="28"/>
+        <text class="t-eb lang-en" x="44" y="54">HOST · BRAIN</text>
+        <text class="t-eb lang-zh" x="44" y="54">宿主 · 大脑</text>
+        <text class="t-zone lang-en" x="44" y="82">alb host</text>
+        <text class="t-zone lang-zh" x="44" y="82">alb 宿主端</text>
 
-              <!-- labels -->
-              <text x="60" y="40" font-family="Poppins" font-size="15" font-weight="600" fill="#6b6a5f" letter-spacing="0.06em">HOST — BRAIN</text>
-              <text x="1140" y="40" text-anchor="end" font-family="Poppins" font-size="15" font-weight="600" fill="#6b6a5f" letter-spacing="0.06em">DEVICE — REFLEX</text>
+        <rect class="box" x="44" y="104" width="213" height="104" rx="16"/>
+        <circle class="dot--p" cx="68" cy="140" r="6"/>
+        <text class="t-title lang-en" x="84" y="146">Reasoning</text>
+        <text class="t-title lang-zh" x="84" y="146">推理</text>
+        <text class="t-sub" x="64" y="178">Claude · GPT · Gemma</text>
 
-              <!-- HOST SIDE -->
-              <g>
-                <rect x="55" y="60" width="500" height="320" rx="24" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
-                <text x="305" y="100" text-anchor="middle" font-family="Poppins" font-size="19" font-weight="600" fill="#141413">alb host</text>
+        <rect class="box box--bridge" x="273" y="104" width="213" height="104" rx="16"/>
+        <circle class="dot--p" cx="297" cy="140" r="6"/>
+        <text class="t-title t-title--bridge lang-en" x="313" y="146">Device bridge</text>
+        <text class="t-title t-title--bridge lang-zh" x="313" y="146">设备桥</text>
+        <text class="t-sub lang-en" x="293" y="178">WS server · RPC · events</text>
+        <text class="t-sub lang-zh" x="293" y="178">WS 服务端 · RPC · 事件</text>
 
-                <!-- host sub-boxes -->
-                <rect x="85" y="135" width="210" height="90" rx="16" fill="#d97757"/>
-                <text x="190" y="170" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">Reasoning</text>
-                <text x="190" y="198" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">Claude · GPT · Gemma</text>
+        <rect class="box" x="44" y="224" width="213" height="104" rx="16"/>
+        <circle class="dot--k" cx="68" cy="260" r="6"/>
+        <text class="t-title" x="84" y="266">AgentLoop</text>
+        <text class="t-sub lang-en" x="64" y="298">ReAct · tool call · stream</text>
+        <text class="t-sub lang-zh" x="64" y="298">ReAct · 工具调用 · 流式</text>
 
-                <rect x="315" y="135" width="220" height="90" rx="16" fill="#6a9bcc"/>
-                <text x="425" y="170" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">AgentLoop</text>
-                <text x="425" y="198" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">ReAct · tool call · stream</text>
+        <rect class="box" x="273" y="224" width="213" height="104" rx="16"/>
+        <circle class="dot--j" cx="297" cy="260" r="6"/>
+        <text class="t-title lang-en" x="313" y="266">Memory</text>
+        <text class="t-title lang-zh" x="313" y="266">记忆</text>
+        <text class="t-sub lang-en" x="293" y="298">sessions · artifacts</text>
+        <text class="t-sub lang-zh" x="293" y="298">会话 · 产物</text>
 
-                <rect x="85" y="245" width="210" height="90" rx="16" fill="#788c5d"/>
-                <text x="190" y="280" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">Memory</text>
-                <text x="190" y="308" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">sessions · artifacts</text>
+        <!-- device zone -->
+        <rect class="zone--device" x="690" y="20" width="490" height="332" rx="28"/>
+        <text class="t-eb lang-en" x="714" y="54">DEVICE · REFLEX</text>
+        <text class="t-eb lang-zh" x="714" y="54">设备 · 反射</text>
+        <text class="t-zone lang-en" x="714" y="82">alb-mobile (Android)</text>
+        <text class="t-zone lang-zh" x="714" y="82">alb-mobile（安卓）</text>
 
-                <rect x="315" y="245" width="220" height="90" rx="16" fill="#ffffff" stroke="#d97757" stroke-width="1.5"/>
-                <text x="425" y="280" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#d97757">Device bridge</text>
-                <text x="425" y="308" text-anchor="middle" font-family="Poppins" font-size="13" fill="#6b6a5f">WS server · RPC · events</text>
-              </g>
+        <rect class="box box--bridge" x="714" y="104" width="213" height="104" rx="16"/>
+        <circle class="dot--p" cx="738" cy="140" r="6"/>
+        <text class="t-title t-title--bridge lang-en" x="754" y="146">Host bridge</text>
+        <text class="t-title t-title--bridge lang-zh" x="754" y="146">宿主桥</text>
+        <text class="t-sub lang-en" x="734" y="178">WS client · offline cache</text>
+        <text class="t-sub lang-zh" x="734" y="178">WS 客户端 · 离线缓存</text>
 
-              <!-- DEVICE SIDE -->
-              <g>
-                <rect x="645" y="60" width="500" height="320" rx="24" fill="#ffffff" stroke="#e8e6dc" stroke-width="1.5"/>
-                <text x="895" y="100" text-anchor="middle" font-family="Poppins" font-size="19" font-weight="600" fill="#141413">alb-mobile (Android)</text>
+        <rect class="box" x="943" y="104" width="213" height="104" rx="16"/>
+        <circle class="dot--k" cx="967" cy="140" r="6"/>
+        <text class="t-title" x="983" y="146">Gemini Nano</text>
+        <text class="t-sub" x="963" y="178">AICore · LiteRT · Gemma 4</text>
 
-                <rect x="675" y="135" width="220" height="90" rx="16" fill="#6a9bcc"/>
-                <text x="785" y="170" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">Gemini Nano</text>
-                <text x="785" y="198" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">AICore · LiteRT · Gemma 4</text>
+        <rect class="box" x="714" y="224" width="213" height="104" rx="16"/>
+        <circle class="dot--u" cx="738" cy="260" r="6"/>
+        <text class="t-title lang-en" x="754" y="266">Probes</text>
+        <text class="t-title lang-zh" x="754" y="266">探针</text>
+        <text class="t-sub" x="734" y="298">perfetto · /proc · dumpsys</text>
 
-                <rect x="915" y="135" width="210" height="90" rx="16" fill="#d97757"/>
-                <text x="1020" y="170" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">Probes</text>
-                <text x="1020" y="198" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">perfetto · /proc · dumpsys</text>
+        <rect class="box" x="943" y="224" width="213" height="104" rx="16"/>
+        <circle class="dot--g" cx="967" cy="260" r="6"/>
+        <text class="t-title lang-en" x="983" y="266">Triage</text>
+        <text class="t-title lang-zh" x="983" y="266">初筛</text>
+        <text class="t-sub lang-en" x="963" y="298">log dedup · stack cluster</text>
+        <text class="t-sub lang-zh" x="963" y="298">日志去重 · 堆栈聚类</text>
 
-                <rect x="675" y="245" width="220" height="90" rx="16" fill="#788c5d"/>
-                <text x="785" y="280" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#ffffff">Triage</text>
-                <text x="785" y="308" text-anchor="middle" font-family="Poppins" font-size="13" fill="#ffffff" opacity="0.95">log dedup · stack cluster</text>
+        <!-- WebSocket channel -->
+        <path class="e-rpc" d="M486 140H712" marker-end="url(#mk-p)"/>
+        <path class="e-evt" d="M714 176H488" marker-end="url(#mk-u)"/>
+        <text class="t-rpc lang-en" x="600" y="128" text-anchor="middle">RPC · directives</text>
+        <text class="t-rpc lang-zh" x="600" y="128" text-anchor="middle">RPC · 指令</text>
+        <text class="t-evt lang-en" x="600" y="198" text-anchor="middle">events · traces · logs</text>
+        <text class="t-evt lang-zh" x="600" y="198" text-anchor="middle">事件 · trace · 日志</text>
+        <text class="t-note lang-en" x="600" y="220" text-anchor="middle">WebSocket · bidirectional</text>
+        <text class="t-note lang-zh" x="600" y="220" text-anchor="middle">WebSocket · 双向</text>
 
-                <rect x="915" y="245" width="210" height="90" rx="16" fill="#ffffff" stroke="#d97757" stroke-width="1.5"/>
-                <text x="1020" y="280" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#d97757">Host bridge</text>
-                <text x="1020" y="308" text-anchor="middle" font-family="Poppins" font-size="13" fill="#6b6a5f">WS client · offline cache</text>
-              </g>
+        <!-- device runs on the hardware -->
+        <path class="e-on" d="M935 352V418"/>
+        <text class="t-note lang-en" x="946" y="390">runs on</text>
+        <text class="t-note lang-zh" x="946" y="390">运行在</text>
+        <rect class="box--hw" x="690" y="420" width="490" height="88" rx="22"/>
+        <text class="t-title lang-en" x="935" y="456" text-anchor="middle">Android device hardware</text>
+        <text class="t-title lang-zh" x="935" y="456" text-anchor="middle">安卓设备硬件</text>
+        <text class="t-sub lang-en" x="935" y="484" text-anchor="middle">kernel · framework · apps · sensors · GPU · thermal</text>
+        <text class="t-sub lang-zh" x="935" y="484" text-anchor="middle">内核 · framework · 应用 · 传感器 · GPU · 温控</text>
 
-              <!-- WS channel between host and device -->
-              <g>
-                <path d="M 555 215 L 645 215" stroke="#d97757" stroke-width="3.5" fill="none" marker-end="url(#arrH)"/>
-                <path d="M 645 255 L 555 255" stroke="#6a9bcc" stroke-width="3.5" fill="none" marker-end="url(#arrHb)"/>
-                <defs>
-                  <marker id="arrH" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d97757"/></marker>
-                  <marker id="arrHb" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 10 0 L 0 5 L 10 10 z" fill="#6a9bcc"/></marker>
-                </defs>
-                <text x="600" y="200" text-anchor="middle" font-family="Poppins" font-size="14" font-weight="600" fill="#d97757">RPC · directives</text>
-                <text x="600" y="272" text-anchor="middle" font-family="Poppins" font-size="14" font-weight="600" fill="#6a9bcc">events · traces · logs</text>
-                <text x="600" y="295" text-anchor="middle" font-family="Poppins" font-size="12" fill="#6b6a5f">WebSocket · bidirectional</text>
-              </g>
+        <!-- fallback transports -->
+        <path class="e-fb" d="M265 352V464H688" marker-end="url(#mk-o)"/>
+        <rect class="box--fb" x="330" y="430" width="280" height="68" rx="16"/>
+        <text class="t-title" x="470" y="459" text-anchor="middle">adb / ssh / UART</text>
+        <text class="t-sub lang-en" x="470" y="483" text-anchor="middle">fallback · first-boot · recovery</text>
+        <text class="t-sub lang-zh" x="470" y="483" text-anchor="middle">兜底 · 首次启动 · recovery</text>
+      </svg>
 
-              <!-- Fallback adb path -->
-              <g>
-                <path d="M 305 380 L 305 560 L 895 560 L 895 380" stroke="#b0aea5" stroke-width="1.5" stroke-dasharray="6 6" fill="none"/>
-                <rect x="490" y="525" width="220" height="70" rx="16" fill="#f0ede3" stroke="#e8e6dc" stroke-width="1.5"/>
-                <text x="600" y="557" text-anchor="middle" font-family="Poppins" font-size="16" font-weight="600" fill="#141413">adb / ssh / UART</text>
-                <text x="600" y="579" text-anchor="middle" font-family="Poppins" font-size="13" fill="#6b6a5f">fallback · first-boot · recovery</text>
-              </g>
+      <!-- ===== tall layout (narrow screens) ===== -->
+      <svg class="dg dg-tall" viewBox="0 0 360 1032" role="img" aria-labelledby="dgCap">
+        <!-- host zone -->
+        <rect class="zone--host" x="36" y="12" width="316" height="340" rx="24"/>
+        <text class="t-eb lang-en" x="52" y="40">HOST · BRAIN</text>
+        <text class="t-eb lang-zh" x="52" y="40">宿主 · 大脑</text>
+        <text class="t-zone lang-en" x="52" y="64">alb host</text>
+        <text class="t-zone lang-zh" x="52" y="64">alb 宿主端</text>
 
-              <!-- Device hardware box -->
-              <g>
-                <rect x="350" y="640" width="500" height="110" rx="22" fill="#faf9f5" stroke="#141413" stroke-width="1.2"/>
-                <text x="600" y="682" text-anchor="middle" font-family="Poppins" font-size="17" font-weight="600" fill="#141413">Android device hardware</text>
-                <text x="600" y="710" text-anchor="middle" font-family="Poppins" font-size="13" fill="#6b6a5f">kernel · framework · apps · sensors · GPU · thermal</text>
-              </g>
-            </svg>
-            <figcaption class="anth-caption" style="text-align:center; margin-top:var(--space-3);" data-i18n="s2.cap">Primary path: WebSocket agent channel. Fallback: existing adb / ssh / UART transports always available.</figcaption>
-          </figure>
-        </div>
-      </section>
+        <rect class="box" x="52" y="80" width="284" height="56" rx="14"/>
+        <circle class="dot--p" cx="70" cy="101" r="5"/>
+        <text class="t-title lang-en" x="84" y="106">Reasoning</text>
+        <text class="t-title lang-zh" x="84" y="106">推理</text>
+        <text class="t-sub" x="84" y="126">Claude · GPT · Gemma</text>
 
-      <section class="anth-section">
-        <div class="anth-container anth-container--wide">
-          <div style="max-width:720px; margin:0 auto var(--space-6);">
-            <h2 data-i18n="s3.title">Who does what.</h2>
-            <p style="color:var(--anth-text-secondary);" data-i18n="s3.sub">A rough division of labor. Subject to change as we prototype, but the shape holds.</p>
-          </div>
+        <rect class="box" x="52" y="146" width="284" height="56" rx="14"/>
+        <circle class="dot--k" cx="70" cy="167" r="5"/>
+        <text class="t-title" x="84" y="172">AgentLoop</text>
+        <text class="t-sub lang-en" x="84" y="192">ReAct · tool call · stream</text>
+        <text class="t-sub lang-zh" x="84" y="192">ReAct · 工具调用 · 流式</text>
 
-          <table class="anth-table" style="max-width:1040px; margin:0 auto;">
-            <thead>
-              <tr>
-                <th data-i18n="s3.col.task">Task</th>
-                <th data-i18n="s3.col.where">Runs on</th>
-                <th data-i18n="s3.col.why">Why</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td data-i18n="s3.r1.t">Threshold alerts (OOM, ANR, thermal)</td><td data-i18n="s3.r1.w"><strong>Device</strong></td><td data-i18n="s3.r1.y">Zero-latency, adb cannot see the transient</td></tr>
-              <tr><td data-i18n="s3.r2.t">logcat stream dedupe, stack cluster</td><td data-i18n="s3.r2.w"><strong>Device (small LLM)</strong></td><td data-i18n="s3.r2.y">Saves host tokens, filters noise at source</td></tr>
-              <tr><td data-i18n="s3.r3.t">perfetto / systrace capture</td><td data-i18n="s3.r3.w"><strong>Device</strong></td><td data-i18n="s3.r3.y">Direct /sys access, no adb chunk overhead</td></tr>
-              <tr><td data-i18n="s3.r4.t">Complex reasoning, code edits, user dialogue</td><td data-i18n="s3.r4.w"><strong>Host (frontier LLM)</strong></td><td data-i18n="s3.r4.y">Capability + cross-file context</td></tr>
-              <tr><td data-i18n="s3.r5.t">Cross-session memory, artifact archive</td><td data-i18n="s3.r5.w"><strong>Host</strong></td><td data-i18n="s3.r5.y">Device storage is limited and volatile</td></tr>
-              <tr><td data-i18n="s3.r6.t">On-site offline debug + later sync</td><td data-i18n="s3.r6.w"><strong>Device (autonomy)</strong></td><td data-i18n="s3.r6.y">Customer field, no dev reachable</td></tr>
-              <tr><td data-i18n="s3.r7.t">Workflow orchestration (multi-step plan)</td><td data-i18n="s3.r7.w"><strong>Host</strong></td><td data-i18n="s3.r7.y">Planning + memory is host's strong suit</td></tr>
-              <tr><td data-i18n="s3.r8.t">First-response "what just happened?"</td><td data-i18n="s3.r8.w"><strong>Device</strong></td><td data-i18n="s3.r8.y">Sub-second triage before the event ages out</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <rect class="box" x="52" y="212" width="284" height="56" rx="14"/>
+        <circle class="dot--j" cx="70" cy="233" r="5"/>
+        <text class="t-title lang-en" x="84" y="238">Memory</text>
+        <text class="t-title lang-zh" x="84" y="238">记忆</text>
+        <text class="t-sub lang-en" x="84" y="258">sessions · artifacts</text>
+        <text class="t-sub lang-zh" x="84" y="258">会话 · 产物</text>
 
-      <section class="anth-section anth-section--subtle">
-        <div class="anth-container anth-container--narrow">
-          <h2 data-i18n="s4.title">The channel.</h2>
-          <p data-i18n="s4.p1">One WebSocket, six message types. alb host already speaks WebSocket (<code>/chat/ws</code>), so we extend the same FastAPI app with a <code>/device/channel</code> endpoint and let devices connect as clients. Authentication reuses alb's config.toml token.</p>
+        <rect class="box box--bridge" x="52" y="278" width="284" height="56" rx="14"/>
+        <circle class="dot--p" cx="70" cy="299" r="5"/>
+        <text class="t-title t-title--bridge lang-en" x="84" y="304">Device bridge</text>
+        <text class="t-title t-title--bridge lang-zh" x="84" y="304">设备桥</text>
+        <text class="t-sub lang-en" x="84" y="324">WS server · RPC · events</text>
+        <text class="t-sub lang-zh" x="84" y="324">WS 服务端 · RPC · 事件</text>
 
-          <h3 style="margin-top:var(--space-6);" data-i18n="s4.msgs.title">Message types</h3>
-          <ul data-i18n-skip>
-            <li data-i18n="s4.m1"><strong><code>HEARTBEAT</code></strong> — device → host. Liveness + battery + thermal + freeform health field.</li>
-            <li data-i18n="s4.m2"><strong><code>EVENT</code></strong> — device → host, unsolicited. OOM, ANR trigger, crash, thermal warn, custom threshold. Includes a short device-side triage summary.</li>
-            <li data-i18n="s4.m3"><strong><code>REQUEST</code></strong> — device → host. "I think this needs a bigger brain, here is what I saw." Escalates to host LLM.</li>
-            <li data-i18n="s4.m4"><strong><code>RPC_CALL</code></strong> — host → device. "Run perfetto for 5 s on PID 1234", "dump heap of app X", "capture method profile". Returns structured data.</li>
-            <li data-i18n="s4.m5"><strong><code>RPC_REPLY</code></strong> — device → host. Result of an RPC_CALL, with <code>{ok, data, error, artifacts}</code> shape — same as the rest of alb.</li>
-            <li data-i18n="s4.m6"><strong><code>LOG_STREAM</code></strong> — device → host. Pre-filtered, pre-clustered logcat. Replaces the adb logcat pipe with something that has already paid its tokens for filtering.</li>
-          </ul>
 
-          <aside class="anth-admonition" style="margin-top:var(--space-6);">
-            <h5 data-i18n="s4.offline.t">Offline buffering</h5>
-            <p data-i18n="s4.offline.b">When the host is unreachable, the device caches EVENTs and RPC_REPLYs on disk. When the link comes back, it replays in order — with a <code>replay_of</code> header so the host knows the clock drift.</p>
-          </aside>
-        </div>
-      </section>
+        <!-- device zone -->
+        <rect class="zone--device" x="36" y="472" width="316" height="340" rx="24"/>
+        <text class="t-eb lang-en" x="52" y="500">DEVICE · REFLEX</text>
+        <text class="t-eb lang-zh" x="52" y="500">设备 · 反射</text>
+        <text class="t-zone lang-en" x="52" y="524">alb-mobile (Android)</text>
+        <text class="t-zone lang-zh" x="52" y="524">alb-mobile（安卓）</text>
 
-      <section class="anth-section">
-        <div class="anth-container anth-container--wide">
-          <div style="max-width:720px; margin:0 auto var(--space-6);">
-            <h2 data-i18n="s5.title">Four phases to ship.</h2>
-            <p style="color:var(--anth-text-secondary);" data-i18n="s5.sub">We get value at every phase — we do not need phase 4 for phase 1 to be useful.</p>
-          </div>
+        <rect class="box box--bridge" x="52" y="540" width="284" height="56" rx="14"/>
+        <circle class="dot--p" cx="70" cy="561" r="5"/>
+        <text class="t-title t-title--bridge lang-en" x="84" y="566">Host bridge</text>
+        <text class="t-title t-title--bridge lang-zh" x="84" y="566">宿主桥</text>
+        <text class="t-sub lang-en" x="84" y="586">WS client · offline cache</text>
+        <text class="t-sub lang-zh" x="84" y="586">WS 客户端 · 离线缓存</text>
 
-          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:var(--space-5);">
-            <article class="phase-card">
-              <span class="phase-num">1</span>
-              <h3 style="font-size:18px;" data-i18n="s5.p1.t">Skeleton</h3>
-              <p style="font-size:15px;" data-i18n="s5.p1.b">alb-mobile Android app: WebSocket client + logcat streamer + system metrics. No LLM yet. The win: replace adb logcat with a filtered, structured stream.</p>
-            </article>
-            <article class="phase-card">
-              <span class="phase-num">2</span>
-              <h3 style="font-size:18px;" data-i18n="s5.p2.t">Local brain</h3>
-              <p style="font-size:15px;" data-i18n="s5.p2.b">Integrate AICore / Gemini Nano on Android 14+, or LiteRT + Gemma 4. Device does first-pass triage: summarize, cluster, decide whether to escalate.</p>
-            </article>
-            <article class="phase-card">
-              <span class="phase-num">3</span>
-              <h3 style="font-size:18px;" data-i18n="s5.p3.t">Bidirectional RPC</h3>
-              <p style="font-size:15px;" data-i18n="s5.p3.b">Host can dispatch device-local tools: perfetto traces, heap dumps, custom probes. No adb round-trip. Tool specs published back to host MCP automatically.</p>
-            </article>
-            <article class="phase-card">
-              <span class="phase-num">4</span>
-              <h3 style="font-size:18px;" data-i18n="s5.p4.t">Offline autonomy</h3>
-              <p style="font-size:15px;" data-i18n="s5.p4.b">Device runs standalone — captures reproducers, diagnoses locally, packages artifacts. Syncs to host when network returns. Field debugging without anyone on the other end.</p>
-            </article>
-          </div>
-        </div>
-      </section>
+        <rect class="box" x="52" y="606" width="284" height="56" rx="14"/>
+        <circle class="dot--k" cx="70" cy="627" r="5"/>
+        <text class="t-title" x="84" y="632">Gemini Nano</text>
+        <text class="t-sub" x="84" y="652">AICore · LiteRT · Gemma 4</text>
 
-      <section class="anth-section anth-section--subtle">
-        <div class="anth-container anth-container--narrow">
-          <h2 data-i18n="s6.title">Aligned with where Android is going.</h2>
-          <p data-i18n="s6.p1">
-            Google's public direction already points here. <strong>AICore</strong> ships a system-level LLM runtime on Pixel 8+ and is expanding; <strong>Gemini Nano</strong> is the first model delivered through it. <strong>LiteRT</strong> (formerly TFLite) gives anyone a path to ship their own quantized model on-device. And Google's own "Gemma 4 for Android" push calls out the <em>on-device agent</em> as a flagship use case.
-          </p>
-          <p data-i18n="s6.p2">
-            alb does not compete with any of that — it composes. alb-mobile will use whatever the device provides: AICore if available, LiteRT if not, Gemma 4 quantized as a fallback. The <em>interesting work</em> is not the model — it's the <strong>host ↔ device protocol</strong> and the division of labor. That's what we own.
-          </p>
-        </div>
-      </section>
+        <rect class="box" x="52" y="672" width="284" height="56" rx="14"/>
+        <circle class="dot--u" cx="70" cy="693" r="5"/>
+        <text class="t-title lang-en" x="84" y="698">Probes</text>
+        <text class="t-title lang-zh" x="84" y="698">探针</text>
+        <text class="t-sub" x="84" y="718">perfetto · /proc · dumpsys</text>
 
-      <section class="anth-section">
-        <div class="anth-container anth-container--narrow">
-          <h2 data-i18n="s7.title">Open questions.</h2>
-          <p data-i18n="s7.intro">Where we do not have a final answer. Help welcome.</p>
-          <details class="anth-details">
-            <summary data-i18n="s7.q1.q">How does alb-mobile ship — sideload or Play Store?</summary>
-            <p data-i18n="s7.q1.a">Developer builds will be sideload (debug APK from Releases). A Play Store track is on the table for field/autonomy use but needs review and a clear safety story.</p>
-          </details>
-          <details class="anth-details">
-            <summary data-i18n="s7.q2.q">Is this Android-only?</summary>
-            <p data-i18n="s7.q2.a">Yes for v1. The WebSocket channel is generic; porting to HarmonyOS or embedded Linux boards (buildroot + a Gemma runner) is feasible but not on the M4 plan.</p>
-          </details>
-          <details class="anth-details">
-            <summary data-i18n="s7.q3.q">What about non-rooted devices?</summary>
-            <p data-i18n="s7.q3.a">The plan assumes unrooted. perfetto, dumpsys, logcat are all available to app-level context via ADB, and AICore / LiteRT run as normal Android libraries. Some probes require <code>adb shell</code> escalation — those stay on the host side.</p>
-          </details>
-          <details class="anth-details">
-            <summary data-i18n="s7.q4.q">Security and permissions?</summary>
-            <p data-i18n="s7.q4.a">WebSocket connection uses a shared token (dev environment) or mTLS (production). Device never initiates destructive actions without a host-approved <code>RPC_CALL</code>. All device-local LLM inputs are logged for audit.</p>
-          </details>
-          <details class="anth-details">
-            <summary data-i18n="s7.q5.q">What about iOS?</summary>
-            <p data-i18n="s7.q5.a">Not in scope. iOS's debugging model is fundamentally different, and Apple does not expose anything comparable to AICore or adb-equivalent at this layer. A reduced host-side alb for iOS is conceivable — not on this roadmap.</p>
-          </details>
-        </div>
-      </section>
+        <rect class="box" x="52" y="738" width="284" height="56" rx="14"/>
+        <circle class="dot--g" cx="70" cy="759" r="5"/>
+        <text class="t-title lang-en" x="84" y="764">Triage</text>
+        <text class="t-title lang-zh" x="84" y="764">初筛</text>
+        <text class="t-sub lang-en" x="84" y="784">log dedup · stack cluster</text>
+        <text class="t-sub lang-zh" x="84" y="784">日志去重 · 堆栈聚类</text>
 
-      <section class="anth-section anth-section--subtle">
-        <div class="anth-container" style="text-align:center;">
-          <h2 data-i18n="cta.title">Want to shape this?</h2>
-          <p style="color:var(--anth-text-secondary); max-width:560px; margin:var(--space-3) auto var(--space-6);" data-i18n="cta.body">Open an issue with the label <code>on-device-agent</code>. This is a design in motion — the earlier we hear, the more we can fold in.</p>
-          <div style="display:flex; gap:var(--space-3); justify-content:center; flex-wrap:wrap;">
-            <a class="anth-button" href="https://github.com/TbusOS/android-llm-bridge/issues/new?labels=on-device-agent" data-i18n="cta.b1">Open an issue</a>
-            <a class="anth-button anth-button--ghost" href="on-device-model-selection.html"><span class="lang-en">Model selection →</span><span class="lang-zh">模型选型 →</span></a>
-            <a class="anth-button anth-button--ghost" href="index.html" data-i18n="cta.b2">← Back to home</a>
-          </div>
-        </div>
-      </section>
-    </main>
+        <!-- WebSocket channel -->
+        <path class="e-rpc" d="M286 334V538" marker-end="url(#mk-p)"/>
+        <path class="e-evt" d="M318 540V336" marker-end="url(#mk-u)"/>
+        <text class="t-rpc lang-en" x="272" y="392" text-anchor="end">RPC · directives ↓</text>
+        <text class="t-rpc lang-zh" x="272" y="392" text-anchor="end">RPC · 指令 ↓</text>
+        <text class="t-evt lang-en" x="272" y="416" text-anchor="end">events · traces · logs ↑</text>
+        <text class="t-evt lang-zh" x="272" y="416" text-anchor="end">事件 · trace · 日志 ↑</text>
+        <text class="t-note lang-en" x="272" y="440" text-anchor="end">WebSocket · bidirectional</text>
+        <text class="t-note lang-zh" x="272" y="440" text-anchor="end">WebSocket · 双向</text>
 
-    <footer class="anth-footer">
-      <div class="anth-footer-grid">
-        <div class="anth-footer-group">
-          <h5 data-i18n="ft.product">Product</h5>
-          <a href="index.html#features" data-i18n="ft.p1">Features</a>
-          <a href="index.html#methods" data-i18n="ft.p2">Methods</a>
-          <a href="index.html#architecture" data-i18n="ft.p3">Architecture</a>
-          <a href="index.html#roadmap" data-i18n="ft.p4">Roadmap</a>
-        </div>
-        <div class="anth-footer-group">
-          <h5 data-i18n="ft.docs">Docs</h5>
-          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/00-overview.md" data-i18n="ft.d1">Overview</a>
-          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md" data-i18n="ft.d2">Install</a>
-          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/agent.md" data-i18n="ft.d3">Agent layer</a>
-        </div>
-        <div class="anth-footer-group">
-          <h5 data-i18n="ft.vision">Vision</h5>
-          <a href="on-device-agent.html" data-i18n="ft.v1">On-device agent</a>
-          <a href="on-device-model-selection.html"><span class="lang-en">Model selection</span><span class="lang-zh">模型选型</span></a>
-          <a href="index.html#roadmap" data-i18n="ft.v2">Roadmap</a>
-        </div>
-        <div class="anth-footer-group">
-          <h5 data-i18n="ft.community">Community</h5>
-          <a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a>
-          <a href="https://github.com/TbusOS/android-llm-bridge/issues">Issues</a>
-        </div>
-        <div class="anth-footer-group">
-          <h5 data-i18n="ft.legal">License</h5>
-          <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a>
-        </div>
+        <!-- runs on the hardware -->
+        <path class="e-on" d="M194 812V850"/>
+        <text class="t-note lang-en" x="204" y="836">runs on</text>
+        <text class="t-note lang-zh" x="204" y="836">运行在</text>
+        <rect class="box--hw" x="36" y="852" width="316" height="82" rx="18"/>
+        <text class="t-title lang-en" x="194" y="878" text-anchor="middle">Android device hardware</text>
+        <text class="t-title lang-zh" x="194" y="878" text-anchor="middle">安卓设备硬件</text>
+        <text class="t-sub lang-en" x="194" y="900" text-anchor="middle">kernel · framework · apps</text>
+        <text class="t-sub lang-en" x="194" y="920" text-anchor="middle">sensors · GPU · thermal</text>
+        <text class="t-sub lang-zh" x="194" y="900" text-anchor="middle">内核 · framework · 应用</text>
+        <text class="t-sub lang-zh" x="194" y="920" text-anchor="middle">传感器 · GPU · 温控</text>
+
+        <!-- fallback transports -->
+        <path class="e-fb" d="M36 182H18V990H54"/>
+        <path class="e-fb" d="M194 962V936" marker-end="url(#mk-o)"/>
+        <rect class="box--fb" x="56" y="962" width="276" height="58" rx="14"/>
+        <text class="t-title" x="194" y="987" text-anchor="middle">adb / ssh / UART</text>
+        <text class="t-sub lang-en" x="194" y="1008" text-anchor="middle">fallback · first-boot · recovery</text>
+        <text class="t-sub lang-zh" x="194" y="1008" text-anchor="middle">兜底 · 首次启动 · recovery</text>
+      </svg>
+
+      <figcaption id="dgCap"><span class="lang-en">Primary path: WebSocket agent channel. Fallback: existing adb / ssh / UART transports always available.</span><span class="lang-zh">主路径：WebSocket agent 通道。兜底：现有 adb / ssh / UART 传输永远可用。</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ================= division of labor ================= -->
+<section class="section" id="division">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Division of labor</span><span class="lang-zh">分工</span></span>
+      <h2><span class="lang-en">Who does what.</span><span class="lang-zh">谁干什么。</span></h2>
+      <p class="lead"><span class="lang-en">A rough division of labor. Subject to change as we prototype, but the shape holds.</span><span class="lang-zh">一个粗略的分工。原型期间会调整，但大体分法不会变。</span></p>
+    </div>
+    <div class="table-wrap">
+      <table class="t t--who">
+        <thead>
+          <tr>
+            <th scope="col"><span class="lang-en">Task</span><span class="lang-zh">任务</span></th>
+            <th scope="col"><span class="lang-en">Runs on</span><span class="lang-zh">放哪</span></th>
+            <th scope="col"><span class="lang-en">Why</span><span class="lang-zh">理由</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="lang-en">Threshold alerts (OOM, ANR, thermal)</span><span class="lang-zh">阈值告警（OOM / ANR / thermal）</span></td>
+            <td><span class="who who--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></td>
+            <td><span class="lang-en">Zero-latency, adb cannot see the transient</span><span class="lang-zh">零延迟，adb 看不见瞬时态</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">logcat stream dedupe, stack cluster</span><span class="lang-zh">logcat 流去重、堆栈聚类</span></td>
+            <td><span class="who who--device"><span class="lang-en">Device (small LLM)</span><span class="lang-zh">设备（小模型）</span></span></td>
+            <td><span class="lang-en">Saves host tokens, filters noise at source</span><span class="lang-zh">节省宿主 token，在源头过滤噪声</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">perfetto / systrace capture</span><span class="lang-zh">perfetto / systrace 采集</span></td>
+            <td><span class="who who--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></td>
+            <td><span class="lang-en">Direct /sys access, no adb chunk overhead</span><span class="lang-zh">直接读 /sys，没有 adb 分块传输开销</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">Complex reasoning, code edits, user dialogue</span><span class="lang-zh">复杂推理、代码修改、对话</span></td>
+            <td><span class="who who--host"><span class="lang-en">Host (frontier LLM)</span><span class="lang-zh">宿主（前沿大模型）</span></span></td>
+            <td><span class="lang-en">Capability + cross-file context</span><span class="lang-zh">能力 + 跨文件上下文</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">Cross-session memory, artifact archive</span><span class="lang-zh">跨会话记忆、产物归档</span></td>
+            <td><span class="who who--host"><span class="lang-en">Host</span><span class="lang-zh">宿主</span></span></td>
+            <td><span class="lang-en">Device storage is limited and volatile</span><span class="lang-zh">设备存储有限且易失</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">On-site offline debug + later sync</span><span class="lang-zh">现场离线调试 + 回网同步</span></td>
+            <td><span class="who who--device"><span class="lang-en">Device (autonomy)</span><span class="lang-zh">设备（自主运行）</span></span></td>
+            <td><span class="lang-en">Customer field, no dev reachable</span><span class="lang-zh">客户现场，没有开发</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">Workflow orchestration (multi-step plan)</span><span class="lang-zh">多步计划编排</span></td>
+            <td><span class="who who--host"><span class="lang-en">Host</span><span class="lang-zh">宿主</span></span></td>
+            <td><span class="lang-en">Planning + memory is host's strong suit</span><span class="lang-zh">规划 + 记忆是宿主强项</span></td>
+          </tr>
+          <tr>
+            <td><span class="lang-en">First-response “what just happened?”</span><span class="lang-zh">第一响应「刚发生了什么」</span></td>
+            <td><span class="who who--device"><span class="lang-en">Device</span><span class="lang-zh">设备</span></span></td>
+            <td><span class="lang-en">Sub-second triage before the event ages out</span><span class="lang-zh">亚秒级初筛，事件还没散</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= channel ================= -->
+<section class="section section--tone" id="channel">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Protocol</span><span class="lang-zh">协议</span></span>
+      <h2><span class="lang-en">The channel.</span><span class="lang-zh">通道。</span></h2>
+      <p class="lead"><span class="lang-en">One WebSocket, six message types. alb host already speaks WebSocket (<code>/chat/ws</code>), so the design adds a <code>/device/channel</code> endpoint (proposed, not built) to the same FastAPI app and lets devices connect as clients. Authentication would reuse the shared token the bench agent already uses (<code>ALB_AGENT_TOKEN</code>).</span><span class="lang-zh">一条 WebSocket，六种消息类型。alb 宿主本来就已经有 WebSocket（<code>/chat/ws</code>），设计上给同一个 FastAPI app 加一个 <code>/device/channel</code> 端点（提议，尚未实现），让设备作为 client 连上来。认证沿用台架 agent 现在用的共享令牌（<code>ALB_AGENT_TOKEN</code>）。</span></p>
+    </div>
+
+    <h3 class="subhead"><span class="lang-en">Message types</span><span class="lang-zh">消息类型</span></h3>
+    <div class="grid grid--3">
+      <article class="card msg">
+        <span class="dir dir--up"><span class="lang-en">device → host</span><span class="lang-zh">设备 → 宿主</span></span>
+        <h3>HEARTBEAT</h3>
+        <p><span class="lang-en">Liveness + battery + thermal + freeform health field.</span><span class="lang-zh">在线状态 + 电量 + 温度 + 自由填写的 health 字段。</span></p>
+      </article>
+      <article class="card msg">
+        <span class="dir dir--up"><span class="lang-en">device → host, unsolicited</span><span class="lang-zh">设备 → 宿主，主动推</span></span>
+        <h3>EVENT</h3>
+        <p><span class="lang-en">OOM, ANR trigger, crash, thermal warn, custom threshold. Includes a short device-side triage summary.</span><span class="lang-zh">OOM、ANR 触发、crash、thermal warn、自定义阈值。附带设备侧初筛摘要。</span></p>
+      </article>
+      <article class="card msg">
+        <span class="dir dir--up"><span class="lang-en">device → host</span><span class="lang-zh">设备 → 宿主</span></span>
+        <h3>REQUEST</h3>
+        <p><span class="lang-en">“I think this needs a bigger brain, here is what I saw.” Escalates to host LLM.</span><span class="lang-zh">「我觉得这个需要更大的脑子，这是我看到的。」升级到宿主 LLM。</span></p>
+      </article>
+      <article class="card msg">
+        <span class="dir dir--down"><span class="lang-en">host → device</span><span class="lang-zh">宿主 → 设备</span></span>
+        <h3>RPC_CALL</h3>
+        <p><span class="lang-en">“Run perfetto for 5 s on PID 1234”, “dump heap of app X”, “capture method profile”. Returns structured data.</span><span class="lang-zh">「对 PID 1234 跑 5 秒 perfetto」「dump app X 的 heap」「抓 method profile」。返回结构化数据。</span></p>
+      </article>
+      <article class="card msg">
+        <span class="dir dir--up"><span class="lang-en">device → host</span><span class="lang-zh">设备 → 宿主</span></span>
+        <h3>RPC_REPLY</h3>
+        <p><span class="lang-en">Result of an RPC_CALL, with <code>{ok, data, error, artifacts}</code> shape — same as the rest of alb.</span><span class="lang-zh">RPC_CALL 的结果，格式 <code>{ok, data, error, artifacts}</code>，和 alb 其他部分一致。</span></p>
+      </article>
+      <article class="card msg">
+        <span class="dir dir--up"><span class="lang-en">device → host</span><span class="lang-zh">设备 → 宿主</span></span>
+        <h3>LOG_STREAM</h3>
+        <p><span class="lang-en">Pre-filtered, pre-clustered logcat. Replaces the adb logcat pipe with something that has already paid its tokens for filtering.</span><span class="lang-zh">预过滤、预聚类的 logcat。替换 adb logcat 的管道 —— 过滤的 token 成本已经在源头付过了。</span></p>
+      </article>
+    </div>
+
+    <aside class="card card--tertiary note">
+      <div class="card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4zM8 7V4h8v3M8 12h8M8 15.5h5"/></svg></div>
+      <div>
+        <h3><span class="lang-en">Offline buffering</span><span class="lang-zh">离线缓存</span></h3>
+        <p><span class="lang-en">When the host is unreachable, the device caches EVENTs and RPC_REPLYs on disk. When the link comes back, it replays in order — with a <code>replay_of</code> header so the host knows the clock drift.</span><span class="lang-zh">宿主不可达时，设备把 EVENT 和 RPC_REPLY 缓到本地盘。连接恢复后按序回放 —— 带 <code>replay_of</code> 头，让宿主知道时钟漂移。</span></p>
       </div>
-      <div class="anth-footer-legal">
-        <span data-i18n="ft.copy">© 2026 android-llm-bridge contributors · open source · Apache 2.0</span>
-        <span class="anth-social">
-          <a href="https://github.com/TbusOS/android-llm-bridge" aria-label="GitHub" style="color:inherit; text-decoration:none;">GitHub</a>
-        </span>
-      </div>
-    </footer>
+    </aside>
+  </div>
+</section>
 
-    <script>
-      const I18N = {
-        "nav.features":"Features","nav.architecture":"Architecture","nav.roadmap":"Roadmap","nav.onDevice":"On-device Agent","nav.cta":"View on GitHub",
-        "bc.home":"Home","bc.now":"On-device Agent",
-        "hero.badge":"Vision · M4+","hero.title":"Pairing alb with an on-device agent.",
-        "hero.meta":"Design note · 2026-04-21 · open for comments",
-        "hero.lead":"This page is a design note, not a shipped feature. It describes how we want alb to evolve past the host-side agent loop — by putting a small agent on the device itself, and keeping both sides talking.",
-        "s1.title":"Why host-only is not enough.",
-        "s1.p1":"Today alb runs entirely on your Linux (or Mac) host. An LLM reasons on the host, pushes tool calls through adb / ssh / UART, and observes the device from the outside. This works — and M2 just made the loop streaming and cache-friendly — but it hits four real walls.",
-        "s1.l1":"Latency. adb round-trips are 50–200 ms each. For a trace that walks 30 thread states, that is 3–6 seconds of pure transport — longer than the phenomenon you are trying to observe.",
-        "s1.l2":"Blind spots. Kernel panics, boot hangs, ramdump windows happen before adb exists. ANR triggers fire in milliseconds; by the time adb says 'not responding', you have lost the signal.",
-        "s1.l3":"Cost. Piping long logcats to a frontier model is expensive and noisy. Most of the tokens are boilerplate the host LLM has already seen a thousand times.",
-        "s1.l4":"Autonomy. When the device is at a customer site with no dev reachable, nothing on the host can help. The problem reproduces, and no one is there.",
-        "s1.p2":"A small agent on the device closes every one of these gaps — without replacing the host.",
-        "s2.title":"Host brain, device reflex.",
-        "s2.sub":"Two cooperating agents, each doing what it is good at. A shared WebSocket keeps them in lockstep.",
-        "s2.cap":"Primary path: WebSocket agent channel. Fallback: existing adb / ssh / UART transports always available.",
-        "s3.title":"Who does what.",
-        "s3.sub":"A rough division of labor. Subject to change as we prototype, but the shape holds.",
-        "s3.col.task":"Task","s3.col.where":"Runs on","s3.col.why":"Why",
-        "s3.r1.t":"Threshold alerts (OOM, ANR, thermal)","s3.r1.w":"Device","s3.r1.y":"Zero-latency, adb cannot see the transient",
-        "s3.r2.t":"logcat stream dedupe, stack cluster","s3.r2.w":"Device (small LLM)","s3.r2.y":"Saves host tokens, filters noise at source",
-        "s3.r3.t":"perfetto / systrace capture","s3.r3.w":"Device","s3.r3.y":"Direct /sys access, no adb chunk overhead",
-        "s3.r4.t":"Complex reasoning, code edits, user dialogue","s3.r4.w":"Host (frontier LLM)","s3.r4.y":"Capability + cross-file context",
-        "s3.r5.t":"Cross-session memory, artifact archive","s3.r5.w":"Host","s3.r5.y":"Device storage is limited and volatile",
-        "s3.r6.t":"On-site offline debug + later sync","s3.r6.w":"Device (autonomy)","s3.r6.y":"Customer field, no dev reachable",
-        "s3.r7.t":"Workflow orchestration (multi-step plan)","s3.r7.w":"Host","s3.r7.y":"Planning + memory is host's strong suit",
-        "s3.r8.t":"First-response \"what just happened?\"","s3.r8.w":"Device","s3.r8.y":"Sub-second triage before the event ages out",
-        "s4.title":"The channel.",
-        "s4.p1":"One WebSocket, six message types. alb host already speaks WebSocket (/chat/ws), so we extend the same FastAPI app with a /device/channel endpoint and let devices connect as clients. Authentication reuses alb's config.toml token.",
-        "s4.msgs.title":"Message types",
-        "s4.m1":"HEARTBEAT — device → host. Liveness + battery + thermal + freeform health field.",
-        "s4.m2":"EVENT — device → host, unsolicited. OOM, ANR trigger, crash, thermal warn, custom threshold. Includes a short device-side triage summary.",
-        "s4.m3":"REQUEST — device → host. \"I think this needs a bigger brain, here is what I saw.\" Escalates to host LLM.",
-        "s4.m4":"RPC_CALL — host → device. \"Run perfetto for 5 s on PID 1234\", \"dump heap of app X\", \"capture method profile\". Returns structured data.",
-        "s4.m5":"RPC_REPLY — device → host. Result of an RPC_CALL, with {ok, data, error, artifacts} shape — same as the rest of alb.",
-        "s4.m6":"LOG_STREAM — device → host. Pre-filtered, pre-clustered logcat. Replaces the adb logcat pipe with something that has already paid its tokens for filtering.",
-        "s4.offline.t":"Offline buffering",
-        "s4.offline.b":"When the host is unreachable, the device caches EVENTs and RPC_REPLYs on disk. When the link comes back, it replays in order — with a replay_of header so the host knows the clock drift.",
-        "s5.title":"Four phases to ship.",
-        "s5.sub":"We get value at every phase — we do not need phase 4 for phase 1 to be useful.",
-        "s5.p1.t":"Skeleton","s5.p1.b":"alb-mobile Android app: WebSocket client + logcat streamer + system metrics. No LLM yet. The win: replace adb logcat with a filtered, structured stream.",
-        "s5.p2.t":"Local brain","s5.p2.b":"Integrate AICore / Gemini Nano on Android 14+, or LiteRT + Gemma 4. Device does first-pass triage: summarize, cluster, decide whether to escalate.",
-        "s5.p3.t":"Bidirectional RPC","s5.p3.b":"Host can dispatch device-local tools: perfetto traces, heap dumps, custom probes. No adb round-trip. Tool specs published back to host MCP automatically.",
-        "s5.p4.t":"Offline autonomy","s5.p4.b":"Device runs standalone — captures reproducers, diagnoses locally, packages artifacts. Syncs to host when network returns. Field debugging without anyone on the other end.",
-        "s6.title":"Aligned with where Android is going.",
-        "s6.p1":"Google's public direction already points here. AICore ships a system-level LLM runtime on Pixel 8+ and is expanding; Gemini Nano is the first model delivered through it. LiteRT (formerly TFLite) gives anyone a path to ship their own quantized model on-device. And Google's own \"Gemma 4 for Android\" push calls out the on-device agent as a flagship use case.",
-        "s6.p2":"alb does not compete with any of that — it composes. alb-mobile will use whatever the device provides: AICore if available, LiteRT if not, Gemma 4 quantized as a fallback. The interesting work is not the model — it's the host ↔ device protocol and the division of labor. That's what we own.",
-        "s7.title":"Open questions.","s7.intro":"Where we do not have a final answer. Help welcome.",
-        "s7.q1.q":"How does alb-mobile ship — sideload or Play Store?",
-        "s7.q1.a":"Developer builds will be sideload (debug APK from Releases). A Play Store track is on the table for field/autonomy use but needs review and a clear safety story.",
-        "s7.q2.q":"Is this Android-only?",
-        "s7.q2.a":"Yes for v1. The WebSocket channel is generic; porting to HarmonyOS or embedded Linux boards (buildroot + a Gemma runner) is feasible but not on the M4 plan.",
-        "s7.q3.q":"What about non-rooted devices?",
-        "s7.q3.a":"The plan assumes unrooted. perfetto, dumpsys, logcat are all available to app-level context via ADB, and AICore / LiteRT run as normal Android libraries. Some probes require adb shell escalation — those stay on the host side.",
-        "s7.q4.q":"Security and permissions?",
-        "s7.q4.a":"WebSocket connection uses a shared token (dev environment) or mTLS (production). Device never initiates destructive actions without a host-approved RPC_CALL. All device-local LLM inputs are logged for audit.",
-        "s7.q5.q":"What about iOS?",
-        "s7.q5.a":"Not in scope. iOS's debugging model is fundamentally different, and Apple does not expose anything comparable to AICore or adb-equivalent at this layer. A reduced host-side alb for iOS is conceivable — not on this roadmap.",
-        "cta.title":"Want to shape this?","cta.body":"Open an issue with the label on-device-agent. This is a design in motion — the earlier we hear, the more we can fold in.",
-        "cta.b1":"Open an issue","cta.b2":"← Back to home",
-        "ft.product":"Product","ft.p1":"Features","ft.p2":"Methods","ft.p3":"Architecture","ft.p4":"Roadmap",
-        "ft.docs":"Docs","ft.d1":"Overview","ft.d2":"Install","ft.d3":"Agent layer",
-        "ft.vision":"Vision","ft.v1":"On-device agent","ft.v2":"Roadmap",
-        "ft.community":"Community","ft.legal":"License",
-        "ft.copy":"© 2026 android-llm-bridge contributors · open source · Apache 2.0"
-      };
-      const ZH = {
-        "nav.features":"特性","nav.architecture":"架构","nav.roadmap":"路线图","nav.onDevice":"设备端 Agent","nav.cta":"GitHub",
-        "bc.home":"首页","bc.now":"设备端 Agent",
-        "hero.badge":"愿景 · M4+","hero.title":"alb 与设备端 Agent 的协作方案。",
-        "hero.meta":"设计笔记 · 2026-04-21 · 欢迎讨论",
-        "hero.lead":"这是一份设计笔记，不是已上线的功能。它描述了我们希望 alb 如何从\"只在宿主侧跑 agent loop\"演进到\"宿主 + 设备两端 agent 协作\"的路径。",
-        "s1.title":"为什么只靠宿主不够。",
-        "s1.p1":"今天 alb 完整跑在你的 Linux（或 Mac）宿主上。LLM 在宿主推理，通过 adb / ssh / UART 发 tool call，从外部观察设备。这套是能用的，M2 刚给 loop 加上流式 + cache 友好，但它撞了四堵墙。",
-        "s1.l1":"延迟。一次 adb 往返 50–200 毫秒。看 30 条线程状态的 trace 就是 3–6 秒纯传输开销 —— 比你想观察的现象本身还长。",
-        "s1.l2":"盲区。内核 panic、启动 hang、ramdump 窗口发生在 adb 起来之前。ANR 触发是毫秒级的；等 adb 报告\"not responding\"时信号已经丢了。",
-        "s1.l3":"成本。把长 logcat 喂给 frontier 模型又贵又吵。大部分 token 是宿主 LLM 已经见过一千遍的模板文。",
-        "s1.l4":"离线。设备在客户现场、没有开发能接触时，宿主一切能力都白费。问题一直在复现，现场没有人。",
-        "s1.p2":"在设备上放一个小 agent，把这四个缺口都合上 —— 而且不取代宿主。",
-        "s2.title":"宿主当大脑，设备管反射。",
-        "s2.sub":"两个协作 agent，各干各擅长的。一条共享 WebSocket 让它们保持同步。",
-        "s2.cap":"主路径：WebSocket agent 通道。兜底：现有 adb / ssh / UART 传输永远可用。",
-        "s3.title":"谁干啥。",
-        "s3.sub":"一个粗略的分工。原型期间会调整，但大的形状不会变。",
-        "s3.col.task":"任务","s3.col.where":"放哪","s3.col.why":"理由",
-        "s3.r1.t":"阈值告警（OOM / ANR / thermal）","s3.r1.w":"设备","s3.r1.y":"零延迟，adb 看不见瞬时态",
-        "s3.r2.t":"logcat 流去重、stack 聚类","s3.r2.w":"设备（小模型）","s3.r2.y":"节省宿主 token，在源头过滤噪声",
-        "s3.r3.t":"perfetto / systrace 采集","s3.r3.w":"设备","s3.r3.y":"直接读 /sys，没有 adb chunk 开销",
-        "s3.r4.t":"复杂推理、代码修改、对话","s3.r4.w":"宿主（frontier 模型）","s3.r4.y":"能力 + 跨文件上下文",
-        "s3.r5.t":"跨 session 记忆、产物归档","s3.r5.w":"宿主","s3.r5.y":"设备存储有限且易失",
-        "s3.r6.t":"现场离线调试 + 回网同步","s3.r6.w":"设备（autonomy）","s3.r6.y":"客户现场，没有开发",
-        "s3.r7.t":"多步 plan orchestration","s3.r7.w":"宿主","s3.r7.y":"规划 + 记忆是宿主强项",
-        "s3.r8.t":"第一响应\"刚发生了什么\"","s3.r8.w":"设备","s3.r8.y":"亚秒级 triage，事件还没散",
-        "s4.title":"通道。",
-        "s4.p1":"一条 WebSocket，六种消息类型。alb 宿主本来就已经有 WebSocket（/chat/ws），我们只需给同一个 FastAPI app 加一个 /device/channel 端点让设备作为 client 连上来。认证复用 alb 的 config.toml token。",
-        "s4.msgs.title":"消息类型",
-        "s4.m1":"HEARTBEAT — 设备 → 宿主。在线状态 + 电量 + 温度 + 自由 health 字段。",
-        "s4.m2":"EVENT — 设备 → 宿主，主动推。OOM、ANR 触发、crash、thermal warn、自定义阈值。附带设备侧 triage 摘要。",
-        "s4.m3":"REQUEST — 设备 → 宿主。\"我觉得这个需要更大的脑子，这是我看到的。\"升级到宿主 LLM。",
-        "s4.m4":"RPC_CALL — 宿主 → 设备。\"对 PID 1234 跑 5 秒 perfetto\"、\"dump app X 的 heap\"、\"抓 method profile\"。返回结构化数据。",
-        "s4.m5":"RPC_REPLY — 设备 → 宿主。RPC_CALL 的结果，格式 {ok, data, error, artifacts} —— 和 alb 其他部分一致。",
-        "s4.m6":"LOG_STREAM — 设备 → 宿主。预过滤、预聚类的 logcat。替换 adb logcat 的管道 —— 过滤的 token 成本已经在源头付过了。",
-        "s4.offline.t":"离线缓存",
-        "s4.offline.b":"宿主不可达时，设备把 EVENT 和 RPC_REPLY 缓到本地盘。链路恢复后按序回放 —— 带 replay_of 头，让宿主知道时钟漂移。",
-        "s5.title":"四个阶段上线。",
-        "s5.sub":"每个阶段都有价值 —— 不用等第 4 阶段，第 1 阶段就能拿出去用。",
-        "s5.p1.t":"骨架","s5.p1.b":"alb-mobile 安卓 app：WebSocket client + logcat streamer + 系统指标。还没 LLM。收益：用一条过滤结构化的流替换 adb logcat。",
-        "s5.p2.t":"本地大脑","s5.p2.b":"在 Android 14+ 集成 AICore / Gemini Nano，或 LiteRT + Gemma 4。设备做首层 triage：总结、聚类、决定要不要升级。",
-        "s5.p3.t":"双向 RPC","s5.p3.b":"宿主能调度设备本地工具：perfetto trace、heap dump、自定义探针。没有 adb 往返。tool spec 自动回传宿主 MCP。",
-        "s5.p4.t":"离线 autonomy","s5.p4.b":"设备单机跑 —— 抓复现、本地诊断、打包产物。网络恢复后同步回宿主。现场调试不需要两头都有人。",
-        "s6.title":"和 Android 的方向一致。",
-        "s6.p1":"Google 的公开方向已经指向这里。AICore 在 Pixel 8+ 上出货系统级 LLM 运行时且在扩展；Gemini Nano 是第一个通过它交付的模型。LiteRT（原 TFLite）给任何人一条路径把自己的量化模型带到设备端。Google 自己的\"Gemma 4 for Android\"推进也把\"设备端 agent\"列为旗舰用例。",
-        "s6.p2":"alb 不和这些竞争 —— 它是在组装。alb-mobile 有什么用什么：有 AICore 就用 AICore，没有就用 LiteRT，再退一步用 Gemma 4 量化。真正有价值的工作不是模型本身 —— 是宿主 ↔ 设备的协议和分工。这是我们要做的部分。",
-        "s7.title":"开放问题。","s7.intro":"还没定型的点。欢迎讨论。",
-        "s7.q1.q":"alb-mobile 怎么分发 —— sideload 还是上 Play Store？",
-        "s7.q1.a":"开发版 sideload（从 Releases 下载 debug APK）。Play Store 通道是在考虑中，主要针对现场 / autonomy 场景，但需要审核和清晰的安全故事。",
-        "s7.q2.q":"只支持 Android 吗？",
-        "s7.q2.a":"v1 是的。WebSocket 通道是通用的；移植到鸿蒙或嵌入式 Linux 板子（buildroot + Gemma runner）是可行的但不在 M4 计划里。",
-        "s7.q3.q":"非 root 设备呢？",
-        "s7.q3.a":"方案默认非 root。perfetto、dumpsys、logcat 都对 app 层上下文开放（通过 ADB），AICore / LiteRT 就是普通 Android 库。少数探针需要 adb shell 提权 —— 那些留在宿主侧。",
-        "s7.q4.q":"安全 + 权限？",
-        "s7.q4.a":"WebSocket 连接用共享 token（开发环境）或 mTLS（生产）。设备不能主动做破坏性操作 —— 必须先有宿主批准的 RPC_CALL。所有设备端 LLM 输入都会记 audit log。",
-        "s7.q5.q":"iOS 呢？",
-        "s7.q5.a":"不在范围内。iOS 的调试模型根本不一样，Apple 也没有 AICore / adb 等价物。给 iOS 做一个精简版的宿主 alb 可以想象 —— 但不在这个路线图里。",
-        "cta.title":"想参与？","cta.body":"开个 issue 带上 on-device-agent 标签。这是一份流动中的设计 —— 越早听到越多东西能进去。",
-        "cta.b1":"开 issue","cta.b2":"← 回首页",
-        "ft.product":"产品","ft.p1":"特性","ft.p2":"方案","ft.p3":"架构","ft.p4":"路线图",
-        "ft.docs":"文档","ft.d1":"总览","ft.d2":"安装","ft.d3":"Agent 层",
-        "ft.vision":"愿景","ft.v1":"设备端 Agent","ft.v2":"路线图",
-        "ft.community":"社区","ft.legal":"许可",
-        "ft.copy":"© 2026 android-llm-bridge contributors · 开源 · Apache 2.0"
-      };
-      function applyLang(lang){
-        const dict = lang === "zh" ? ZH : I18N;
-        document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
-        document.querySelectorAll("[data-i18n]").forEach(el => {
-          const key = el.getAttribute("data-i18n");
-          if(dict[key] !== undefined) el.textContent = dict[key];
-        });
-        const btn = document.getElementById("langBtn");
-        if(btn) btn.textContent = lang === "zh" ? "English" : "中文";
-        try{ localStorage.setItem("alb.lang", lang); }catch(e){}
-      }
-      function toggleLang(){
-        const cur = (localStorage.getItem("alb.lang") || "en");
-        applyLang(cur === "zh" ? "en" : "zh");
-      }
-      (function init(){
-        let stored = null;
-        try{ stored = localStorage.getItem("alb.lang"); }catch(e){}
-        const prefer = stored || (navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
-        if(prefer === "zh") applyLang("zh");
-      })();
-    </script>
-  </body>
+<!-- ================= phases ================= -->
+<section class="section" id="phases">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Plan</span><span class="lang-zh">计划</span></span>
+      <h2><span class="lang-en">Four phases to ship.</span><span class="lang-zh">四个阶段上线。</span></h2>
+      <p class="lead"><span class="lang-en">We get value at every phase — we do not need phase 4 for phase 1 to be useful.</span><span class="lang-zh">每个阶段都有价值 —— 不用等第 4 阶段，第 1 阶段就能拿出去用。</span></p>
+    </div>
+    <div class="grid grid--4">
+      <article class="card phase">
+        <span class="phase__num" aria-hidden="true">1</span>
+        <h3><span class="lang-en">Skeleton</span><span class="lang-zh">骨架</span></h3>
+        <p><span class="lang-en">alb-mobile Android app: WebSocket client + logcat streamer + system metrics. No LLM yet. The win: replace adb logcat with a filtered, structured stream.</span><span class="lang-zh">alb-mobile 安卓 app：WebSocket client + logcat streamer + 系统指标。还没有 LLM。收益：用一条过滤过的结构化流替换 adb logcat。</span></p>
+      </article>
+      <article class="card phase">
+        <span class="phase__num phase__num--k" aria-hidden="true">2</span>
+        <h3><span class="lang-en">Local brain</span><span class="lang-zh">本地大脑</span></h3>
+        <p><span class="lang-en">Integrate AICore / Gemini Nano on Android 14+, or LiteRT + Gemma 4. Device does first-pass triage: summarize, cluster, decide whether to escalate.</span><span class="lang-zh">在 Android 14+ 集成 AICore / Gemini Nano，或 LiteRT + Gemma 4。设备做首层初筛：总结、聚类、决定要不要升级。</span></p>
+      </article>
+      <article class="card phase">
+        <span class="phase__num phase__num--u" aria-hidden="true">3</span>
+        <h3><span class="lang-en">Bidirectional RPC</span><span class="lang-zh">双向 RPC</span></h3>
+        <p><span class="lang-en">Host can dispatch device-local tools: perfetto traces, heap dumps, custom probes. No adb round-trip. Tool specs published back to host MCP automatically.</span><span class="lang-zh">宿主能调度设备本地工具：perfetto trace、heap dump、自定义探针。没有 adb 往返。tool spec 自动回传宿主 MCP。</span></p>
+      </article>
+      <article class="card phase">
+        <span class="phase__num phase__num--j" aria-hidden="true">4</span>
+        <h3><span class="lang-en">Offline autonomy</span><span class="lang-zh">离线自主</span></h3>
+        <p><span class="lang-en">Device runs standalone — captures reproducers, diagnoses locally, packages artifacts. Syncs to host when network returns. Field debugging without anyone on the other end.</span><span class="lang-zh">设备单机跑 —— 抓复现、本地诊断、打包产物。网络恢复后同步回宿主。现场调试不需要两头都有人。</span></p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Android direction ================= -->
+<section class="section section--tone" id="android">
+  <div class="wrap">
+    <div class="section__head section__head--tight">
+      <span class="eyebrow"><span class="lang-en">Context</span><span class="lang-zh">背景</span></span>
+      <h2><span class="lang-en">Aligned with where Android is going.</span><span class="lang-zh">和 Android 的方向一致。</span></h2>
+    </div>
+    <div class="prose">
+      <p><span class="lang-en">Google's public direction already points here. <strong>AICore</strong> ships a system-level LLM runtime on Pixel 8+ and is expanding; <strong>Gemini Nano</strong> is the first model delivered through it. <strong>LiteRT</strong> (formerly TFLite) gives anyone a path to ship their own quantized model on-device. And Google's own “Gemma 4 for Android” push calls out the <em>on-device agent</em> as a flagship use case.</span><span class="lang-zh">Google 的公开方向已经指向这里。<strong>AICore</strong> 在 Pixel 8+ 上提供系统级 LLM 运行时，并在扩展；<strong>Gemini Nano</strong> 是第一个通过它交付的模型。<strong>LiteRT</strong>（原 TFLite）给任何人一条路径，把自己的量化模型带到设备端。Google 自己的「Gemma 4 for Android」也把<em>设备端 agent</em> 列为旗舰用例。</span></p>
+      <p><span class="lang-en">alb does not compete with any of that — it composes. alb-mobile will use whatever the device provides: AICore if available, LiteRT if not, Gemma 4 quantized as a fallback. The <em>interesting work</em> is not the model — it's the <strong>host ↔ device protocol</strong> and the division of labor. That's what we own.</span><span class="lang-zh">alb 不和这些竞争，而是把它们组合起来用。alb-mobile 有什么用什么：有 AICore 就用 AICore，没有就用 LiteRT，再退一步用量化的 Gemma 4。真正有价值的工作不是模型本身，而是<strong>宿主 ↔ 设备的协议</strong>和分工。这是我们要做的部分。</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= open questions ================= -->
+<section class="section" id="questions">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow">FAQ</span>
+      <h2><span class="lang-en">Open questions.</span><span class="lang-zh">开放问题。</span></h2>
+      <p class="lead"><span class="lang-en">Where we do not have a final answer. Help welcome.</span><span class="lang-zh">还没定型的点。欢迎讨论。</span></p>
+    </div>
+    <div class="faq">
+      <details>
+        <summary><span class="lang-en">How does alb-mobile ship — sideload or Play Store?</span><span class="lang-zh">alb-mobile 怎么分发 —— sideload 还是上 Play Store？</span></summary>
+        <p><span class="lang-en">Developer builds will be sideload (debug APK from Releases). A Play Store track is on the table for field/autonomy use but needs review and a clear safety story.</span><span class="lang-zh">开发版走 sideload（从 Releases 下载 debug APK）。Play Store 通道在考虑中，主要针对现场 / 自主运行场景，但需要过审核，也需要讲清楚安全方案。</span></p>
+      </details>
+      <details>
+        <summary><span class="lang-en">Is this Android-only?</span><span class="lang-zh">只支持 Android 吗？</span></summary>
+        <p><span class="lang-en">Yes for v1. The WebSocket channel is generic; porting to HarmonyOS or embedded Linux boards (buildroot + a Gemma runner) is feasible but not on the M4 plan.</span><span class="lang-zh">v1 是的。WebSocket 通道是通用的；移植到鸿蒙或嵌入式 Linux 板子（buildroot + Gemma runner）可行，但不在 M4 计划里。</span></p>
+      </details>
+      <details>
+        <summary><span class="lang-en">What about non-rooted devices?</span><span class="lang-zh">非 root 设备呢？</span></summary>
+        <p><span class="lang-en">The plan assumes unrooted. perfetto, dumpsys, logcat are all available to app-level context via ADB, and AICore / LiteRT run as normal Android libraries. Some probes require <code>adb shell</code> escalation — those stay on the host side.</span><span class="lang-zh">方案默认非 root。perfetto、dumpsys、logcat 都对 app 层上下文开放（通过 ADB），AICore / LiteRT 就是普通 Android 库。少数探针需要 <code>adb shell</code> 提权 —— 那些留在宿主侧。</span></p>
+      </details>
+      <details>
+        <summary><span class="lang-en">Security and permissions?</span><span class="lang-zh">安全和权限？</span></summary>
+        <p><span class="lang-en">WebSocket connection uses a shared token (dev environment) or mTLS (production). Device never initiates destructive actions without a host-approved <code>RPC_CALL</code>. All device-local LLM inputs are logged for audit.</span><span class="lang-zh">WebSocket 连接用共享 token（开发环境）或 mTLS（生产环境）。设备不能主动做破坏性操作 —— 必须先有宿主批准的 <code>RPC_CALL</code>。所有设备端 LLM 输入都会记审计日志。</span></p>
+      </details>
+      <details>
+        <summary><span class="lang-en">What about iOS?</span><span class="lang-zh">iOS 呢？</span></summary>
+        <p><span class="lang-en">Not in scope. iOS's debugging model is fundamentally different, and Apple does not expose anything comparable to AICore or adb-equivalent at this layer. A reduced host-side alb for iOS is conceivable — not on this roadmap.</span><span class="lang-zh">不在范围内。iOS 的调试模型根本不一样，Apple 也没有 AICore / adb 的等价物。给 iOS 做一个精简版的宿主端 alb 可以想象，但不在这个路线图里。</span></p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ================= call to action ================= -->
+<section class="section section--tone cta">
+  <div class="wrap">
+    <h2><span class="lang-en">Want to shape this?</span><span class="lang-zh">想参与？</span></h2>
+    <p><span class="lang-en">Open an issue with the label <code>on-device-agent</code>. This is a design in motion — the earlier we hear, the more we can fold in.</span><span class="lang-zh">开个 issue，带上 <code>on-device-agent</code> 标签。这是一份还在变的设计 —— 越早听到，越多想法能放进去。</span></p>
+    <div class="cta__btns">
+      <a class="btn btn--filled" href="https://github.com/TbusOS/android-llm-bridge/issues/new?labels=on-device-agent"><span class="lang-en">Open an issue</span><span class="lang-zh">开 issue</span></a>
+      <a class="btn btn--tonal" href="on-device-model-selection.html"><span class="lang-en">Model selection →</span><span class="lang-zh">模型选型 →</span></a>
+      <a class="btn btn--outlined" href="./"><span class="lang-en">← Back to home</span><span class="lang-zh">← 回首页</span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+</body>
 </html>

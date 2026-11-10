@@ -110,7 +110,8 @@ node_modules/
 # ─────────────────────────────────────────────
 docs/_build/
 docs/.cache/
-site/
+# mkdocs output at the repo root only; docs/assets/site/ is the project site's own assets
+/site/
 
 # ─────────────────────────────────────────────
 # 第三方设计素材（仅本机参考，不进 git）

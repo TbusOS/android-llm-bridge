@@ -1295,6 +1295,7 @@ li:first-child > button.list__item--action { border-top: 0; }
 .kv dt { font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); }
 .kv dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 .kv .kv--wide { grid-column: span 2; }
+.kv .kv__sub { display: block; margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--alb-color-text-muted); }
 
 /* ---------- progress ---------- */
 .progress {

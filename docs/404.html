@@ -1,103 +1,243 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Not found — android-llm-bridge</title>
-    <!-- Prod-only paths. Opening this file via file:// in dev will
-         have the CSS 404 silently and render a default-styled 404 —
-         that's intentional, this page is the GH Pages fallback. -->
-    <link rel="stylesheet" href="/android-llm-bridge/assets/fonts.css" />
-    <link rel="stylesheet" href="/android-llm-bridge/assets/anthropic.css" />
-    <!--
-      DEBT-015 fix · 2026-04-29 · GitHub Pages SPA fallback.
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found — android-llm-bridge</title>
+<meta name="alb-title-en" content="Page not found — android-llm-bridge">
+<meta name="alb-title-zh" content="页面不存在 —— android-llm-bridge">
+<meta name="description" content="This page does not exist on the android-llm-bridge site. Go back to the project home, the Web UI gallery or the docs.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<!--
+  GitHub Pages serves this file for every missing path under the site, at any
+  depth, so it cannot rely on paths relative to its own URL.
 
-      Mirrors the spa-github-pages convention: any path under
-      /android-llm-bridge/app/ that GH Pages can't find as a file is
-      a TanStack Router HTML5 history-mode route. Encode the path into
-      ?spa=1&p=<rest> and bounce to the SPA shell at /app/. The shell
-      (docs/app/index.html) has a tiny matching recovery script that
-      runs BEFORE the React bundle and uses history.replaceState to
-      rewrite the URL back to the original deep link, so the router
-      sees the right path.
+  1. SPA fallback (DEBT-015 · 2026-04-29). Mirrors the spa-github-pages
+     convention: any path under /android-llm-bridge/app/ that GH Pages can't
+     find as a file is a TanStack Router HTML5 history-mode route. Encode the
+     path into ?spa=1&p=<rest> and bounce to the SPA shell at /app/. The shell
+     (docs/app/index.html) has a tiny matching recovery script that runs
+     BEFORE the React bundle and uses history.replaceState to rewrite the URL
+     back to the original deep link, so the router sees the right path.
+  2. Base URL. On the published site every relative link below resolves from
+     /android-llm-bridge/; opened from disk or a local server at the docs
+     root, no <base> is set and the same relative links still work.
+-->
+<script>
+(function () {
+  var path = window.location.pathname || "";
+  var search = window.location.search || "";
+  var hash = window.location.hash || "";
+  var APP_BASE = "/android-llm-bridge/app/";
+  // Loop guard: if we landed here with ?spa=1 already, the SPA
+  // shell itself was missing (deploy-time race / cdn cache).
+  // Don't re-wrap or we'd accumulate &qs=spa%3D1%26p%3D... etc.
+  if (search.indexOf("spa=1") !== -1) return;
+  if (path.indexOf(APP_BASE) !== 0) return;
+  var rest = path.slice(APP_BASE.length);
+  if (rest === "") return; // landed at /app/ itself; nothing to do.
+  // Drop trailing slash so the recovery script restores a
+  // canonical path. TanStack Router doesn't distinguish
+  // /dashboard vs /dashboard/ but the URL bar should be tidy.
+  if (rest.length > 1 && rest.charAt(rest.length - 1) === "/") {
+    rest = rest.slice(0, -1);
+  }
+  // Carry the original querystring through as `qs=<encoded>`
+  // so the recovery script can restore ?tab=charts etc.
+  var qsParam = search.length > 1 ? "&qs=" + encodeURIComponent(search.slice(1)) : "";
+  window.location.replace(APP_BASE + "?spa=1&p=" + encodeURIComponent(rest) + qsParam + hash);
+})();
+(function () {
+  var SITE = "/android-llm-bridge/";
+  if ((window.location.pathname || "").indexOf(SITE) !== 0) return;
+  var b = document.createElement("base");
+  b.href = SITE;
+  document.head.appendChild(b);
+})();
+</script>
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+})();
+</script>
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<style>
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  main { flex: 1; }
+  .nf { position: relative; overflow: hidden; padding: clamp(56px, 10vw, 128px) 0 clamp(64px, 10vw, 120px); }
+  .nf .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .8fr); gap: clamp(24px, 5vw, 72px); align-items: center; }
+  @media (max-width: 860px) { .nf .wrap { grid-template-columns: 1fr; } .nf__art { order: -1; max-width: 300px; } }
+  @media (max-width: 480px) { .nf__art { max-width: 240px; } }
 
-      For non-/app paths, fall back to the project landing page so
-      typo'd repo URLs still feel like part of this site.
-    -->
-    <script>
-      (function () {
-        var path = window.location.pathname || "";
-        var search = window.location.search || "";
-        var hash = window.location.hash || "";
-        var APP_BASE = "/android-llm-bridge/app/";
-        // Loop guard: if we landed here with ?spa=1 already, the SPA
-        // shell itself was missing (deploy-time race / cdn cache).
-        // Don't re-wrap or we'd accumulate &qs=spa%3D1%26p%3D... etc.
-        if (search.indexOf("spa=1") !== -1) return;
-        if (path.indexOf(APP_BASE) !== 0) return;
-        var rest = path.slice(APP_BASE.length);
-        if (rest === "") return; // landed at /app/ itself; nothing to do.
-        // Drop trailing slash so the recovery script restores a
-        // canonical path. TanStack Router doesn't distinguish
-        // /dashboard vs /dashboard/ but the URL bar should be tidy.
-        if (rest.length > 1 && rest.charAt(rest.length - 1) === "/") {
-          rest = rest.slice(0, -1);
-        }
-        // Carry the original querystring through as `qs=<encoded>`
-        // so the recovery script can restore ?tab=charts etc.
-        var qsParam =
-          search.length > 1 ? "&qs=" + encodeURIComponent(search.slice(1)) : "";
-        var target =
-          APP_BASE +
-          "?spa=1&p=" +
-          encodeURIComponent(rest) +
-          qsParam +
-          hash;
-        window.location.replace(target);
-      })();
-    </script>
-    <style>
-      body {
-        font-family: var(--font-heading, system-ui, sans-serif);
-        background: var(--anth-cream, #faf9f5);
-        color: var(--anth-ink, #1f1e1c);
-        display: grid;
-        place-items: center;
-        min-height: 100vh;
-        margin: 0;
-        padding: 24px;
-      }
-      .nf {
-        max-width: 560px;
-        text-align: center;
-      }
-      .nf h1 {
-        font-size: 64px;
-        margin: 0 0 12px;
-        color: var(--anth-orange, #d97757);
-      }
-      .nf p {
-        font-family: var(--font-body, Georgia, serif);
-        font-size: 18px;
-        line-height: 1.6;
-        color: var(--anth-text-secondary, #69655d);
-      }
-      .nf a {
-        color: var(--anth-orange, #d97757);
-        text-decoration: none;
-        border-bottom: 1px solid currentColor;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="nf">
-      <h1>404</h1>
-      <p>
-        That page isn't here. Head back to the
-        <a href="/android-llm-bridge/">project home</a>
-        or open the
-        <a href="/android-llm-bridge/app/">Web UI</a>.
-      </p>
+  .nf h1 { margin-top: 14px; font-size: clamp(34px, 5vw, 56px); line-height: 1.1; letter-spacing: -.5px; }
+  :root:lang(zh) .nf h1 { line-height: 1.25; letter-spacing: 0; }
+  .nf .lead { margin-top: 18px; max-width: 560px; font-size: 18px; line-height: 1.6; color: var(--md-sys-color-on-surface-variant); }
+  .nf__cta { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 12px; }
+
+  /* the big 404 sits on M3 expressive shapes */
+  .nf__art { position: relative; width: 100%; aspect-ratio: 1; margin: 0 auto; }
+  .nf__art .shape { position: absolute; }
+  .nf__art .shape--cookie { inset: 0; background: var(--md-sys-color-primary-container); animation: site-spin 80s linear infinite; }
+  .nf__art .shape--clover { width: 34%; height: 34%; right: -2%; bottom: 2%; background: var(--site-kernel-container); animation: site-spin 60s linear infinite reverse; }
+  .nf__art .shape--sunny { width: 22%; height: 22%; left: 2%; top: 6%; background: var(--site-uart-container); animation: site-spin 50s linear infinite; }
+  .nf__num {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: clamp(88px, 15vw, 168px); line-height: 1; font-weight: 700; letter-spacing: -4px;
+    font-variation-settings: "opsz" 144; font-variant-numeric: tabular-nums;
+    color: var(--md-sys-color-on-primary-container);
+  }
+
+  .nf__links { margin-top: 40px; }
+  .nf__links h2 { font-size: 14px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
+  .nf__links ul { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-width: 560px; }
+  @media (max-width: 480px) { .nf__links ul { grid-template-columns: 1fr; } }
+  .nf__links a {
+    display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 16px; border-radius: 16px;
+    background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant);
+    color: var(--md-sys-color-on-surface); text-decoration: none; font-weight: 500;
+    transition: background-color .2s var(--site-ease), transform .2s var(--site-ease-spring);
+  }
+  .nf__links a:hover { background: var(--md-sys-color-surface-container-high); }
+  .nf__links a:active { transform: scale(.98); }
+  .nf__links svg { width: 22px; height: 22px; flex: none; fill: none; stroke: var(--md-sys-color-primary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .nf__links small { display: block; font-size: 13px; font-weight: 400; color: var(--md-sys-color-on-surface-variant); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">Topology</span><span class="lang-zh">拓扑</span></a>
+      <a href="./#models"><span class="lang-en">Models</span><span class="lang-zh">模型</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="./#targets"><span class="lang-en">Targets</span><span class="lang-zh">调试对象</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="./#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
+      <a href="./#community"><span class="lang-en">Contribute</span><span class="lang-zh">参与</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
     </div>
-  </body>
+  </div>
+</header>
+
+<main id="main">
+  <section class="nf">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow"><span class="lang-en">Error 404</span><span class="lang-zh">404 错误</span></span>
+        <h1><span class="lang-en">That page isn't here.</span><span class="lang-zh">这个页面不存在。</span></h1>
+        <p class="lead">
+          <span class="lang-en">The link may be old, or the address has a typo. Head back to the project home, or pick one of the pages below.</span>
+          <span class="lang-zh">可能是链接过期了，也可能是地址打错了。回到项目首页，或者从下面挑一个页面。</span>
+        </p>
+        <div class="nf__cta">
+          <a class="btn btn--filled" href="./">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11.5 12 5l8 6.5V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
+            <span class="lang-en">Back to the project home</span><span class="lang-zh">回到项目首页</span>
+          </a>
+          <a class="btn btn--outlined" href="app/">
+            <span class="lang-en">Open the Web UI</span><span class="lang-zh">打开网页界面</span>
+          </a>
+        </div>
+
+        <div class="nf__links">
+          <h2><span class="lang-en">Often visited</span><span class="lang-zh">常用页面</span></h2>
+          <ul>
+            <li><a href="webui-preview.html">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg>
+              <span><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span><small><span class="lang-en">screenshots and design pages</span><span class="lang-zh">截图和交互设计稿</span></small></span>
+            </a></li>
+            <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12.5 15H17"/></svg>
+              <span><span class="lang-en">Install</span><span class="lang-zh">安装</span><small><span class="lang-en">set up alb on your machine</span><span class="lang-zh">在自己电脑上装好 alb</span></small></span>
+            </a></li>
+            <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v6M16 4v6M6 10h12v3a6 6 0 0 1-12 0zM12 19v2"/></svg>
+              <span><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span><small><span class="lang-en">boards on another PC</span><span class="lang-zh">板子插在另一台电脑上</span></small></span>
+            </a></li>
+            <li><a href="dev-team.html">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+              <span><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span><small><span class="lang-en">the review workflow</span><span class="lang-zh">评审工作流</span></small></span>
+            </a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="nf__art" aria-hidden="true">
+        <span class="shape shape--cookie"></span>
+        <span class="shape shape--clover"></span>
+        <span class="shape shape--sunny"></span>
+        <span class="nf__num">404</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+</body>
 </html>

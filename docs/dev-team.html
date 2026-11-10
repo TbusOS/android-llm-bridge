@@ -1,726 +1,559 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>How we ship — android-llm-bridge dev team</title>
-    <meta
-      name="description"
-      content="Inside the agents-team workflow that ships android-llm-bridge: 7 review agents, 4 slash commands, a knowledge base that gets smarter every commit. Real numbers from 8 reviews and 94 suggestions across the F-dock milestone."
-    />
-    <link rel="stylesheet" href="assets/fonts.css" />
-    <link rel="stylesheet" href="assets/anthropic.css" />
-    <style>
-      html[lang="en"] .lang-zh,
-      html[lang^="zh"] .lang-en {
-        display: none !important;
-      }
-      .lang-toggle {
-        font-family: var(--font-heading);
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--anth-text-secondary);
-        background: transparent;
-        border: 1px solid var(--anth-light-gray);
-        border-radius: var(--radius-pill);
-        padding: 6px 14px;
-        cursor: pointer;
-        transition: border-color var(--duration-sm) var(--ease-anth),
-          color var(--duration-sm) var(--ease-anth);
-      }
-      .lang-toggle:hover {
-        border-color: var(--anth-orange);
-        color: var(--anth-orange);
-      }
-      .anth-section {
-        padding: var(--space-9) var(--space-6);
-        max-width: 1120px;
-        margin: 0 auto;
-      }
-      .stat-strip {
-        display: grid;
-        grid-template-columns: repeat(6, 1fr);
-        gap: var(--space-4);
-        margin-top: var(--space-6);
-      }
-      .stat-tile {
-        background: #ffffff;
-        border: 1px solid var(--anth-light-gray);
-        border-radius: var(--radius-md);
-        padding: var(--space-5);
-        text-align: center;
-        box-shadow: var(--shadow-card);
-      }
-      .stat-tile .num {
-        font-family: var(--font-heading);
-        font-size: 36px;
-        font-weight: 600;
-        color: var(--anth-orange);
-        line-height: 1.1;
-      }
-      .stat-tile .label {
-        font-family: var(--font-body);
-        font-size: 13px;
-        color: var(--anth-text-secondary);
-        margin-top: var(--space-2);
-      }
-      .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: var(--space-5);
-        margin-top: var(--space-6);
-      }
-      .agent-card {
-        background: #ffffff;
-        border: 1px solid var(--anth-light-gray);
-        border-radius: var(--radius-md);
-        padding: var(--space-5);
-        box-shadow: var(--shadow-card);
-      }
-      .agent-card h3 {
-        font-family: var(--font-heading);
-        font-size: 18px;
-        font-weight: 600;
-        margin: 0 0 var(--space-2);
-        color: var(--anth-text);
-      }
-      .agent-card .role {
-        font-family: var(--font-heading);
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--anth-orange);
-        margin-bottom: var(--space-3);
-      }
-      .agent-card p {
-        font-family: var(--font-body);
-        font-size: 14px;
-        line-height: 1.6;
-        color: var(--anth-text-secondary);
-        margin: 0;
-      }
-      .agent-card .write-tag {
-        display: inline-block;
-        font-family: var(--font-heading);
-        font-size: 10px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        padding: 2px 8px;
-        border-radius: var(--radius-pill);
-        margin-top: var(--space-3);
-      }
-      .write-readonly {
-        background: var(--anth-light-gray);
-        color: var(--anth-text-secondary);
-      }
-      .write-reports {
-        background: rgba(217, 119, 87, 0.18);
-        color: #a8502f;
-      }
-      .step-list {
-        counter-reset: step;
-        margin: var(--space-6) 0 0;
-        padding: 0;
-        list-style: none;
-      }
-      .step-list li {
-        position: relative;
-        padding: var(--space-4) 0 var(--space-4) 56px;
-        border-bottom: 1px solid var(--anth-light-gray);
-        font-family: var(--font-body);
-        font-size: 16px;
-        line-height: 1.6;
-      }
-      .step-list li:last-child {
-        border-bottom: none;
-      }
-      .step-list li::before {
-        counter-increment: step;
-        content: counter(step);
-        position: absolute;
-        left: 0;
-        top: var(--space-4);
-        width: 36px;
-        height: 36px;
-        border-radius: var(--radius-pill);
-        background: var(--anth-orange);
-        color: #fff;
-        font-family: var(--font-heading);
-        font-weight: 600;
-        font-size: 16px;
-        display: grid;
-        place-items: center;
-      }
-      .step-list strong {
-        font-family: var(--font-heading);
-        font-weight: 600;
-        color: var(--anth-text);
-        display: block;
-        margin-bottom: 4px;
-      }
-      .review-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: var(--space-6);
-        font-family: var(--font-body);
-        font-size: 14px;
-        background: #ffffff;
-        border-radius: var(--radius-md);
-        overflow: hidden;
-        box-shadow: var(--shadow-card);
-      }
-      .review-table th,
-      .review-table td {
-        padding: var(--space-3) var(--space-4);
-        text-align: left;
-        border-bottom: 1px solid var(--anth-light-gray);
-      }
-      .review-table th {
-        font-family: var(--font-heading);
-        font-weight: 600;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        background: var(--anth-cream);
-        color: var(--anth-text-secondary);
-      }
-      .review-table tr:last-child td {
-        border-bottom: none;
-      }
-      .review-table .rate {
-        font-family: var(--font-heading);
-        font-weight: 600;
-        color: var(--anth-orange);
-      }
-      .review-table .keystroke {
-        font-size: 13px;
-        color: var(--anth-text-secondary);
-        font-style: italic;
-      }
-      .knowledge-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: var(--space-4);
-        margin-top: var(--space-6);
-      }
-      .file-card {
-        background: #ffffff;
-        border: 1px solid var(--anth-light-gray);
-        border-radius: var(--radius-md);
-        padding: var(--space-5);
-        box-shadow: var(--shadow-card);
-      }
-      .file-card .filename {
-        font-family: "JetBrains Mono", "Menlo", monospace;
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--anth-orange);
-        margin-bottom: var(--space-2);
-      }
-      .file-card h3 {
-        font-family: var(--font-heading);
-        font-size: 16px;
-        font-weight: 600;
-        margin: 0 0 var(--space-2);
-      }
-      .file-card p {
-        font-family: var(--font-body);
-        font-size: 14px;
-        line-height: 1.6;
-        color: var(--anth-text-secondary);
-        margin: 0;
-      }
-      .file-card .writer {
-        font-family: var(--font-heading);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--anth-text-secondary);
-        margin-top: var(--space-3);
-      }
-      .closeup {
-        background: var(--anth-cream);
-        border-left: 4px solid var(--anth-orange);
-        padding: var(--space-5) var(--space-6);
-        margin-top: var(--space-6);
-        border-radius: 0 var(--radius-md) var(--radius-md) 0;
-      }
-      .closeup h3 {
-        font-family: var(--font-heading);
-        font-size: 18px;
-        margin: 0 0 var(--space-3);
-      }
-      .closeup p {
-        font-family: var(--font-body);
-        font-size: 15px;
-        line-height: 1.65;
-        color: var(--anth-text-secondary);
-        margin: 0 0 var(--space-3);
-      }
-      .closeup p:last-child {
-        margin-bottom: 0;
-      }
-      .h-eyebrow {
-        font-family: var(--font-heading);
-        font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--anth-orange);
-        margin-bottom: var(--space-3);
-      }
-      @media (max-width: 880px) {
-        .stat-strip {
-          grid-template-columns: repeat(3, 1fr);
-        }
-        .agent-grid,
-        .knowledge-grid {
-          grid-template-columns: 1fr;
-        }
-      }
-      @media (max-width: 540px) {
-        .stat-strip {
-          grid-template-columns: repeat(2, 1fr);
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <header class="anth-nav">
-      <div class="anth-nav-inner">
-        <nav aria-label="Primary" style="display: flex; align-items: center">
-          <a href="index.html"><span class="lang-en">Home</span><span class="lang-zh">首页</span></a>
-          <a href="agent.md"><span class="lang-en">On-device Agent</span><span class="lang-zh">设备端 Agent</span></a>
-          <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">Web 界面</span></a>
-          <a href="https://github.com/TbusOS/android-llm-bridge" rel="noopener">GitHub</a>
-        </nav>
-        <button
-          type="button"
-          class="lang-toggle"
-          onclick="toggleLang()"
-          aria-label="toggle language"
-        >
-          <span class="lang-en">中文</span><span class="lang-zh">EN</span>
-        </button>
-      </div>
-    </header>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How we ship — android-llm-bridge dev team</title>
+<meta name="alb-title-en" content="How we ship — android-llm-bridge dev team">
+<meta name="alb-title-zh" content="我们怎么交付 —— android-llm-bridge 开发团队">
+<meta name="description" content="Inside the agents-team workflow that ships android-llm-bridge: 7 review agents, 6 slash commands, a knowledge base that gets smarter every commit. Real numbers from 8 reviews and 94 suggestions across the F-dock milestone.">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/dev-team.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="How we ship — android-llm-bridge dev team">
+<meta property="og:description" content="7 review agents, slash commands and a shared knowledge base, all in the repo. The workflow and the numbers from the F-dock milestone.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/dev-team.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+})();
+</script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<style>
+  /* ---------- hero ---------- */
+  .page-hero { position: relative; overflow: hidden; }
+  .page-hero .wrap { position: relative; }
+  .page-hero h1 em { font-style: normal; color: var(--md-sys-color-primary); }
+  .page-hero .shape--cookie { width: 300px; height: 300px; right: -80px; top: -90px; background: var(--md-sys-color-primary-container); animation: site-spin 90s linear infinite; }
+  .page-hero .shape--clover { width: 150px; height: 150px; right: 15%; bottom: -60px; background: var(--site-kernel-container); animation: site-spin 120s linear infinite reverse; }
+  @media (max-width: 860px) { .page-hero .shape { display: none; } }
 
-    <section class="anth-section">
-      <div class="h-eyebrow">
-        <span class="lang-en">How we ship</span>
-        <span class="lang-zh">我们如何 ship</span>
-      </div>
-      <h1 style="font-size: 56px; line-height: 1.1; margin: 0 0 var(--space-5)">
-        <span class="lang-en"
-          >A review team that
-          <span style="color: var(--anth-orange)">ships in the open</span>.</span
-        >
-        <span class="lang-zh"
-          >把评审团队入仓，<span style="color: var(--anth-orange)"
-            >过程公开可追</span
-          >。</span
-        >
-      </h1>
-      <p
-        style="
-          font-family: var(--font-body);
-          font-size: 19px;
-          line-height: 1.6;
-          color: var(--anth-text-secondary);
-          max-width: 720px;
-        "
-      >
-        <span class="lang-en"
-          >alb's <code>.claude/</code> tree carries 7 review agents, 4 slash
-          commands, and a 5-file knowledge base. Every non-trivial commit goes
-          through the team, every accepted suggestion writes a regression note,
-          every reversed decision lands a fresh ADR. Below: the workflow, the
-          numbers, and what the team caught that humans missed.</span
-        >
-        <span class="lang-zh"
-          >alb 仓库的 <code>.claude/</code> 目录里入仓了 7 个评审 agent、4
-          条 slash 命令、5 份共享知识库。每条非 trivial 改动都过这套团队，
-          采纳的建议会留下回归记录，反转的决策会立新 ADR。下面是工作流、
-          实战数字，以及团队抓到的人没看出来的问题。</span
-        >
+  .stats { margin: 40px 0 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+  .stats div { padding: 18px 16px; border-radius: 20px; background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); }
+  .stats dt { font-size: 34px; line-height: 1.1; font-weight: 600; color: var(--md-sys-color-primary); font-variant-numeric: tabular-nums; }
+  .stats dd { margin: 6px 0 0; font-size: 13.5px; line-height: 1.35; color: var(--md-sys-color-on-surface-variant); }
+  .stats-note { margin-top: 12px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+  @media (max-width: 900px) { .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  /* ---------- roles ---------- */
+  .agents .card { display: flex; flex-direction: column; padding: 24px; }
+  .agent__role { font-size: 12.5px; font-weight: 600; letter-spacing: var(--alb-tracking-caps); text-transform: uppercase; color: var(--md-sys-color-primary); }
+  :root:lang(zh) .agent__role { text-transform: none; letter-spacing: 0; }
+  .card--primary .agent__role { color: inherit; opacity: .85; }
+  .agents h3 { margin-top: 8px; font-family: var(--md-ref-typeface-mono); font-size: 18px; line-height: 26px; font-weight: 500; overflow-wrap: anywhere; }
+  .agents .card--primary h3 { font-family: var(--md-ref-typeface-plain); }
+  .agents p { color: var(--md-sys-color-on-surface-variant); font-size: 15px; line-height: 1.6; }
+  .agents .card--primary p { color: inherit; }
+  .agents .card__foot { margin-top: auto; padding-top: 16px; }
+
+  /* ---------- workflow diagram ---------- */
+  .flow-fig { padding: clamp(10px, 1.8vw, 24px); }
+  .flow-fig svg { display: block; width: 100%; height: auto; }
+  .flow-fig .fl--tall { display: none; }
+  @media (max-width: 960px) {
+    .flow-fig .fl--wide { display: none; }
+    .flow-fig .fl--tall { display: block; max-width: 440px; margin: 0 auto; }
+  }
+  .fl text { font-family: var(--md-ref-typeface-plain); letter-spacing: 0; }
+  .fl .f-box { fill: var(--alb-color-card); stroke: var(--md-sys-color-outline-variant); stroke-width: 1; }
+  .fl .f-zone-rev { fill: color-mix(in srgb, var(--site-uart-container) 62%, var(--alb-color-card)); }
+  .fl .f-zone-kb { fill: color-mix(in srgb, var(--site-kernel-container) 62%, var(--alb-color-card)); }
+  .fl .f-zone-main { fill: var(--md-sys-color-primary-container); }
+  .fl .f-chip { fill: var(--md-sys-color-surface-container-high); }
+  .fl .f-chip-in { fill: var(--alb-color-card); }
+  .fl .f-badge { fill: var(--md-sys-color-primary); }
+  .fl .f-avatar { fill: var(--md-sys-color-secondary-container); }
+  .fl .f-avatar-line { fill: none; stroke: var(--md-sys-color-on-secondary-container); stroke-width: 1.8; stroke-linecap: round; }
+  .fl .t-badge { font-size: 13px; font-weight: 700; fill: var(--md-sys-color-on-primary); }
+  .fl .t-title { font-size: 16px; font-weight: 600; fill: var(--md-sys-color-on-surface); }
+  .fl .t-sub { font-size: 13px; fill: var(--md-sys-color-on-surface-variant); }
+  .fl .t-chip { font-size: 13px; font-weight: 500; fill: var(--md-sys-color-on-surface); }
+  .fl .t-mono { font-family: var(--md-ref-typeface-mono); font-size: 12px; font-weight: 500; }
+  .fl .t-mono--s { font-size: 11px; }
+  .fl .t-main { fill: var(--md-sys-color-on-primary-container); }
+  .fl .t-ok { font-size: 13px; font-weight: 700; fill: var(--alb-color-success); }
+  .fl .t-edge { font-size: 13px; font-weight: 600; fill: var(--md-sys-color-primary); }
+  .fl .f-edge { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 1.8; }
+  .fl .f-edge--loop { stroke: var(--md-sys-color-primary); stroke-width: 2; stroke-dasharray: 6 5; }
+  .fl-ah { fill: var(--md-sys-color-outline); }
+  .fl-ah--p { fill: var(--md-sys-color-primary); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 4px 4px 0; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .legend i { width: 28px; height: 0; border-top: 2px solid var(--md-sys-color-outline); display: inline-block; }
+  .legend i.p { border-top: 2px dashed var(--md-sys-color-primary); }
+
+  /* ---------- workflow steps ---------- */
+  .steps { list-style: none; margin: 24px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; counter-reset: step; }
+  @media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
+  .steps li { counter-increment: step; display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: minmax(40px, auto) auto; gap: 4px 16px; padding: 20px 22px; border-radius: var(--site-radius-card); background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); }
+  .steps li::before {
+    content: counter(step); grid-row: span 2; align-self: start; width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center;
+    background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-weight: 700; font-size: 16px;
+  }
+  .steps strong { font-size: 18px; line-height: 1.35; font-weight: 600; align-self: center; }
+  .steps .d { color: var(--md-sys-color-on-surface-variant); font-size: 15px; line-height: 1.6; }
+
+  /* ---------- track record ---------- */
+  .rate { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .rate .bar { display: inline-block; vertical-align: middle; width: 56px; height: 6px; margin-right: 8px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
+  .rate .bar b { display: block; height: 100%; border-radius: 999px; background: var(--md-sys-color-primary); }
+  table.t td:first-child { white-space: nowrap; font-weight: 600; }
+  table.t td code { white-space: nowrap; overflow-wrap: normal; }
+  .highlights { margin-top: 24px; }
+  .highlights .card { padding: 28px; }
+  .highlights h3 { margin-top: 14px; font-size: 21px; line-height: 1.35; }
+  .highlights p { font-size: 15.5px; line-height: 1.65; }
+  .highlights .pill { background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; }
+
+  /* ---------- knowledge ---------- */
+  .files .card { padding: 24px; }
+  .file__name { display: inline-block; font: 600 13.5px/1.4 var(--md-ref-typeface-mono); color: var(--md-sys-color-primary); }
+  .files h3 { margin-top: 8px; font-size: 19px; line-height: 1.35; }
+  .files p { color: var(--md-sys-color-on-surface-variant); font-size: 15px; line-height: 1.6; }
+  .file__writer { margin-top: 14px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+  .files .card--wide { grid-column: 1 / -1; }
+
+  /* ---------- reuse ---------- */
+  .reuse { position: relative; overflow: hidden; border-radius: var(--site-radius-hero); padding: clamp(28px, 5vw, 64px);
+    background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+  .reuse h2 { color: inherit; font-size: clamp(28px, 3.8vw, 44px); line-height: 1.15; margin-top: 12px; max-width: 760px; }
+  :root:lang(zh) .reuse h2 { line-height: 1.3; }
+  .reuse .eyebrow { color: inherit; }
+  .reuse p { position: relative; margin-top: 16px; max-width: 720px; font-size: 17px; line-height: 1.65; }
+  .reuse code { background: color-mix(in srgb, var(--md-sys-color-on-primary-container) 10%, transparent); color: inherit; }
+  .reuse__cta { position: relative; margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .reuse__cta .btn code { background: none; color: inherit; padding: 0; }
+  .reuse__cta .btn { white-space: normal; height: auto; min-height: 48px; padding-top: 10px; padding-bottom: 10px; text-align: left; }
+  .reuse .shape--sunny { width: 220px; height: 220px; right: -60px; top: -70px; background: color-mix(in srgb, var(--md-sys-color-on-primary-container) 8%, transparent); }
+</style>
+</head>
+<body>
+<a class="skip" href="#main"><span class="lang-en">Skip to content</span><span class="lang-zh">跳到正文</span></a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="fl-ah" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path class="fl-ah" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="fl-ahp" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path class="fl-ah--p" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">Topology</span><span class="lang-zh">拓扑</span></a>
+      <a href="./#models"><span class="lang-en">Models</span><span class="lang-zh">模型</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="./#targets"><span class="lang-en">Targets</span><span class="lang-zh">调试对象</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="./#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
+      <a href="./#community"><span class="lang-en">Contribute</span><span class="lang-zh">参与</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============================== HERO ============================== -->
+<section class="page-hero">
+  <span class="shape shape--cookie" aria-hidden="true"></span>
+  <span class="shape shape--clover" aria-hidden="true"></span>
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></span>
+    <h1>
+      <span class="lang-en">A review team that <em>ships in the open</em>.</span>
+      <span class="lang-zh">把评审团队入仓，<em>过程公开可追</em>。</span>
+    </h1>
+    <p class="lead">
+      <span class="lang-en">alb's <code>.claude/</code> tree carries 7 review agents, 6 slash commands, and a 5-file knowledge base. Every non-trivial commit goes through the team, every accepted suggestion writes a regression note, every reversed decision lands a fresh ADR. Below: the workflow, the numbers, and what the team caught that humans missed.</span>
+      <span class="lang-zh">alb 仓库的 <code>.claude/</code> 目录里入仓了 7 个评审 agent、6 条 slash 命令、5 份共享知识库。每条非 trivial 改动都过这套团队，采纳的建议会留下回归记录，反转的决策会立新 ADR。下面是工作流、实战数字，以及团队抓到的人没看出来的问题。</span>
+    </p>
+
+    <dl class="stats" aria-label="agents team metrics">
+      <div><dt>8</dt><dd><span class="lang-en">reviews shipped</span><span class="lang-zh">已完成评审</span></dd></div>
+      <div><dt>94</dt><dd><span class="lang-en">suggestions raised</span><span class="lang-zh">提出建议</span></dd></div>
+      <div><dt>84%</dt><dd><span class="lang-en">acceptance rate</span><span class="lang-zh">采纳率</span></dd></div>
+      <div><dt>6</dt><dd><span class="lang-en">lessons learned</span><span class="lang-zh">记下的教训</span></dd></div>
+      <div><dt>4</dt><dd><span class="lang-en">ADRs recorded</span><span class="lang-zh">立档决策</span></dd></div>
+      <div><dt>6</dt><dd><span class="lang-en">debts closed</span><span class="lang-zh">已关技术债</span></dd></div>
+    </dl>
+    <p class="stats-note"><span class="lang-en">Numbers from the F-dock milestone.</span><span class="lang-zh">数字来自 F 档里程碑。</span></p>
+  </div>
+</section>
+
+<!-- ============================== ROLES ============================== -->
+<section class="section" id="agents">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Roles</span><span class="lang-zh">角色</span></span>
+      <h2><span class="lang-en">7 specialised reviewers, 4 read-only.</span><span class="lang-zh">7 个专项评审，4 个只读。</span></h2>
+      <p class="lead">
+        <span class="lang-en">Each agent owns one slice of quality. Four agents have no Write tool at all — their findings come back as a report; the main conversation decides what to land. Three agents (perf / ui-fluency / visual) can write only to <code>.claude/reports/&lt;agent&gt;-&lt;ts&gt;.md</code>. No agent ever edits product code.</span>
+        <span class="lang-zh">每个 agent 负责一个质量维度。4 个完全只读 —— 反馈以报告形式回到主对话，由主对话决定是否落地。3 个（perf / ui-fluency / visual）能写，但只能写到 <code>.claude/reports/&lt;agent&gt;-&lt;ts&gt;.md</code>。没有任何 agent 会改产品代码。</span>
       </p>
+    </div>
 
-      <div class="stat-strip" role="list" aria-label="agents team metrics">
-        <div class="stat-tile" role="listitem">
-          <div class="num">8</div>
-          <div class="label">
-            <span class="lang-en">reviews shipped</span>
-            <span class="lang-zh">已完成评审</span>
-          </div>
-        </div>
-        <div class="stat-tile" role="listitem">
-          <div class="num">94</div>
-          <div class="label">
-            <span class="lang-en">suggestions raised</span>
-            <span class="lang-zh">提出建议</span>
-          </div>
-        </div>
-        <div class="stat-tile" role="listitem">
-          <div class="num">84%</div>
-          <div class="label">
-            <span class="lang-en">acceptance rate</span>
-            <span class="lang-zh">采纳率</span>
-          </div>
-        </div>
-        <div class="stat-tile" role="listitem">
-          <div class="num">6</div>
-          <div class="label">
-            <span class="lang-en">lessons learned</span>
-            <span class="lang-zh">沉淀教训</span>
-          </div>
-        </div>
-        <div class="stat-tile" role="listitem">
-          <div class="num">4</div>
-          <div class="label">
-            <span class="lang-en">ADRs recorded</span>
-            <span class="lang-zh">立档决策</span>
-          </div>
-        </div>
-        <div class="stat-tile" role="listitem">
-          <div class="num">6</div>
-          <div class="label">
-            <span class="lang-en">debts closed</span>
-            <span class="lang-zh">已关技术债</span>
-          </div>
-        </div>
-      </div>
-    </section>
+    <div class="grid grid--2 agents">
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">code reviewer</span><span class="lang-zh">代码评审</span></span>
+        <h3>code-reviewer</h3>
+        <p>
+          <span class="lang-en">Resource lifetime, error propagation, race conditions, test coverage, API contracts. Five dimensions, two findings each max.</span>
+          <span class="lang-zh">资源生命周期 · 错误传播 · 并发争用 · 测试覆盖 · API 设计。五个维度，每个维度最多两条。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--plan">read-only</span></div>
+      </article>
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">architecture reviewer</span><span class="lang-zh">架构评审</span></span>
+        <h3>architecture-reviewer</h3>
+        <p>
+          <span class="lang-en">Module boundaries, dependency direction, debt accrual, ADR consistency. Required to flag every reversal of a prior ADR's alternatives.</span>
+          <span class="lang-zh">模块边界 · 依赖方向 · 债务积累 · ADR 一致性。必须标记任何反转既有 ADR 备选方案的改动。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--plan">read-only</span></div>
+      </article>
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">performance auditor</span><span class="lang-zh">性能审计</span></span>
+        <h3>performance-auditor</h3>
+        <p>
+          <span class="lang-en">Bundle size, render cost, memory footprint, network chatter, long-task wallclock. Files reports per run.</span>
+          <span class="lang-zh">包体积 · 渲染开销 · 内存 · 网络频次 · 长任务时长。每次运行落一份报告。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--next">reports/</span></div>
+      </article>
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">ui fluency auditor</span><span class="lang-zh">界面流畅度</span></span>
+        <h3>ui-fluency-auditor</h3>
+        <p>
+          <span class="lang-en">Animation cadence, layout shift, three-state UI (loading / error / data), keyboard nav, a11y. Captures screenshots when a smell shows up.</span>
+          <span class="lang-zh">动画节奏 · CLS · 三态 UI（加载 / 出错 / 有数据）· 键盘导航 · a11y。看到可疑迹象会截图存证。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--next">reports/</span></div>
+      </article>
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">mockup baseline checker</span><span class="lang-zh">基线对照</span></span>
+        <h3>mockup-baseline-checker</h3>
+        <p>
+          <span class="lang-en">Compares React render output against the source HTML mockup (<code>docs/webui-preview-v*.html</code>). Catches drift before it ships.</span>
+          <span class="lang-zh">对照 React 渲染结果与源 HTML mockup（<code>docs/webui-preview-v*.html</code>），在偏离发布出去之前抓住。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--plan">read-only</span></div>
+      </article>
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">visual audit runner</span><span class="lang-zh">视觉审验</span></span>
+        <h3>visual-audit-runner</h3>
+        <p>
+          <span class="lang-en">Wraps the sky-skills three-gate Playwright + WCAG scripts. Files per-route screenshots into the timestamped reports folder.</span>
+          <span class="lang-zh">包装 sky-skills 三道闸 Playwright + WCAG 脚本。按路由出截图，归档到时间戳报告目录。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--next">reports/</span></div>
+      </article>
+      <article class="card">
+        <span class="agent__role"><span class="lang-en">security &amp; neutrality</span><span class="lang-zh">合规检查</span></span>
+        <h3>security-and-neutrality-auditor</h3>
+        <p>
+          <span class="lang-en">OWASP basics, XSS surfaces, credential exposure, plus the project-specific neutrality rule (no employer brand names leaking into open-source code).</span>
+          <span class="lang-zh">OWASP 基本面 · XSS 表面 · 凭证泄漏，加上项目特定的中立性规则（开源仓库不允许出现雇主品牌名）。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--plan">read-only</span></div>
+      </article>
+      <article class="card card--primary">
+        <span class="agent__role"><span class="lang-en">main conversation</span><span class="lang-zh">主对话</span></span>
+        <h3><span class="lang-en">(you, the operator)</span><span class="lang-zh">（你，操作者）</span></h3>
+        <p>
+          <span class="lang-en">Spawns reviewers, integrates feedback, asks the user to accept or reject each suggestion, writes accepted ones into knowledge files, and only commits after the user signs off the message.</span>
+          <span class="lang-zh">调起评审者，整合反馈，逐条问用户采纳或驳回，把采纳的写入知识库，commit message 用户审过后才执行 commit。</span>
+        </p>
+        <div class="card__foot"><span class="pill pill--today">writes knowledge</span></div>
+      </article>
+    </div>
+  </div>
+</section>
 
-    <section class="anth-section" id="agents">
-      <div class="h-eyebrow">
-        <span class="lang-en">Roles</span><span class="lang-zh">角色</span>
-      </div>
-      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
-        <span class="lang-en">7 specialised reviewers, 5 read-only.</span>
-        <span class="lang-zh">7 个专项评审 · 5 个只读。</span>
-      </h2>
-      <p
-        style="
-          font-family: var(--font-body);
-          font-size: 16px;
-          line-height: 1.6;
-          color: var(--anth-text-secondary);
-          max-width: 720px;
-        "
-      >
-        <span class="lang-en"
-          >Each agent owns one slice of quality. Five agents have no Write
-          tool at all — their findings come back as a report; the main
-          conversation decides what to land. Two agents (perf / ui-fluency /
-          visual) can write only to <code>.claude/reports/&lt;agent&gt;-&lt;ts&gt;.md</code>.
-          No agent ever edits product code.</span
-        >
-        <span class="lang-zh"
-          >每个 agent 负责一个质量维度。5 个完全只读 —— 反馈以报告形式回到
-          主对话，由主对话决定是否落地。2 个能写但只能写到
-          <code>.claude/reports/&lt;agent&gt;-&lt;ts&gt;.md</code>。没有任何
-          agent 会改产品代码。</span
-        >
+<!-- ============================== WORKFLOW ============================== -->
+<section class="section section--tone" id="workflow">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Workflow</span><span class="lang-zh">工作流</span></span>
+      <h2><span class="lang-en">Six steps from sketch to ship.</span><span class="lang-zh">从草图到交付，六步走完。</span></h2>
+    </div>
+
+    <figure class="figure flow-fig">
+      <!-- wide: two rows, read 1 → 3 along the top, then 4 → 6 right to left -->
+      <svg class="fl fl--wide" viewBox="0 0 1120 548" role="img" aria-labelledby="fl-cap">
+        <!-- 1 write code -->
+        <rect class="f-box" x="16" y="24" width="216" height="248" rx="24"/>
+        <circle class="f-badge" cx="44" cy="56" r="14"/><text class="t-badge" x="44" y="61" text-anchor="middle">1</text>
+        <text class="t-title lang-en" x="68" y="61">Write code</text><text class="t-title lang-zh" x="68" y="61">写代码</text>
+        <text class="t-sub lang-en" x="32" y="100">Three gates, all green</text><text class="t-sub lang-zh" x="32" y="100">三道检查全部通过</text>
+        <rect class="f-chip" x="32" y="114" width="184" height="30" rx="8"/><text class="t-chip t-mono" x="46" y="134">pytest</text><text class="t-ok" x="202" y="134" text-anchor="end">✓</text>
+        <rect class="f-chip" x="32" y="152" width="184" height="30" rx="8"/><text class="t-chip lang-en" x="46" y="172">sensitive words: 0</text><text class="t-chip lang-zh" x="46" y="172">敏感词：0</text><text class="t-ok" x="202" y="172" text-anchor="end">✓</text>
+        <rect class="f-chip" x="32" y="190" width="184" height="30" rx="8"/><text class="t-chip t-mono" x="46" y="210">offline-purity</text><text class="t-ok" x="202" y="210" text-anchor="end">✓</text>
+        <text class="t-sub lang-en" x="32" y="252">before any reviewer starts</text><text class="t-sub lang-zh" x="32" y="252">调起评审前必须全绿</text>
+        <path class="f-edge" d="M232 148H270" marker-end="url(#fl-ah)"/>
+
+        <!-- 2 reviewers -->
+        <rect class="f-zone-rev" x="276" y="24" width="392" height="248" rx="24"/>
+        <circle class="f-badge" cx="304" cy="56" r="14"/><text class="t-badge" x="304" y="61" text-anchor="middle">2</text>
+        <text class="t-title lang-en" x="328" y="61">Reviewers, in parallel</text><text class="t-title lang-zh" x="328" y="61">并行调起评审者</text>
+        <text class="t-sub lang-en" x="292" y="96">Code change</text><text class="t-sub lang-zh" x="292" y="96">只改代码</text>
+        <rect class="f-chip-in" x="292" y="104" width="120" height="28" rx="8"/><text class="t-chip t-mono" x="304" y="123">code-reviewer</text>
+        <rect class="f-chip-in" x="420" y="104" width="190" height="28" rx="8"/><text class="t-chip t-mono" x="432" y="123">security-and-neutrality</text>
+        <text class="t-sub lang-en" x="292" y="158">New module: also</text><text class="t-sub lang-zh" x="292" y="158">引入新模块：再加</text>
+        <rect class="f-chip-in" x="292" y="166" width="176" height="28" rx="8"/><text class="t-chip t-mono" x="304" y="185">architecture-reviewer</text>
+        <text class="t-sub lang-en" x="292" y="220">UI change: /ui-check, one after another</text><text class="t-sub lang-zh" x="292" y="220">界面改动：/ui-check，依次跑</text>
+        <rect class="f-chip-in" x="292" y="228" width="84" height="28" rx="8"/><text class="t-chip t-mono" x="334" y="247" text-anchor="middle">mockup</text>
+        <path class="f-edge" d="M380 242H398" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="402" y="228" width="88" height="28" rx="8"/><text class="t-chip t-mono" x="446" y="247" text-anchor="middle">fluency</text>
+        <path class="f-edge" d="M494 242H512" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="516" y="228" width="80" height="28" rx="8"/><text class="t-chip t-mono" x="556" y="247" text-anchor="middle">visual</text>
+        <path class="f-edge" d="M668 148H706" marker-end="url(#fl-ah)"/>
+
+        <!-- 3 main conversation -->
+        <rect class="f-zone-main" x="712" y="24" width="392" height="248" rx="24"/>
+        <circle class="f-badge" cx="740" cy="56" r="14"/><text class="t-badge" x="740" y="61" text-anchor="middle">3</text>
+        <text class="t-title t-main lang-en" x="764" y="61">Main conversation</text><text class="t-title t-main lang-zh" x="764" y="61">主对话</text>
+        <text class="t-sub t-main lang-en" x="728" y="96">Sums up every finding and recommends</text><text class="t-sub t-main lang-zh" x="728" y="96">汇总每条建议，给出推荐</text>
+        <rect class="f-chip-in" x="728" y="106" width="84" height="28" rx="8"/><text class="t-chip lang-en" x="770" y="125" text-anchor="middle">accept</text><text class="t-chip lang-zh" x="770" y="125" text-anchor="middle">采纳</text>
+        <rect class="f-chip-in" x="820" y="106" width="84" height="28" rx="8"/><text class="t-chip lang-en" x="862" y="125" text-anchor="middle">reject</text><text class="t-chip lang-zh" x="862" y="125" text-anchor="middle">驳回</text>
+        <rect class="f-chip-in" x="912" y="106" width="92" height="28" rx="8"/><text class="t-chip lang-en" x="958" y="125" text-anchor="middle">partial</text><text class="t-chip lang-zh" x="958" y="125" text-anchor="middle">部分采纳</text>
+        <rect class="f-box" x="728" y="152" width="360" height="100" rx="16"/>
+        <circle class="f-avatar" cx="762" cy="202" r="20"/>
+        <circle class="f-avatar-line" cx="762" cy="196" r="5"/><path class="f-avatar-line" d="M752 213a10 8 0 0 1 20 0"/>
+        <text class="t-title lang-en" x="796" y="196">You decide each one</text><text class="t-title lang-zh" x="796" y="196">你逐条确认</text>
+        <text class="t-sub lang-en" x="796" y="222">No silent decisions.</text><text class="t-sub lang-zh" x="796" y="222">不允许默默决定。</text>
+        <path class="f-edge" d="M908 272V322" marker-end="url(#fl-ah)"/>
+
+        <!-- loop: the knowledge base feeds the next review -->
+        <path class="f-edge f-edge--loop" d="M472 326V278" marker-end="url(#fl-ahp)"/>
+        <text class="t-edge lang-en" x="484" y="306">Reviewers read these before every review</text><text class="t-edge lang-zh" x="484" y="306">评审者每次评审前先读这些</text>
+
+        <!-- 4 apply and verify -->
+        <rect class="f-box" x="712" y="328" width="392" height="200" rx="24"/>
+        <circle class="f-badge" cx="740" cy="360" r="14"/><text class="t-badge" x="740" y="365" text-anchor="middle">4</text>
+        <text class="t-title lang-en" x="764" y="365">Apply, then verify end to end</text><text class="t-title lang-zh" x="764" y="365">按意见改，端到端验证</text>
+        <rect class="f-chip" x="728" y="386" width="220" height="30" rx="8"/><text class="t-chip lang-en" x="742" y="406">Run the three gates again</text><text class="t-chip lang-zh" x="742" y="406">再过一遍三道检查</text>
+        <rect class="f-chip" x="728" y="424" width="280" height="30" rx="8"/><text class="t-chip lang-en" x="742" y="444">New data path: real browser (L-017)</text><text class="t-chip lang-zh" x="742" y="444">新数据路径：真浏览器跑一次（L-017）</text>
+        <text class="t-sub lang-en" x="728" y="494">Unit tests can't catch wiring bugs</text><text class="t-sub lang-zh" x="728" y="494">单元测试抓不住接线 bug</text>
+        <path class="f-edge" d="M712 428H674" marker-end="url(#fl-ah)"/>
+
+        <!-- 5 knowledge base -->
+        <rect class="f-zone-kb" x="276" y="328" width="392" height="200" rx="24"/>
+        <circle class="f-badge" cx="304" cy="360" r="14"/><text class="t-badge" x="304" y="365" text-anchor="middle">5</text>
+        <text class="t-title lang-en" x="328" y="365">Knowledge base</text><text class="t-title lang-zh" x="328" y="365">写知识库</text>
+        <text class="t-sub lang-en" x="652" y="365" text-anchor="end">main conversation only</text><text class="t-sub lang-zh" x="652" y="365" text-anchor="end">只有主对话写</text>
+        <text class="t-sub lang-en" x="292" y="403">accepted</text><text class="t-sub lang-zh" x="292" y="403">采纳</text>
+        <path class="f-edge" d="M420 398H440" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="448" y="384" width="204" height="28" rx="8"/><text class="t-chip lang-en" x="460" y="403">diff comment</text><text class="t-chip lang-zh" x="460" y="403">diff 注释</text>
+        <text class="t-sub lang-en" x="292" y="437">rejected</text><text class="t-sub lang-zh" x="292" y="437">驳回</text>
+        <path class="f-edge" d="M420 432H440" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="448" y="418" width="204" height="28" rx="8"/><text class="t-chip t-mono" x="460" y="437">review-feedback.md</text>
+        <text class="t-sub lang-en" x="292" y="471">new rule</text><text class="t-sub lang-zh" x="292" y="471">新规律</text>
+        <path class="f-edge" d="M420 466H440" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="448" y="452" width="204" height="28" rx="8"/><text class="t-chip t-mono" x="460" y="471">lessons.md</text>
+        <text class="t-sub lang-en" x="292" y="505">reversed decision</text><text class="t-sub lang-zh" x="292" y="505">反转决策</text>
+        <path class="f-edge" d="M420 500H440" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="448" y="486" width="204" height="28" rx="8"/><text class="t-chip t-mono lang-en" x="460" y="505">decisions.md · new ADR</text><text class="t-chip t-mono lang-zh" x="460" y="505">decisions.md · 新 ADR</text>
+        <path class="f-edge" d="M276 428H238" marker-end="url(#fl-ah)"/>
+
+        <!-- 6 commit and push -->
+        <rect class="f-box" x="16" y="328" width="216" height="200" rx="24"/>
+        <circle class="f-badge" cx="44" cy="360" r="14"/><text class="t-badge" x="44" y="365" text-anchor="middle">6</text>
+        <text class="t-title lang-en" x="68" y="365">Commit and push</text><text class="t-title lang-zh" x="68" y="365">提交和推送</text>
+        <text class="t-sub lang-en" x="32" y="400">You check the message</text><text class="t-sub lang-zh" x="32" y="400">你审过 commit message</text>
+        <rect class="f-chip" x="32" y="408" width="184" height="28" rx="8"/><text class="t-chip t-mono" x="46" y="427">git commit</text>
+        <text class="t-sub lang-en" x="32" y="464">You confirm again</text><text class="t-sub lang-zh" x="32" y="464">你再确认一次</text>
+        <rect class="f-chip" x="32" y="472" width="184" height="28" rx="8"/><text class="t-chip t-mono" x="46" y="491">git push</text>
+      </svg>
+
+      <!-- tall: one column for phones; the dashed path on the right is the read-back loop -->
+      <svg class="fl fl--tall" viewBox="0 0 360 1420" role="img" aria-labelledby="fl-cap">
+        <!-- 1 -->
+        <rect class="f-box" x="12" y="8" width="316" height="188" rx="22"/>
+        <circle class="f-badge" cx="40" cy="40" r="14"/><text class="t-badge" x="40" y="45" text-anchor="middle">1</text>
+        <text class="t-title lang-en" x="64" y="45">Write code</text><text class="t-title lang-zh" x="64" y="45">写代码</text>
+        <text class="t-sub lang-en" x="28" y="80">Three gates, all green</text><text class="t-sub lang-zh" x="28" y="80">三道检查全部通过</text>
+        <rect class="f-chip" x="28" y="92" width="92" height="28" rx="8"/><text class="t-chip t-mono" x="40" y="111">pytest</text><text class="t-ok" x="110" y="111" text-anchor="end">✓</text>
+        <rect class="f-chip" x="128" y="92" width="168" height="28" rx="8"/><text class="t-chip lang-en" x="140" y="111">sensitive words: 0</text><text class="t-chip lang-zh" x="140" y="111">敏感词：0</text><text class="t-ok" x="286" y="111" text-anchor="end">✓</text>
+        <rect class="f-chip" x="28" y="128" width="148" height="28" rx="8"/><text class="t-chip t-mono" x="40" y="147">offline-purity</text><text class="t-ok" x="166" y="147" text-anchor="end">✓</text>
+        <text class="t-sub lang-en" x="28" y="180">before any reviewer starts</text><text class="t-sub lang-zh" x="28" y="180">调起评审前必须全绿</text>
+        <path class="f-edge" d="M170 196V226" marker-end="url(#fl-ah)"/>
+
+        <!-- 2 -->
+        <rect class="f-zone-rev" x="12" y="230" width="316" height="242" rx="22"/>
+        <circle class="f-badge" cx="40" cy="262" r="14"/><text class="t-badge" x="40" y="267" text-anchor="middle">2</text>
+        <text class="t-title lang-en" x="64" y="267">Reviewers, in parallel</text><text class="t-title lang-zh" x="64" y="267">并行调起评审者</text>
+        <text class="t-sub lang-en" x="28" y="300">Code change</text><text class="t-sub lang-zh" x="28" y="300">只改代码</text>
+        <rect class="f-chip-in" x="28" y="308" width="104" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="38" y="326">code-reviewer</text>
+        <rect class="f-chip-in" x="140" y="308" width="172" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="150" y="326">security-and-neutrality</text>
+        <text class="t-sub lang-en" x="28" y="360">New module: also</text><text class="t-sub lang-zh" x="28" y="360">引入新模块：再加</text>
+        <rect class="f-chip-in" x="28" y="368" width="162" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="38" y="386">architecture-reviewer</text>
+        <text class="t-sub lang-en" x="28" y="420">UI change: /ui-check, one after another</text><text class="t-sub lang-zh" x="28" y="420">界面改动：/ui-check，依次跑</text>
+        <rect class="f-chip-in" x="28" y="428" width="72" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="64" y="446" text-anchor="middle">mockup</text>
+        <path class="f-edge" d="M104 442H118" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="122" y="428" width="76" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="160" y="446" text-anchor="middle">fluency</text>
+        <path class="f-edge" d="M202 442H216" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="220" y="428" width="70" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="255" y="446" text-anchor="middle">visual</text>
+        <path class="f-edge" d="M170 472V502" marker-end="url(#fl-ah)"/>
+
+        <!-- 3 -->
+        <rect class="f-zone-main" x="12" y="506" width="316" height="220" rx="22"/>
+        <circle class="f-badge" cx="40" cy="538" r="14"/><text class="t-badge" x="40" y="543" text-anchor="middle">3</text>
+        <text class="t-title t-main lang-en" x="64" y="543">Main conversation</text><text class="t-title t-main lang-zh" x="64" y="543">主对话</text>
+        <text class="t-sub t-main lang-en" x="28" y="576">Sums up every finding and recommends</text><text class="t-sub t-main lang-zh" x="28" y="576">汇总每条建议，给出推荐</text>
+        <rect class="f-chip-in" x="28" y="588" width="76" height="28" rx="8"/><text class="t-chip lang-en" x="66" y="607" text-anchor="middle">accept</text><text class="t-chip lang-zh" x="66" y="607" text-anchor="middle">采纳</text>
+        <rect class="f-chip-in" x="110" y="588" width="76" height="28" rx="8"/><text class="t-chip lang-en" x="148" y="607" text-anchor="middle">reject</text><text class="t-chip lang-zh" x="148" y="607" text-anchor="middle">驳回</text>
+        <rect class="f-chip-in" x="192" y="588" width="84" height="28" rx="8"/><text class="t-chip lang-en" x="234" y="607" text-anchor="middle">partial</text><text class="t-chip lang-zh" x="234" y="607" text-anchor="middle">部分采纳</text>
+        <rect class="f-box" x="28" y="630" width="284" height="80" rx="16"/>
+        <circle class="f-avatar" cx="60" cy="670" r="18"/>
+        <circle class="f-avatar-line" cx="60" cy="665" r="4.5"/><path class="f-avatar-line" d="M51 680a9 7 0 0 1 18 0"/>
+        <text class="t-title lang-en" x="90" y="664">You decide each one</text><text class="t-title lang-zh" x="90" y="664">你逐条确认</text>
+        <text class="t-sub lang-en" x="90" y="690">No silent decisions.</text><text class="t-sub lang-zh" x="90" y="690">不允许默默决定。</text>
+        <path class="f-edge" d="M170 726V756" marker-end="url(#fl-ah)"/>
+
+        <!-- 4 -->
+        <rect class="f-box" x="12" y="760" width="316" height="170" rx="22"/>
+        <circle class="f-badge" cx="40" cy="792" r="14"/><text class="t-badge" x="40" y="797" text-anchor="middle">4</text>
+        <text class="t-title lang-en" x="64" y="797">Apply, then verify end to end</text><text class="t-title lang-zh" x="64" y="797">按意见改，端到端验证</text>
+        <rect class="f-chip" x="28" y="814" width="210" height="30" rx="8"/><text class="t-chip lang-en" x="40" y="834">Run the three gates again</text><text class="t-chip lang-zh" x="40" y="834">再过一遍三道检查</text>
+        <rect class="f-chip" x="28" y="852" width="268" height="30" rx="8"/><text class="t-chip lang-en" x="40" y="872">New data path: real browser (L-017)</text><text class="t-chip lang-zh" x="40" y="872">新数据路径：真浏览器跑一次（L-017）</text>
+        <text class="t-sub lang-en" x="28" y="912">Unit tests can't catch wiring bugs</text><text class="t-sub lang-zh" x="28" y="912">单元测试抓不住接线 bug</text>
+        <path class="f-edge" d="M170 930V960" marker-end="url(#fl-ah)"/>
+
+        <!-- 5 -->
+        <rect class="f-zone-kb" x="12" y="964" width="316" height="226" rx="22"/>
+        <circle class="f-badge" cx="40" cy="996" r="14"/><text class="t-badge" x="40" y="1001" text-anchor="middle">5</text>
+        <text class="t-title lang-en" x="64" y="1001">Write the knowledge base</text><text class="t-title lang-zh" x="64" y="1001">写知识库</text>
+        <text class="t-sub lang-en" x="28" y="1030">Main conversation writes, reviewers read</text><text class="t-sub lang-zh" x="28" y="1030">主对话写，评审者每次先读</text>
+        <text class="t-sub lang-en" x="28" y="1063">accepted</text><text class="t-sub lang-zh" x="28" y="1063">采纳</text>
+        <path class="f-edge" d="M140 1058H156" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="162" y="1044" width="150" height="28" rx="8"/><text class="t-chip lang-en" x="172" y="1063">diff comment</text><text class="t-chip lang-zh" x="172" y="1063">diff 注释</text>
+        <text class="t-sub lang-en" x="28" y="1097">rejected</text><text class="t-sub lang-zh" x="28" y="1097">驳回</text>
+        <path class="f-edge" d="M140 1092H156" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="162" y="1078" width="150" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="172" y="1097">review-feedback.md</text>
+        <text class="t-sub lang-en" x="28" y="1131">new rule</text><text class="t-sub lang-zh" x="28" y="1131">新规律</text>
+        <path class="f-edge" d="M140 1126H156" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="162" y="1112" width="150" height="28" rx="8"/><text class="t-chip t-mono t-mono--s" x="172" y="1131">lessons.md</text>
+        <text class="t-sub lang-en" x="28" y="1165">reversed decision</text><text class="t-sub lang-zh" x="28" y="1165">反转决策</text>
+        <path class="f-edge" d="M140 1160H156" marker-end="url(#fl-ah)"/>
+        <rect class="f-chip-in" x="162" y="1146" width="150" height="28" rx="8"/><text class="t-chip t-mono t-mono--s lang-en" x="172" y="1165">decisions.md (ADR)</text><text class="t-chip t-mono t-mono--s lang-zh" x="172" y="1165">decisions.md 新 ADR</text>
+        <path class="f-edge" d="M170 1190V1220" marker-end="url(#fl-ah)"/>
+        <!-- read-back loop to step 2 -->
+        <path class="f-edge f-edge--loop" d="M328 1077H346V351H334" marker-end="url(#fl-ahp)"/>
+
+        <!-- 6 -->
+        <rect class="f-box" x="12" y="1224" width="316" height="188" rx="22"/>
+        <circle class="f-badge" cx="40" cy="1256" r="14"/><text class="t-badge" x="40" y="1261" text-anchor="middle">6</text>
+        <text class="t-title lang-en" x="64" y="1261">Commit and push</text><text class="t-title lang-zh" x="64" y="1261">提交和推送</text>
+        <text class="t-sub lang-en" x="28" y="1294">You check the message</text><text class="t-sub lang-zh" x="28" y="1294">你审过 commit message</text>
+        <rect class="f-chip" x="28" y="1302" width="200" height="28" rx="8"/><text class="t-chip t-mono" x="40" y="1321">git commit</text>
+        <text class="t-sub lang-en" x="28" y="1358">You confirm again</text><text class="t-sub lang-zh" x="28" y="1358">你再确认一次</text>
+        <rect class="f-chip" x="28" y="1366" width="200" height="28" rx="8"/><text class="t-chip t-mono" x="40" y="1385">git push</text>
+      </svg>
+      <figcaption id="fl-cap">
+        <span class="lang-en">The six steps below at a glance: which reviewers run for which change, who decides, and where each finding is written down.</span>
+        <span class="lang-zh">下面六步的全貌：哪种改动调哪些评审者、谁拍板、每条意见最后记在哪里。</span>
+        <span class="legend">
+          <span><i></i><span class="lang-en">next step</span><span class="lang-zh">下一步</span></span>
+          <span><i class="p"></i><span class="lang-en">reviewers read the knowledge base first</span><span class="lang-zh">评审者先读知识库</span></span>
+        </span>
+      </figcaption>
+    </figure>
+
+    <ol class="steps">
+      <li>
+        <strong><span class="lang-en">Write code, run the three gates</span><span class="lang-zh">写代码，过三道闸</span></strong>
+        <span class="d">
+          <span class="lang-en">2,800+ pytest pass, sensitive-words 0, offline-purity clean. Tests stay green before any reviewer is spawned.</span>
+          <span class="lang-zh">2800+ 条 pytest 全过 · 敏感词 0 · offline-purity 干净。任何评审者被调起之前，测试必须是绿的。</span>
+        </span>
+      </li>
+      <li>
+        <strong><span class="lang-en">Stage and spawn reviewers in parallel</span><span class="lang-zh">stage 改动，并行调起评审者</span></strong>
+        <span class="d">
+          <span class="lang-en">Code-review-only changes get code-reviewer + security; new modules also get architecture-reviewer; UI changes go through ui-check (mockup → fluency → visual, sequential).</span>
+          <span class="lang-zh">只改代码 → code-reviewer + security 并行；引入新模块 → 加 architecture-reviewer；UI 改动走 ui-check（mockup → 流畅度 → 视觉，串行）。</span>
+        </span>
+      </li>
+      <li>
+        <strong><span class="lang-en">Integrate findings, ask the user</span><span class="lang-zh">整合反馈，逐条问用户</span></strong>
+        <span class="d">
+          <span class="lang-en">Main conversation summarises every finding, recommends accept / reject / partial, and waits for the user to confirm. No silent decisions.</span>
+          <span class="lang-zh">主对话汇总每条建议，给出采纳 / 驳回 / 部分采纳推荐，等用户确认。不允许默默决定。</span>
+        </span>
+      </li>
+      <li>
+        <strong><span class="lang-en">Apply changes, end-to-end verify</span><span class="lang-zh">落地改动，端到端验证</span></strong>
+        <span class="d">
+          <span class="lang-en">Re-run gates. For new data paths or deployment surfaces, run a real browser hit (lesson L-017) — type-checking and unit tests do not catch wiring bugs.</span>
+          <span class="lang-zh">再过三闸。新数据路径或新部署表面要跑真浏览器（教训 L-017）—— 类型检查和单元测试抓不住接线 bug。</span>
+        </span>
+      </li>
+      <li>
+        <strong><span class="lang-en">Write knowledge before commit</span><span class="lang-zh">commit 前写知识库</span></strong>
+        <span class="d">
+          <span class="lang-en">Accepted suggestions become diff comments; rejected ones become <code>review-feedback.md</code> entries. New rules become lessons. Reversed decisions become new ADRs.</span>
+          <span class="lang-zh">采纳的建议变成 diff 注释；驳回的进 <code>review-feedback.md</code>。形成新规律 → lessons；反转决策 → 新 ADR。</span>
+        </span>
+      </li>
+      <li>
+        <strong><span class="lang-en">User reviews the commit message, then push</span><span class="lang-zh">用户审 commit message → push</span></strong>
+        <span class="d">
+          <span class="lang-en">Two confirmations, two checkpoints: commit message before <code>git commit</code>, push readiness before <code>git push</code>.</span>
+          <span class="lang-zh">两道确认 · 两道关卡：<code>git commit</code> 前确认 message，<code>git push</code> 前再次确认。</span>
+        </span>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============================== TRACK RECORD ============================== -->
+<section class="section" id="track-record">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Track record</span><span class="lang-zh">实战记录</span></span>
+      <h2><span class="lang-en">Eight reviews across the F-dock milestone.</span><span class="lang-zh">F 档里程碑 · 八次评审。</span></h2>
+      <p class="lead">
+        <span class="lang-en">F-dock connected the live token-throughput stream end-to-end — backend sampler, dual WS, reducer, KPI tile. Every step had a review, every review left a paper trail in <code>.claude/knowledge/review-feedback.md</code>.</span>
+        <span class="lang-zh">F 档接通了端到端的 token 吞吐流：后端采样、双 WS、reducer、KPI 卡片。每步都有评审，每次评审都在 <code>.claude/knowledge/review-feedback.md</code> 留痕。</span>
       </p>
+    </div>
 
-      <div class="agent-grid">
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">code reviewer</span>
-            <span class="lang-zh">代码评审</span>
-          </div>
-          <h3>code-reviewer</h3>
-          <p>
-            <span class="lang-en"
-              >Resource lifetime, error propagation, race conditions, test
-              coverage, API contracts. Five dimensions, two findings each
-              max.</span
-            >
-            <span class="lang-zh"
-              >资源生命周期 · 错误传播 · 并发争用 · 测试覆盖 · API 设计。
-              五维度、每维度最多两条。</span
-            >
-          </p>
-          <span class="write-tag write-readonly">read-only</span>
-        </article>
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">architecture reviewer</span>
-            <span class="lang-zh">架构评审</span>
-          </div>
-          <h3>architecture-reviewer</h3>
-          <p>
-            <span class="lang-en"
-              >Module boundaries, dependency direction, debt accrual, ADR
-              consistency. Required to flag every reversal of a prior ADR's
-              alternatives.</span
-            >
-            <span class="lang-zh"
-              >模块边界 · 依赖方向 · 债务积累 · ADR 一致性。必须标记任何
-              反转既有 ADR 备选方案的改动。</span
-            >
-          </p>
-          <span class="write-tag write-readonly">read-only</span>
-        </article>
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">performance auditor</span>
-            <span class="lang-zh">性能审计</span>
-          </div>
-          <h3>performance-auditor</h3>
-          <p>
-            <span class="lang-en"
-              >Bundle size, render cost, memory footprint, network chatter,
-              long-task wallclock. Files reports per run.</span
-            >
-            <span class="lang-zh"
-              >包体积 · 渲染开销 · 内存 · 网络频次 · 长任务时长。每次运行
-              落一份报告。</span
-            >
-          </p>
-          <span class="write-tag write-reports">reports/</span>
-        </article>
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">ui fluency auditor</span>
-            <span class="lang-zh">界面流畅度</span>
-          </div>
-          <h3>ui-fluency-auditor</h3>
-          <p>
-            <span class="lang-en"
-              >Animation cadence, layout shift, three-state UI (loading / error
-              / data), keyboard nav, a11y. Captures screenshots when a smell
-              shows up.</span
-            >
-            <span class="lang-zh"
-              >动画节奏 · CLS · 三态 UI（加载 / 出错 / 有数据）· 键盘导航 ·
-              a11y。看到可疑迹象会截图存证。</span
-            >
-          </p>
-          <span class="write-tag write-reports">reports/</span>
-        </article>
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">mockup baseline checker</span>
-            <span class="lang-zh">基线对照</span>
-          </div>
-          <h3>mockup-baseline-checker</h3>
-          <p>
-            <span class="lang-en"
-              >Compares React render output against the source HTML mockup
-              (<code>docs/webui-preview-v*.html</code>). Catches drift before
-              it ships.</span
-            >
-            <span class="lang-zh"
-              >对照 React 渲染结果与源 HTML mockup
-              （<code>docs/webui-preview-v*.html</code>）。在偏离 ship 前抓住。</span
-            >
-          </p>
-          <span class="write-tag write-readonly">read-only</span>
-        </article>
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">visual audit runner</span>
-            <span class="lang-zh">视觉审验</span>
-          </div>
-          <h3>visual-audit-runner</h3>
-          <p>
-            <span class="lang-en"
-              >Wraps the sky-skills three-gate Playwright + WCAG scripts.
-              Files per-route screenshots into the timestamped reports
-              folder.</span
-            >
-            <span class="lang-zh"
-              >包装 sky-skills 三道闸 Playwright + WCAG 脚本。按路由出
-              截图，归档到时间戳报告目录。</span
-            >
-          </p>
-          <span class="write-tag write-reports">reports/</span>
-        </article>
-        <article class="agent-card">
-          <div class="role">
-            <span class="lang-en">security &amp; neutrality</span>
-            <span class="lang-zh">合规检查</span>
-          </div>
-          <h3>security-and-neutrality-auditor</h3>
-          <p>
-            <span class="lang-en"
-              >OWASP basics, XSS surfaces, credential exposure, plus the
-              project-specific neutrality rule (no employer brand names
-              leaking into open-source code).</span
-            >
-            <span class="lang-zh"
-              >OWASP 基本面 · XSS 表面 · 凭证泄漏，加上项目特定的中立性
-              规则（开源仓库不允许出现雇主品牌名）。</span
-            >
-          </p>
-          <span class="write-tag write-readonly">read-only</span>
-        </article>
-        <article class="agent-card" style="background: var(--anth-cream)">
-          <div class="role">
-            <span class="lang-en">main conversation</span>
-            <span class="lang-zh">主对话</span>
-          </div>
-          <h3>(you, the operator)</h3>
-          <p>
-            <span class="lang-en"
-              >Spawns reviewers, integrates feedback, asks the user to accept
-              or reject each suggestion, writes accepted ones into knowledge
-              files, and only commits after the user signs off the message.</span
-            >
-            <span class="lang-zh"
-              >调起评审者，整合反馈，逐条问用户采纳或驳回，把采纳的写入
-              知识库，commit message 用户审过后才执行 commit。</span
-            >
-          </p>
-          <span class="write-tag write-readonly">writes knowledge</span>
-        </article>
-      </div>
-    </section>
-
-    <section class="anth-section" id="workflow">
-      <div class="h-eyebrow">
-        <span class="lang-en">Workflow</span>
-        <span class="lang-zh">工作流</span>
-      </div>
-      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
-        <span class="lang-en">Six steps from sketch to ship.</span>
-        <span class="lang-zh">从草图到 ship · 六步走完。</span>
-      </h2>
-      <ol class="step-list">
-        <li>
-          <strong>
-            <span class="lang-en">Write code, run the three gates</span>
-            <span class="lang-zh">写代码，过三道闸</span>
-          </strong>
-          <span class="lang-en"
-            >645+ pytest pass, sensitive-words 0, offline-purity clean. Tests
-            stay green before any reviewer is spawned.</span
-          >
-          <span class="lang-zh"
-            >645+ pytest 全过 · 敏感词 0 · offline-purity 干净。任何评审者
-            被调起之前，测试必须是绿的。</span
-          >
-        </li>
-        <li>
-          <strong>
-            <span class="lang-en">Stage and spawn reviewers in parallel</span>
-            <span class="lang-zh">stage 改动，并行调起评审者</span>
-          </strong>
-          <span class="lang-en"
-            >Code-review-only changes get code-reviewer + security; new modules
-            also get architecture-reviewer; UI changes go through ui-check
-            (mockup → fluency → visual, sequential).</span
-          >
-          <span class="lang-zh"
-            >只改代码 → code-reviewer + security 并行；引入新模块 → 加
-            architecture-reviewer；UI 改动走 ui-check（mockup → 流畅度 →
-            视觉，串行）。</span
-          >
-        </li>
-        <li>
-          <strong>
-            <span class="lang-en">Integrate findings, ask the user</span>
-            <span class="lang-zh">整合反馈，逐条问用户</span>
-          </strong>
-          <span class="lang-en"
-            >Main conversation summarises every finding, recommends accept /
-            reject / partial, and waits for the user to confirm. No silent
-            decisions.</span
-          >
-          <span class="lang-zh"
-            >主对话汇总每条建议，给出采纳 / 驳回 / 部分采纳推荐，等用户
-            确认。不允许默默决定。</span
-          >
-        </li>
-        <li>
-          <strong>
-            <span class="lang-en">Apply changes, end-to-end verify</span>
-            <span class="lang-zh">落地改动，端到端验证</span>
-          </strong>
-          <span class="lang-en"
-            >Re-run gates. For new data paths or deployment surfaces, run a
-            real browser hit (lesson L-017) — type-checking and unit tests do
-            not catch wiring bugs.</span
-          >
-          <span class="lang-zh"
-            >再过三闸。新数据路径或新部署表面要跑真浏览器（教训 L-017）
-            —— 类型检查和单元测试抓不住接线 bug。</span
-          >
-        </li>
-        <li>
-          <strong>
-            <span class="lang-en">Write knowledge before commit</span>
-            <span class="lang-zh">commit 前写知识库</span>
-          </strong>
-          <span class="lang-en"
-            >Accepted suggestions become diff comments; rejected ones become
-            <code>review-feedback.md</code> entries. New rules become lessons.
-            Reversed decisions become new ADRs.</span
-          >
-          <span class="lang-zh"
-            >采纳的建议变成 diff 注释；驳回的进
-            <code>review-feedback.md</code>。形成新规律 → lessons；反转
-            决策 → 新 ADR。</span
-          >
-        </li>
-        <li>
-          <strong>
-            <span class="lang-en">User reviews the commit message, then push</span>
-            <span class="lang-zh">用户审 commit message → push</span>
-          </strong>
-          <span class="lang-en"
-            >Two confirmations, two checkpoints: commit message before
-            <code>git commit</code>, push readiness before <code>git push</code>.</span
-          >
-          <span class="lang-zh"
-            >两道确认 · 两道关卡：<code>git commit</code> 前确认 message，
-            <code>git push</code> 前再次确认。</span
-          >
-        </li>
-      </ol>
-    </section>
-
-    <section class="anth-section" id="track-record">
-      <div class="h-eyebrow">
-        <span class="lang-en">Track record</span>
-        <span class="lang-zh">实战记录</span>
-      </div>
-      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
-        <span class="lang-en"
-          >Eight reviews across the F-dock milestone.</span
-        >
-        <span class="lang-zh">F 档里程碑 · 八次评审。</span>
-      </h2>
-      <p
-        style="
-          font-family: var(--font-body);
-          font-size: 16px;
-          line-height: 1.6;
-          color: var(--anth-text-secondary);
-          max-width: 720px;
-        "
-      >
-        <span class="lang-en"
-          >F-dock connected the live token-throughput stream end-to-end —
-          backend sampler, dual WS, reducer, KPI tile. Every step had a
-          review, every review left a paper trail in
-          <code>.claude/knowledge/review-feedback.md</code>.</span
-        >
-        <span class="lang-zh"
-          >F 档接通了端到端的 token 吞吐流：后端采样、双 WS、reducer、
-          KPI 卡片。每步都有评审，每次评审都在
-          <code>.claude/knowledge/review-feedback.md</code> 留痕。</span
-        >
-      </p>
-      <table class="review-table">
+    <div class="table-wrap">
+      <table class="t">
         <thead>
           <tr>
             <th><span class="lang-en">step</span><span class="lang-zh">步骤</span></th>
             <th><span class="lang-en">topic</span><span class="lang-zh">主题</span></th>
-            <th><span class="lang-en">suggestions</span><span class="lang-zh">建议数</span></th>
+            <th class="c"><span class="lang-en">suggestions</span><span class="lang-zh">建议数</span></th>
             <th><span class="lang-en">acceptance</span><span class="lang-zh">采纳率</span></th>
             <th><span class="lang-en">key output</span><span class="lang-zh">关键产出</span></th>
           </tr>
@@ -728,446 +561,220 @@
         <tbody>
           <tr>
             <td>F.1</td>
-            <td>
-              <span class="lang-en">TokenSampler + tps_sample bus</span>
-              <span class="lang-zh">TokenSampler + tps_sample 总线</span>
-            </td>
-            <td>18</td>
-            <td class="rate">65%</td>
-            <td>
-              <span class="lang-en"
-                >ADR-021, L-013 bus event split — caught a 2–3× precision bug
-                that would have shipped silently.</span
-              >
-              <span class="lang-zh"
-                >ADR-021、L-013 总线事件分类 —— 抓到一个会静默 ship 的
-                2–3 倍精度错。</span
-              >
-            </td>
+            <td><span class="lang-en">TokenSampler + tps_sample bus</span><span class="lang-zh">TokenSampler + tps_sample 总线</span></td>
+            <td class="c">18</td>
+            <td class="rate"><span class="bar"><b style="width:65%"></b></span>65%</td>
+            <td><span class="lang-en">ADR-021, L-013 bus event split — caught a 2–3× precision bug that would have shipped silently.</span><span class="lang-zh">ADR-021、L-013 总线事件分类 —— 抓到一个会悄悄发布出去的 2–3 倍精度错。</span></td>
           </tr>
           <tr>
             <td>F.3</td>
             <td><code>GET /metrics/summary</code></td>
-            <td>10</td>
-            <td class="rate">80%</td>
-            <td>
-              <span class="lang-en"
-                >Defensive type guards, DEBT-008 cache stub.</span
-              >
-              <span class="lang-zh"
-                >防御性类型守卫，DEBT-008 缓存条目登记。</span
-              >
-            </td>
+            <td class="c">10</td>
+            <td class="rate"><span class="bar"><b style="width:80%"></b></span>80%</td>
+            <td><span class="lang-en">Defensive type guards, DEBT-008 cache stub.</span><span class="lang-zh">防御性类型守卫，DEBT-008 缓存条目登记。</span></td>
           </tr>
           <tr>
             <td>F.4</td>
             <td><code>GET /tools</code></td>
-            <td>8</td>
-            <td class="rate">100%</td>
-            <td>
-              <span class="lang-en"
-                >L-014 — MCP tool docstrings are public API.</span
-              >
-              <span class="lang-zh"
-                >L-014 —— MCP 工具 docstring 是公开 API。</span
-              >
-            </td>
+            <td class="c">8</td>
+            <td class="rate"><span class="bar"><b style="width:100%"></b></span>100%</td>
+            <td><span class="lang-en">L-014 — MCP tool docstrings are public API.</span><span class="lang-zh">L-014 —— MCP 工具 docstring 是公开 API。</span></td>
           </tr>
           <tr>
             <td>F.5</td>
-            <td>
-              <span class="lang-en">Dual WS instances</span>
-              <span class="lang-zh">双 WS 实例</span>
-            </td>
-            <td>12</td>
-            <td class="rate">92%</td>
-            <td>
-              <span class="lang-en"
-                >ADR-022 reverses ADR-018 alt c; <strong>L-015 meta-rule
-                </strong>— reversed decisions need a fresh ADR, period.</span
-              >
-              <span class="lang-zh"
-                >ADR-022 反转 ADR-018 备选 c；<strong>L-015 元规则</strong> ——
-                反转决策必须立新 ADR。</span
-              >
-            </td>
+            <td><span class="lang-en">Dual WS instances</span><span class="lang-zh">双 WS 实例</span></td>
+            <td class="c">12</td>
+            <td class="rate"><span class="bar"><b style="width:92%"></b></span>92%</td>
+            <td><span class="lang-en">ADR-022 reverses ADR-018 alt c; <strong>L-015 meta-rule</strong> — reversed decisions need a fresh ADR, period.</span><span class="lang-zh">ADR-022 反转 ADR-018 备选 c；<strong>L-015 元规则</strong> —— 反转决策必须立新 ADR。</span></td>
           </tr>
           <tr>
             <td>F.6</td>
-            <td>
-              <span class="lang-en">tps_sample reducer</span>
-              <span class="lang-zh">tps_sample reducer</span>
-            </td>
-            <td>15</td>
-            <td class="rate">87%</td>
-            <td>
-              <span class="lang-en"
-                >L-016 view-aware scaling, plus L-017 — end-to-end testing
-                discovered a 4-month-old projection bug that unit tests
-                missed.</span
-              >
-              <span class="lang-zh"
-                >L-016 view-aware 协议下 scaling 同层；L-017 触发 ——
-                端到端测试发现单元测试漏掉的、4 个月前就埋下的投影 bug。</span
-              >
-            </td>
+            <td><span class="lang-en">tps_sample reducer</span><span class="lang-zh">tps_sample reducer</span></td>
+            <td class="c">15</td>
+            <td class="rate"><span class="bar"><b style="width:87%"></b></span>87%</td>
+            <td><span class="lang-en">L-016 view-aware scaling, plus L-017 — end-to-end testing discovered a 4-month-old projection bug that unit tests missed.</span><span class="lang-zh">L-016 view-aware 协议下 scaling 同层；L-017 触发 —— 端到端测试发现单元测试漏掉的、4 个月前就埋下的投影 bug。</span></td>
           </tr>
           <tr>
             <td>F.7</td>
-            <td>
-              <span class="lang-en">KpiStrip + dual buffer</span>
-              <span class="lang-zh">KpiStrip + 双缓冲</span>
-            </td>
-            <td>9</td>
-            <td class="rate">78%</td>
-            <td>
-              <span class="lang-en"
-                >Closed DEBT-003/004/011, escalated DEBT-008 low → mid (the
-                first stable consumer changed the calculus).</span
-              >
-              <span class="lang-zh"
-                >关闭 DEBT-003/004/011；DEBT-008 升级 low → mid（第一个稳定
-                消费者改变了优先级）。</span
-              >
-            </td>
+            <td><span class="lang-en">KpiStrip + dual buffer</span><span class="lang-zh">KpiStrip + 双缓冲</span></td>
+            <td class="c">9</td>
+            <td class="rate"><span class="bar"><b style="width:78%"></b></span>78%</td>
+            <td><span class="lang-en">Closed DEBT-003/004/011, escalated DEBT-008 low → mid (the first stable consumer changed the calculus).</span><span class="lang-zh">关闭 DEBT-003/004/011；DEBT-008 升级 low → mid（第一个稳定消费者改变了优先级）。</span></td>
           </tr>
           <tr>
             <td>DEBT-014</td>
-            <td>
-              <span class="lang-en">alb-api SPA fallback</span>
-              <span class="lang-zh">alb-api SPA fallback</span>
-            </td>
-            <td>10</td>
-            <td class="rate">90%</td>
-            <td>
-              <span class="lang-en"
-                >Subclassed StaticFiles, kept asset 404s honest.</span
-              >
-              <span class="lang-zh"
-                >子类化 StaticFiles，保留 asset 真 404 不被改写成白页。</span
-              >
-            </td>
+            <td><span class="lang-en">alb-api SPA fallback</span><span class="lang-zh">alb-api SPA fallback</span></td>
+            <td class="c">10</td>
+            <td class="rate"><span class="bar"><b style="width:90%"></b></span>90%</td>
+            <td><span class="lang-en">Subclassed StaticFiles, kept asset 404s honest.</span><span class="lang-zh">子类化 StaticFiles，保留 asset 真 404 不被改写成白页。</span></td>
           </tr>
           <tr>
             <td>DEBT-015</td>
-            <td>
-              <span class="lang-en">GH Pages SPA fallback</span>
-              <span class="lang-zh">GH Pages SPA fallback</span>
-            </td>
-            <td>12</td>
-            <td class="rate">92%</td>
-            <td>
-              <span class="lang-en"
-                >ADR-023 cross-surface heterogeneity, L-018 inline-recovery
-                rule. Prod verify exposed an unrelated 6-day-old vite-base bug
-                (DEBT-016).</span
-              >
-              <span class="lang-zh"
-                >ADR-023 跨部署 surface 异构；L-018 静态托管 recovery 必须
-                inline 同步。Prod 验证还暴露一个 6 天前就有的 vite base
-                bug（DEBT-016）。</span
-              >
-            </td>
+            <td><span class="lang-en">GH Pages SPA fallback</span><span class="lang-zh">GH Pages SPA fallback</span></td>
+            <td class="c">12</td>
+            <td class="rate"><span class="bar"><b style="width:92%"></b></span>92%</td>
+            <td><span class="lang-en">ADR-023 cross-surface heterogeneity, L-018 inline-recovery rule. Prod verify exposed an unrelated 6-day-old vite-base bug (DEBT-016).</span><span class="lang-zh">ADR-023 跨部署 surface 异构；L-018 静态托管 recovery 必须 inline 同步。Prod 验证还暴露一个 6 天前就有的 vite base bug（DEBT-016）。</span></td>
           </tr>
         </tbody>
       </table>
+    </div>
 
-      <div class="closeup">
-        <h3>
-          <span class="lang-en">Highlight: F.5 reviewer caught a doc debt no human flagged</span>
-          <span class="lang-zh">高光：F.5 评审者抓到了人没看出来的文档债</span>
-        </h3>
+    <div class="grid grid--2 highlights">
+      <article class="card card--kernel">
+        <span class="pill"><span class="lang-en">Highlight · F.5</span><span class="lang-zh">高光 · F.5</span></span>
+        <h3><span class="lang-en">F.5 reviewer caught a doc debt no human flagged</span><span class="lang-zh">F.5 评审者抓到了人没看出来的文档债</span></h3>
         <p>
-          <span class="lang-en"
-            >F.5 implemented "alt c" of ADR-018 (separate WS per kind) — but
-            ADR-018 had explicitly rejected that alternative. The
-            architecture-reviewer dug through the historical ADR, noticed the
-            reversal, and demanded a new ADR rather than letting the contradiction
-            ship as a sketch comment. ADR-022 was born; meta-rule L-015 was
-            promoted: reversed decisions never sneak through commit messages
-            again.</span
-          >
-          <span class="lang-zh"
-            >F.5 实施了 ADR-018 的"备选 c"（不同 kind 分别开 WS）—— 而 ADR-018
-            明确否决过这个备选。architecture-reviewer 翻了历史 ADR，识别出反转，
-            要求立新 ADR 而不是把矛盾留在 sketch 注释里。于是 ADR-022 诞生；
-            元规则 L-015 升级：反转决策再也不能从 commit message 偷偷过去了。</span
-          >
+          <span class="lang-en">F.5 implemented "alt c" of ADR-018 (separate WS per kind) — but ADR-018 had explicitly rejected that alternative. The architecture-reviewer dug through the historical ADR, noticed the reversal, and demanded a new ADR rather than letting the contradiction ship as a sketch comment. ADR-022 was born; meta-rule L-015 was promoted: reversed decisions never sneak through commit messages again.</span>
+          <span class="lang-zh">F.5 实施了 ADR-018 的「备选 c」（不同 kind 分别开 WS）—— 而 ADR-018 明确否决过这个备选。architecture-reviewer 翻了历史 ADR，识别出反转，要求立新 ADR 而不是把矛盾留在 sketch 注释里。于是 ADR-022 诞生；元规则 L-015 升级：反转决策再也不能从 commit message 偷偷过去了。</span>
         </p>
-      </div>
-
-      <div class="closeup">
-        <h3>
-          <span class="lang-en">Highlight: F.6 end-to-end run found a 4-month-old wiring bug</span>
-          <span class="lang-zh">高光：F.6 端到端跑出了 4 个月前的接线 bug</span>
-        </h3>
+      </article>
+      <article class="card card--uart">
+        <span class="pill"><span class="lang-en">Highlight · F.6</span><span class="lang-zh">高光 · F.6</span></span>
+        <h3><span class="lang-en">F.6 end-to-end run found a 4-month-old wiring bug</span><span class="lang-zh">F.6 端到端跑出了 4 个月前的接线 bug</span></h3>
         <p>
-          <span class="lang-en"
-            >Unit tests, type-check, sensitive-word scan, offline-purity check
-            — all green. Then the F.6 closing run booted alb-api, hit a real
-            chat session, and watched the LiveSession spark stay flat at zero.
-            Trace: <code>audit_route._project()</code> had been silently
-            dropping the <code>data</code> field on every event since C.1
-            (commit 36537d5, 4 months prior). The reducer's defensive
-            <code>data ?? {}</code> fallback masked it; only end-to-end
-            data flow exposed it.</span
-          >
-          <span class="lang-zh"
-            >单元测试、类型检查、敏感词、offline-purity 全绿。然后 F.6 收官
-            阶段起 alb-api 跑真 chat session，发现 LiveSession spark 贴底为零。
-            追根溯源：<code>audit_route._project()</code> 从 C.1（commit
-            36537d5，4 个月前）开始就一直在静默丢弃 <code>data</code> 字段。
-            reducer 的防御性 <code>data ?? {}</code> 兜底把这条 bug 盖住了 ——
-            只有端到端跑真数据才能挖出来。</span
-          >
+          <span class="lang-en">Unit tests, type-check, sensitive-word scan, offline-purity check — all green. Then the F.6 closing run booted alb-api, hit a real chat session, and watched the LiveSession spark stay flat at zero. Trace: <code>audit_route._project()</code> had been silently dropping the <code>data</code> field on every event since C.1 (commit 36537d5, 4 months prior). The reducer's defensive <code>data ?? {}</code> fallback masked it; only end-to-end data flow exposed it.</span>
+          <span class="lang-zh">单元测试、类型检查、敏感词、offline-purity 全绿。然后 F.6 收官阶段起 alb-api 跑真 chat session，发现 LiveSession spark 贴底为零。追根溯源：<code>audit_route._project()</code> 从 C.1（commit 36537d5，4 个月前）开始就一直在静默丢弃 <code>data</code> 字段。reducer 的防御性 <code>data ?? {}</code> 兜底把这条 bug 盖住了 —— 只有端到端跑真数据才能挖出来。</span>
         </p>
         <p>
-          <span class="lang-en"
-            >Lesson L-017: deployment-layer wiring (SPA fallback, projection,
-            CDN cache rules) is a path too. If you mount it, hit it with a real
-            browser before you ship.</span
-          >
-          <span class="lang-zh"
-            >教训 L-017：部署层兜底（SPA fallback、投影、CDN 缓存规则）也是
-            数据路径。挂上之后必须用真浏览器打一次再 ship。</span
-          >
+          <span class="lang-en">Lesson L-017: deployment-layer wiring (SPA fallback, projection, CDN cache rules) is a path too. If you mount it, hit it with a real browser before you ship.</span>
+          <span class="lang-zh">教训 L-017：部署层兜底（SPA fallback、投影、CDN 缓存规则）也是数据路径。挂上之后必须用真浏览器打一次再交付。</span>
         </p>
-      </div>
-    </section>
+      </article>
+    </div>
+  </div>
+</section>
 
-    <section class="anth-section" id="knowledge">
-      <div class="h-eyebrow">
-        <span class="lang-en">Knowledge base</span>
-        <span class="lang-zh">知识库</span>
-      </div>
-      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
-        <span class="lang-en">Five files agents read before reviewing.</span>
-        <span class="lang-zh">评审前必读的五份文件。</span>
-      </h2>
-      <p
-        style="
-          font-family: var(--font-body);
-          font-size: 16px;
-          line-height: 1.6;
-          color: var(--anth-text-secondary);
-          max-width: 720px;
-        "
-      >
-        <span class="lang-en"
-          >Only the main conversation writes here — agents read but never
-          touch. This keeps the team's shared memory clean from any single
-          run's hallucination.</span
-        >
-        <span class="lang-zh"
-          >只有主对话能写 —— agent 只读不改。这样团队记忆不会被任何单次
-          运行的幻觉污染。</span
-        >
+<!-- ============================== KNOWLEDGE ============================== -->
+<section class="section section--tone" id="knowledge">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Knowledge base</span><span class="lang-zh">知识库</span></span>
+      <h2><span class="lang-en">Five files agents read before reviewing.</span><span class="lang-zh">评审前必读的五份文件。</span></h2>
+      <p class="lead">
+        <span class="lang-en">Only the main conversation writes here — agents read but never touch. This keeps the team's shared memory clean from any single run's hallucination.</span>
+        <span class="lang-zh">只有主对话能写 —— agent 只读不改。这样团队记忆不会被任何单次运行的幻觉污染。</span>
       </p>
-      <div class="knowledge-grid">
-        <div class="file-card">
-          <div class="filename">architecture.md</div>
-          <h3>
-            <span class="lang-en">Module map &amp; invariants</span>
-            <span class="lang-zh">模块地图与不变量</span>
-          </h3>
-          <p>
-            <span class="lang-en"
-              >Where things live, who depends on whom, and the cross-cutting
-              rules that must hold (e.g. SPA route paths cannot contain
-              <code>.</code>).</span
-            >
-            <span class="lang-zh"
-              >模块在哪、谁依赖谁、必须守住的横切规则（比如 SPA 路由路径
-              段不能含 <code>.</code>）。</span
-            >
-          </p>
-          <div class="writer">
-            <span class="lang-en">writer: main conversation</span>
-            <span class="lang-zh">写者：主对话</span>
-          </div>
-        </div>
-        <div class="file-card">
-          <div class="filename">decisions.md</div>
-          <h3>
-            <span class="lang-en">ADRs (4 active)</span>
-            <span class="lang-zh">ADR（已立 4 条）</span>
-          </h3>
-          <p>
-            <span class="lang-en"
-              >Each major decision: context, decision, alternatives, trade-off,
-              when to revisit. ADR-022 reverses ADR-018; ADR-023 documents
-              cross-surface heterogeneity.</span
-            >
-            <span class="lang-zh"
-              >每条重大决策：上下文、决定、备选、trade-off、何时重审。
-              ADR-022 反转 ADR-018；ADR-023 记录跨部署 surface 的异构。</span
-            >
-          </p>
-          <div class="writer">
-            <span class="lang-en">writer: main conversation</span>
-            <span class="lang-zh">写者：主对话</span>
-          </div>
-        </div>
-        <div class="file-card">
-          <div class="filename">debts.md</div>
-          <h3>
-            <span class="lang-en">Tracked technical debt</span>
-            <span class="lang-zh">登记的技术债</span>
-          </h3>
-          <p>
-            <span class="lang-en"
-              >Each debt: severity, where it lives, why we deferred, what
-              triggers repayment. Six closed, one upgraded, three new in this
-              cycle.</span
-            >
-            <span class="lang-zh"
-              >每条债：严重度、位置、为什么推迟、什么条件触发还。本周期
-              6 关 · 1 升 · 3 新。</span
-            >
-          </p>
-          <div class="writer">
-            <span class="lang-en">writer: main conversation</span>
-            <span class="lang-zh">写者：主对话</span>
-          </div>
-        </div>
-        <div class="file-card">
-          <div class="filename">lessons.md</div>
-          <h3>
-            <span class="lang-en">Lessons (L-013…L-018)</span>
-            <span class="lang-zh">教训 (L-013–L-018)</span>
-          </h3>
-          <p>
-            <span class="lang-en"
-              >Negative-pattern catalogue with root cause, rule, and
-              "where agents apply this". L-017 (end-to-end gates real bugs)
-              has its own positive case file.</span
-            >
-            <span class="lang-zh"
-              >反模式清单，记录根因、规则、agent 在哪应用。L-017
-              （端到端验证抓真 bug）配有专属正面案例。</span
-            >
-          </p>
-          <div class="writer">
-            <span class="lang-en">writer: main conversation</span>
-            <span class="lang-zh">写者：主对话</span>
-          </div>
-        </div>
-        <div class="file-card" style="grid-column: span 2">
-          <div class="filename">review-feedback.md</div>
-          <h3>
-            <span class="lang-en">Per-review log: what was rejected and why</span>
-            <span class="lang-zh">逐场评审日志：驳回了什么、理由</span>
-          </h3>
-          <p>
-            <span class="lang-en"
-              >Mandatory reading for every reviewer. Suggestions rejected
-              three times in a row are signals to tune the agent prompt;
-              suggestions accepted three times graduate into lessons.</span
-            >
-            <span class="lang-zh"
-              >每位评审者必读。同类建议被驳回三次是信号 ——
-              该调 agent prompt；被采纳三次则升级为 lesson。</span
-            >
-          </p>
-          <div class="writer">
-            <span class="lang-en">writer: main conversation · readers: every agent</span>
-            <span class="lang-zh">写者：主对话 · 读者：每个 agent</span>
-          </div>
-        </div>
-      </div>
-    </section>
+    </div>
 
-    <section class="anth-section" id="reuse">
-      <div class="h-eyebrow">
-        <span class="lang-en">Reuse</span>
-        <span class="lang-zh">复用</span>
+    <div class="grid grid--2 files">
+      <div class="card">
+        <span class="file__name">architecture.md</span>
+        <h3><span class="lang-en">Module map &amp; invariants</span><span class="lang-zh">模块地图与不变量</span></h3>
+        <p>
+          <span class="lang-en">Where things live, who depends on whom, and the cross-cutting rules that must hold (e.g. SPA route paths cannot contain <code>.</code>).</span>
+          <span class="lang-zh">模块在哪、谁依赖谁、必须守住的横切规则（比如 SPA 路由路径段不能含 <code>.</code>）。</span>
+        </p>
+        <p class="file__writer"><span class="lang-en">writer: main conversation</span><span class="lang-zh">写者：主对话</span></p>
       </div>
-      <h2 style="font-size: 36px; margin: 0 0 var(--space-3)">
-        <span class="lang-en">Any clone gets the team for free.</span>
-        <span class="lang-zh">任意 clone · 团队即得即用。</span>
-      </h2>
-      <p
-        style="
-          font-family: var(--font-body);
-          font-size: 17px;
-          line-height: 1.65;
-          color: var(--anth-text-secondary);
-          max-width: 720px;
-        "
-      >
-        <span class="lang-en"
-          >Agent definitions live under <code>.claude/agents/</code>; slash
-          commands under <code>.claude/commands/</code>; the knowledge base
-          under <code>.claude/knowledge/</code>. They're all in-tree. Clone
-          the repo, open Claude Code, and the team is there. Type <code>/review</code>
-          on staged changes and the code-reviewer + security-and-neutrality
-          agents run in parallel; <code>/preflight</code> runs all seven
-          before a milestone.</span
-        >
-        <span class="lang-zh"
-          >Agent 定义在 <code>.claude/agents/</code>；slash 命令在
-          <code>.claude/commands/</code>；知识库在
-          <code>.claude/knowledge/</code>。全部入仓。clone 完打开 Claude
-          Code，团队就在。在 stage 的改动上敲 <code>/review</code>，
-          code-reviewer 和 security-and-neutrality 并行跑；
-          <code>/preflight</code> 在里程碑前跑全部七个。</span
-        >
-      </p>
-      <p
-        style="
-          font-family: var(--font-body);
-          font-size: 17px;
-          line-height: 1.65;
-          color: var(--anth-text-secondary);
-          max-width: 720px;
-          margin-top: var(--space-4);
-        "
-      >
-        <span class="lang-en"
-          >No CI dependency. No third-party service. No proprietary plugin.
-          The whole workflow is plain Markdown plus a few Python and Node
-          scripts. Fork it, adapt the agent prompts to your domain, and
-          ship.</span
-        >
-        <span class="lang-zh"
-          >不依赖 CI。不依赖第三方服务。不依赖私有插件。整套工作流就是
-          Markdown 加几个 Python 和 Node 脚本。fork 一份、把 agent
-          prompt 调成你的领域，就能 ship。</span
-        >
-      </p>
-    </section>
+      <div class="card">
+        <span class="file__name">decisions.md</span>
+        <h3><span class="lang-en">Decisions, numbered up to ADR-067</span><span class="lang-zh">决策记录，已编到 ADR-067</span></h3>
+        <p>
+          <span class="lang-en">Each major decision: context, decision, alternatives, trade-off, when to revisit. ADR-022 reverses ADR-018; ADR-023 documents cross-surface heterogeneity.</span>
+          <span class="lang-zh">每条重大决策：上下文、决定、备选、trade-off、何时重审。ADR-022 反转 ADR-018；ADR-023 记录跨部署 surface 的异构。</span>
+        </p>
+        <p class="file__writer"><span class="lang-en">writer: main conversation</span><span class="lang-zh">写者：主对话</span></p>
+      </div>
+      <div class="card">
+        <span class="file__name">debts.md</span>
+        <h3><span class="lang-en">Tracked technical debt</span><span class="lang-zh">登记的技术债</span></h3>
+        <p>
+          <span class="lang-en">Each debt: severity, where it lives, why we deferred, what triggers repayment. Numbered up to DEBT-084.</span>
+          <span class="lang-zh">每条债：严重度、位置、为什么推迟、什么条件触发还。已编到 DEBT-084。</span>
+        </p>
+        <p class="file__writer"><span class="lang-en">writer: main conversation</span><span class="lang-zh">写者：主对话</span></p>
+      </div>
+      <div class="card">
+        <span class="file__name">lessons.md</span>
+        <h3><span class="lang-en">Lessons, numbered up to L-063</span><span class="lang-zh">教训，已编到 L-063</span></h3>
+        <p>
+          <span class="lang-en">Negative-pattern catalogue with root cause, rule, and "where agents apply this". L-017 (end-to-end gates real bugs) has its own positive case file.</span>
+          <span class="lang-zh">反模式清单，记录根因、规则、agent 在哪应用。L-017（端到端验证抓真 bug）配有专属正面案例。</span>
+        </p>
+        <p class="file__writer"><span class="lang-en">writer: main conversation</span><span class="lang-zh">写者：主对话</span></p>
+      </div>
+      <div class="card card--filled card--wide">
+        <span class="file__name">review-feedback.md</span>
+        <h3><span class="lang-en">Per-review log: what was rejected and why</span><span class="lang-zh">逐场评审日志：驳回了什么、理由</span></h3>
+        <p>
+          <span class="lang-en">Mandatory reading for every reviewer. Suggestions rejected three times in a row are signals to tune the agent prompt; suggestions accepted three times graduate into lessons.</span>
+          <span class="lang-zh">每位评审者必读。同类建议被驳回三次是信号 —— 该调 agent prompt；被采纳三次则升级为 lesson。</span>
+        </p>
+        <p class="file__writer"><span class="lang-en">writer: main conversation · readers: every agent</span><span class="lang-zh">写者：主对话 · 读者：每个 agent</span></p>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <footer
-      style="
-        background: var(--anth-cream);
-        padding: var(--space-8) var(--space-6);
-        text-align: center;
-        border-top: 1px solid var(--anth-light-gray);
-        font-family: var(--font-body);
-        color: var(--anth-text-secondary);
-      "
-    >
-      <p style="margin: 0">
-        <span class="lang-en">
-          Open source · Apache 2.0 licence ·
-          <a href="https://github.com/TbusOS/android-llm-bridge" rel="noopener"
-            >github.com/TbusOS/android-llm-bridge</a
-          >
-        </span>
-        <span class="lang-zh">
-          开源 · Apache 2.0 协议 ·
-          <a href="https://github.com/TbusOS/android-llm-bridge" rel="noopener"
-            >github.com/TbusOS/android-llm-bridge</a
-          >
-        </span>
+<!-- ============================== REUSE ============================== -->
+<section class="section" id="reuse">
+  <div class="wrap">
+    <div class="reuse">
+      <span class="shape shape--sunny" aria-hidden="true"></span>
+      <span class="eyebrow"><span class="lang-en">Reuse</span><span class="lang-zh">复用</span></span>
+      <h2><span class="lang-en">Any clone gets the team for free.</span><span class="lang-zh">任意 clone，团队即得即用。</span></h2>
+      <p>
+        <span class="lang-en">Agent definitions live under <code>.claude/agents/</code>; slash commands under <code>.claude/commands/</code>; the knowledge base under <code>.claude/knowledge/</code>. They're all in-tree. Clone the repo, open Claude Code, and the team is there. Type <code>/review</code> on staged changes and the code-reviewer + security-and-neutrality agents run in parallel; <code>/preflight</code> runs all seven before a milestone.</span>
+        <span class="lang-zh">Agent 定义在 <code>.claude/agents/</code>；slash 命令在 <code>.claude/commands/</code>；知识库在 <code>.claude/knowledge/</code>。全部入仓。clone 完打开 Claude Code，团队就在。在 stage 的改动上敲 <code>/review</code>，code-reviewer 和 security-and-neutrality 并行跑；<code>/preflight</code> 在里程碑前跑全部七个。</span>
       </p>
-    </footer>
+      <p>
+        <span class="lang-en">No CI dependency. No third-party service. No proprietary plugin. The whole workflow is plain Markdown plus a few Python and Node scripts. Fork it, adapt the agent prompts to your domain, and ship.</span>
+        <span class="lang-zh">不依赖 CI。不依赖第三方服务。不依赖私有插件。整套工作流就是 Markdown 加几个 Python 和 Node 脚本。fork 一份、把 agent prompt 调成你的领域，就能用起来。</span>
+      </p>
+      <div class="reuse__cta">
+        <a class="btn btn--filled" href="https://github.com/TbusOS/android-llm-bridge/tree/main/.claude">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="lang-en">Browse <code>.claude/</code> on GitHub</span><span class="lang-zh">在 GitHub 上看 <code>.claude/</code></span>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <script>
-      function toggleLang() {
-        const html = document.documentElement;
-        html.lang = html.lang.startsWith("zh") ? "en" : "zh-CN";
-      }
-    </script>
-  </body>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html" aria-current="page"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+</body>
 </html>
