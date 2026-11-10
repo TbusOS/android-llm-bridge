@@ -80,10 +80,11 @@ async def execute(
     r = await transport.shell(cmd, timeout=timeout)
 
     if not r.ok:
+        message, suggestion = _failure_text(r.exit_code, r.stdout, r.stderr, r.error_code)
         return fail(
             code=r.error_code or "SHELL_NONZERO_EXIT",
-            message=r.stderr.strip() or "Command failed",
-            suggestion=_suggest_for(r.error_code),
+            message=message,
+            suggestion=suggestion,
             category="transport",
             details={
                 "stdout": r.stdout,
@@ -101,6 +102,42 @@ async def execute(
             duration_ms=r.duration_ms,
         ),
         timing_ms=r.duration_ms,
+    )
+
+
+def _failure_text(
+    exit_code: int, stdout: str, stderr: str, error_code: str | None
+) -> tuple[str, str]:
+    """Message + suggestion for a failed command.
+
+    stderr, when there is any, is the most useful message. Without it the old
+    text was a bare "Command failed", and a non-zero exit with no output at
+    all was easy to read as "ran fine, printed nothing" — a board-side
+    ``su 0 rm -f a b`` came back 255 with both streams empty and two cleanups
+    were taken as done. So name the exit code, and say when nothing came out.
+    """
+    if stderr.strip():
+        return stderr.strip(), _suggest_for(error_code)
+    if stdout.strip():
+        return f"command failed with exit code {exit_code}", _suggest_for(error_code)
+    suggestion = (
+        "Do not read the empty output as success: the command may not have run at all. "
+        "Append '; echo rc=$?' — if even that prints nothing, the command never started"
+    )
+    if error_code == "ADB_COMMAND_FAILED":
+        # Seen on a real board: its adbd refused the shell request by the
+        # command's text and closed the stream — adb then exits 255 with
+        # nothing printed, even for `echo <that text>`. The same command ran
+        # over the serial console, and base64-wrapped over adb.
+        suggestion += (
+            ". Over adb this is also how a command looks when the device's adbd refuses it: "
+            "some vendor adbd builds reject shell commands by their text (the device log "
+            "says so). Try the serial console, run the steps one by one, or put them in a "
+            "script and run that"
+        )
+    return (
+        f"command failed with exit code {exit_code} and no output (stdout and stderr both empty)",
+        suggestion,
     )
 
 

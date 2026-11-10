@@ -93,3 +93,60 @@ async def test_execute_propagates_transport_error() -> None:
     assert r.error is not None
     assert r.error.code == "DEVICE_OFFLINE"
     assert "Reconnect" in r.error.suggestion  # shell._suggest_for
+
+
+@pytest.mark.asyncio
+async def test_execute_silent_failure_names_exit_code_and_empty_output() -> None:
+    """A non-zero exit with nothing on stdout or stderr must not read like
+    success: the message names the exit code and says both streams were empty
+    (a board-side `su 0 rm -f a b` came back 255 with no output at all)."""
+    t = _mk_transport(
+        shell_ok=False, exit_code=255, stdout="", stderr="", error_code="ADB_COMMAND_FAILED",
+    )
+    r = await execute(t, "su 0 rm -f /data/local/tmp/a /data/local/tmp/b")
+    assert not r.ok
+    assert r.error is not None
+    assert r.error.code == "ADB_COMMAND_FAILED"
+    assert "255" in r.error.message
+    assert "no output" in r.error.message
+    assert "success" in r.error.suggestion
+    assert "adbd" in r.error.suggestion  # adb-only hint: the device may refuse by text
+    assert r.error.details["exit_code"] == 255
+
+
+@pytest.mark.asyncio
+async def test_execute_failure_with_stdout_only_names_exit_code() -> None:
+    """stderr empty but stdout not: the message still carries the exit code
+    instead of a bare 'Command failed'."""
+    t = _mk_transport(
+        shell_ok=False, exit_code=2, stdout="usage: foo\n", stderr="", error_code="ADB_COMMAND_FAILED",
+    )
+    r = await execute(t, "foo")
+    assert r.error is not None
+    assert "exit code 2" in r.error.message
+    assert r.error.details["stdout"] == "usage: foo\n"
+
+
+@pytest.mark.asyncio
+async def test_execute_failure_keeps_stderr_as_message() -> None:
+    t = _mk_transport(
+        shell_ok=False, exit_code=1, stdout="", stderr="rm: x: Permission denied\n",
+        error_code="ADB_COMMAND_FAILED",
+    )
+    r = await execute(t, "rm x")
+    assert r.error is not None
+    assert r.error.message == "rm: x: Permission denied"
+
+
+@pytest.mark.asyncio
+async def test_execute_silent_failure_off_adb_has_no_adbd_hint() -> None:
+    """The adbd hint is adb-only; a silent non-zero exit over ssh / serial
+    still gets the 'not a success' warning, without talking about adbd."""
+    t = _mk_transport(
+        shell_ok=False, exit_code=1, stdout="", stderr="", error_code="SHELL_NONZERO_EXIT",
+    )
+    r = await execute(t, "false")
+    assert r.error is not None
+    assert "exit code 1" in r.error.message and "no output" in r.error.message
+    assert "success" in r.error.suggestion
+    assert "adbd" not in r.error.suggestion
