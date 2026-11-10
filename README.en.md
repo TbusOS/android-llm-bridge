@@ -7,10 +7,22 @@
 </p>
 
 <p align="center">
+  <a href="https://doc.tbusos.com/android-llm-bridge/"><b>Website</b></a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#supported-methods">Methods</a> ·
   <a href="#documentation">Docs</a> ·
   <a href="./README.md">中文</a>
+</p>
+
+<p align="center">
+  <a href="https://doc.tbusos.com/android-llm-bridge/#topology">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/site/readme/topology-en-dark.png">
+      <img src="docs/assets/site/readme/topology-en-light.png" width="900" alt="Topology: the AI coding agent and the alb hub run on the build server; a bench agent on each PC with boards dials out to the hub and reaches boards over USB and UART; models can be cloud APIs, local models or on-device models">
+    </picture>
+  </a>
+  <br>
+  <sub>Solid lines ship today, dashed lines are planned. Click the picture to walk through one debugging loop on the website.</sub>
 </p>
 
 ---

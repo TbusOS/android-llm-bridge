@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Website and docs · 项目主页和文档
+    url: https://doc.tbusos.com/android-llm-bridge/
+    about: What alb does today, the topology and the roadmap. alb 现在能做什么、整体拓扑和路线图。
+  - name: Remote bench runbook · 远程台架操作手册
+    url: https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md
+    about: Hub on one machine, boards on another PC. hub 在一台机器，板子插在另一台电脑上。

@@ -1,0 +1,78 @@
+name: Board / tool support request · 申请支持我的板子
+description: Ask alb to support a board, SoC family, debug link or vendor flash tool. 想让 alb 支持某块板子、某类芯片、某种连接方式或厂商烧录工具。
+title: "[board] "
+labels: ["board-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for asking! Please use **public information only** — no internal part numbers, customer names, serial numbers or private IPs.
+        感谢提需求！请只写**公开信息**：不要写内部料号、客户名、序列号或内网地址。
+
+        Not sure what alb already does? See the [website](https://doc.tbusos.com/android-llm-bridge/) and the [connections table](https://doc.tbusos.com/android-llm-bridge/#links).
+        不确定 alb 现在能做什么？先看[项目主页](https://doc.tbusos.com/android-llm-bridge/)和[连接方式表](https://doc.tbusos.com/android-llm-bridge/#links)。
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Board or SoC family · 板子或芯片系列
+      description: A public name is enough, e.g. "Qualcomm QCS-class dev kit", "Rockchip RK35xx board", "x86 server with a BMC". 写公开名称即可。
+      placeholder: e.g. an ARM64 dev board with a 1.5 Mbaud UART console
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: What runs on it · 板子上跑什么
+      options:
+        - Android
+        - Embedded Linux (Yocto / Buildroot / Debian …) · 嵌入式 Linux
+        - Linux server · Linux 服务器
+        - RTOS / bare metal · 实时系统或裸机
+        - Other · 其他
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: links
+    attributes:
+      label: How can you reach it · 能用哪些方式连上它
+      options:
+        - label: adb over USB
+        - label: adb over Wi-Fi
+        - label: ssh
+        - label: UART / serial console · 串口
+        - label: fastboot
+        - label: Vendor download / emergency mode · 厂商下载模式(e.g. Qualcomm EDL)
+        - label: BMC / IPMI serial-over-LAN · 服务器网络串口
+        - label: JTAG / SWD debug probe · 调试探针
+
+  - type: textarea
+    id: want
+    attributes:
+      label: What should alb do · 希望 alb 做什么
+      description: The debugging task you want an AI agent to handle, step by step if you can. 你想让 AI Agent 帮你做的调试任务，能分步写更好。
+      placeholder: |
+        e.g. flash a new kernel, catch the boot log on the serial console, tell me where it hangs
+        例如：烧新内核，从串口抓启动日志，告诉我卡在哪一步
+    validations:
+      required: true
+
+  - type: textarea
+    id: tools
+    attributes:
+      label: Tools you use today · 你现在用什么工具
+      description: Command-line tools are easiest to wire in. Say which OS they run on. 命令行工具最容易接进来，写一下它们跑在哪个系统上。
+      placeholder: e.g. a vendor flash tool with a CLI on Windows; picocom at 1500000 baud
+
+  - type: dropdown
+    id: hardware-access
+    attributes:
+      label: Can you test on real hardware · 你能在真板子上测试吗
+      options:
+        - Yes, I have the board · 能，板子在我手上
+        - Yes, and I can help write the code · 能，还可以一起写代码
+        - No · 不能
+    validations:
+      required: true

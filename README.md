@@ -7,10 +7,22 @@
 </p>
 
 <p align="center">
+  <a href="https://doc.tbusos.com/android-llm-bridge/"><b>项目主页</b></a> ·
   <a href="#-快速开始">快速开始</a> ·
   <a href="#-支持的调试方案">方案对比</a> ·
   <a href="#-文档导航">文档</a> ·
   <a href="./README.en.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://doc.tbusos.com/android-llm-bridge/#topology">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/site/readme/topology-zh-dark.png">
+      <img src="docs/assets/site/readme/topology-zh-light.png" width="900" alt="整体拓扑：编译机上跑 AI 编程助手和 alb hub；台架电脑上的 agent 主动连回 hub，经 USB、串口连板子；模型可以是云端 API、本地模型或板上模型">
+    </picture>
+  </a>
+  <br>
+  <sub>实线已实现，虚线规划中。点图打开项目主页，可以一步步看一次调试流程怎么走。</sub>
 </p>
 
 ---
@@ -92,7 +104,7 @@
    **双击 `run-agent.bat`**（每次启动自检环境，缺依赖自动装）
 
 之后 adb / UART 串口 / Web 控制台 / MCP 全部从 hub 侧驱动，跟板子直接插在
-hub 上一样。完整链路与逐跳排障：[docs/dial-home-runbook.md](./docs/dial-home-runbook.md)；
+hub 上一样。从 hub 到板子每一跳的连接说明和排障：[docs/dial-home-runbook.md](./docs/dial-home-runbook.md)；
 设备侧操作手册（中文）：[clients/windows-agent/README.md](./clients/windows-agent/README.md)。
 
 ---
