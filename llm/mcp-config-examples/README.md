@@ -12,9 +12,9 @@ owner: sky
 
 | 文件 | 客户端 | 配置文件位置 |
 |-----|------|------------|
-| [claude-code.json](./claude-code.json) | Claude Code | `~/.claude/mcp-settings.json` |
+| [claude-code.json](./claude-code.json) | Claude Code | 项目根 `.mcp.json`(或 `claude mcp add alb -- uv run --project <路径> alb-mcp`) |
 | [cursor.json](./cursor.json) | Cursor | `~/.cursor/mcp.json` |
-| [codex.json](./codex.json) | OpenAI Codex CLI | `~/.codex/config.json` |
+| [codex.toml](./codex.toml) | OpenAI Codex CLI | `~/.codex/config.toml`(或 `codex mcp add alb -- uv run --project <路径> alb-mcp`) |
 
 ## 使用
 

@@ -170,22 +170,17 @@ uv run alb version             # 0.0.1
 uv run pytest -q               # 跑完整测试
 ```
 
-### 接入 Claude Code（MCP）
+### 接入 Claude Code / Codex（MCP）
 
-写入 `~/.claude/mcp-settings.json`：
+在仓库目录里登记一次：
 
-```json
-{
-  "mcpServers": {
-    "alb": {
-      "command": "uv",
-      "args": ["run", "--project", "/absolute/path/to/android-llm-bridge", "alb-mcp"]
-    }
-  }
-}
+```bash
+claude mcp add alb -- uv run --project "$PWD" alb-mcp   # Claude Code
+codex mcp add alb -- uv run --project "$PWD" alb-mcp    # Codex CLI
 ```
 
-重启 Claude Code，它会启动 `alb-mcp` 子进程，自动拿到全部 21 个 tool。
+Claude Code 加 `-s project` 会写进项目根的 `.mcp.json`;Codex 写进 `~/.codex/config.toml`。
+重启客户端后，它会启动 `alb-mcp` 子进程，拿到全部 MCP 工具(`alb describe` 可列出)。
 
 ---
 

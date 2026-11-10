@@ -39,7 +39,7 @@ tags: [llm, mcp, cli, agent, integration]
 ### 架构
 
 ```
-~/.claude/mcp-settings.json
+claude mcp add alb -- … alb-mcp(登记一次)
          ↓
 Claude Code 启动 alb-mcp 子进程（stdio）
          ↓
@@ -53,20 +53,10 @@ Claude 请求 tools/call alb_logcat → 执行 capabilities/logging.py
 
 ### 配置（各家客户端）
 
-**Claude Code** （`~/.claude/mcp-settings.json`）
-```json
-{
-  "mcpServers": {
-    "alb": {
-      "command": "uv",
-      "args": ["run", "--project", "/path/to/android-llm-bridge", "alb-mcp"],
-      "env": {
-        "ALB_WORKSPACE": "~/alb-workspace",
-        "ALB_PROFILE": "work"
-      }
-    }
-  }
-}
+**Claude Code**(命令行登记;默认只对当前目录生效,`-s user` 对所有目录生效,`-s project` 写进项目根的 `.mcp.json` 给团队共用)
+```bash
+claude mcp add alb -e ALB_WORKSPACE=~/alb-workspace -e ALB_PROFILE=work \
+  -- uv run --project /path/to/android-llm-bridge alb-mcp
 ```
 
 **Cursor** （`~/.cursor/mcp.json`）
@@ -81,18 +71,15 @@ Claude 请求 tools/call alb_logcat → 执行 capabilities/logging.py
 }
 ```
 
-**Codex CLI** （`~/.codex/config.json`）
-```json
-{
-  "mcp_servers": [
-    {
-      "name": "alb",
-      "command": "uv",
-      "args": ["run", "alb-mcp"],
-      "cwd": "/path/to/android-llm-bridge"
-    }
-  ]
-}
+**Codex CLI**(`codex mcp add` 写进 `~/.codex/config.toml`;codex-cli 0.159.2 实测)
+```bash
+codex mcp add alb -- uv run --project /path/to/android-llm-bridge alb-mcp
+```
+写出来的配置:
+```toml
+[mcp_servers.alb]
+command = "uv"
+args = ["run", "--project", "/path/to/android-llm-bridge", "alb-mcp"]
 ```
 
 更多示例见 [`/llm/mcp-config-examples/`](../llm/mcp-config-examples/)。

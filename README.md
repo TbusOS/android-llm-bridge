@@ -205,19 +205,16 @@ uv run alb serial shell "dmesg | tail"
 
 配置方式详见 [`docs/methods/`](./docs/methods/)。
 
-### 接入 Claude Code（MCP）
+### 接入 Claude Code / Codex（MCP）
 
-```json
-// ~/.claude/mcp-settings.json
-{
-  "mcpServers": {
-    "alb": {
-      "command": "uv",
-      "args": ["run", "--project", "/path/to/android-llm-bridge", "alb-mcp"]
-    }
-  }
-}
+在仓库目录里登记一次即可：
+
+```bash
+claude mcp add alb -- uv run --project "$PWD" alb-mcp   # Claude Code
+codex mcp add alb -- uv run --project "$PWD" alb-mcp    # Codex CLI,写进 ~/.codex/config.toml
 ```
+
+Cursor 等用 JSON 配置的客户端见 [`llm/mcp-config-examples/`](./llm/mcp-config-examples/)。
 
 在 Claude Code 里直接让它"帮我看看板子最近的 ANR"、"拉一份 bugreport"、"监控 15 分钟的 CPU 占用"即可，无需手写 adb 命令。
 

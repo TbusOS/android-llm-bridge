@@ -226,15 +226,9 @@ ${GREEN}Next steps:${NC}
   uv run alb status                    # health check
   uv run alb devices                   # list connected devices (needs transport setup)
 
-  ${DIM}# Use from Claude Code — add to ~/.claude/mcp-settings.json:${NC}
-  {
-    "mcpServers": {
-      "alb": {
-        "command": "uv",
-        "args": ["run", "--project", "${REPO_ROOT}", "alb-mcp"]
-      }
-    }
-  }
+  ${DIM}# Use from Claude Code or Codex CLI (registers the MCP server once):${NC}
+  claude mcp add alb -- uv run --project "${REPO_ROOT}" alb-mcp
+  codex mcp add alb -- uv run --project "${REPO_ROOT}" alb-mcp
 
 ${DIM}Docs:      ${REPO_ROOT}/docs/
 Uninstall: ${REPO_ROOT}/scripts/uninstall.sh${NC}

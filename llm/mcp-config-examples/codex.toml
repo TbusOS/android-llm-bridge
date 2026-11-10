@@ -1,0 +1,15 @@
+# OpenAI Codex CLI MCP configuration for android-llm-bridge.
+#
+# Easiest: run this once from your checkout and Codex writes the block below
+# into ~/.codex/config.toml (checked with codex-cli 0.159.2):
+#
+#   codex mcp add alb -- uv run --project "$PWD" alb-mcp
+#
+# Or paste the block into ~/.codex/config.toml by hand and replace the path.
+
+[mcp_servers.alb]
+command = "uv"
+args = ["run", "--project", "/path/to/android-llm-bridge", "alb-mcp"]
+
+[mcp_servers.alb.env]
+ALB_WORKSPACE = "~/alb-workspace"
