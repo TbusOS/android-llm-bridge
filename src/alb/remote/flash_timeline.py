@@ -93,6 +93,9 @@ class FlashTimeline:
         self._last_byte_at = 0.0
         self.uart_attached = False
         self.uart_note = ""
+        # Files a vendor tool wrote on the bench host (ADR-068), as kept under
+        # files/: {name: bytes written so far}.
+        self.files_kept: dict[str, int] = {}
 
     # ── clock ────────────────────────────────────────────────────────
 
@@ -148,6 +151,40 @@ class FlashTimeline:
             ),
             encoding="utf-8",
         )
+
+    def save_file_piece(self, name: str, offset: int, data: bytes, *, end: bool) -> bool:
+        """Append one piece of a file the agent brought back to
+        `files/<name>`. False when the name or the offset is not one this
+        side will write: the name comes from the bench host and must stay
+        one relative path under files/; the pieces must arrive in order."""
+        parts = name.split("/")
+        if not name or any(
+            p in ("", ".", "..") or any(c in p for c in "\\:") or not p.isprintable() for p in parts
+        ):
+            return False
+        base = self.dir / "files"
+        path = base.joinpath(*parts)
+        if offset != self.files_kept.get(name, 0):
+            return False
+        base.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.resolve().is_relative_to(base.resolve()):
+            return False
+        with path.open("ab" if offset else "wb") as fh:
+            fh.write(data)
+        self.files_kept[name] = offset + len(data)
+        if end:
+            self._write(
+                {
+                    "t": self._t(),
+                    "src": "meta",
+                    "ev": "file",
+                    "name": name,
+                    "size": self.files_kept[name],
+                    "path": f"files/{name}",
+                }
+            )
+        return True
 
     # ── uart side ────────────────────────────────────────────────────
 

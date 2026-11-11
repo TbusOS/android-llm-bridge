@@ -96,3 +96,46 @@ log_file=logs/agent.log
 #edl_sahara=
 #edl_firehose=
 #edl_root=
+
+# ── Other vendors' download-mode tools (optional, ADR-068) ────────────
+# Register a vendor's command-line flashing tool under a name of your choice
+# and the hub can run it with the tool's OWN arguments:
+#   alb flash tool <name> --pkg <package dir> -- <the tool's arguments>
+# Only tools registered here can run; the hub never names a program or a
+# path. Before running, the agent refuses any argument holding a drive path
+# (X:\ or X:/), a network path (\\server, //server), a path from the drive
+# root (\x) or '..' — name files relative to the package (the tool runs in
+# it) or write {pkg}. {com} becomes the COM port of the tool_usb device.
+# `alb flash tools` lists what is registered, with the usage text below.
+#
+# Name rule: 1-32 of a-z 0-9 _ -, starting with a letter or digit.
+#   tool_exe.<name>     REQUIRED. Absolute path of the tool's .exe.
+#   tool_root.<name>    REQUIRED. Packages sit in directories under it; the
+#                       hub names one by its path relative to this root.
+#   tool_cwd.<name>     package (default): run in the package directory, as
+#                       you would by hand; job: in a fresh scratch directory.
+#   tool_timeout.<name> seconds, 1-1700, default 1500. The tool and every
+#                       process it started are ended after this.
+#   tool_ok.<name>      regex; a line must match it for the run to count as a
+#                       success. Without it only the exit code is looked at,
+#                       and the result says so — some tools exit 0 on failure.
+#   tool_fail.<name>    regex; a matching line makes the run a failure, even
+#                       with exit code 0.
+#   tool_note.<name>    regex; matching lines are listed in the result
+#                       (e.g. one line per partition written).
+#   tool_usb.<name>     VID:PID, comma-separated. Checked before running: the
+#                       board must be attached in that mode. Needed for {com}.
+#   tool_usage.<name>   notes shown by `alb flash tools`: how to enter the mode,
+#                       which arguments to give. Repeat the line for more lines.
+# Files the tool writes into its working directory (its own logs) come back
+# to the hub next to the job's record. A missing tool_exe or tool_root file
+# is logged at start-up and that tool is not offered; a malformed line stops
+# the agent from starting.
+#
+# Example — fastboot registered as a pass-through tool, to compare with the
+# built-in fastboot ops:
+#   tool_exe.fb=D:\platform-tools\fastboot.exe
+#   tool_root.fb=D:\flash\board-a\packages
+#   tool_fail.fb=FAILED
+#   tool_usage.fb=board in fastboot first: alb power reboot fastboot
+#   tool_usage.fb=e.g. alb flash tool fb --pkg v12 -- flash boot boot.img

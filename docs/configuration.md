@@ -275,7 +275,7 @@ agent 是 `clients/windows-agent/` 里的 `alb_agent.py`,跑在插着板子的 W
 
 ### 6.1 agent.conf 的键
 
-代码:`clients/windows-agent/alb_agent.py` 的 `_CONFIG_KEYS` 和 `_parse_args`。除了 `<key>.<board>` 这两种,每个键都有同名的命令行参数(下划线换成连字符,例如 `--hub-url`),命令行赢。`<key>.<board>` 只能写在文件里。
+代码:`clients/windows-agent/alb_agent.py` 的 `_CONFIG_KEYS`、`_TOOL_KEYS` 和 `_parse_args`。除了 `<key>.<board>` 和 `tool_*.<tool>` 这两类,每个键都有同名的命令行参数(下划线换成连字符,例如 `--hub-url`),命令行赢。`<key>.<board>` 和 `tool_*.<tool>` 只能写在文件里。
 
 | 键 | 作用 | 默认值 |
 |---|---|---|
@@ -293,6 +293,13 @@ agent 是 `clients/windows-agent/` 里的 `alb_agent.py`,跑在插着板子的 W
 | `edl_sahara` | 9008 模式用的 QSaharaServer 路径 | 不设 |
 | `edl_firehose` | 9008 模式用的 fh_loader 路径 | 不设 |
 | `edl_root` | 9008 刷机包所在的目录,hub 只能指定它下面的目录 | 不设 |
+| `tool_exe.<tool>` | 登记一个厂商烧录工具:exe 的绝对路径。`<tool>` 是自己起的名字,规则同板子名 | 不设 |
+| `tool_root.<tool>` | 这个工具的刷机包根目录,`alb flash tool --pkg` 只能指定它下面的目录 | 不设(登记了工具就必填) |
+| `tool_cwd.<tool>` | `package`:在包目录里运行;`job`:每次一个临时目录 | `package` |
+| `tool_timeout.<tool>` | 秒,1-1700;到点连工具起的子进程一起结束 | 1500 |
+| `tool_ok.<tool>` / `tool_fail.<tool>` / `tool_note.<tool>` | 正则:必须出现才算成功 / 出现就算失败 / 匹配的行列进结果 | 不设:只看退出码 |
+| `tool_usb.<tool>` | 下载模式的 `VID:PID`,逗号分隔;运行前查 USB 上有没有,参数里的 `{com}` 换成它的 COM 口 | 不设:不查 |
+| `tool_usage.<tool>` | 说明文字,`alb flash tools` 里显示;重复写这一行就是多行 | 不设 |
 
 文件格式规则(`_load_config`):
 
@@ -302,6 +309,7 @@ agent 是 `clients/windows-agent/` 里的 `alb_agent.py`,跑在插着板子的 W
 - 写错键名,agent 拒绝启动,并列出所有合法键名。
 - `flash_partitions` 和任何一个 `flash_partitions.<board>` 同时写,agent 拒绝启动。
 - `edl_sahara` / `edl_firehose` / `edl_root` 三个要一起写。少一个、或路径不存在,9008 的三个操作都不提供,启动日志里写明原因(`_resolve_edl`)。
+- `tool_*.<tool>`(`_resolve_tools`):缺 `tool_exe` 或 `tool_root`、写了相对路径、正则写错、超时不在 1-1700、`tool_usb` 不是 `VID:PID`,agent 拒绝启动;exe 或根目录此刻不存在,启动日志警告,这个工具不提供。用法见 [`clients/windows-agent/README.md`](../clients/windows-agent/README.md)「其它厂商的下载工具」。
 
 agent 连的 adb server 固定是台架主机上的 `127.0.0.1:5037`,不能改(`ADB_TARGET`)。
 

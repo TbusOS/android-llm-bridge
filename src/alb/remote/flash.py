@@ -28,6 +28,8 @@ one job all want the same events.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import hashlib
 import logging
@@ -145,6 +147,9 @@ class FlashResult:
 
 
 EventSink = Callable[[FlashEvent], None]
+# A piece of a file the job wrote on the bench host (ADR-068): name, offset,
+# bytes, last piece. Returns False when it could not be kept.
+FileSink = Callable[[str, int, bytes, bool], bool]
 _R = TypeVar("_R", FlashResult, PlanResult)
 
 
@@ -166,8 +171,10 @@ def _fail(code: str, error: str) -> FlashResult:
 
 def _label(name: str, values: dict[str, Any]) -> str:
     """`erase misc`, `set-active b`, `log-tail agent 200` — the op and its
-    values in order, for the busy message and the timeline directory."""
-    shown = [str(v) for v in values.values() if v not in ("", None)]
+    values in order, for the busy message and the timeline directory. An
+    argument list (tool-run) is left out: the request in the record has it,
+    and a directory name is no place for a vendor tool's command line."""
+    shown = [str(v) for v in values.values() if v not in ("", None) and not isinstance(v, list)]
     return " ".join([name, *shown])
 
 
@@ -190,6 +197,11 @@ def _unknown_op(agent: Any, name: str, table: dict[str, OpSpec]) -> FlashResult:
         )
     offered = ", ".join(sorted(table)) or "nothing"
     note = "" if CAP_FASTBOOT in caps else " (it has no fastboot executable, so no fastboot ops)"
+    if name in ("tool-run", "tool-list"):
+        note = (
+            " (no vendor tool is registered there: add tool_exe.<name> and "
+            "tool_root.<name> to its agent.conf, see `alb flash tools --help`)"
+        )
     return _fail(
         "BENCH_OP_UNKNOWN", f"agent {agent.agent_id} has no op {name!r}{note}; it offers: {offered}"
     )
@@ -697,7 +709,9 @@ class FlashService:
             timeline = await _open_timeline(label, request, enabled=record, watch_uart=watch_uart)
             sink = _tee(on_event, timeline)
             try:
-                result = await self._step(request, sink, after_request, label=label)
+                result = await self._step(
+                    request, sink, after_request, label=label, on_file=_file_sink(timeline)
+                )
                 return _finish(result, timeline)
             finally:
                 self._current = ""
@@ -719,7 +733,10 @@ class FlashService:
         timeline = await _open_timeline(label, request, enabled=record, watch_uart=watch_uart)
         sink = _tee(on_event, timeline)
         try:
-            return _finish(await self._step(request, sink, after_request, label=label), timeline)
+            result = await self._step(
+                request, sink, after_request, label=label, on_file=_file_sink(timeline)
+            )
+            return _finish(result, timeline)
         finally:
             if timeline is not None:
                 await timeline.aclose()
@@ -731,11 +748,14 @@ class FlashService:
         after_request: Callable[[DataChannel], Any] | None,
         *,
         label: str,
+        on_file: FileSink | None = None,
     ) -> FlashResult:
         """One job on one channel, every failure turned into a FlashResult.
         The caller must already hold the lock."""
         try:
-            return await asyncio.wait_for(self._drive(request, sink, after_request), JOB_TIMEOUT_S)
+            return await asyncio.wait_for(
+                self._drive(request, sink, after_request, on_file), JOB_TIMEOUT_S
+            )
         except TimeoutError:
             return _fail(
                 "FLASH_FAILED", f"job '{label}' exceeded {JOB_TIMEOUT_S:.0f}s and was abandoned"
@@ -750,6 +770,7 @@ class FlashService:
         request: dict[str, Any],
         on_event: EventSink | None,
         after_request: Callable[[DataChannel], Any] | None,
+        on_file: FileSink | None = None,
     ) -> FlashResult:
         agent = self._get_agent()
         if agent is None:
@@ -773,7 +794,7 @@ class FlashService:
         try:
             await channel.send(encode_control(request))
             if after_request is None:
-                return await _collect(channel, on_event, started)
+                return await _collect(channel, on_event, started, on_file)
             return await _send_while_collecting(channel, after_request(channel), on_event, started)
         finally:
             with contextlib.suppress(Exception):
@@ -857,7 +878,12 @@ async def _stream_file(channel: DataChannel, path: Path) -> None:
     await channel.send(encode_data(b""))
 
 
-async def _collect(channel: DataChannel, on_event: EventSink | None, started: float) -> FlashResult:
+async def _collect(
+    channel: DataChannel,
+    on_event: EventSink | None,
+    started: float,
+    on_file: FileSink | None = None,
+) -> FlashResult:
     """Consume agent events until the terminal frame.
 
     A closed channel with no `done` is its own failure: the caller must be
@@ -866,6 +892,7 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
     """
     reader = FrameReader(channel)
     events: list[FlashEvent] = []
+    lost_files: set[str] = set()
     while True:
         msg = await reader.read_control()
         if msg is None:
@@ -891,7 +918,23 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
             events.append(item)
             if on_event is not None:
                 on_event(item)
+        elif ev == "file":
+            # A piece of a file a vendor tool wrote on the bench host
+            # (ADR-068). Kept beside the timeline; never fatal to the job.
+            name = str(msg.get("name") or "")
+            try:
+                piece = base64.b64decode(str(msg.get("b64") or ""), validate=True)
+                kept = on_file is not None and on_file(
+                    name, _as_int(msg.get("offset"), -1), piece, bool(msg.get("end"))
+                )
+            except (binascii.Error, ValueError):
+                kept = False
+            if not kept:
+                lost_files.add(name)
         elif ev == JobEvent.DONE.value:
+            data = msg["data"] if isinstance(msg.get("data"), dict) else {}
+            if lost_files:
+                data["files_not_kept"] = sorted(lost_files)
             return FlashResult(
                 ok=bool(msg.get("ok")),
                 rc=_as_int(msg.get("rc"), -1),
@@ -901,7 +944,7 @@ async def _collect(channel: DataChannel, on_event: EventSink | None, started: fl
                 stderr=str(msg.get("stderr") or ""),
                 duration_s=time.monotonic() - started,
                 events=events,
-                data=msg["data"] if isinstance(msg.get("data"), dict) else {},
+                data=data,
             )
         # ACCEPTED and anything unknown: ignore. A forward-compatible agent
         # may add events; refusing to proceed on an unrecognised one would
@@ -973,11 +1016,29 @@ def _tee(on_event: EventSink | None, timeline: FlashTimeline | None) -> EventSin
     return sink
 
 
+def _file_sink(timeline: FlashTimeline | None) -> FileSink | None:
+    """Where the files a job brings back go: `files/` beside its timeline.
+    No timeline, nowhere to keep them — the result says which were lost."""
+    if timeline is None:
+        return None
+
+    def keep(name: str, offset: int, data: bytes, end: bool) -> bool:
+        try:
+            return timeline.save_file_piece(name, offset, data, end=end)
+        except OSError as e:
+            _log.warning("flash timeline: cannot keep %r: %s", name, e)
+            return False
+
+    return keep
+
+
 def _finish(result: _R, timeline: FlashTimeline | None) -> _R:
     """Record the verdict and tell the caller where to read the story."""
     if timeline is None:
         return result
     with contextlib.suppress(Exception):
+        if isinstance(result, FlashResult) and timeline.files_kept:
+            result.data["files_dir"] = str(timeline.dir / "files")
         timeline.job_result(result)
         result.artifacts = str(timeline.dir)
     return result

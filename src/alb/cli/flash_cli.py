@@ -15,6 +15,8 @@ command is a client of it.
     alb flash write <partition> <image>
     alb flash erase <partition>
     alb flash plan <manifest> [--skip p1,p2] [--skip-action a] [--from-line N] [--dry-run] [--yes]
+    alb flash tools
+    alb flash tool <name> [--pkg <dir>] [--yes] -- <the tool's own arguments>
 
 `write`, not `flash flash`: the verb reads as what it does to the device.
 """
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -513,3 +516,189 @@ def cmd_plan(
         "reboot_wait_s": reboot_wait,
     }
     _report_plan(_run_job("plan/run", run_payload, render=_render_plan_progress))
+
+
+# ── vendor tools registered on the bench host (ADR-068) ──────────────
+
+
+def _size_text(n: int) -> str:
+    if n >= 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MiB"
+    if n >= 1024:
+        return f"{n / 1024:.1f} KiB"
+    return f"{n} B"
+
+
+def _print_tool_result(final: dict[str, Any], *, err: bool, show_output: bool) -> None:
+    """What a tool-run done frame says beyond ok/fail: who judged it, the
+    highlight lines, the files it wrote and where the hub kept them."""
+    data = final.get("data") or {}
+    judged = str(data.get("judged_by") or "")
+    if judged:
+        typer.echo(f"  judged by: {judged}", err=err)
+    if data.get("note"):
+        typer.echo(f"  note: {data['note']}", err=err)
+    highlights = [str(h) for h in data.get("highlights") or []]
+    if highlights:
+        typer.echo("  highlights (tool_note):", err=err)
+        for line in highlights:
+            typer.echo(f"    {line}", err=err)
+        if data.get("highlights_dropped"):
+            typer.echo(f"    … {data['highlights_dropped']} more not kept", err=err)
+    if show_output:
+        out = str(final.get("stdout") or "").strip()
+        if out:
+            typer.echo("  last output lines:", err=err)
+            for line in out.splitlines():
+                typer.echo(f"    {line}", err=err)
+    files = [f for f in data.get("files") or [] if isinstance(f, dict)]
+    lost = set(data.get("files_not_kept") or [])
+    if files:
+        where = data.get("files_dir") or "(not kept: the hub had no record directory)"
+        typer.echo(f"  files the tool wrote — kept in {where}:", err=err)
+        for f in files:
+            name = str(f.get("name") or "")
+            size = _size_text(int(f.get("size") or 0))
+            if not f.get("sent"):
+                typer.echo(
+                    f"    {name or '(none)'} ({size}) — not brought back: {f.get('why')}", err=err
+                )
+            elif name in lost:
+                typer.echo(f"    {name} ({size}) — arrived but could not be kept", err=err)
+            else:
+                typer.echo(f"    {name} ({size})", err=err)
+    _report_artifacts(str(final.get("artifacts") or ""), err=err)
+
+
+@app.command("tools")
+def cmd_tools(
+    as_json: bool = typer.Option(False, "--json", help="print the raw answer"),
+) -> None:
+    """List the vendor flashing tools registered on the bench host.
+
+    For each tool: the exe, the directory its packages sit under, where it
+    runs, its time limit, how its result is judged, its USB device and
+    whether that device is attached right now, and the usage notes written
+    in agent.conf. Register a tool there with tool_exe.<name> and
+    tool_root.<name> (see clients/windows-agent/agent.conf.example).
+    """
+    final = _run_job("ops/tool-list", {"params": {}}, base="/api/bench")
+    if as_json:
+        typer.echo(json.dumps(final, ensure_ascii=False, indent=2))
+    if not final.get("ok"):
+        if not as_json:
+            _report(final)
+        raise typer.Exit(code=1)
+    if as_json:
+        return
+    data = final.get("data") or {}
+    tools = [t for t in data.get("tools") or [] if isinstance(t, dict)]
+    for t in tools:
+        where = (
+            "the package directory" if t.get("cwd") == "package" else "a fresh scratch directory"
+        )
+        typer.echo(f"{t.get('name')}  {t.get('exe')}")
+        typer.echo(
+            f"    packages under {t.get('root')} · runs in {where} · "
+            f"time limit {float(t.get('timeout_s') or 0):.0f}s"
+        )
+        ok = f"exit code 0 and /{t['ok']}/" if t.get("ok") else "exit code 0 only"
+        fail = f" · failure: /{t['fail']}/" if t.get("fail") else ""
+        note = f" · highlights: /{t['note']}/" if t.get("note") else ""
+        typer.echo(f"    success: {ok}{fail}{note}")
+        usb = ", ".join(t.get("usb") or [])
+        if not usb:
+            typer.echo("    USB: not checked (no tool_usb)")
+        elif "attached" not in t:
+            typer.echo(f"    USB {usb}: unknown — {data.get('usb_error') or 'not listed'}")
+        elif t["attached"]:
+            typer.echo(f"    USB {usb}: attached — {'; '.join(t['attached'])}")
+        else:
+            typer.echo(f"    USB {usb}: not attached (is the board in download mode?)")
+        usage = str(t.get("usage") or "").strip()
+        if usage:
+            typer.echo("    usage:")
+            for line in usage.splitlines():
+                typer.echo(f"      {line}")
+    for problem in data.get("problems") or []:
+        typer.echo(f"[warn] {problem}")
+    if not tools:
+        typer.echo("[fail] no vendor tool is usable on the bench host", err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command("tool")
+def cmd_tool(
+    name: str = typer.Argument(..., help="a registered tool, see `alb flash tools`"),
+    tool_args: list[str] = typer.Argument(
+        None, help="the tool's own arguments, after `--` so options reach the tool"
+    ),
+    pkg: str = typer.Option(
+        "",
+        "--pkg",
+        help="package directory, relative to the tool's tool_root on the bench "
+        "host; the tool runs in it (unless tool_cwd is job) and {pkg} in an argument is its path",
+    ),
+    port: str = typer.Option(
+        "",
+        "--port",
+        help="COMnn to use for {com} when several devices of the tool's tool_usb are attached",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
+    as_json: bool = typer.Option(False, "--json", help="print the done frame as JSON"),
+) -> None:
+    """Run a registered vendor flashing tool with its own arguments.
+
+    Everything after `--` goes to the tool unchanged:
+
+        alb flash tool fb --pkg board-a/v12 -- getvar product
+        alb flash tool vt --pkg board-a/v12 -- -p {com} -f update.img
+
+    The bench agent refuses an argument with a drive path (X:\\), a network
+    path (\\\\server), a path from the drive root (\\x) or `..`; name files
+    relative to the package, or write {pkg}. {com} is the COM port of the
+    tool's USB device. Every output line streams here and into the record;
+    files the tool writes into its working directory come back to the hub.
+    The result says who judged it: tool_fail / exit code / tool_ok from
+    agent.conf — with no tool_ok, only the exit code was looked at.
+
+    Exit codes: 0 judged a success · 1 refused or judged a failure · 2 the
+    hub refused the request or cannot be reached.
+    """
+    args = list(tool_args or [])
+    if not yes:
+        shown = shlex.join(args) if args else "(no arguments)"
+        where = f" in package {pkg}" if pkg else ""
+        typer.echo(f"about to run {name} {shown}{where} on the bench — it may write the board")
+        typer.confirm("proceed?", abort=True)
+    params: dict[str, Any] = {"tool": name, "args": args}
+    if pkg:
+        params["pkg"] = pkg
+    if port:
+        params["port"] = port
+    state: dict[str, Any] = {}
+
+    def render(msg: dict[str, Any], st: dict[str, Any]) -> None:
+        state["lines"] = state.get("lines", 0) + 1
+        _render_progress(msg, st)
+
+    final = _run_job("ops/tool-run", {"params": params}, render=render, base="/api/bench")
+    if as_json:
+        typer.echo(json.dumps(final, ensure_ascii=False, indent=2))
+        if not final.get("ok"):
+            raise typer.Exit(code=1)
+        return
+    # The tool's lines streamed above; print the tail again only when they
+    # did not (a refusal before it ran says why in its own words).
+    show_output = not state.get("lines")
+    if final.get("ok"):
+        typer.echo(f"[ok] {final.get('duration_s', 0)}s")
+        _print_tool_result(final, err=False, show_output=show_output)
+        return
+    code = str(final.get("code") or "")
+    message, advice = _explain(code, str(final.get("error") or ""))
+    typer.echo(f"[fail] {code or 'error'}: {message}", err=True)
+    if advice:
+        typer.echo(f"  try: {advice}", err=True)
+    _print_tool_result(final, err=True, show_output=show_output)
+    raise typer.Exit(code=1)

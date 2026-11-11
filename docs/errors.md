@@ -51,13 +51,13 @@ tags: [errors, reference, llm-friendly]
 <!-- BEGIN GENERATED: scripts/gen_errors_doc.py -->
 <!-- 本段由脚本生成,不要手改。改了 src/alb/infra/errors.py 或返回错误码的代码后,运行:uv run python scripts/gen_errors_doc.py -->
 
-登记在 `ERROR_CODES` 里的码共 88 个,按 `category` 分 7 组,每组按码名字母排序。message 和 suggestion 是目录里的默认文字,原样照抄英文:`alb_describe_errors` 返回的就是这两句。
+登记在 `ERROR_CODES` 里的码共 95 个,按 `category` 分 7 组,每组按码名字母排序。message 和 suggestion 是目录里的默认文字,原样照抄英文:`alb_describe_errors` 返回的就是这两句。
 
 另有 61 个码代码里会返回、但没有登记,列在本节最后。
 
 | category | 中文 | 含义 | 码数 | 码名前缀 |
 |---|---|---|---|---|
-| `transport` | 通道与台架 | 到板子的通道(adb / ssh / 串口)出了问题,或经台架 agent 做的操作(fastboot 烧录、9008、agent 更新与启动)失败 | 50 | `ADB_*` `AGENT_*` `BENCH_*` `BOARD_*` `EDL_*` `FASTBOOT_*` `FLASH_*` `PORT_*` `PSTORE_*` `SERIAL_*` `SHELL_*` `SSH_*` `TIMELINE_*` `TRANSPORT_*` |
+| `transport` | 通道与台架 | 到板子的通道(adb / ssh / 串口)出了问题,或经台架 agent 做的操作(fastboot 烧录、9008、agent 更新与启动)失败 | 57 | `ADB_*` `AGENT_*` `BENCH_*` `BOARD_*` `EDL_*` `FASTBOOT_*` `FLASH_*` `PORT_*` `PSTORE_*` `SERIAL_*` `SHELL_*` `SSH_*` `TIMELINE_*` `TRANSPORT_*` |
 | `device` | 对端状态 | 连接本身是通的,是对端(板子或台架主机)的状态或回答不对:USB 未授权、离线、adbd 不肯切 root、板子上的端口没人监听、台架主机上没有启动 agent 的任务 | 13 | `ADB_*` `AGENT_*` `BENCH_*` `BREAKIN_*` `DEVICE_*` `FLASH_*` `PORT_*` |
 | `permission` | 权限 | 被权限策略拦下,或要 root 才能读 | 2 | `PERMISSION_*` `ROOT_*` |
 | `timeout` | 超时 | 在限定时间内没等到预期的输出或状态 | 6 | `ADBD_*` `AGENT_*` `BREAKIN_*` `TIMEOUT_*` |
@@ -66,7 +66,7 @@ tags: [errors, reference, llm-friendly]
 | `system` | 主机环境与 LLM | 主机缺依赖,或 LLM 后端的上下文 / 输出被截断 | 3 | `LLM_*` `SYSTEM_*` |
 | `capability` | 业务层 | `fail()` 不传 category 时的默认值;目录里目前没有这一类的码 | 0 | — |
 
-### transport · 通道与台架(50 个)
+### transport · 通道与台架(57 个)
 
 | Code | 默认 message | 默认 suggestion |
 |---|---|---|
@@ -84,6 +84,13 @@ tags: [errors, reference, llm-friendly]
 | `BENCH_LOG_UNAVAILABLE` | The log source is configured on the agent but cannot be read right now | Check that the file exists on the bench host and the agent's account may read it; `alb bench ops` lists the sources this agent offers |
 | `BENCH_OP_UNKNOWN` | The agent on the bench host has no such op | Run `alb bench ops` to see what this agent offers |
 | `BENCH_PARAM_REJECTED` | A parameter value was refused (wrong type, out of range, or not one of the allowed choices) | Run `alb bench ops` — each op lists its parameters with their kinds and allowed values |
+| `BENCH_TOOL_ARG_REJECTED` | An argument for the vendor tool was refused; the tool was not started | Name files relative to the package (the tool runs in it), or write {pkg}; no drive paths, network paths or '..'; {com} needs tool_usb in agent.conf; the error says which argument and which rule |
+| `BENCH_TOOL_FAILED` | The vendor tool ran and failed: a line matched tool_fail, its exit code was not 0, or the tool_ok line never appeared | data.judged_by says which; read the output and the files it wrote (record: …/files/) before running it again |
+| `BENCH_TOOL_NOT_STARTED` | The vendor tool could not be started on the bench host | Check tool_exe in the bench agent.conf; a missing DLL or a tool that needs administrator rights fails this way — run it once by hand on the bench host |
+| `BENCH_TOOL_NO_DEVICE` | The USB device registered for the tool (tool_usb) is not attached to the bench host, or has no COM port | Put the board into the vendor's download mode; the error lists what is attached — a device with the right VID:PID but no COM port means its driver is missing |
+| `BENCH_TOOL_PACKAGE_REJECTED` | The package directory is not usable on the bench host: badly formed, missing, or outside the tool's tool_root; the tool was not started | pkg is a directory relative to the tool's tool_root (`alb flash tools` shows it); copy the package there on the bench host first |
+| `BENCH_TOOL_TIMEOUT` | The vendor tool did not finish within its tool_timeout and was ended, with everything it started | Read the last lines: a tool waiting for a board that never entered download mode looks like this; raise tool_timeout in agent.conf only for a tool that really runs that long |
+| `BENCH_TOOL_UNKNOWN` | No vendor tool of that name is registered on the bench host | `alb flash tools` lists the registered tools; register one with tool_exe.\<name> and tool_root.\<name> in the bench agent.conf |
 | `BOARD_BOOTING` | Board is still in a boot phase (SPL / kernel / init); shell not yet available | Wait a few seconds and retry, or use alb stream_read to watch progress |
 | `BOARD_IN_FASTBOOT` | Board is in fastboot mode — shell commands are not applicable | Use adb / fastboot tools to leave fastboot, then retry |
 | `BOARD_NEEDS_LOGIN` | Login prompt is waiting for a username | Send a username via `alb serial send`, then retry the command |

@@ -582,6 +582,64 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "result — a write that stopped part-way leaves the board half-written, so run it "
         "again before resetting",
     ),
+    # Vendor tools run as registered on the bench host (ADR-068). One code
+    # per place to look: the registration, the package, the arguments, the
+    # board (not in download mode), the tool itself, and its result.
+    "BENCH_TOOL_UNKNOWN": ErrorSpec(
+        "BENCH_TOOL_UNKNOWN",
+        "transport",
+        "No vendor tool of that name is registered on the bench host",
+        "`alb flash tools` lists the registered tools; register one with "
+        "tool_exe.<name> and tool_root.<name> in the bench agent.conf",
+    ),
+    "BENCH_TOOL_PACKAGE_REJECTED": ErrorSpec(
+        "BENCH_TOOL_PACKAGE_REJECTED",
+        "transport",
+        "The package directory is not usable on the bench host: badly formed, missing, "
+        "or outside the tool's tool_root; the tool was not started",
+        "pkg is a directory relative to the tool's tool_root (`alb flash tools` shows it); "
+        "copy the package there on the bench host first",
+    ),
+    "BENCH_TOOL_ARG_REJECTED": ErrorSpec(
+        "BENCH_TOOL_ARG_REJECTED",
+        "transport",
+        "An argument for the vendor tool was refused; the tool was not started",
+        "Name files relative to the package (the tool runs in it), or write {pkg}; no drive "
+        "paths, network paths or '..'; {com} needs tool_usb in agent.conf; the error says "
+        "which argument and which rule",
+    ),
+    "BENCH_TOOL_NO_DEVICE": ErrorSpec(
+        "BENCH_TOOL_NO_DEVICE",
+        "transport",
+        "The USB device registered for the tool (tool_usb) is not attached to the bench "
+        "host, or has no COM port",
+        "Put the board into the vendor's download mode; the error lists what is attached — "
+        "a device with the right VID:PID but no COM port means its driver is missing",
+    ),
+    "BENCH_TOOL_NOT_STARTED": ErrorSpec(
+        "BENCH_TOOL_NOT_STARTED",
+        "transport",
+        "The vendor tool could not be started on the bench host",
+        "Check tool_exe in the bench agent.conf; a missing DLL or a tool that needs "
+        "administrator rights fails this way — run it once by hand on the bench host",
+    ),
+    "BENCH_TOOL_FAILED": ErrorSpec(
+        "BENCH_TOOL_FAILED",
+        "transport",
+        "The vendor tool ran and failed: a line matched tool_fail, its exit code was "
+        "not 0, or the tool_ok line never appeared",
+        "data.judged_by says which; read the output and the files it wrote "
+        "(record: …/files/) before running it again",
+    ),
+    "BENCH_TOOL_TIMEOUT": ErrorSpec(
+        "BENCH_TOOL_TIMEOUT",
+        "transport",
+        "The vendor tool did not finish within its tool_timeout and was ended, with "
+        "everything it started",
+        "Read the last lines: a tool waiting for a board that never entered download mode "
+        "looks like this; raise tool_timeout in agent.conf only for a tool that really "
+        "runs that long",
+    ),
     # Remote agent update (ADR-060). Four codes because each points at a
     # different place to look: the bundle, the new code, the bench host's
     # update log, or the bench host itself.

@@ -22,6 +22,7 @@ each treated as one that changes the device.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -36,7 +37,10 @@ PARTITION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\Z")
 # An op name ends up in a URL path, a timeline directory name and a log line.
 OP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 
-KINDS = ("partition", "enum", "int", "text")
+KINDS = ("partition", "enum", "int", "text", "argv")
+# argv (ADR-068): an argument list for a vendor tool. Same element rule as the
+# agent's: a control character could split or end an argument on the way.
+_ARGV_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 RECORD_TIERS = ("none", "events", "uart")
 
 
@@ -50,7 +54,8 @@ class ParamSpec:
     min: int | None = None
     max: int | None = None
     pattern: str = ""
-    max_len: int = 0
+    max_len: int = 0  # text: the whole value; argv: each element
+    max_items: int = 0  # argv
 
     @classmethod
     def from_wire(cls, raw: Any) -> ParamSpec | None:
@@ -69,6 +74,7 @@ class ParamSpec:
             max=_strict_int(raw.get("max")),
             pattern=str(raw.get("pattern") or ""),
             max_len=_strict_int(raw.get("max_len")) or 0,
+            max_items=_strict_int(raw.get("max_items")) or 0,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -84,6 +90,8 @@ class ParamSpec:
             out["min"], out["max"] = self.min, self.max
         if self.kind == "text":
             out["pattern"], out["max_len"] = self.pattern, self.max_len
+        if self.kind == "argv":
+            out["max_items"], out["max_len"] = self.max_items, self.max_len
         return out
 
     def check(self, value: Any, allowlist: list[str]) -> tuple[Any, str]:
@@ -117,6 +125,8 @@ class ParamSpec:
             ):
                 return None, f"{self.name} must be within {self.min}..{self.max} — got {number}"
             return number, ""
+        if self.kind == "argv":
+            return self._check_argv(value)
         if not isinstance(value, str):
             return None, f"{self.name} must be text — got {value!r}"
         if self.kind == "text":
@@ -128,6 +138,28 @@ class ParamSpec:
             except re.error:
                 pass  # the agent's regex dialect is the authority; let it judge
         # An unknown kind (a newer agent): pass the string through untouched.
+        return value, ""
+
+    def _check_argv(self, value: Any) -> tuple[Any, str]:
+        """A list of strings. A string is read as a JSON list — `alb bench run
+        tool-run args='["-p","x"]'` has nothing else to send."""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return None, f'{self.name} must be a JSON list of strings, e.g. ["-p", "x"]'
+        if not isinstance(value, list) or not all(isinstance(a, str) for a in value):
+            return None, f"{self.name} must be a list of strings — got {value!r}"[:300]
+        if self.max_items and len(value) > self.max_items:
+            return None, f"{self.name}: {len(value)} arguments, at most {self.max_items}"
+        for i, arg in enumerate(value, 1):
+            if self.max_len and len(arg) > self.max_len:
+                return None, f"{self.name}: argument {i} is longer than {self.max_len} characters"
+            if _ARGV_CONTROL_RE.search(arg):
+                return None, (
+                    f"{self.name}: argument {i} {arg!r} contains a control character "
+                    "(newline, tab, NUL, …)"
+                )
         return value, ""
 
 
@@ -284,6 +316,13 @@ def reject_code(op: str, param: ParamSpec) -> str:
         return "FLASH_OEM_REJECTED"
     if op == "getvar" and param.name == "name":
         return "FLASH_VAR_REJECTED"
+    if op == "tool-run":
+        # The codes the agent uses for the same params (ADR-068), so the
+        # answer does not depend on which side noticed first.
+        return {
+            "tool": "BENCH_TOOL_UNKNOWN",
+            "pkg": "BENCH_TOOL_PACKAGE_REJECTED",
+        }.get(param.name, "BENCH_TOOL_ARG_REJECTED")
     return "BENCH_PARAM_REJECTED"
 
 

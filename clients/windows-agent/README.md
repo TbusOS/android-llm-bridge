@@ -196,7 +196,7 @@ agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有�
 
 不配也不影响 adb 和串口，只是 hub 会直接告诉调用方"这台不能烧"。
 
-## 这台 agent 能替 hub 做什么：操作表（usb-list / log-tail / set-active / boot / erase）
+## 这台 agent 能替 hub 做什么：操作表（usb-list / log-tail / set-active / boot / erase / tool-run）
 
 agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报上去：每个操作带名字、
 参数规则、要不要板子在 fastboot 里、会不会改设备、要不要独占、超时。hub 的命令行
@@ -212,6 +212,7 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 | `log-tail` | 读本机日志的最后 N 行，可按关键字筛。来源只有名字：`agent`（本 agent 自己的日志，`log_file` 配了才有）、`setupapi`（Windows 的驱动安装日志）、`update`（上一次远程更新的经过，更新过才有） | 否 |
 | `agent-update` | 换这个 agent 自己的文件并重启，见下一节 | 否 |
 | `edl-sahara` / `edl-program` / `edl-reset` | 高通 9008（EDL）烧录，见下面「高通 9008」一节 | 否（要板子在 9008 里） |
+| `tool-run` / `tool-list` | 跑在 `agent.conf` 里登记过的厂商烧录工具，参数由调用方照厂商的写法给，见下面「其它厂商的下载工具」一节 | 否（要板子在那家的下载模式里） |
 
 两条规矩不变：
 
@@ -284,6 +285,65 @@ D:\flash\board-a\
 - 两个工具都在包目录里运行，文件按名字给，和手工跑的命令一样；fh_loader 会在包目录里写 `port_trace.txt`。
 - 判成功要退出码 0 **并且**有成功标志（Sahara 的「Sahara protocol completed」、
   fh_loader 的「{All Finished Successfully}」）。失败时结果里带工具输出的最后 80 行。
+
+### 其它厂商的下载工具：登记后照厂商的参数跑
+
+别家芯片的下载模式工具，各家参数都不一样，alb 不去理解它们：在 `agent.conf` 里把工具登记一个名字，
+调用方照厂商文档写参数，agent 检查过路径后原样交给工具。厂商工具平时怎么跑，现在还怎么跑，只是换成在
+Linux 那边敲命令。
+
+```
+tool_exe.vt=D:\flash\board-a\tools\VendorTool.exe
+tool_root.vt=D:\flash\board-a\packages
+tool_ok.vt=Download finished
+tool_fail.vt=(?i)fail|error
+tool_note.vt=^Write .* (ok|fail)
+tool_usb.vt=1a2b:3c4d
+tool_usage.vt=按住 recovery 键插 USB 进下载模式
+tool_usage.vt=例:alb flash tool vt --pkg v12 -- -p {com} -f update.img
+```
+
+`vt` 是自己起的名字（小写字母、数字、`_`、`-`，最长 32）。每个键的含义：
+
+| 键 | 必填 | 含义 |
+|---|---|---|
+| `tool_exe.<名>` | 是 | 工具 exe 的绝对路径 |
+| `tool_root.<名>` | 是 | 刷机包的根目录，一个包一个子目录；hub 只能指定它下面的目录 |
+| `tool_cwd.<名>` | 否 | `package`（默认）：在包目录里运行，和手工 `cd` 进去跑一样；`job`：每次一个临时目录，跑完删掉 |
+| `tool_timeout.<名>` | 否 | 秒，1-1700，默认 1500。到点连工具起的子进程一起结束 |
+| `tool_ok.<名>` | 否 | 正则。写了就必须有一行匹配才算成功 |
+| `tool_fail.<名>` | 否 | 正则。有一行匹配就算失败，退出码是 0 也算 |
+| `tool_note.<名>` | 否 | 正则。匹配的行列进结果，比如每个分区一行 |
+| `tool_usb.<名>` | 否 | `VID:PID`，逗号分隔可写多个。运行前先查 USB 上有没有；参数里用 `{com}` 时必须写 |
+| `tool_usage.<名>` | 否 | 说明文字，`alb flash tools` 里显示。写多行就重复这一行 |
+
+调用（在 Linux 那边）：
+
+```bash
+alb flash tools                                   # 登记了哪些工具、下载模式的设备在不在、说明
+alb flash tool vt --pkg v12 -- -p {com} -f update.img
+```
+
+- `--` 后面的参数原样交给工具，不经过 cmd.exe，参数里的空格、`&`、`%` 都不会被解释。stdin 是空的，
+  等按键的工具会直接读到结束，不会卡住。
+- agent 先查每个参数，有下面任何一种就拒绝，工具不会运行（`BENCH_TOOL_ARG_REJECTED`，报错写明第几个参数）：
+  盘符路径（`X:\`、`X:/`）、网络路径（`\\server`、`//server`）、从盘根开始的路径（`\x`）、作为一段路径的 `..`。
+  串口设备名 `\\.\COM<n>` 放行。文件按包里的相对路径写（工具在包目录里运行），或者用 `{pkg}`。
+- 查完才替换：`{pkg}` 换成包目录的完整路径，`{com}` 换成 `tool_usb` 那个设备的 COM 口，`{{` `}}` 是字面的花括号。
+- 判成功按这个顺序：有一行匹配 `tool_fail` → 失败；退出码不是 0 → 失败；写了 `tool_ok` 但没有一行匹配 → 失败；
+  其余算成功。结果里的 `judged_by` 写明是哪一条判的；没写 `tool_ok` 时会提醒「只看了退出码」——
+  有的工具失败也返回 0，这种工具一定要写 `tool_ok`。
+- 每行输出边跑边传回 hub，和串口一起记进这次作业的 `timeline.jsonl`；跑完把工具在工作目录里新写或改过的文件
+  （它自己的日志）收回 hub，放在记录目录的 `files/` 下。每个最多 4 MiB、最多 20 个、合计 6 MiB，超出的只列名字和大小。
+- 和 fastboot、9008 共用一把烧录锁，一次只跑一个。
+- `tool_exe` 或 `tool_root` 指的文件此刻不存在：启动日志打一条警告，这个工具不提供；键写错（缺必填、相对路径、
+  正则写错、超时超范围）：agent 不启动。
+- 管不到的：工具自己读的配置文件里写的路径、工具往固定目录（比如用户目录）写的东西、以 `/` 开头的参数
+  （很多 Windows 工具用 `/x` 当选项，所以放行）。这层检查防的是手误和 AI 拼错路径，不防故意。
+- 只有图形界面的工具不支持；要按键或短接才能进的下载模式，需要人到现场。
+
+建议先把已经会用的 `fastboot.exe` 登记成一个透传工具，用 `alb flash tool fb -- getvar product` 和
+`alb flash getvar product` 对照一次，确认这条路通了，再登记新厂商的工具。
 
 ## 更新 agent：在 Linux 那边推，不用到这台机器上拷
 

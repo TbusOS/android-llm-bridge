@@ -205,7 +205,7 @@ Every environment variable and config file: [`docs/configuration.md`](./docs/con
 | Board on USB at this machine (adb) | "Set up a transport" above → [docs/configuration.md](./docs/configuration.md) (Chinese), section 三 USB / adb |
 | Board on a serial console (UART) | [docs/methods/07-uart-serial.md](./docs/methods/07-uart-serial.md) → [docs/configuration.md](./docs/configuration.md), section 二 |
 | Board plugged into another (Windows) machine | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md) (hub side) → [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md) (Windows side) |
-| Flash remotely (fastboot / Qualcomm 9008) | [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md), op table and 9008 sections; `alb flash --help` |
+| Flash remotely (fastboot / Qualcomm 9008 / other vendors' tools) | commands: [docs/flash.md](./docs/flash.md) (Chinese) and `alb flash --help`; bench-side setup: [clients/windows-agent/README.en.md](./clients/windows-agent/README.en.md), op table, 9008 and "Other vendors' download tools" sections |
 | Connect Claude Code / Codex / Cursor | [docs/llm-integration.md](./docs/llm-integration.md) |
 | Web UI / HTTP API | [docs/web-api.md](./docs/web-api.md) |
 | Look up an env var or config key | [docs/configuration.md](./docs/configuration.md) — every variable and config-file key, including the ones that currently have no effect |

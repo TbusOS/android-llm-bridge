@@ -250,7 +250,7 @@ Cursor 等用 JSON 配置的客户端见 [`llm/mcp-config-examples/`](./llm/mcp-
 | 板子用 USB 插在本机,走 adb | 本页「配一种传输方案」→ [docs/configuration.md](./docs/configuration.md)「三、USB / adb」;adb 经 ssh 隧道看 [docs/methods/01-ssh-tunnel-adb.md](./docs/methods/01-ssh-tunnel-adb.md) |
 | 板子接串口(UART) | [docs/methods/07-uart-serial.md](./docs/methods/07-uart-serial.md) → [docs/configuration.md](./docs/configuration.md)「二、串口 UART」 |
 | 板子插在另一台 Windows 电脑上(远程台架) | [docs/dial-home-runbook.md](./docs/dial-home-runbook.md)(Linux 这边)→ [clients/windows-agent/README.md](./clients/windows-agent/README.md)(Windows 那边) |
-| 远程烧录(fastboot / 高通 9008) | [clients/windows-agent/README.md](./clients/windows-agent/README.md)「操作表」和「高通 9008」两节、[FASTBOOT-SETUP.md](./clients/windows-agent/FASTBOOT-SETUP.md);命令用法看 `alb flash --help` |
+| 远程烧录(fastboot / 高通 9008 / 其它厂商工具) | 命令用法:[docs/flash.md](./docs/flash.md);台架上怎么配:[clients/windows-agent/README.md](./clients/windows-agent/README.md)「操作表」「高通 9008」「其它厂商的下载工具」三节、[FASTBOOT-SETUP.md](./clients/windows-agent/FASTBOOT-SETUP.md) |
 | 接 Claude Code / Codex / Cursor | [docs/llm-integration.md](./docs/llm-integration.md) |
 | 用网页或 HTTP 接口 | [docs/web-api.md](./docs/web-api.md) |
 | 查某个环境变量、配置项 | [docs/configuration.md](./docs/configuration.md)(全部环境变量和配置文件的键,含「设了无效的项」) |

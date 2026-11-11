@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import collections
 import contextlib
 import contextvars
 import csv
@@ -60,6 +62,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -837,6 +840,17 @@ def _edl_problem_note() -> str:
     return f" — at start-up: {_EDL_PROBLEM}" if _EDL_PROBLEM else ""
 
 
+# Vendor tools (ADR-068), resolved by _apply_flash_config from the
+# `tool_*.<name>` lines; _TOOL_PROBLEMS names the registered ones that are
+# not offered because their exe or root is missing on this host right now.
+_TOOLS: dict[str, _Tool] = {}
+_TOOL_PROBLEMS: tuple[str, ...] = ()
+
+
+def _tool_problem_note() -> str:
+    return f" — at start-up: {'; '.join(_TOOL_PROBLEMS)}" if _TOOL_PROBLEMS else ""
+
+
 def _resolve_fastboot(configured: str) -> str:
     """Where this host's fastboot lives. Explicit config first, then PATH.
 
@@ -962,14 +976,25 @@ class _JobRejected(Exception):
     """A request this agent will not act on. `code` is the wire error code
     the done frame carries; `message` is the human-readable reason. A builtin
     whose tool ran and failed passes the tool's exit code and output along,
-    so the caller sees what the tool said, not only that it failed."""
+    so the caller sees what the tool said, not only that it failed — and,
+    for a vendor tool (ADR-068), the structured result too: who judged the
+    run a failure and which files it wrote."""
 
-    def __init__(self, code: str, message: str, *, rc: int = -1, stdout: str = "") -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        rc: int = -1,
+        stdout: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.rc = rc
         self.stdout = stdout
+        self.data = data
 
 
 # A placeholder is a WHOLE argv element, never part of one: "{partition}" is
@@ -978,7 +1003,11 @@ class _JobRejected(Exception):
 # security argument in one rule — a value can never grow, split or merge an
 # argv element, so what the validator saw is what the tool gets.
 _PLACEHOLDER_RE = re.compile(r"^\{([a-z_]+)\}$")
-_PARAM_KINDS = ("partition", "enum", "int", "text")
+_PARAM_KINDS = ("partition", "enum", "int", "text", "argv")
+# argv (ADR-068): a whole argument list for a vendor tool. Each element is
+# one argument as the tool receives it; a control character could split or
+# end one on the way (a newline in a console, a NUL in CreateProcess).
+_ARGV_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _REJECT_CODE_DEFAULT = "BENCH_PARAM_REJECTED"
 
 
@@ -995,12 +1024,15 @@ class ParamSpec:
     min: int | None = None  # int
     max: int | None = None  # int
     pattern: str = ""  # text: re.fullmatch
-    max_len: int = 0  # text
+    max_len: int = 0  # text: the whole value; argv: each element
+    max_items: int = 0  # argv: how many elements
     # Agent-side only (not in describe()): the error code a rejection carries
     # and the noun used in its message. partition / oem.command / getvar.name
-    # keep the codes and the wording the hub already knows.
+    # keep the codes and the wording the hub already knows. `hint` is added
+    # to a rejection — where to fix it, when that is not obvious.
     code: str = _REJECT_CODE_DEFAULT
     label: str = ""
+    hint: str = ""
 
     def __post_init__(self) -> None:
         if self.kind not in _PARAM_KINDS:
@@ -1011,13 +1043,16 @@ class ParamSpec:
             raise ValueError(f"param {self.name}: int without min/max")
         if self.kind == "text" and (not self.pattern or self.max_len <= 0):
             raise ValueError(f"param {self.name}: text without pattern/max_len")
+        if self.kind == "argv" and (self.max_items <= 0 or self.max_len <= 0):
+            raise ValueError(f"param {self.name}: argv without max_items/max_len")
 
     def describe(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "name": self.name,
             "kind": self.kind,
             "required": self.required,
-            "default": self.default,
+            # argv: a tuple here (the dataclass is frozen), a list on the wire
+            "default": list(self.default) if self.kind == "argv" else self.default,
         }
         if self.kind == "enum":
             d["choices"] = list(self.choices)
@@ -1026,6 +1061,9 @@ class ParamSpec:
             d["max"] = self.max
         elif self.kind == "text":
             d["pattern"] = self.pattern
+            d["max_len"] = self.max_len
+        elif self.kind == "argv":
+            d["max_items"] = self.max_items
             d["max_len"] = self.max_len
         return d
 
@@ -1051,8 +1089,15 @@ class ParamSpec:
             # Exact: no case folding, no strip. The device would not fold it
             # either, and a stray space would become a second argv element.
             if not isinstance(raw, str) or raw not in self.choices:
-                raise _JobRejected(self.code, f"{what} {raw!r} is not on this agent's allowlist")
+                hint = f" — {self.hint}" if self.hint else ""
+                raise _JobRejected(
+                    self.code,
+                    f"{what} {raw!r} is not on this agent's allowlist "
+                    f"({', '.join(self.choices)}){hint}",
+                )
             return raw
+        if self.kind == "argv":
+            return self._resolve_argv(raw, what)
         if self.kind == "int":
             # bool subclasses int in Python; `true` for a line count is a
             # caller bug to report, not the number 1.
@@ -1070,6 +1115,26 @@ class ParamSpec:
             raise _JobRejected(self.code, f"{what} {raw!r} rejected")
         return raw
 
+    def _resolve_argv(self, raw: Any, what: str) -> list[str]:
+        """A list of strings, each one argument. Numbered from 1 in every
+        message: that is how a person counts the words after `--`."""
+        if not isinstance(raw, list) or not all(isinstance(a, str) for a in raw):
+            raise _JobRejected(self.code, f"{what} must be a list of strings, got {raw!r}"[:300])
+        if len(raw) > self.max_items:
+            raise _JobRejected(self.code, f"{what}: {len(raw)} arguments, at most {self.max_items}")
+        for i, arg in enumerate(raw, 1):
+            if len(arg) > self.max_len:
+                raise _JobRejected(
+                    self.code, f"{what}: argument {i} is longer than {self.max_len} characters"
+                )
+            if _ARGV_CONTROL_RE.search(arg):
+                raise _JobRejected(
+                    self.code,
+                    f"{what}: argument {i} {arg!r} contains a control character "
+                    "(newline, tab, NUL, …)",
+                )
+        return list(raw)
+
 
 # A builtin gets the op's row and the validated values; it returns (stdout,
 # data) for the done frame or raises _JobRejected. An image builtin finds the
@@ -1086,7 +1151,7 @@ class OpSpec:
     """One row of the op table. `describe()` is the OpDesc the hub sees."""
 
     name: str
-    group: str  # "fastboot" | "host" | "edl"
+    group: str  # "fastboot" | "host" | "edl" | "tool"
     summary: str
     params: tuple[ParamSpec, ...] = ()  # in argv order
     needs: str = ""  # "fastboot-device" | "edl-device" | ""
@@ -1105,7 +1170,7 @@ class OpSpec:
     no_device_msg: str = "no device is in fastboot on this host"
 
     def __post_init__(self) -> None:
-        if self.group not in ("fastboot", "host", "edl"):
+        if self.group not in ("fastboot", "host", "edl", "tool"):
             raise ValueError(f"op {self.name}: unknown group {self.group!r}")
         if self.needs not in ("", "fastboot-device", "edl-device"):
             raise ValueError(f"op {self.name}: unknown needs {self.needs!r}")
@@ -1911,6 +1976,710 @@ async def _op_edl_reset(
     return _edl_tail(out), {"port": port}
 
 
+# ── builtins: vendor tools (ADR-068) ─────────────────────────────────
+# A chip vendor's download-mode tool, registered on THIS host in agent.conf
+# (`tool_exe.<name>` and friends), run with the caller's own arguments.
+# The agent does not understand those arguments; it checks only what could
+# reach a file outside the package (the path rules below), fills in {pkg}
+# and {com}, runs the tool without a shell, relays every output line, judges
+# the run by the patterns the owner registered, and brings back the files
+# the tool wrote. What a tool may be run at all is decided here, by whoever
+# edits agent.conf — never by the hub.
+
+_TOOL_KEYS = (
+    "tool_exe",
+    "tool_root",
+    "tool_cwd",
+    "tool_timeout",
+    "tool_ok",
+    "tool_fail",
+    "tool_note",
+    "tool_usb",
+    "tool_usage",
+)
+_TOOL_OP_NAMES = frozenset({"tool-run", "tool-list"})
+_TOOL_CWD_MODES = ("package", "job")
+_TOOL_TIMEOUT_DEFAULT_S = 1500
+# Under the hub's 30-minute job limit (src/alb/remote/flash.py JOB_TIMEOUT_S),
+# so a stuck tool is ended — and reported — by the agent, with its output,
+# before the hub gives up on the job without either.
+_TOOL_TIMEOUT_MAX_S = 1700
+_TOOL_USB_RE = re.compile(r"^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}\Z")
+_TOOL_MAX_ARGS = 64
+_TOOL_MAX_ARG_LEN = 1024
+_TOOL_TAIL_LINES = 80  # output lines the done frame carries; every line also went out as progress
+_TOOL_NOTE_MAX = 200  # highlight lines kept; more are counted, not kept
+_TOOL_LINE_MAX = 4096  # bytes; a longer run without a line break is cut into pieces
+# A tool that redraws one line with \r (a percentage) can do so many times a
+# second. Every redraw is checked against the patterns; one a second is
+# forwarded, so the timeline holds the progress without thousands of copies.
+_TOOL_REDRAW_INTERVAL_S = 1.0
+# After the tool exits, how long its output pipe may stay open. Longer means
+# something the tool started is still running and holding it — likely the USB
+# device too; it is ended like a timed-out tool.
+_TOOL_DRAIN_S = 5.0
+_TOOL_POLL_S = 0.2  # how often the tool's exit is checked while its output is open
+# Files the tool wrote into its working directory come back to the hub. The
+# caps keep one job's files well inside the job channel (8 MiB per frame,
+# _JOB_MAX_FRAME) and the hub's disk; what does not fit is listed, not sent.
+_TOOL_FILE_MAX = 4 * 1024 * 1024
+_TOOL_FILES_MAX = 20
+_TOOL_FILES_TOTAL = 6 * 1024 * 1024
+_TOOL_FILE_CHUNK = 512 * 1024  # bytes per `file` frame (base64 makes it ~683 KiB)
+_TOOL_WATCH_MAX = 20000  # files in the working directory beyond which none are collected
+# Windows NTSTATUS codes a process ends with when it never really started.
+_TOOL_NOT_STARTED_RC = {
+    0xC0000135: "a DLL it needs is missing",
+    0xC0000139: "a DLL it needs is the wrong version (entry point not found)",
+    0xC000007B: "it or a DLL it loads is built for another CPU (bad image format)",
+    0xC0000142: "a DLL it needs failed to initialise",
+}
+
+
+@dataclass(frozen=True)
+class _Tool:
+    name: str
+    exe: str  # absolute path
+    root: Path  # every `pkg` is a directory under it
+    cwd: str  # "package" | "job"
+    timeout_s: float
+    ok: re.Pattern[str] | None
+    fail: re.Pattern[str] | None
+    note: re.Pattern[str] | None
+    usb: tuple[str, ...]  # "vvvv:pppp", lower case
+    usage: str
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "exe": self.exe,
+            "root": str(self.root),
+            "cwd": self.cwd,
+            "timeout_s": self.timeout_s,
+            "ok": self.ok.pattern if self.ok else "",
+            "fail": self.fail.pattern if self.fail else "",
+            "note": self.note.pattern if self.note else "",
+            "usb": list(self.usb),
+            "usage": self.usage,
+        }
+
+
+def _tool_regex(name: str, key: str, value: str) -> re.Pattern[str] | None:
+    if not value:
+        return None
+    try:
+        return re.compile(value)
+    except re.error as e:
+        raise ValueError(f"{key}.{name} is not a valid regular expression: {e}") from None
+
+
+def _resolve_tools(raw: Mapping[str, Mapping[str, str]]) -> tuple[dict[str, _Tool], list[str]]:
+    """({name: tool}, problems). A setting that cannot be right however the
+    host looks — a missing required key, a bad regex, a relative path —
+    raises ValueError: the agent refuses to start, as for an unknown key.
+    A path that is merely absent right now (a drive not mounted, a tool not
+    copied yet) is a problem: logged at start-up, that tool not offered."""
+    tools: dict[str, _Tool] = {}
+    problems: list[str] = []
+    for name in sorted(raw):
+        cfg = raw[name]
+        missing = [k for k in ("tool_exe", "tool_root") if not cfg.get(k)]
+        if missing:
+            keys = " and ".join(f"{k}.{name}" for k in missing)
+            raise ValueError(
+                f"tool {name}: {keys} not set — both tool_exe and tool_root are needed"
+            )
+        exe, root = cfg["tool_exe"].strip(), cfg["tool_root"].strip()
+        for key, path in (("tool_exe", exe), ("tool_root", root)):
+            # A relative exe would be looked up from wherever the agent was
+            # started, a relative root would move with it; neither is what
+            # the owner looked at when writing the line.
+            if not (Path(path).is_absolute() or _is_windows_absolute(path)):
+                raise ValueError(f"{key}.{name} must be an absolute path, got {path!r}")
+        cwd = (cfg.get("tool_cwd") or "package").strip().lower()
+        if cwd not in _TOOL_CWD_MODES:
+            raise ValueError(f"tool_cwd.{name} must be package or job, got {cwd!r}")
+        timeout_raw = (cfg.get("tool_timeout") or str(_TOOL_TIMEOUT_DEFAULT_S)).strip()
+        if not timeout_raw.isdigit() or not 1 <= int(timeout_raw) <= _TOOL_TIMEOUT_MAX_S:
+            raise ValueError(
+                f"tool_timeout.{name} must be whole seconds from 1 to {_TOOL_TIMEOUT_MAX_S} "
+                f"(under the hub's 30-minute job limit), got {timeout_raw!r}"
+            )
+        usb: list[str] = []
+        for item in (cfg.get("tool_usb") or "").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if not _TOOL_USB_RE.match(item):
+                raise ValueError(f"tool_usb.{name}: {item!r} is not VID:PID (four hex digits each)")
+            usb.append(item.lower())
+        tool = _Tool(
+            name=name,
+            exe=exe,
+            root=Path(root),
+            cwd=cwd,
+            timeout_s=float(timeout_raw),
+            ok=_tool_regex(name, "tool_ok", cfg.get("tool_ok") or ""),
+            fail=_tool_regex(name, "tool_fail", cfg.get("tool_fail") or ""),
+            note=_tool_regex(name, "tool_note", cfg.get("tool_note") or ""),
+            usb=tuple(dict.fromkeys(usb)),
+            usage=cfg.get("tool_usage") or "",
+        )
+        if not Path(exe).is_file():
+            problems.append(f"tool {name}: tool_exe {exe} is not a file — not offered")
+            continue
+        if not Path(root).is_dir():
+            problems.append(f"tool {name}: tool_root {root} is not a directory — not offered")
+            continue
+        tools[name] = tool
+    return tools, problems
+
+
+def _is_windows_absolute(path: str) -> bool:
+    """`D:\\x` / `D:/x` read as absolute on any host, so a Windows agent.conf
+    can be checked (self-check, tests) where it does not run."""
+    return bool(re.match(r"^[A-Za-z]:[\\/]", path))
+
+
+# ── the path rules (ADR-068 决定 2) ──
+# Applied to every argument BEFORE {pkg} / {com} are filled in, so the only
+# absolute path an argument can carry is the package the agent itself put
+# there. They guard against a mistake — a path typed for another directory,
+# a `..` too many — not against a tool that reads paths from elsewhere.
+# A path may start at the beginning of an argument or after = , ; (the
+# `--out=…`, `a.xml,b.xml` shapes); a leading `/` is allowed because many
+# Windows tools take `/x` as an option.
+_TOOL_SEP = r"[\\/=,;:'\"\s]"
+_TOOL_DOTDOT_RE = re.compile(rf"(?:^|{_TOOL_SEP})\.\.(?={_TOOL_SEP}|$)")
+_TOOL_DRIVE_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]")
+# The serial device name a vendor tool is given for a COM port. The only
+# `\\` form allowed: it opens a port, not a file.
+_TOOL_COM_DEVICE_RE = re.compile(r"\\\\\.\\(?:COM[1-9][0-9]{0,2}|\{com\})(?![A-Za-z0-9_])")
+_TOOL_PATH_START = r"(?:^|[=,;])"
+_TOOL_FWD_UNC_RE = re.compile(rf"{_TOOL_PATH_START}//")
+_TOOL_ROOTED_RE = re.compile(rf"{_TOOL_PATH_START}\\")
+_TOOL_TOKEN_RE = re.compile(r"\{\{|\}\}|\{(pkg|com)\}|[{}]")
+
+
+def _tool_arg_problem(arg: str) -> str:
+    """Which path rule `arg` breaks, or ""."""
+    if _TOOL_DOTDOT_RE.search(arg):
+        return "'..' as a path segment would leave the package"
+    if _TOOL_DRIVE_RE.search(arg):
+        return "a drive path (X:\\ or X:/) — name files relative to the package, or use {pkg}"
+    rest = _TOOL_COM_DEVICE_RE.sub("", arg)
+    if "\\\\" in rest or _TOOL_FWD_UNC_RE.search(rest):
+        return "a network or device path (\\\\…) — only \\\\.\\COM<n> is allowed"
+    if _TOOL_ROOTED_RE.search(rest):
+        return "a path from the root of the drive (\\…)"
+    return ""
+
+
+def _tool_placeholders(args: list[str]) -> dict[str, int]:
+    """{placeholder: number of the first argument using it}. A brace that is
+    neither {pkg}, {com}, {{ nor }} is refused: a misspelt {pakg} reaching
+    the tool as text would fail somewhere far less clear."""
+    used: dict[str, int] = {}
+    for i, arg in enumerate(args, 1):
+        for m in _TOOL_TOKEN_RE.finditer(arg):
+            if m.group(1):
+                used.setdefault(m.group(1), i)
+            elif m.group() in ("{", "}"):
+                raise _JobRejected(
+                    "BENCH_TOOL_ARG_REJECTED",
+                    f"argument {i} {arg!r}: a lone {m.group()!r} — the placeholders are "
+                    "{pkg} and {com}; write {{ or }} for a literal brace",
+                )
+    return used
+
+
+def _tool_fill(arg: str, values: Mapping[str, str]) -> str:
+    def sub(m: re.Match[str]) -> str:
+        token = m.group()
+        if token == "{{":
+            return "{"
+        if token == "}}":
+            return "}"
+        return values[m.group(1)]
+
+    return _TOOL_TOKEN_RE.sub(sub, arg)
+
+
+def _tool_package(tool: _Tool, rel: str) -> Path:
+    """The package directory `rel` names under the tool's root, resolved —
+    links and junctions followed, so one pointing elsewhere is refused.
+    Blocking."""
+    base = tool.root.resolve()
+    target = (base / rel).resolve()
+    if not _edl_inside(base, target) or target == base:
+        raise _JobRejected(
+            "BENCH_TOOL_PACKAGE_REJECTED",
+            f"package {rel!r} resolves outside tool_root.{tool.name} ({tool.root})",
+        )
+    if not target.is_dir():
+        raise _JobRejected(
+            "BENCH_TOOL_PACKAGE_REJECTED",
+            f"package {rel!r} is not a directory under tool_root.{tool.name} ({tool.root})",
+        )
+    return target
+
+
+async def _tool_usb_devices(timeout_s: float) -> list[dict[str, Any]]:
+    if sys.platform == "win32":
+        return await _usb_list_windows(timeout_s)
+    if not await asyncio.to_thread(_SYSFS_USB_ROOT.is_dir):
+        raise _JobRejected(
+            "BENCH_TOOL_NO_DEVICE", f"this host cannot list USB devices: no {_SYSFS_USB_ROOT}"
+        )
+    return await asyncio.to_thread(_enumerate_sysfs_usb, _SYSFS_USB_ROOT)
+
+
+def _tool_matches(tool: _Tool, devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [d for d in devices if f"{d.get('vid')}:{d.get('pid')}" in tool.usb]
+
+
+def _tool_device_text(d: Mapping[str, Any]) -> str:
+    return f"{d.get('name') or d.get('instance_id') or '?'} ({d.get('vid')}:{d.get('pid')})"
+
+
+async def _tool_port(tool: _Tool, requested: str, uses_com: bool) -> str:
+    """Check the registered USB device is attached; the COM port it has when
+    an argument asks for {com}. Nothing to check without tool_usb."""
+    if not tool.usb:
+        if uses_com:
+            raise _JobRejected(
+                "BENCH_TOOL_ARG_REJECTED",
+                f"{{com}} needs tool_usb.{tool.name} (the device's VID:PID) in agent.conf",
+            )
+        return ""
+    devices = await _tool_usb_devices(30.0)
+    matched = _tool_matches(tool, devices)
+    if not matched:
+        seen = sorted({_tool_device_text(d) for d in devices if d.get("vid")})
+        shown = "; ".join(seen[:15]) + (" …" if len(seen) > 15 else "")
+        raise _JobRejected(
+            "BENCH_TOOL_NO_DEVICE",
+            f"no USB device {', '.join(tool.usb)} (tool_usb.{tool.name}) is attached to this "
+            f"host — attached now: {shown or 'none'}",
+        )
+    if not uses_com:
+        return ""
+    ports = sorted(
+        {m.group(1) for d in matched if (m := _EDL_COM_RE.search(str(d.get("name") or "")))},
+        key=lambda p: int(p[3:]),
+    )
+    if not ports:
+        names = "; ".join(sorted({_tool_device_text(d) for d in matched}))
+        raise _JobRejected(
+            "BENCH_TOOL_NO_DEVICE",
+            f"{names} is attached but has no COM port — its USB driver is missing or failed "
+            "on this host",
+        )
+    if requested:
+        if requested in ports:
+            return requested
+        raise _JobRejected(
+            "BENCH_TOOL_NO_DEVICE",
+            f"{requested} is not a port of {', '.join(tool.usb)} on this host "
+            f"(its ports here: {', '.join(ports)})",
+        )
+    if len(ports) > 1:
+        raise _JobRejected(
+            "BENCH_TOOL_ARG_REJECTED",
+            f"{len(ports)} devices {', '.join(tool.usb)} on this host ({', '.join(ports)}) — "
+            "choose one with port=",
+        )
+    return ports[0]
+
+
+# ── running it ──
+
+_TOOL_EOL_RE = re.compile(rb"\r\n|\n|\r")
+
+
+def _split_tool_output(buf: bytes, final: bool) -> tuple[list[tuple[bytes, bool]], bytes]:
+    """([(line, redraw)], rest). `redraw` = ended by a bare \\r: the tool
+    will print over it. A \\r at the very end of what has arrived may be the
+    first half of \\r\\n, so it waits for the next read unless `final`."""
+    lines: list[tuple[bytes, bool]] = []
+    start = 0
+    for m in _TOOL_EOL_RE.finditer(buf):
+        if m.group() == b"\r" and m.end() == len(buf) and not final:
+            break
+        lines.append((buf[start : m.start()], m.group() == b"\r"))
+        start = m.end()
+    rest = buf[start:]
+    while len(rest) > _TOOL_LINE_MAX:
+        lines.append((rest[:_TOOL_LINE_MAX], False))
+        rest = rest[_TOOL_LINE_MAX:]
+    if final and rest:
+        lines.append((rest, False))
+        rest = b""
+    return lines, rest
+
+
+class _ToolOutput:
+    """Everything kept from a tool's output while it runs: every line is
+    checked against the patterns, the last lines are kept for the done
+    frame, matching note lines are collected. Nothing else is held — a tool
+    may print for half an hour."""
+
+    def __init__(self, tool: _Tool, data_ws: Any) -> None:
+        self._tool = tool
+        self._ws = data_ws
+        self.tail: collections.deque[str] = collections.deque(maxlen=_TOOL_TAIL_LINES)
+        self.ok_seen = False
+        self.fail_line = ""
+        self.notes: list[str] = []
+        self.notes_dropped = 0
+        self.lines = 0
+        self._last_redraw = -_TOOL_REDRAW_INTERVAL_S
+
+    async def line(self, raw: bytes, redraw: bool) -> None:
+        text = _decode_tool(raw).rstrip()
+        if not text.strip():
+            return
+        self.lines += 1
+        tool = self._tool
+        if tool.fail is not None and not self.fail_line and tool.fail.search(text):
+            self.fail_line = text
+        if tool.ok is not None and not self.ok_seen and tool.ok.search(text):
+            self.ok_seen = True
+        if tool.note is not None and tool.note.search(text):
+            if len(self.notes) < _TOOL_NOTE_MAX:
+                self.notes.append(text[:300])
+            else:
+                self.notes_dropped += 1
+        if redraw:
+            now = time.monotonic()
+            if now - self._last_redraw < _TOOL_REDRAW_INTERVAL_S:
+                return
+            self._last_redraw = now
+        self.tail.append(text)
+        await _job_progress(self._ws, "tool", 0, 0, text)
+
+    def say(self, text: str) -> None:
+        """The agent's own words about the run, kept with the tool's."""
+        self.tail.append(text)
+
+
+async def _tool_kill(proc: Any) -> None:
+    """End the tool and everything it started. Vendor tools often start a
+    second process that does the USB work; ending only the first leaves that
+    one holding the device and the next run fails with "port busy"."""
+    if sys.platform == "win32":
+        await asyncio.to_thread(_kill_tree, proc.pid)
+    else:
+        # started with start_new_session: its process group is its pid,
+        # and the group outlives the tool itself
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    await _reap(proc)
+
+
+async def _run_vendor_tool(
+    data_ws: Any, tool: _Tool, argv: list[str], cwd: Path
+) -> tuple[int, bool, _ToolOutput]:
+    """(rc, timed_out, output). Every output line goes out as progress
+    while the tool runs. stdin is the null device, so a tool that waits for
+    a key reads end-of-file instead of hanging until the timeout."""
+    _log.info("job: tool %s: %s (in %s)", tool.name, subprocess.list2cmdline(argv), cwd)
+    kw: dict[str, Any] = (
+        {"creationflags": _CREATE_NO_WINDOW}
+        if sys.platform == "win32"
+        else {"start_new_session": True}
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(cwd),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            **kw,
+        )
+    except OSError as e:
+        # Missing file, no permission, elevation required (WinError 740).
+        raise _JobRejected(
+            "BENCH_TOOL_NOT_STARTED", f"cannot start {Path(argv[0]).name} on this host: {e}"
+        ) from e
+    out = _ToolOutput(tool, data_ws)
+
+    async def pump() -> None:
+        assert proc.stdout is not None
+        buf = b""
+        while True:
+            chunk = await proc.stdout.read(_CHUNK)
+            buf += chunk
+            lines, buf = _split_tool_output(buf, final=not chunk)
+            for raw, redraw in lines:
+                await out.line(raw, redraw)
+            if not chunk:
+                return
+
+    reader = asyncio.ensure_future(pump())
+    timed_out = leftover = False
+    try:
+        async with asyncio.timeout(tool.timeout_s):
+            # Not proc.wait() alone: asyncio wakes it only once every pipe
+            # has closed, so a child still holding the output would keep us
+            # here until the timeout. The exit code is set at the exit itself.
+            while proc.returncode is None and not reader.done():
+                await asyncio.wait({reader}, timeout=_TOOL_POLL_S)
+            if reader.done():
+                await proc.wait()  # output closed; the tool itself may still be finishing
+            else:
+                done, _ = await asyncio.wait({reader}, timeout=_TOOL_DRAIN_S)
+                leftover = not done
+    except TimeoutError:
+        timed_out = True
+    except BaseException:
+        await _tool_kill(proc)
+        reader.cancel()
+        with contextlib.suppress(BaseException):
+            await reader
+        raise
+    if timed_out or leftover:
+        await _tool_kill(proc)
+    try:
+        # killed: the pipe closes and the reader finishes with what was left
+        await asyncio.wait_for(asyncio.shield(reader), _TOOL_DRAIN_S)
+    except TimeoutError:
+        reader.cancel()
+        with contextlib.suppress(BaseException):
+            await reader
+    rc = -1 if timed_out or proc.returncode is None else proc.returncode
+    if timed_out:
+        out.say(f"[agent] ended the tool and what it started after {tool.timeout_s:.0f}s")
+    elif leftover:
+        out.say("[agent] the tool exited but something it started kept its output open; ended it")
+    return rc, timed_out, out
+
+
+# ── files the tool wrote ──
+
+
+def _tool_snapshot(base: Path) -> dict[str, tuple[int, int]] | None:
+    """{relative path: (size, mtime_ns)} of the files under `base`; links
+    are not followed. None = too many files to watch. Blocking."""
+    seen: dict[str, tuple[int, int]] = {}
+    for dirpath, _dirs, files in os.walk(base):
+        for name in files:
+            path = Path(dirpath) / name
+            try:
+                st = path.lstat()
+            except OSError:
+                continue
+            if not S_ISREG(st.st_mode):
+                continue
+            seen[path.relative_to(base).as_posix()] = (st.st_size, st.st_mtime_ns)
+            if len(seen) > _TOOL_WATCH_MAX:
+                return None
+    return seen
+
+
+def _tool_written(
+    before: Mapping[str, tuple[int, int]] | None, after: Mapping[str, tuple[int, int]] | None
+) -> list[tuple[str, int]]:
+    """(name, size) of every file that is new or changed, by name."""
+    if before is None or after is None:
+        return []
+    return sorted((n, v[0]) for n, v in after.items() if before.get(n) != v)
+
+
+def _read_capped(path: Path) -> bytes | None:
+    """The file, or None when it is gone or grew past the cap. Blocking."""
+    try:
+        with path.open("rb") as fh:
+            data = fh.read(_TOOL_FILE_MAX + 1)
+    except OSError:
+        return None
+    return None if len(data) > _TOOL_FILE_MAX else data
+
+
+async def _tool_send_files(
+    data_ws: Any, cwd: Path, before: Mapping[str, tuple[int, int]] | None
+) -> list[dict[str, Any]]:
+    """Send what the tool wrote into its working directory as `file` frames
+    and say what was and was not sent. A hub that does not know the frame
+    skips it, as it does every unknown event."""
+    if before is None:
+        return [{"name": "", "size": 0, "sent": False, "why": f"over {_TOOL_WATCH_MAX} files"}]
+    after = await asyncio.to_thread(_tool_snapshot, cwd)
+    if after is None:
+        return [{"name": "", "size": 0, "sent": False, "why": f"over {_TOOL_WATCH_MAX} files"}]
+    report: list[dict[str, Any]] = []
+    total = sent = 0
+    for name, size in _tool_written(before, after):
+        why = ""
+        if size > _TOOL_FILE_MAX:
+            why = f"over {_TOOL_FILE_MAX // (1024 * 1024)} MiB"
+        elif sent >= _TOOL_FILES_MAX:
+            why = f"over {_TOOL_FILES_MAX} files"
+        elif total + size > _TOOL_FILES_TOTAL:
+            why = f"over {_TOOL_FILES_TOTAL // (1024 * 1024)} MiB in all"
+        data = None if why else await asyncio.to_thread(_read_capped, cwd / name)
+        if not why and data is None:
+            why = "gone or grew while being read"
+        if why or data is None:
+            report.append({"name": name, "size": size, "sent": False, "why": why})
+            continue
+        for offset in range(0, max(len(data), 1), _TOOL_FILE_CHUNK):
+            piece = data[offset : offset + _TOOL_FILE_CHUNK]
+            await data_ws.send(
+                _job_control(
+                    {
+                        "ev": "file",
+                        "name": name,
+                        "size": len(data),
+                        "offset": offset,
+                        "b64": base64.b64encode(piece).decode("ascii"),
+                        "end": offset + len(piece) >= len(data),
+                    }
+                )
+            )
+        sent += 1
+        total += len(data)
+        report.append({"name": name, "size": len(data), "sent": True, "why": ""})
+    return report
+
+
+# ── the two ops ──
+
+
+def _tool_verdict(tool: _Tool, rc: int, out: _ToolOutput) -> tuple[bool, str, str]:
+    """(ok, judged_by, why) — ADR-068 决定 3, in this order."""
+    if out.fail_line:
+        return (
+            False,
+            "fail_pattern",
+            f"a line matched tool_fail.{tool.name}: {out.fail_line[-300:]}",
+        )
+    if rc != 0:
+        return False, "exit_code", f"exit code {rc}"
+    if tool.ok is not None:
+        if not out.ok_seen:
+            return (
+                False,
+                "ok_pattern_missing",
+                f"exit code 0, but no line matched tool_ok.{tool.name} ({tool.ok.pattern})",
+            )
+        return True, "exit_code+ok_pattern", ""
+    return True, "exit_code_only", ""
+
+
+async def _op_tool_run(
+    _spec: OpSpec, values: Mapping[str, Any], *, tools: Mapping[str, _Tool]
+) -> tuple[str, dict[str, Any]]:
+    data_ws = _job_ws.get()
+    tool = tools[str(values["tool"])]
+    rel = str(values["pkg"] or "")
+    args = list(values["args"] or [])
+    for i, arg in enumerate(args, 1):
+        why = _tool_arg_problem(arg)
+        if why:
+            raise _JobRejected("BENCH_TOOL_ARG_REJECTED", f"argument {i} {arg!r}: {why}")
+    used = _tool_placeholders(args)
+    pkg: Path | None = None
+    if rel:
+        pkg = await asyncio.to_thread(_tool_package, tool, rel)
+    elif "pkg" in used:
+        raise _JobRejected(
+            "BENCH_TOOL_ARG_REJECTED",
+            f"argument {used['pkg']} uses {{pkg}} but no package was given (pkg=)",
+        )
+    port = await _tool_port(tool, str(values["port"] or ""), "com" in used)
+    fill = {"pkg": str(pkg or ""), "com": port}
+    argv = [tool.exe, *(_tool_fill(a, fill) for a in args)]
+    scratch: Path | None = None
+    if tool.cwd == "package" and pkg is not None:
+        cwd = pkg
+    else:
+        scratch = cwd = Path(
+            await asyncio.to_thread(tempfile.mkdtemp, prefix=f"alb-tool-{tool.name}-")
+        )
+    started = time.monotonic()
+    try:
+        before = await asyncio.to_thread(_tool_snapshot, cwd)
+        rc, timed_out, out = await _run_vendor_tool(data_ws, tool, argv, cwd)
+        files = await _tool_send_files(data_ws, cwd, before)
+    finally:
+        if scratch is not None:
+            await asyncio.to_thread(shutil.rmtree, scratch, True)
+    data: dict[str, Any] = {
+        "tool": tool.name,
+        "pkg": rel,
+        "port": port,
+        "cwd": tool.cwd if pkg is not None else "job",
+        "rc": rc,
+        "seconds": round(time.monotonic() - started, 1),
+        "lines": out.lines,
+        "highlights": out.notes,
+        "files": files,
+    }
+    if out.notes_dropped:
+        data["highlights_dropped"] = out.notes_dropped
+    tail = "\n".join(out.tail)
+    if timed_out:
+        data["judged_by"] = "timeout"
+        raise _JobRejected(
+            "BENCH_TOOL_TIMEOUT",
+            f"{tool.name} did not finish within {tool.timeout_s:.0f}s (tool_timeout.{tool.name}); "
+            "it and what it started were ended",
+            rc=rc,
+            stdout=tail,
+            data=data,
+        )
+    unsigned = rc & 0xFFFFFFFF
+    if sys.platform == "win32" and unsigned in _TOOL_NOT_STARTED_RC:
+        data["judged_by"] = "exit_code"
+        raise _JobRejected(
+            "BENCH_TOOL_NOT_STARTED",
+            f"{Path(tool.exe).name} could not start: {_TOOL_NOT_STARTED_RC[unsigned]} "
+            f"(exit code 0x{unsigned:08X})",
+            rc=rc,
+            stdout=tail,
+            data=data,
+        )
+    ok, judged_by, why = _tool_verdict(tool, rc, out)
+    data["judged_by"] = judged_by
+    if not ok:
+        raise _JobRejected(
+            "BENCH_TOOL_FAILED", f"{tool.name}: {why}", rc=rc, stdout=tail, data=data
+        )
+    if judged_by == "exit_code_only":
+        data["note"] = (
+            f"judged by the exit code only — some tools exit 0 after a failure; read the output "
+            f"or check the board (tool_ok.{tool.name} in agent.conf makes this stricter)"
+        )
+    return tail, data
+
+
+async def _op_tool_list(
+    spec: OpSpec,
+    _values: Mapping[str, Any],
+    *,
+    tools: Mapping[str, _Tool],
+    problems: tuple[str, ...],
+) -> tuple[str, dict[str, Any]]:
+    """The registered tools, and whether each one's USB device is attached
+    right now — "is the board in download mode" is the first question."""
+    devices: list[dict[str, Any]] = []
+    usb_error = ""
+    if any(t.usb for t in tools.values()):
+        try:
+            devices = await _tool_usb_devices(spec.timeout_s)
+        except _JobRejected as e:
+            usb_error = e.message
+    rows = []
+    for tool in tools.values():
+        row = tool.describe()
+        if tool.usb and not usb_error:
+            row["attached"] = sorted({_tool_device_text(d) for d in _tool_matches(tool, devices)})
+        rows.append(row)
+    return "", {"tools": rows, "problems": list(problems), "usb_error": usb_error}
+
+
 # ── the rows ─────────────────────────────────────────────────────────
 # Timeouts: fastboot BLOCKS waiting for a device when none is in fastboot
 # mode ("< waiting for any device >"). Without a ceiling one such command
@@ -2200,18 +2969,91 @@ def _edl_rows(tools: _EdlTools) -> list[OpSpec]:
     ]
 
 
+def _tool_rows(tools: Mapping[str, _Tool], problems: tuple[str, ...] = ()) -> list[OpSpec]:
+    """tool-run and tool-list (ADR-068); none without a registered tool —
+    a `tool` dropdown with nothing in it is a question nobody can answer."""
+    if not tools:
+        return []
+    tools = dict(tools)
+    return [
+        OpSpec(
+            "tool-run",
+            "tool",
+            "run a vendor tool registered in the bench agent.conf with your own arguments "
+            "(args, a list); pkg is a directory under that tool's tool_root, {pkg} and {com} "
+            "in an argument become the package path and the device's COM port",
+            params=(
+                ParamSpec(
+                    "tool",
+                    "enum",
+                    choices=tuple(tools),
+                    code="BENCH_TOOL_UNKNOWN",
+                    label="tool",
+                    hint="register one with tool_exe.<name> and tool_root.<name> in agent.conf",
+                ),
+                ParamSpec(
+                    "pkg",
+                    "text",
+                    required=False,
+                    default="",
+                    pattern=_EDL_DIR_PATTERN,
+                    max_len=256,
+                    code="BENCH_TOOL_PACKAGE_REJECTED",
+                    label="package dir",
+                ),
+                ParamSpec(
+                    "args",
+                    "argv",
+                    required=False,
+                    default=(),
+                    max_items=_TOOL_MAX_ARGS,
+                    max_len=_TOOL_MAX_ARG_LEN,
+                    code="BENCH_TOOL_ARG_REJECTED",
+                    label="tool arguments",
+                ),
+                ParamSpec(
+                    "port",
+                    "text",
+                    required=False,
+                    default="",
+                    pattern=_EDL_PORT_PATTERN,
+                    max_len=6,
+                    code="BENCH_TOOL_ARG_REJECTED",
+                    label="COM port",
+                ),
+            ),
+            record="uart",
+            timeout_s=max(t.timeout_s for t in tools.values()),
+            builtin=functools.partial(_op_tool_run, tools=tools),
+        ),
+        OpSpec(
+            "tool-list",
+            "tool",
+            "the vendor tools registered in the bench agent.conf: usage, settings, and "
+            "whether each one's USB device is attached now",
+            mutates=False,
+            exclusive=False,
+            timeout_s=30.0,
+            builtin=functools.partial(_op_tool_list, tools=tools, problems=tuple(problems)),
+        ),
+    ]
+
+
 def _build_ops(
     fastboot: str = "",
     log_sources: Mapping[str, Path] | None = None,
     edl: _EdlTools | None = None,
+    tools: Mapping[str, _Tool] | None = None,
+    tool_problems: tuple[str, ...] = (),
 ) -> dict[str, OpSpec]:
     """The op table for a host with THIS fastboot (none = no fastboot rows,
-    in the table and therefore in hello), THESE log sources and THESE EDL
-    tools (none = no EDL rows)."""
+    in the table and therefore in hello), THESE log sources, THESE EDL
+    tools (none = no EDL rows) and THESE vendor tools (none = no tool rows)."""
     rows = [
         *(_fastboot_rows(fastboot) if fastboot else []),
         *_host_rows(log_sources or {}),
         *(_edl_rows(edl) if edl is not None else []),
+        *_tool_rows(tools or {}, tool_problems),
     ]
     return {row.name: row for row in rows}
 
@@ -2317,12 +3159,17 @@ async def _run_job(data_ws: Any, ops: Mapping[str, OpSpec], *, hint: str | None 
                 f"{why}: this agent has no EDL tools configured "
                 f"(edl_sahara, edl_firehose and edl_root in agent.conf){_edl_problem_note()}"
             )
+        elif op in _TOOL_OP_NAMES:
+            why = (
+                f"{why}: this agent has no vendor tool registered "
+                f"(tool_exe.<name> and tool_root.<name> in agent.conf){_tool_problem_note()}"
+            )
         await _job_fail(data_ws, why, code="BENCH_OP_UNKNOWN")
         return
     try:
         await _dispatch(data_ws, reader, spec, req)
     except _JobRejected as e:
-        await _job_fail(data_ws, e.message, code=e.code, rc=e.rc, stdout=e.stdout)
+        await _job_fail(data_ws, e.message, code=e.code, rc=e.rc, stdout=e.stdout, data=e.data)
     except Exception as e:
         # Whatever escaped (fastboot removed after start-up, a broken temp
         # dir, …) still ends the job with a `done` frame: without one the
@@ -2357,7 +3204,7 @@ async def _dispatch(data_ws: Any, reader: _JobReader, spec: OpSpec, req: Mapping
         try:
             out, data = await spec.builtin(spec, values)
         except _JobRejected as e:
-            await _job_fail(data_ws, e.message, code=e.code, rc=e.rc, stdout=e.stdout)
+            await _job_fail(data_ws, e.message, code=e.code, rc=e.rc, stdout=e.stdout, data=e.data)
             return
         finally:
             _job_ws.reset(token)
@@ -2377,21 +3224,31 @@ async def _finish_tool(data_ws: Any, spec: OpSpec, rc: int, out: str, err: str) 
     await _job_finish(data_ws, rc, out, err, fail_code=code, ok_override=ok, fail_error=error)
 
 
-async def _job_fail(data_ws: Any, error: str, *, code: str, rc: int = -1, stdout: str = "") -> None:
+async def _job_fail(
+    data_ws: Any,
+    error: str,
+    *,
+    code: str,
+    rc: int = -1,
+    stdout: str = "",
+    data: dict[str, Any] | None = None,
+) -> None:
+    msg: dict[str, Any] = {
+        "ev": "done",
+        "ok": False,
+        "rc": rc,
+        "stdout": stdout[-_JOB_OUTPUT_CAP:],
+        "stderr": "",
+        "error": error,
+        "code": code,
+    }
+    # Only a failed vendor tool has one (ADR-068): who judged it a failure,
+    # the highlight lines, the files it wrote. Every other refusal's frame
+    # stays what it was.
+    if data is not None:
+        msg["data"] = data
     with contextlib.suppress(Exception):
-        await data_ws.send(
-            _job_control(
-                {
-                    "ev": "done",
-                    "ok": False,
-                    "rc": rc,
-                    "stdout": stdout[-_JOB_OUTPUT_CAP:],
-                    "stderr": "",
-                    "error": error,
-                    "code": code,
-                }
-            )
-        )
+        await data_ws.send(_job_control(msg))
     _job_reported()
 
 
@@ -4104,6 +4961,8 @@ def _self_check_main(args: argparse.Namespace) -> int:
                 "agent_id_fixed": args.agent_id_explicit,
                 "boards": _boards_view(),
                 "edl_problem": _EDL_PROBLEM,
+                "tools": sorted(_TOOLS),
+                "tool_problems": list(_TOOL_PROBLEMS),
             }
         )
     )
@@ -4494,6 +5353,11 @@ _BOARD_CONFIG_KEYS = {
 }
 # Same rule as the hub's board table (alb.remote.bench_board).
 _BOARD_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}\Z")
+# `<key>.<tool>` keys (ADR-068): one vendor tool per name, collected into
+# args.tool_config = {tool: {key: value}}. Config file only, like the
+# per-board keys. tool_usage may be given on several lines; they are joined.
+# Tool names follow the board-name rule.
+_TOOL_CONFIG_DEST = "tool_config"
 
 
 def _default_config_path() -> Path:
@@ -4531,15 +5395,19 @@ def _load_config(path: Path) -> dict[str, Any]:
         if dot:
             key = f"{base}.{board}"
         board_dest = _BOARD_CONFIG_KEYS.get(base, "") if dot else ""
-        if board_dest:
+        tool_key = bool(dot) and base in _TOOL_KEYS
+        if board_dest or tool_key:
             if not _BOARD_NAME_RE.match(board):
+                what = "tool" if tool_key else "board"
                 sys.exit(
-                    f"{path}:{lineno}: bad board name {board!r} in {key!r} "
+                    f"{path}:{lineno}: bad {what} name {board!r} in {key!r} "
                     "(1-32 of a-z 0-9 _ -, starting with a letter or digit)"
                 )
         elif key not in _CONFIG_KEYS:
             valid = ", ".join(
-                sorted(_CONFIG_KEYS) + [f"{b}.<board>" for b in sorted(_BOARD_CONFIG_KEYS)]
+                sorted(_CONFIG_KEYS)
+                + [f"{b}.<board>" for b in sorted(_BOARD_CONFIG_KEYS)]
+                + [f"{t}.<tool>" for t in _TOOL_KEYS]
             )
             sys.exit(f"{path}:{lineno}: unknown key {key!r} (valid keys: {valid})")
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
@@ -4551,9 +5419,18 @@ def _load_config(path: Path) -> dict[str, Any]:
                     f"{path}:{lineno}: {key} is empty — name {what}, or remove the line "
                     "(an empty per-board line would widen what this agent accepts)"
                 )
+            if tool_key:
+                sys.exit(f"{path}:{lineno}: {key} is empty — set it, or remove the line")
             continue
         if board_dest:
             cfg.setdefault(board_dest, {})[board] = value
+            continue
+        if tool_key:
+            entry = cfg.setdefault(_TOOL_CONFIG_DEST, {}).setdefault(board, {})
+            if base == "tool_usage" and base in entry:
+                entry[base] = f"{entry[base]}\n{value}"
+            else:
+                entry[base] = value
             continue
         try:
             cfg[key] = _CONFIG_KEYS[key](value)
@@ -4824,6 +5701,20 @@ def _log_environment(args: argparse.Namespace) -> None:
         )
     elif _EDL_PROBLEM:
         _log.warning("edl: NOT enabled — %s", _EDL_PROBLEM)
+    for tool in _TOOLS.values():
+        _log.info(
+            "tool %s: %s · packages under %s · cwd %s · timeout %.0fs · usb %s · ok %s · fail %s",
+            tool.name,
+            tool.exe,
+            tool.root,
+            tool.cwd,
+            tool.timeout_s,
+            ",".join(tool.usb) or "(not checked)",
+            tool.ok.pattern if tool.ok else "(exit code only)",
+            tool.fail.pattern if tool.fail else "(none)",
+        )
+    for problem in _TOOL_PROBLEMS:
+        _log.warning("%s", problem)
     _log.info("ops: %s", ", ".join(_OPS) if _OPS else "none")
     ports = _enumerate_com()
     _log.info(
@@ -4844,7 +5735,7 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
     whether this agent claims the `fastboot` capability at all — and which
     rows the hello's op table carries."""
     global _FASTBOOT_PATH, _FLASH_PARTITIONS, _BOARD_PARTITIONS, _BOARD_PRODUCT, _OPS
-    global _EDL, _EDL_PROBLEM
+    global _EDL, _EDL_PROBLEM, _TOOLS, _TOOL_PROBLEMS
     _FASTBOOT_PATH = _resolve_fastboot(getattr(args, "fastboot_path", None) or "")
     _EDL, _EDL_PROBLEM = _resolve_edl(
         getattr(args, "edl_sahara", None) or "",
@@ -4869,9 +5760,17 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
             "lists, every partition must be on the list of the board it is meant for; "
             "remove flash_partitions"
         )
+    # A tool line that cannot be right on any host (a missing tool_exe, a bad
+    # regex) refuses the start, as an unknown key does; one whose exe or root
+    # is absent right now is logged and not offered (ADR-068).
+    try:
+        tools, problems = _resolve_tools(getattr(args, _TOOL_CONFIG_DEST, None) or {})
+    except ValueError as e:
+        sys.exit(f"agent.conf: {e}")
+    _TOOLS, _TOOL_PROBLEMS = tools, tuple(problems)
     # The op table follows from the same resolution (ADR-059): fastboot rows
     # only when the tool resolved, log-tail sources from what is configured.
-    _OPS = _build_ops(_FASTBOOT_PATH, _log_sources(), _EDL)
+    _OPS = _build_ops(_FASTBOOT_PATH, _log_sources(), _EDL, _TOOLS, _TOOL_PROBLEMS)
     _STATUS.set_ops(list(_OPS))
 
 

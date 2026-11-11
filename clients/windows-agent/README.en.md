@@ -144,6 +144,7 @@ so a new op on the agent needs no hub code.
 | `log-tail` | last N lines of a host log, optional substring filter. Sources are names only: `agent` (this agent's own log, when `log_file` is set), `setupapi` (Windows' driver-install log) and `update` (the last remote update, once there has been one) | no |
 | `agent-update` | replace this agent's own files and restart it — see below | no |
 | `edl-sahara` / `edl-program` / `edl-reset` | Qualcomm 9008 (EDL) flashing — see "Qualcomm 9008" below | no (needs the board in 9008) |
+| `tool-run` / `tool-list` | run a vendor flashing tool registered in `agent.conf`, with the arguments the vendor documents — see "Other vendors' download tools" below | no (needs the board in that vendor's download mode) |
 
 Two rules do not change:
 
@@ -234,6 +235,70 @@ with one kind of 9008 board on the host, point them at that board's directory.
 - Success = exit code 0 **and** the tool's success line ("Sahara protocol
   completed", "{All Finished Successfully}"). A failure carries the last 80
   lines of the tool's output.
+
+### Other vendors' download tools: registered here, run with their own arguments
+
+Every vendor's download-mode tool takes different arguments, and alb does not
+try to understand them. Register the tool under a name in `agent.conf`; the
+caller writes the arguments as the vendor documents them, and the agent
+checks the paths in them and hands them to the tool unchanged.
+
+```
+tool_exe.vt=D:\flash\board-a\tools\VendorTool.exe
+tool_root.vt=D:\flash\board-a\packages
+tool_ok.vt=Download finished
+tool_fail.vt=(?i)fail|error
+tool_note.vt=^Write .* (ok|fail)
+tool_usb.vt=1a2b:3c4d
+tool_usage.vt=hold the recovery key while plugging USB in
+tool_usage.vt=e.g. alb flash tool vt --pkg v12 -- -p {com} -f update.img
+```
+
+| key | required | meaning |
+|---|---|---|
+| `tool_exe.<name>` | yes | absolute path of the tool's exe |
+| `tool_root.<name>` | yes | packages sit in directories under it; the hub can only name a directory under it |
+| `tool_cwd.<name>` | no | `package` (default): run in the package directory, as by hand; `job`: a fresh scratch directory each run |
+| `tool_timeout.<name>` | no | seconds, 1-1700, default 1500; the tool and every process it started are ended after it |
+| `tool_ok.<name>` | no | regex; a line must match it for success |
+| `tool_fail.<name>` | no | regex; a matching line is a failure, even with exit code 0 |
+| `tool_note.<name>` | no | regex; matching lines are listed in the result |
+| `tool_usb.<name>` | no | `VID:PID`, comma-separated; checked before the run; needed for `{com}` |
+| `tool_usage.<name>` | no | notes shown by `alb flash tools`; repeat the line for more lines |
+
+From the Linux side:
+
+```bash
+alb flash tools                                   # what is registered, whether its device is attached, usage
+alb flash tool vt --pkg v12 -- -p {com} -f update.img
+```
+
+- Everything after `--` reaches the tool as is, without cmd.exe. stdin is
+  empty, so a tool waiting for a key reads end-of-file instead of hanging.
+- Refused before the tool starts (`BENCH_TOOL_ARG_REJECTED`, naming the
+  argument): a drive path (`X:\`, `X:/`), a network path (`\\server`,
+  `//server`), a path from the drive root (`\x`), `..` as a path segment.
+  `\\.\COM<n>` is allowed. Name files relative to the package, or use `{pkg}`.
+- Then `{pkg}` becomes the package's full path and `{com}` the COM port of
+  the `tool_usb` device; `{{` / `}}` are literal braces.
+- The verdict, in order: a line matching `tool_fail` → failure; exit code
+  not 0 → failure; `tool_ok` set but no line matched → failure; otherwise
+  success. `judged_by` in the result names the rule; without `tool_ok` the
+  result says only the exit code was looked at.
+- Every output line streams to the hub and into the job's `timeline.jsonl`
+  next to the UART. Files the tool wrote into its working directory come back
+  to `files/` in the record directory (4 MiB each, 20 files, 6 MiB in all;
+  the rest are listed by name and size).
+- Shares the flash job lock with fastboot and 9008.
+- A `tool_exe` / `tool_root` that does not exist right now: logged at
+  start-up, that tool is not offered. A malformed line: the agent does not start.
+- Not covered: paths inside the tool's own config files, files the tool
+  writes to fixed places (e.g. the user profile), arguments starting with
+  `/` (many Windows tools use `/x` as an option). The checks guard against
+  mistakes, not against intent.
+
+Register the `fastboot.exe` you already use as a pass-through tool first and
+compare `alb flash tool fb -- getvar product` with `alb flash getvar product`.
 
 ## Updating the agent from the hub
 
