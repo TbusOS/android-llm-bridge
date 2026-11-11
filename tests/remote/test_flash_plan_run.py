@@ -432,3 +432,37 @@ async def test_a_symlinked_image_is_streamed_from_its_target(tmp_path):
     result = await FlashService(lambda: bench).run_plan(plan)
     assert result.ok, result.error
     assert bench.images["boot_a"] == b"T" * 1000
+
+
+# ── a plain getvar reads the same FAILED line (2026-11-11) ──────────────
+# On the bench fastboot 36 answered a variable the bootloader does not have
+# with `getvar:<name>  FAILED (remote: 'GetVar Variable Not found')` and exit
+# code 0, and `alb flash getvar` showed it under [ok].
+
+_NOT_FOUND = (
+    "getvar:no-such-var                                 "
+    "FAILED (remote: 'GetVar Variable Not found')\r\nFinished. Total time: 0.001s\r\n"
+)
+
+
+@pytest.mark.parametrize("via_run_op", [False, True], ids=["alb flash getvar", "alb bench run"])
+async def test_a_getvar_the_device_answered_with_failed_is_a_failure(via_run_op: bool) -> None:
+    bench = _Bench()
+    bench.getvar_stderr = _NOT_FOUND
+    svc = FlashService(lambda: bench)
+    if via_run_op:
+        result = await svc.run_op("getvar", {"name": "no-such-var"})
+    else:
+        result = await svc.getvar("no-such-var")
+    assert (result.ok, result.code) == (False, "FLASH_GETVAR_FAILED")
+    assert "GetVar Variable Not found" in result.error
+    assert "Finished" not in result.error, "the error quotes the FAILED line only"
+
+
+async def test_a_getvar_answer_is_still_passed_through_untouched() -> None:
+    """Only the FAIL status is read: a value — even an odd one — is not."""
+    bench = _Bench()
+    bench.getvar_stderr = "partition-size:cfg: 0x0\r\nFinished. Total time: 0.001s\r\n"
+    result = await FlashService(lambda: bench).getvar("partition-size:cfg")
+    assert result.ok and result.code == ""
+    assert "partition-size:cfg: 0x0" in result.stderr

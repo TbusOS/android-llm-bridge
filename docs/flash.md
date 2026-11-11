@@ -63,7 +63,8 @@ alb flash getvar          # getvar all
 ```
 
 - `status` 在「能连上但一个分区都不许写」时也返回 1 并说明原因,比如按板分了名单、却没有选板子。
-- `getvar` 把板子的回答原样打出来,不做解释。同一个变量在不同平台上的意思不一样(比如有的平台对存在的分区也回 `partition-size: 0`),判断以板子原话为准。
+- `getvar` 把板子的回答原样打出来,不解释值。同一个变量在不同平台上的意思不一样(比如有的平台对存在的分区也回 `partition-size: 0`),判断以板子原话为准。
+- 板子回 `FAILED`(比如 `getvar:<名> FAILED (remote: 'GetVar Variable Not found')`,这块板没有这个变量)时报 `FLASH_GETVAR_FAILED`、退出码 1。fastboot 自己这时退出码是 0,所以单看 fastboot 会当成功。不写名字的 `alb flash getvar` 列出板子有哪些变量。
 
 ## 进出 fastboot
 
@@ -129,6 +130,7 @@ alb flash tool vt --pkg board-a/v12 -- -p {com} -f update.img
 - 台架 agent 拒绝带盘符路径(`X:\`)、网络路径(`\\server`)、从盘根开始的路径(`\x`)、`..` 的参数,报错写明第几个参数。
 - 结果里的 `judged by` 写明是谁判的:`fail_pattern`(输出里有失败标志)、`exit_code`(退出码不是 0)、`ok_pattern_missing`(退出码 0 但没看到成功标志)、`exit_code+ok_pattern`、`exit_code_only`(台架没登记成功标志,只看了退出码——有的工具失败也返回 0,烧完到板上核对)。
 - 工具自己写的日志文件会收回 hub,命令最后打出放在哪。
+- 记录里的 `board` 是台架当前选中的板子(`alb bench board use`),不一定是工具实际烧的那块:透传不知道工具碰的是哪块板。几块板同时接在台架上时,先选中要烧的那块。
 
 ## 结果和记录
 

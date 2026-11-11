@@ -100,7 +100,10 @@ plain restart from the hub yet.
 
 The agent serves a localhost-only status page on `http://127.0.0.1:8731`. It
 shows the hub's web-console URL (a clickable `web console` row, derived from
-`hub_url`; the startup log prints the same line), the connection state,
+`hub_url`; the agent window prints it at the bottom of the block it shows once
+connected, after `>>> Web console`, and keeps it in the window title
+`alb agent <name> · connected · <url>`, which turns into
+`DISCONNECTED - retrying` while the hub is gone), the connection state,
 active channels, enumerated devices, and the last error — so you can tell whether the dial-home reached the hub *without* logging
 into the hub, even when the hub never saw the agent (wrong token / hub
 unreachable). The token is never shown there; `GET /status.json` exposes the

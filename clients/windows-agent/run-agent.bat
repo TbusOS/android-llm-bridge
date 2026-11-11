@@ -63,9 +63,9 @@ if errorlevel 1 (
 rem -- 5. serial ports visible to this machine, for quick eyeballing.
 %PY% -c "from serial.tools import list_ports; ps = [p.device for p in list_ports.comports()]; print('  [v] serial ports here: ' + (', '.join(ps) if ps else 'NONE -- check the USB-serial cable/driver'))" 2>nul
 
+rem The web console address and the local status page are printed by the
+rem agent itself once the hub connection is up (and kept in the title bar).
 echo.
-echo [run-agent] status page: http://127.0.0.1:8731 by default -- the agent
-echo [run-agent] log below prints the actual URL.
 rem Tells the agent it was started from here, so a remote update restarts
 rem it the same way: through this script, in a window of its own.
 set "ALB_AGENT_LAUNCHER=run-agent.bat"

@@ -3270,7 +3270,7 @@ cut_tool_result() ──> 截短的文本 ──> 模型 / 会话记录(里面�
 
 ## ADR-068 · 台架 agent 透传厂商烧录工具:台架上登记过的工具,参数原样转发
 
-**日期**: 2026-11-10 · **状态**: 已确认,代码已写(假工具测试过),真台架未验 · 重新评估 ADR-059 决定 1 末尾「第三批(下载模式工具,各厂家命令行不同)时再评估」
+**日期**: 2026-11-10 · **状态**: 已实现(公开 `03ce371`),2026-11-11 真台架对照过(见末尾) · 重新评估 ADR-059 决定 1 末尾「第三批(下载模式工具,各厂家命令行不同)时再评估」
 
 **user 2026-11-10 定的四条**:第一版只做命令行;默认工作目录是包目录;刷机包先放在台架上,hub 不推;
 第一个非高通厂商等 user 给工具和手工跑通的命令,真台架先拿 fastboot.exe 和 9008 两个工具登记成透传工具对照。
@@ -3450,5 +3450,27 @@ agent 这一层,按顺序:
 | 收文件 | 每块 512 KiB 一个 `file` 控制帧(base64),在 done 之前发;hub 按顺序接到 `files/` | 一帧 4 MiB 在慢网络上要传好几秒,这期间心跳发不出去;旧 hub 不认 `file` 事件会跳过,不出错 |
 | 起不来 | 退出码是 0xC0000135 等「缺 DLL / 位数不对」的 NTSTATUS 时报 `BENCH_TOOL_NOT_STARTED` | Windows 上缺 DLL 不会在 CreateProcess 报错,而是进程起来就退出 |
 | 配置错 | 缺 `tool_exe`/`tool_root`、相对路径、正则写错、超时超范围、`tool_usb` 格式错:拒绝启动;exe 或根目录此刻不存在:启动日志警告、不提供这个工具 | 前者怎么都不对;后者可能只是盘没挂上 |
+
+### 真台架对照(2026-11-11)
+
+台架 Windows,板子 A 一块(高通),agent 登记了 fastboot.exe(`fb`)、QSaharaServer.exe(`sahara`)、
+fh_loader.exe(`fh`)。只读命令加 9008 握手,没写分区。原始输出在当时会话的临时目录,记录在内网 hub 的 `workspace/flash/tool-run-*`。
+
+| 验的是 | 内建 | 透传 |
+|---|---|---|
+| fastboot 里 `getvar product` / `current-slot` | 有值,[ok] | 输出逐字一致,`exit_code_only` |
+| `getvar` 一个板子没有的变量 | **[ok]**(fastboot 退出码 0) | 原登记的 `tool_fail=^FAILED` 没匹配上(那一行以 `getvar:<名>` 开头);改成 `FAILED \(remote\|^fastboot: error:` 后判 `fail_pattern` |
+| 没有 fastboot 设备时 `devices` | `FASTBOOT_NO_DEVICE` | 空输出、退出码 0 → [ok]:透传不替工具解释输出 |
+| 没设备时 `fb -- nosuchcommand` | — | fastboot 先等设备,120 s 后 `BENCH_TOOL_TIMEOUT`,`timeout` |
+| 6 种不合规参数 / 包目录 / 工具名 | — | 都在工具运行前拒,写明第几个参数 |
+| sahara 加载 programmer | — | 1.75 s,`exit_code+ok_pattern` |
+| programmer 已加载再跑 sahara | `EDL_SAHARA_FAILED` | `BENCH_TOOL_FAILED`,`fail_pattern` |
+| fh_loader `--reset` | — | 1.75 s,`exit_code+ok_pattern`;`port_trace.txt` 12554 字节收回 `files/`;板子 48 s 回系统 |
+
+由此补的两处:
+- 内建 `alb flash getvar` 读到 fastboot 的 FAILED 行报 `FLASH_GETVAR_FAILED`(整包清单的 getvar 检查本来就这么判,单独的 getvar 没有)。值照旧不解释。
+- 透传记录里的 `board` 是台架当前选中的板子,不一定是工具实际碰到的那块(那次选中的是另一块板)。透传不知道工具碰哪块板,写进文档,不改。
+
+没验到:超时后 Windows 上整棵进程树真被结束(没查台架进程表)、临时工作目录删没删、只按退出码判失败(碰到的失败都先被失败标志判掉)、非 ASCII 输出、缺 DLL 起不来。
 
 **关联**: ADR-056(作业通道 · 决定 4 时间轴 · 决定 5 不发路径)· ADR-059(操作表)· ADR-060(换 agent)· ADR-066(9008)

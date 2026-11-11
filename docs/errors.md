@@ -51,14 +51,14 @@ tags: [errors, reference, llm-friendly]
 <!-- BEGIN GENERATED: scripts/gen_errors_doc.py -->
 <!-- 本段由脚本生成,不要手改。改了 src/alb/infra/errors.py 或返回错误码的代码后,运行:uv run python scripts/gen_errors_doc.py -->
 
-登记在 `ERROR_CODES` 里的码共 95 个,按 `category` 分 7 组,每组按码名字母排序。message 和 suggestion 是目录里的默认文字,原样照抄英文:`alb_describe_errors` 返回的就是这两句。
+登记在 `ERROR_CODES` 里的码共 96 个,按 `category` 分 7 组,每组按码名字母排序。message 和 suggestion 是目录里的默认文字,原样照抄英文:`alb_describe_errors` 返回的就是这两句。
 
 另有 61 个码代码里会返回、但没有登记,列在本节最后。
 
 | category | 中文 | 含义 | 码数 | 码名前缀 |
 |---|---|---|---|---|
 | `transport` | 通道与台架 | 到板子的通道(adb / ssh / 串口)出了问题,或经台架 agent 做的操作(fastboot 烧录、9008、agent 更新与启动)失败 | 57 | `ADB_*` `AGENT_*` `BENCH_*` `BOARD_*` `EDL_*` `FASTBOOT_*` `FLASH_*` `PORT_*` `PSTORE_*` `SERIAL_*` `SHELL_*` `SSH_*` `TIMELINE_*` `TRANSPORT_*` |
-| `device` | 对端状态 | 连接本身是通的,是对端(板子或台架主机)的状态或回答不对:USB 未授权、离线、adbd 不肯切 root、板子上的端口没人监听、台架主机上没有启动 agent 的任务 | 13 | `ADB_*` `AGENT_*` `BENCH_*` `BREAKIN_*` `DEVICE_*` `FLASH_*` `PORT_*` |
+| `device` | 对端状态 | 连接本身是通的,是对端(板子或台架主机)的状态或回答不对:USB 未授权、离线、adbd 不肯切 root、板子上的端口没人监听、台架主机上没有启动 agent 的任务 | 14 | `ADB_*` `AGENT_*` `BENCH_*` `BREAKIN_*` `DEVICE_*` `FLASH_*` `PORT_*` |
 | `permission` | 权限 | 被权限策略拦下,或要 root 才能读 | 2 | `PERMISSION_*` `ROOT_*` |
 | `timeout` | 超时 | 在限定时间内没等到预期的输出或状态 | 6 | `ADBD_*` `AGENT_*` `BREAKIN_*` `TIMEOUT_*` |
 | `io` | 本地文件 | 本地文件、工作目录、路径 | 4 | `FILE_*` `REMOTE_*` `WORKSPACE_*` |
@@ -128,7 +128,7 @@ tags: [errors, reference, llm-friendly]
 | `TRANSPORT_NOT_CONFIGURED` | No active transport configured | Run: alb setup adb  (or: alb setup ssh / serial) |
 | `TRANSPORT_NOT_SUPPORTED` | Operation not supported by this transport | Switch transport: alb setup \<other-method> |
 
-### device · 对端状态(13 个)
+### device · 对端状态(14 个)
 
 | Code | 默认 message | 默认 suggestion |
 |---|---|---|
@@ -142,6 +142,7 @@ tags: [errors, reference, llm-friendly]
 | `DEVICE_NOT_FOUND` | Specified device serial not found | Run: alb devices |
 | `DEVICE_OFFLINE` | Device is offline | Reconnect USB or run: alb devices |
 | `DEVICE_UNAUTHORIZED` | Device rejected USB debugging | Accept 'Allow USB debugging' on device screen |
+| `FLASH_GETVAR_FAILED` | fastboot getvar printed FAILED although it exited 0; there is no value to read | Read the quoted line. `remote: '...'` is the device's answer — most often this bootloader has no variable by that name (`alb flash getvar` with no name lists the ones it has). Anything else is a local error on the way (USB) |
 | `FLASH_PLAN_CHECK_FAILED` | A getvar check in the plan reported FAILED; the rows after it were not run | Read the quoted line. `remote: '...'` is the device's answer — a firmware / board check failing usually means this package is for another board; skip the check (--skip-action getvar) only if you are sure. Anything else is a local error on the way (USB) — fix the link and run the plan again |
 | `PORT_DEVICE_AMBIGUOUS` | More than one device is attached; the target must be named | Run `alb devices` and pass `--serial <one of them>` |
 | `PORT_DEVICE_REFUSED` | The device refused the connection to that port (nothing is listening there) | Start the server on the device first (e.g. `gdbserver :<port> --attach <pid>`), then `alb port check <port>` |

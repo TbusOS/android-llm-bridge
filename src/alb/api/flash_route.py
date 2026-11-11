@@ -11,7 +11,8 @@ Endpoints:
     POST /api/flash/getvar     Body: {"name": "" | "partition-size:cfg" | ...}
                                Passes the device's answer through untouched —
                                the verb is protocol level, the meaning of the
-                               values is not (see FlashService.getvar).
+                               values is not (see FlashService.getvar). A
+                               FAILED answer is FLASH_GETVAR_FAILED.
     POST /api/flash/oem        Body: {"command": "<any oem command>"}
                                Passed to the board as is; the bootloader
                                decides what it allows and its refusal comes

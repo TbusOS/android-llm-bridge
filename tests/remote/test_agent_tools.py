@@ -854,3 +854,17 @@ async def test_tool_list_says_whether_each_device_is_attached(bench: _Bench) -> 
 async def test_tool_run_takes_the_job_lock_and_tool_list_does_not(bench: _Bench) -> None:
     ops = bench.ops()
     assert ops["tool-run"].exclusive and not ops["tool-list"].exclusive
+
+
+async def test_the_window_gets_the_command_and_the_file_gets_the_folders(
+    bench: _Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    """2026-11-11: the console line was `job: tool vt: <exe path> ... (in <temp
+    folder>)`. The window now shows the tool's name and its arguments; the
+    log file keeps the full line."""
+    caplog.set_level("INFO", logger="alb-agent")
+    ws = await _run(bench.ops(), tool="vt", args=["-p", "x y"])
+    assert ws.done()["ok"], ws.done()
+    (rec,) = [r for r in caplog.records if r.getMessage().startswith("job: tool vt:")]
+    assert getattr(rec, "alb_short", None) == 'job   vt -p "x y"'
+    assert str(bench.exe) in rec.getMessage() and "(in " in rec.getMessage()

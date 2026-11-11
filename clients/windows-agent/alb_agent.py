@@ -388,7 +388,9 @@ def _start_status_server(host: str, port: int) -> ThreadingHTTPServer | None:
 
     threading.Thread(target=_serve, name="alb-agent-status", daemon=True).start()
     started.wait(timeout=2.0)  # serve_forever is (about to be) looping → shutdown is safe
-    _log.info("status page on http://%s:%d", host, port)
+    global _STATUS_URL
+    _STATUS_URL = f"http://{host}:{port}"
+    _log.info("status page on %s", _STATUS_URL, extra={"alb_where": "file"})
     return httpd
 
 
@@ -626,7 +628,13 @@ async def _handle_serial_channel(
         _log.warning("serial channel %s: cannot open %s @ %s: %s", cid[:8], com, baud, e)
         await _report_channel_error(ws, cid, f"cannot open {com} @ {baud}: {e}")
         return
-    _log.info("serial channel %s: opened %s @ %s", cid[:8], com, baud)
+    _log.info(
+        "serial channel %s: opened %s @ %s",
+        cid[:8],
+        com,
+        baud,
+        extra={"alb_short": f"serial {com} opened @ {baud}"},
+    )
 
     url = _channel_url(hub_url, cid)
     headers = _channel_headers(token, csecret)
@@ -1809,7 +1817,12 @@ async def _run_edl_tool(
 ) -> tuple[int, str]:
     """Run one vendor tool; every output line goes out as progress while it
     runs. (rc, combined output). A timeout or a cancel kills the tool."""
-    _log.info("job: running %s (in %s)", " ".join(argv), cwd)
+    _log.info(
+        "job: running %s (in %s)",
+        " ".join(argv),
+        cwd,
+        extra={"alb_short": f"job   {_exe_name(argv[0])} {' '.join(argv[1:])}"},
+    )
     kw: dict[str, Any] = {"creationflags": _CREATE_NO_WINDOW} if sys.platform == "win32" else {}
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -2383,7 +2396,13 @@ async def _run_vendor_tool(
     """(rc, timed_out, output). Every output line goes out as progress
     while the tool runs. stdin is the null device, so a tool that waits for
     a key reads end-of-file instead of hanging until the timeout."""
-    _log.info("job: tool %s: %s (in %s)", tool.name, subprocess.list2cmdline(argv), cwd)
+    _log.info(
+        "job: tool %s: %s (in %s)",
+        tool.name,
+        subprocess.list2cmdline(argv),
+        cwd,
+        extra={"alb_short": f"job   {tool.name} {subprocess.list2cmdline(argv[1:])}".rstrip()},
+    )
     kw: dict[str, Any] = (
         {"creationflags": _CREATE_NO_WINDOW}
         if sys.platform == "win32"
@@ -3514,7 +3533,11 @@ async def _run_fastboot(
     fastboot writes its own progress to stderr, so relaying it is what makes
     a long write visible instead of a frozen bar. Reading it concurrently
     also keeps the pipe from filling and deadlocking the child."""
-    _log.info("job: running %s", " ".join(argv[1:]))
+    _log.info(
+        "job: running %s",
+        " ".join(argv[1:]),
+        extra={"alb_short": f"job   fastboot {' '.join(argv[1:])}"},
+    )
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -5153,8 +5176,16 @@ async def _run_session(args: argparse.Namespace) -> None:
         msg = json.loads(reply) if isinstance(reply, str) else {}
         if msg.get("verb") != "hello_ok":
             raise _HandshakeRejected(f"unexpected handshake reply: {msg!r}")
-        _log.info("connected to %s as %s (build %s)", args.hub_url, args.agent_id, _BUILD)
+        _log.info(
+            "connected to %s as %s (build %s)",
+            args.hub_url,
+            args.agent_id,
+            _BUILD,
+            extra={"alb_where": "file"},
+        )
         _STATUS.on_connected()
+        _console_title("connected", args.hub_url, args.name)
+        _show_banner(args)
         await asyncio.to_thread(_mark_connected)
 
         hb = asyncio.create_task(_heartbeat(ws))
@@ -5234,6 +5265,7 @@ async def _main_loop(args: argparse.Namespace) -> None:
             attempt = 0  # clean session end → reset backoff
         except _HandshakeRejected as e:
             _log.error("%s — not retrying (check --token / hub version)", e)
+            _console_title("STOPPED - the hub refused this agent", args.hub_url, args.name)
             return  # misconfig won't fix itself by reconnecting
         except (OSError, websockets.exceptions.WebSocketException, RuntimeError) as e:
             _log.warning("session ended: %s", e)
@@ -5243,6 +5275,7 @@ async def _main_loop(args: argparse.Namespace) -> None:
         delay = RECONNECT_BACKOFF_S[min(attempt, len(RECONNECT_BACKOFF_S) - 1)]
         attempt += 1
         _STATUS.on_reconnect_scheduled()
+        _console_title("DISCONNECTED - retrying", args.hub_url, args.name)
         _log.info("reconnecting in %.0fs ...", delay)
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(_shutdown.wait(), timeout=delay)
@@ -5535,6 +5568,231 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
+# ── the console window (2026-11-11) ──────────────────────────────────────
+# The window used to get the log file's lines: a date, milliseconds, the
+# level and the logger name before every message, a 37-name partition list
+# on one line, the full exe path and temp folder of every job — and the web
+# console's address on line four, gone as soon as the log moved (colleagues
+# said they could not find it). The log file keeps every detail; the window
+# gets short lines, one block with the essentials when the hub connection
+# is up, and the address in the window title, where it stays visible.
+#
+# A record says where it goes with `extra`:
+#   alb_where="file"     log file only (the detail behind the block)
+#   alb_where="console"  window only (the block, the "connecting" line)
+#   alb_short="..."      the window shows this instead of the message
+#   alb_block=[(text, style), ...]  printed as is, no time stamp
+
+_ANSI_STYLES = {"bold": "\x1b[1m", "green": "\x1b[1;32m", "yellow": "\x1b[33m", "red": "\x1b[1;31m"}
+_ANSI_RESET = "\x1b[0m"
+
+
+def _to_file(record: logging.LogRecord) -> bool:
+    return getattr(record, "alb_where", "") != "console"
+
+
+def _to_console(record: logging.LogRecord) -> bool:
+    return getattr(record, "alb_where", "") != "file"
+
+
+class _ConsoleFormatter(logging.Formatter):
+    """`10:20:59  message`; WARN / ERROR spelled out before the message.
+    Colour only when the window can show it (see _console_color)."""
+
+    def __init__(self, color: bool = False) -> None:
+        super().__init__(datefmt="%H:%M:%S")
+        self.color = color
+
+    def paint(self, text: str, style: str) -> str:
+        if not (self.color and style in _ANSI_STYLES):
+            return text
+        return f"{_ANSI_STYLES[style]}{text}{_ANSI_RESET}"
+
+    def format(self, record: logging.LogRecord) -> str:
+        block = getattr(record, "alb_block", None)
+        if block is not None:
+            return "\n".join(self.paint(text, style) for text, style in block)
+        short = getattr(record, "alb_short", None)
+        text = short if isinstance(short, str) else record.getMessage()
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+            text = f"{text}\n{record.exc_text}"
+        when = self.formatTime(record, self.datefmt)
+        if record.levelno >= logging.ERROR:
+            return f"{when}  {self.paint('ERROR', 'red')} {text}"
+        if record.levelno >= logging.WARNING:
+            return f"{when}  {self.paint('WARN', 'yellow')}  {text}"
+        return f"{when}  {text}"
+
+
+def _console_color(stream: Any) -> bool:
+    """Whether escape codes will show as colour, not as `←[1;32m` litter:
+    a real console, NO_COLOR unset, and on Windows the console's VT mode
+    switched on (Windows 10 and later; an older console says no)."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    try:
+        if not stream.isatty():
+            return False
+    except (AttributeError, ValueError, OSError):
+        return False
+    if sys.platform != "win32":
+        return os.environ.get("TERM", "") not in ("", "dumb")
+    try:
+        import ctypes
+        import msvcrt
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        mode = ctypes.c_uint32()
+        if not k32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        return bool(mode.value & vt) or bool(k32.SetConsoleMode(handle, mode.value | vt))
+    except Exception:
+        return False
+
+
+def _set_console_title(text: str) -> None:
+    """The window's title bar: visible however far the log has scrolled.
+    Windows only; elsewhere the terminal's title is left alone."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    with contextlib.suppress(Exception):
+        ctypes.windll.kernel32.SetConsoleTitleW(text)
+
+
+@dataclass(frozen=True)
+class _Title:
+    text: str
+
+
+_CONSOLE: _ConsoleLog | None = None
+
+
+def _console_title(state: str, hub_url: str, name: str) -> None:
+    """`alb agent <name> · <state> · <web console URL>` in the title bar,
+    set from the console thread (see _ConsoleLog for why)."""
+    web = _web_ui_url(hub_url)
+    text = " · ".join(p for p in (f"alb agent {name}", state, web) if p)
+    if _CONSOLE is not None:
+        _CONSOLE.set_title(text)
+
+
+def _console_line(text: str) -> None:
+    """A line for the window only."""
+    _log.info("%s", text, extra={"alb_where": "console"})
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _exe_name(path: str) -> str:
+    """The file name of a Windows or POSIX path, whichever this is."""
+    return re.split(r"[\\/]", path)[-1]
+
+
+def _banner_lines(
+    *,
+    name: str,
+    build: str,
+    fastboot: str,
+    boards: Mapping[str, Mapping[str, Any]],
+    partitions: frozenset[str],
+    edl: tuple[str, str] | None,
+    edl_problem: str,
+    tools: list[str],
+    tool_problems: int,
+    log_path: str,
+    web_url: str,
+    status_url: str,
+) -> list[tuple[str, str]]:
+    """The block the window shows each time the hub connection comes up:
+    what this agent can do, then the web console's address, last, so it is
+    the part still on screen. Pure, for the tests."""
+    body: list[str] = []
+    if fastboot:
+        body.append(f"  fastboot  {fastboot}")
+        if boards:
+            width = max(len(b) for b in boards)
+            for i, (board, row) in enumerate(boards.items()):
+                product = row.get("product") or "not checked"
+                names = row.get("partitions")
+                count = "no list" if names is None else _plural(len(names), "partition")
+                label = "  boards    " if i == 0 else " " * 12
+                body.append(f"{label}{board:<{width}}  product {product:<11}  {count:>13}")
+        elif partitions:
+            body.append(
+                f"  partitions  {_plural(len(partitions), 'name')}, the same for every board"
+            )
+        else:
+            body.append("  partitions  any well-formed name")
+    else:
+        body.append("  fastboot  not found - flashing is off (fastboot_path in agent.conf)")
+    if edl is not None:
+        body.append(f"  9008      {_exe_name(edl[0])} + {_exe_name(edl[1])}")
+    elif edl_problem:
+        body.append("  9008      not enabled (the warning above says why)")
+    if tools or tool_problems:
+        line = f"  tools     {', '.join(tools) or 'none'}"
+        if tools:
+            line += "    (details: alb flash tools)"
+        if tool_problems:
+            line += f"  - {tool_problems} not offered, see the warnings above"
+        body.append(line)
+    if log_path:
+        body.append(f"  log file  {log_path} (full detail)")
+    head = f"  alb agent {name} · build {build} · CONNECTED to hub"
+    tail: list[tuple[str, str]] = []
+    if web_url:
+        tail += [
+            ("  >>> Web console - open in a browser on any PC:", "green"),
+            (f"  >>>     {web_url}", "green"),
+        ]
+    if status_url:
+        local = urlsplit(status_url).hostname in ("127.0.0.1", "localhost", "::1")
+        where = " (this PC only)" if local else ""
+        tail.append((f"      Local status page{where}: {status_url}", ""))
+    else:
+        tail.append(("      Local status page: off", ""))
+    width = max(62, *(len(t) + 2 for t in [head, *body, *(t for t, _ in tail)]))
+    width = min(width, 100)
+    rule, thin = "=" * width, "-" * width
+    out: list[tuple[str, str]] = [("", ""), (rule, ""), (head, "bold"), (thin, "")]
+    out += [(line, "") for line in body]
+    out.append((rule, ""))
+    out += tail
+    out.append((rule, ""))
+    return out
+
+
+_STATUS_URL = ""
+
+
+def _show_banner(args: argparse.Namespace) -> None:
+    edl = (_EDL.sahara, _EDL.firehose) if _EDL is not None else None
+    lines = _banner_lines(
+        name=args.name,
+        build=_BUILD,
+        fastboot=_fastboot_path(),
+        boards=_boards_view(),
+        partitions=_FLASH_PARTITIONS,
+        edl=(str(edl[0]), str(edl[1])) if edl else None,
+        edl_problem=_EDL_PROBLEM,
+        tools=sorted(_TOOLS),
+        tool_problems=len(_TOOL_PROBLEMS),
+        log_path=str(_AGENT_LOG_PATH or ""),
+        web_url=_web_ui_url(args.hub_url),
+        status_url=_STATUS_URL,
+    )
+    _log.info(
+        "%s", "\n".join(t for t, _ in lines), extra={"alb_where": "console", "alb_block": lines}
+    )
+
 
 class _ConsoleLog(logging.Handler):
     """Log lines to the console window from a thread of its own.
@@ -5548,10 +5806,12 @@ class _ConsoleLog(logging.Handler):
 
     _BACKLOG = 5000
 
-    def __init__(self, stream: Any) -> None:
+    def __init__(self, stream: Any, *, color: bool | None = None) -> None:
         super().__init__()
         self._stream = stream
-        self._lines: queue.Queue[str | None] = queue.Queue(maxsize=self._BACKLOG)
+        self.color = _console_color(stream) if color is None else color
+        self.addFilter(_to_console)
+        self._lines: queue.Queue[str | _Title | None] = queue.Queue(maxsize=self._BACKLOG)
         self._dropped = 0
         self._dropped_lock = threading.Lock()
         self._thread = threading.Thread(target=self._pump, name="console-log", daemon=True)
@@ -5569,8 +5829,18 @@ class _ConsoleLog(logging.Handler):
             with self._dropped_lock:
                 self._dropped += 1
 
+    def set_title(self, text: str) -> None:
+        """Through the same thread as the lines: whether a selected window
+        also holds up a title change is not known, and not worth finding out
+        on the bench."""
+        with contextlib.suppress(queue.Full):
+            self._lines.put_nowait(_Title(text))
+
     def _pump(self) -> None:
         while (line := self._lines.get()) is not None:
+            if isinstance(line, _Title):
+                _set_console_title(line.text)
+                continue
             with self._dropped_lock:
                 dropped, self._dropped = self._dropped, 0
             if dropped:
@@ -5607,11 +5877,12 @@ def _setup_file_logging(log_file: str) -> None:
         _log.warning("file logging disabled — cannot open %s (%s)", path, e)
         return
     handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    handler.addFilter(_to_file)
     logging.getLogger().addHandler(handler)
     # Remember where it went: `log-tail agent` reads exactly this file.
     global _AGENT_LOG_PATH
     _AGENT_LOG_PATH = path
-    _log.info("logging to %s", path)
+    _log.info("logging to %s", path, extra={"alb_where": "file"})
 
 
 def _route_uncaught_to_log() -> None:
@@ -5648,7 +5919,10 @@ def _route_uncaught_to_log() -> None:
 
 
 def _log_environment(args: argparse.Namespace) -> None:
-    """One startup line with everything a post-mortem needs (never the token)."""
+    """Startup lines with everything a post-mortem needs (never the token).
+    Log file only: the window shows _show_banner's block once connected;
+    warnings still go to both."""
+    detail = {"alb_where": "file"}
     try:
         import serial
 
@@ -5663,16 +5937,14 @@ def _log_environment(args: argparse.Namespace) -> None:
         pyserial_ver,
         sys.platform,
         args.config_used or "(none — flags only)",
+        extra=detail,
     )
     _log.info(
-        "identity: name=%s agent_id=%s hub=%s",
-        args.name,
-        args.agent_id,
-        args.hub_url,
+        "identity: name=%s agent_id=%s hub=%s", args.name, args.agent_id, args.hub_url, extra=detail
     )
     web_ui = _web_ui_url(args.hub_url)
     if web_ui:
-        _log.info("hub web console: %s", web_ui)
+        _log.info("hub web console: %s", web_ui, extra=detail)
     # Say it at startup, not at the first failed flash: "no fastboot here" is
     # a five-minute fix on this host and an hour of confusion from the hub.
     if _fastboot_path():
@@ -5682,15 +5954,16 @@ def _log_environment(args: argparse.Namespace) -> None:
             allow = ",".join(sorted(_FLASH_PARTITIONS))
         else:
             allow = "(any well-formed)"
-        _log.info("fastboot: %s · partitions %s", _fastboot_path(), allow)
+        _log.info("fastboot: %s · partitions %s", _fastboot_path(), allow, extra=detail)
         for board, row in _boards_view().items():
             names = ",".join(row["partitions"]) if row["partitions"] is not None else "(no list)"
             product = row["product"] or "(not checked)"
-            _log.info("board %s: product %s · partitions %s", board, product, names)
+            _log.info("board %s: product %s · partitions %s", board, product, names, extra=detail)
     else:
         _log.info(
             "fastboot: not found — this agent will NOT advertise the fastboot "
-            "capability (set fastboot_path in agent.conf to enable flashing)"
+            "capability (set fastboot_path in agent.conf to enable flashing)",
+            extra=detail,
         )
     if _EDL is not None:
         _log.info(
@@ -5698,6 +5971,7 @@ def _log_environment(args: argparse.Namespace) -> None:
             _EDL.sahara,
             _EDL.firehose,
             _EDL.root,
+            extra=detail,
         )
     elif _EDL_PROBLEM:
         _log.warning("edl: NOT enabled — %s", _EDL_PROBLEM)
@@ -5712,14 +5986,16 @@ def _log_environment(args: argparse.Namespace) -> None:
             ",".join(tool.usb) or "(not checked)",
             tool.ok.pattern if tool.ok else "(exit code only)",
             tool.fail.pattern if tool.fail else "(none)",
+            extra=detail,
         )
     for problem in _TOOL_PROBLEMS:
         _log.warning("%s", problem)
-    _log.info("ops: %s", ", ".join(_OPS) if _OPS else "none")
+    _log.info("ops: %s", ", ".join(_OPS) if _OPS else "none", extra=detail)
     ports = _enumerate_com()
     _log.info(
         "serial ports here: %s",
         ", ".join(p["port"] for p in ports) if ports else "NONE",
+        extra=detail,
     )
 
 
@@ -5785,8 +6061,9 @@ def main() -> None:
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG if args.verbose else logging.INFO)
-    console = _ConsoleLog(sys.stderr)
-    console.setFormatter(logging.Formatter(_LOG_FORMAT))
+    global _CONSOLE
+    console = _CONSOLE = _ConsoleLog(sys.stderr)
+    console.setFormatter(_ConsoleFormatter(console.color))
     root.addHandler(console)
     if args.log_file:
         _setup_file_logging(args.log_file)
@@ -5818,6 +6095,8 @@ async def _run(args: argparse.Namespace) -> None:
     _install_signal_handlers()
     _STATUS.init(hub_url=args.hub_url, agent_id=args.agent_id, name=args.name)
     httpd = _start_status_server(args.status_host, args.status_port) if args.status_port else None
+    _console_title("connecting", args.hub_url, args.name)
+    _console_line(f"connecting to hub {args.hub_url} as {args.name} ...")
     watcher = asyncio.create_task(_watch_stop_requests())
     try:
         await _main_loop(args)

@@ -103,6 +103,9 @@ REBOOT_SETTLE_S = 5.0
 # Matched loosely on purpose — any line with the word FAILED — because a
 # missed FAIL lets a package meant for another board through, while an
 # OKAY answer prints `<name>: <value>` and has no reason to contain it.
+# A plain getvar reads the same line (2026-11-11: fastboot 36 answered a
+# variable the board does not have with FAILED and exit code 0, and
+# `alb flash getvar` showed it under [ok]).
 _GETVAR_FAILED_RE = re.compile(r"^.*\bFAILED\b.*$", re.MULTILINE)
 
 
@@ -445,6 +448,12 @@ class FlashService:
             from alb.remote.usb_modes import annotate
 
             result.data = annotate(result.data)
+        if name == "getvar" and result.ok:
+            failed = _GETVAR_FAILED_RE.search(f"{result.stderr}\n{result.stdout}")
+            if failed is not None:
+                result.ok = False
+                result.code = "FLASH_GETVAR_FAILED"
+                result.error = f"fastboot getvar reported {failed.group(0).strip()!r}"
         return result
 
     async def flash(
@@ -488,8 +497,10 @@ class FlashService:
         survives a platform change; the meaning of the values does not —
         this bench answers `partition-size:cfg` with `0` on flashes that
         succeed. Turning that into "the partition is missing" would ship the
-        misreading that cost a day on 2026-08-10, so nothing here parses the
-        output. Recorded nowhere, no UART — same tier as `devices`.
+        misreading that cost a day on 2026-08-10, so no value is parsed.
+        The one thing read is fastboot's own FAILED line (see
+        _GETVAR_FAILED_RE): it exits 0 after printing it, and a FAIL is not
+        an answer. Recorded nowhere, no UART — same tier as `devices`.
         """
         return await self.run_op("getvar", {"name": name}, label="getvar", on_event=on_event)
 

@@ -413,7 +413,8 @@ REST_ENDPOINTS: list[EndpointSpec] = [
         "path": "/api/flash/getvar",
         "description": "fastboot getvar <name> (empty = all); the device's answer is "
         "passed through untouched — the verb is protocol level, what the values mean "
-        "is platform-specific (NDJSON stream)",
+        "is platform-specific. A FAILED answer is FLASH_GETVAR_FAILED, although fastboot "
+        "itself exits 0 (NDJSON stream)",
     },
     {
         "method": "POST",

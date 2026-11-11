@@ -386,6 +386,17 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "(--skip-action getvar) only if you are sure. Anything else is a local error on the "
         "way (USB) — fix the link and run the plan again",
     ),
+    # The same FAILED line outside a plan: `alb flash getvar` used to show it
+    # under [ok] because fastboot exited 0 (2026-11-11, a variable the
+    # bootloader does not have). Only the FAIL status is read, never a value.
+    "FLASH_GETVAR_FAILED": ErrorSpec(
+        "FLASH_GETVAR_FAILED",
+        "device",
+        "fastboot getvar printed FAILED although it exited 0; there is no value to read",
+        "Read the quoted line. `remote: '...'` is the device's answer — most often this "
+        "bootloader has no variable by that name (`alb flash getvar` with no name lists "
+        "the ones it has). Anything else is a local error on the way (USB)",
+    ),
     # ─── serial break-in (alb serial break-in) ───────────────────────
     # Stopping a bootloader at its countdown over UART. Only "stopped at a
     # prompt" is success; the two timeouts differ in what to try next.

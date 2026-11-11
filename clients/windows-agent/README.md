@@ -47,8 +47,10 @@ Windows 上（USB 线 + 串口线），跑起这个 agent 之后，Linux 那边�
 agent 启动后在本机开一个状态页：**http://127.0.0.1:8731**（只有这台电脑
 自己能访问）。上面能看到：
 
-- **hub 网页控制台的链接**（`web console` 一行，直接点开就是网页界面；
-  启动时窗口里也会打一行 `hub web console: http://...`，不用再问地址）
+- **hub 网页控制台的链接**（`web console` 一行，直接点开就是网页界面）。
+  agent 窗口里也有：连上 hub 后打印一块摘要，最后两行 `>>> Web console` 就是这个地址；
+  窗口标题栏一直显示 `alb agent <名字> · connected · <地址>`，日志刷走了也看得到，
+  断线时标题变成 `DISCONNECTED - retrying`
 - 连接状态（绿点 connected / 红点 disconnected）和最近一次错误原因
 - 这台电脑上枚举到的 **adb 设备** 和 **串口列表**（板子插没插好一眼看出）
 - 当前活跃的转发通道（Linux 那边正在用 adb 还是串口）
