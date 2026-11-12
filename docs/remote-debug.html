@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debugging across two sites — android-llm-bridge</title>
+<meta name="alb-title-en" content="Debugging across two sites — android-llm-bridge">
+<meta name="alb-title-zh" content="两地调试：主脑在 A 地，板子在 B 地 —— android-llm-bridge">
+<meta name="description" content="Run the model, the source tree and the alb hub at one site and keep the board on a bench PC at another. The bench agent opens every connection outwards, so the remote site needs no inbound port. Setups for LAN, VPN and a TLS reverse proxy.">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/remote-debug.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="Debugging across two sites — android-llm-bridge">
+<meta property="og:description" content="The main brain at site A, the board at site B. The bench agent dials out, so the remote site opens no inbound port.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/remote-debug.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+  r.classList.add("js");
+})();
+</script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<link rel="stylesheet" href="assets/site/feature.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">How it works</span><span class="lang-zh">原理</span></a>
+      <a href="./#flash"><span class="lang-en">Flashing</span><span class="lang-zh">烧录</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="models.html"><span class="lang-en">Models</span><span class="lang-zh">模型协作</span></a>
+      <a href="remote-debug.html" aria-current="page"><span class="lang-en">Remote</span><span class="lang-zh">两地调试</span></a>
+      <a href="linux-analysis.html"><span class="lang-en">Analysis</span><span class="lang-zh">分析工具</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-hero">
+  <span class="shape shape--cookie" aria-hidden="true"></span>
+  <span class="shape shape--clover" aria-hidden="true"></span>
+  <div class="wrap">
+    <div class="crumbs"><a href="./"><span class="lang-en">android-llm-bridge home</span><span class="lang-zh">android-llm-bridge 首页</span></a><span>/</span><span><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></span></div>
+    <h1>
+      <span class="lang-en">The brain at site A. <em>The board at site B.</em></span>
+      <span class="lang-zh">主脑在 A 地，<em>板子在 B 地</em>。</span>
+    </h1>
+    <p class="lead">
+      <span class="lang-en">The model, the source tree and the alb hub stay on a machine at one site. The board stays on a bench PC somewhere else: another building, a lab, a customer's desk. The bench agent opens every connection outwards, so site B opens no inbound port and nobody ships the board.</span>
+      <span class="lang-zh">模型、源码树和 alb hub 留在一个地方的机器上。板子留在另一个地方的台架电脑上：另一栋楼、实验室、客户的桌子上都行。每条连接都由台架 agent 往外发起，B 地不用开任何入站端口，板子也不用寄来寄去。</span>
+    </p>
+    <ul class="states">
+      <li><span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span><span><span class="lang-en">The agent dials the hub for signaling and for every data channel; the hub never connects back. adb, the serial console, fastboot, Qualcomm EDL and vendor tools all ride these connections.</span><span class="lang-zh">信令和每一条数据通道都由 agent 连向 hub，hub 从不反过来连。adb、串口、fastboot、高通 9008、厂商工具都走这些连接。</span></span></li>
+      <li><span class="pill pill--partial"><span class="lang-en">not yet measured</span><span class="lang-zh">还没实测</span></span><span><span class="lang-en">The bench used so far sits in one office network on <code>ws://</code>. The <code>wss://</code> path through a reverse proxy, and how a slow or distant link feels, have not been tried on a real bench.</span><span class="lang-zh">目前用过的真台架和 hub 在同一个办公网里，走的是 <code>ws://</code>。经反向代理的 <code>wss://</code>，以及又远又慢的链路上用起来怎么样，还没有在真台架上试过。</span></span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="how">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">How the two sites meet</span><span class="lang-zh">两地怎么连上</span></span>
+      <h2><span class="lang-en">One direction only: the bench calls home.</span><span class="lang-zh">方向只有一个：台架往回拨。</span></h2>
+      <p class="lead"><span class="lang-en">The one requirement is that the bench PC can open a TCP connection to the hub's address and port. Everything after that, in both directions, travels inside connections the agent opened.</span><span class="lang-zh">只有一个要求：台架电脑能连到 hub 的地址和端口。之后两个方向的所有数据，都走在 agent 自己开出来的连接里。</span></p>
+    </div>
+
+    <div class="fig" data-play data-link="up">
+      <div class="fig__bar">
+        <div class="fig__title"><span class="lang-en">From first dial to first log line</span><span class="lang-zh">从拨出到第一行日志</span> <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span></div>
+        <div class="fig__ctl">
+          <button class="icon-btn" type="button" data-play-btn="replay" aria-label="Replay" title="Replay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5"/></svg></button>
+          <button class="icon-btn" type="button" data-play-btn="end" aria-label="Skip to the end" title="Skip to the end"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 5 9 7-9 7zM18 5v14"/></svg></button>
+        </div>
+      </div>
+      <div class="fig__progress" aria-hidden="true"><b></b></div>
+      <i class="cue" data-at="0" data-set="link=idle"></i>
+      <i class="cue" data-at="1200" data-set="link=dial"></i>
+      <i class="cue" data-at="4200" data-set="link=up"></i>
+      <i class="cue" data-at="6400" data-set="link=cmd"></i>
+      <i class="cue" data-at="9600" data-set="link=logs"></i>
+
+      <div class="twosite">
+        <div class="site site--a">
+          <div class="site__name"><span class="lang-en">Site A</span><span class="lang-zh">A 地</span><small><span class="lang-en">you, the code and the main brain</span><span class="lang-zh">你、代码和主脑</span></small></div>
+          <div class="box"><b><span class="lang-en">You</span><span class="lang-zh">你</span></b><small><span class="lang-en">terminal over ssh · web UI in a browser</span><span class="lang-zh">ssh 终端 · 浏览器里的网页界面</span></small></div>
+          <div class="box"><b><span class="lang-en">AI coding agent</span><span class="lang-zh">AI 编程助手</span></b><small><span class="lang-en">edits and builds in the source tree</span><span class="lang-zh">在源码树里改代码、编译</span></small></div>
+          <div class="box box--hub"><b>alb hub</b><small><span class="lang-en">listens on one port · checks the agent's token</span><span class="lang-zh">只监听一个端口 · 核对 agent 的令牌</span></small></div>
+        </div>
+
+        <div class="between">
+          <div class="rail rail--wan" aria-hidden="true"></div>
+          <div class="between__text">
+            <div class="between__cloud"><span class="lang-en">any network in between: LAN, VPN, or a TLS reverse proxy</span><span class="lang-zh">中间什么网络都行：局域网、VPN、带 TLS 的反向代理</span></div>
+            <div class="between__say" aria-live="polite">
+              <span class="say" data-say="idle"><span class="lang-en">not connected yet</span><span class="lang-zh">还没连上</span></span>
+              <span class="say" data-say="dial"><span class="lang-en">the agent dials out, B → A</span><span class="lang-zh">agent 往外拨，B → A</span></span>
+              <span class="say" data-say="up"><span class="lang-en">connected; the hub never dials back</span><span class="lang-zh">连上了；hub 不会反过来拨</span></span>
+              <span class="say" data-say="cmd"><span class="lang-en">the image goes down, A → B</span><span class="lang-zh">镜像下行，A → B</span></span>
+              <span class="say" data-say="logs"><span class="lang-en">UART and logs come back, B → A</span><span class="lang-zh">串口和日志回传，B → A</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="site site--b">
+          <div class="site__name"><span class="lang-en">Site B</span><span class="lang-zh">B 地</span><small><span class="lang-en">the bench and the board</span><span class="lang-zh">台架和板子</span></small></div>
+          <div class="shield"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg><span><span class="lang-en">inbound ports: none needed</span><span class="lang-zh">入站端口：一个都不用开</span></span></div>
+          <div class="box"><b><span class="lang-en">Bench PC · bench agent</span><span class="lang-zh">台架电脑 · 台架 agent</span></b><small><span class="lang-en">runs adb, fastboot and the flash tools next to the board</span><span class="lang-zh">在板子旁边跑 adb、fastboot 和烧录工具</span></small></div>
+          <div class="site__link" aria-hidden="true"><span>USB · UART</span><div class="rail rail--usb"></div></div>
+          <div class="box"><b><span class="lang-en">The board</span><span class="lang-zh">板子</span></b><small><span class="lang-en">stays where its cables are</span><span class="lang-zh">线插在哪，它就留在哪</span></small></div>
+        </div>
+      </div>
+
+      <ol class="walk">
+        <li data-at="1200"><span class="lang-en">The bench agent starts and dials the hub's address. Site B's firewall only sees an outgoing connection.</span><span class="lang-zh">台架 agent 启动，拨 hub 的地址。B 地的防火墙看到的只是一条出站连接。</span></li>
+        <li data-at="4200"><span class="lang-en">The hub checks the token. Each adb, serial or flash channel after this is another connection the agent opens.</span><span class="lang-zh">hub 核对令牌。之后每一条 adb、串口、烧录通道，都是 agent 再开出来的一条连接。</span></li>
+        <li data-at="6400"><span class="lang-en">At site A the agent runs <code>alb flash write</code>. The image crosses the link once and the bench agent flashes it next to the board.</span><span class="lang-zh">A 地的 AI 助手跑 <code>alb flash write</code>。镜像过一次链路，台架 agent 在板子旁边把它烧进去。</span></li>
+        <li data-at="9600"><span class="lang-en">UART bytes and logs flow back into the workspace at site A, where the model reads them.</span><span class="lang-zh">串口字节和日志流回 A 地的工作区，模型在那边读。</span></li>
+      </ol>
+      <p class="fig__cap"><span class="lang-en">The direction of every connection is as drawn (see <code>_channel_url</code> in <code>clients/windows-agent/alb_agent.py</code>). The picture shows no speeds: none have been measured across sites.</span><span class="lang-zh">每条连接的方向就是图上画的（见 <code>clients/windows-agent/alb_agent.py</code> 里的 <code>_channel_url</code>）。图上没有速度：跨地点的速度还没有测过。</span></p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tone" id="setups">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Pick a setup</span><span class="lang-zh">选一种接法</span></span>
+      <h2><span class="lang-en">Same desk or another country: only <code>hub_url</code> changes.</span><span class="lang-zh">同一张桌子还是另一个国家，改的只有 <code>hub_url</code>。</span></h2>
+      <p class="lead"><span class="lang-en"><code>hub_url</code> is one line in the bench PC's <code>agent.conf</code>. What differs between setups is what you put in front of the hub.</span><span class="lang-zh"><code>hub_url</code> 是台架电脑 <code>agent.conf</code> 里的一行。各种接法的区别，在于 hub 前面放什么。</span></p>
+    </div>
+    <div class="setups">
+      <div class="setup">
+        <h3><span class="lang-en">Same LAN</span><span class="lang-zh">同一个局域网</span></h3>
+        <div><code>ws://&lt;hub-ip&gt;:8765/agent/connect</code></div>
+        <div><span class="lang-en">Nothing to set up. This is the setup used on a real bench so far.</span><span class="lang-zh">不用额外配置。目前真台架用的就是这种。</span></div>
+      </div>
+      <div class="setup">
+        <h3><span class="lang-en">Different subnets, routed</span><span class="lang-zh">不同网段，有路由</span></h3>
+        <div><code>ws://&lt;hub-ip&gt;:8765/agent/connect</code></div>
+        <div><span class="lang-en">Office VLANs or two buildings: let the bench reach the hub's port through the firewall.</span><span class="lang-zh">办公室的不同 VLAN、两栋楼之间：防火墙放行台架到 hub 那个端口。</span></div>
+      </div>
+      <div class="setup">
+        <h3><span class="lang-en">Two sites over a VPN</span><span class="lang-zh">两地，走 VPN</span> <span class="pill pill--today"><span class="lang-en">recommended</span><span class="lang-zh">推荐</span></span></h3>
+        <div><code>ws://&lt;hub-vpn-ip&gt;:8765/agent/connect</code></div>
+        <div><span class="lang-en">WireGuard, Tailscale or the company VPN on both machines. The hub stays off the public internet.</span><span class="lang-zh">两台机器都接进 WireGuard、Tailscale 或公司 VPN。hub 不暴露在公网上。</span></div>
+      </div>
+      <div class="setup">
+        <h3><span class="lang-en">Two sites, reverse proxy with TLS</span><span class="lang-zh">两地，带 TLS 的反向代理</span></h3>
+        <div><code>wss://hub.example.com/agent/connect</code></div>
+        <div><span class="lang-en">A proxy in front of the hub, with a login on everything except the two agent endpoints. The runbook has an nginx example; it has not been run on a real proxy yet.</span><span class="lang-zh">hub 前面放一个代理，除了 agent 用的两个地址以外都要登录。手册里有一份 nginx 示例，这份示例还没在真的代理上跑过。</span></div>
+      </div>
+      <div class="setup">
+        <h3><span class="lang-en">Two sites, port relay</span><span class="lang-zh">两地，端口中转</span></h3>
+        <div><code>ws://&lt;relay&gt;:&lt;port&gt;/agent/connect</code></div>
+        <div><span class="lang-en">frp and similar forward to the hub's port. The same login rule applies as for the proxy.</span><span class="lang-zh">frp 这类工具把连接转到 hub 的端口。登录的要求和反向代理一样。</span></div>
+      </div>
+    </div>
+    <div class="concept" style="margin-top:16px">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19zM12 10v5M12 17.5v.5"/></svg>
+      <span><span class="lang-en"><b>Do not publish port 8765 as it is.</b> Only the two agent endpoints check a token. The web UI and the rest of the HTTP API have no login, so anyone who can reach the port can run commands on your boards and flash them. Across the internet, use a VPN or a proxy that makes people log in.</span><span class="lang-zh"><b>不要把 8765 端口直接放到公网上。</b>只有 agent 用的两个地址会核对令牌；网页和其余的 HTTP 接口没有登录，谁能连到这个端口，谁就能在你的板子上跑命令、烧录。跨公网时用 VPN，或者用要求登录的代理。</span></span>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="setup">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Set it up</span><span class="lang-zh">怎么配</span></span>
+      <h2><span class="lang-en">One file at each site.</span><span class="lang-zh">两边各改一个文件。</span></h2>
+    </div>
+    <div class="split">
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">site A · Linux · the hub</span><span class="lang-zh">A 地 · Linux · hub</span></span></div>
+<pre class="code"><span class="p">$</span> cd deploy/hub
+<span class="p">$</span> cp hub.env.example hub.env
+<span class="c"># in hub.env: the shared token</span>
+ALB_AGENT_TOKEN=&lt;a-long-random-string&gt;
+<span class="p">$</span> ./run-hub.sh</pre>
+      </div>
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">site B · Windows · agent.conf</span><span class="lang-zh">B 地 · Windows · agent.conf</span></span></div>
+<pre class="code"><span class="c"># copy clients/windows-agent/ to the bench PC</span>
+hub_url=ws://&lt;hub-vpn-ip&gt;:8765/agent/connect
+token=&lt;the-same-string&gt;
+name=bench-01
+<span class="c"># then double-click run-agent.bat</span></pre>
+      </div>
+    </div>
+    <div class="grid grid--3 cards3" style="margin-top:16px">
+      <article class="card">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">Check it from the bench</span><span class="lang-zh">在台架这边自查</span></h3>
+        <p><span class="lang-en">The agent serves a status page on the bench PC itself, at <code>http://127.0.0.1:8731</code>: connected or not, and the last error. On the hub, <code>alb devices</code> listing the board means the data channels made it too.</span><span class="lang-zh">agent 在台架电脑本机开一个状态页 <code>http://127.0.0.1:8731</code>：连没连上、最近一次报错是什么。hub 这边 <code>alb devices</code> 能列出板子，说明数据通道也通了。</span></p>
+      </article>
+      <article class="card">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">Nobody has to be at site B</span><span class="lang-zh">B 地不用有人守着</span></h3>
+        <p><span class="lang-en">A new agent version is pushed from the hub with <code>alb bench agent-update</code>, and <code>alb bench usb</code> shows what is plugged into the bench PC and which mode each board is in.</span><span class="lang-zh">agent 要换新版，在 hub 这边用 <code>alb bench agent-update</code> 推过去。<code>alb bench usb</code> 能看到台架电脑上插着什么、每块板现在是什么模式。</span></p>
+      </article>
+      <article class="card">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">A slow link wants a model at site B</span><span class="lang-zh">链路慢，就把小模型放到 B 地</span></h3>
+        <p><span class="lang-en">A small model on the bench PC, or on the board, reads the logs where they are produced and sends findings instead of the stream.</span><span class="lang-zh">台架电脑上或板子上的小模型，在日志产生的地方就读完，传回来的是结论而不是整条日志流。</span></p>
+        <p class="more"><a href="models.html"><span class="lang-en">Big and small models →</span><span class="lang-zh">大小模型怎么分工 →</span></a></p>
+      </article>
+    </div>
+    <p style="margin-top:20px; display:flex; flex-wrap:wrap; gap:8px 24px"><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md#5-across-networks"><span class="lang-en">Runbook: across networks →</span><span class="lang-zh">操作手册：跨网络部署 →</span></a><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/clients/windows-agent/README.md"><span class="lang-en">Bench agent manual →</span><span class="lang-zh">台架 agent 使用说明 →</span></a></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="models.html"><span class="lang-en">Big and small models</span><span class="lang-zh">大小模型协作</span></a></li>
+          <li><a href="roundtable.html"><span class="lang-en">Model round table</span><span class="lang-zh">模型圆桌</span></a></li>
+          <li><a href="remote-debug.html" aria-current="page"><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></a></li>
+          <li><a href="linux-analysis.html"><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+<script src="assets/site/play.js" defer></script>
+</body>
+</html>

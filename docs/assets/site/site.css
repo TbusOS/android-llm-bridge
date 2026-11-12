@@ -120,7 +120,7 @@ html[lang="en"] .lang-zh, html[lang^="zh"] .lang-en { display: none !important; 
 .icon-btn:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); color: var(--md-sys-color-on-surface); }
 .icon-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .menu-btn { display: none; }
-@media (max-width: 1080px) {
+@media (max-width: 1260px) {
   .nav { display: none; position: absolute; top: var(--site-topbar-h); left: 0; right: 0; margin: 0;
     flex-direction: column; align-items: stretch; gap: 0; padding: 8px var(--site-gutter) 16px;
     background: var(--md-sys-color-surface-container); border-bottom: 1px solid var(--md-sys-color-outline-variant); }

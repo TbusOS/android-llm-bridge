@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Big and small models working together — android-llm-bridge</title>
+<meta name="alb-title-en" content="Big and small models working together — android-llm-bridge">
+<meta name="alb-title-zh" content="大模型拿主意，小模型盯日志 —— android-llm-bridge">
+<meta name="description" content="How alb splits the work between models: the main brain plans and patches next to the code, a small local model watches the log stream, and findings pass between them instead of raw logs. What is shipped today and what is planned.">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/models.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="Big and small models working together — android-llm-bridge">
+<meta property="og:description" content="A big model to think, small models to watch: how alb splits debugging work between models, what ships today and what is planned.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/models.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+  r.classList.add("js");
+})();
+</script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<link rel="stylesheet" href="assets/site/feature.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">How it works</span><span class="lang-zh">原理</span></a>
+      <a href="./#flash"><span class="lang-en">Flashing</span><span class="lang-zh">烧录</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="models.html" aria-current="page"><span class="lang-en">Models</span><span class="lang-zh">模型协作</span></a>
+      <a href="remote-debug.html"><span class="lang-en">Remote</span><span class="lang-zh">两地调试</span></a>
+      <a href="linux-analysis.html"><span class="lang-en">Analysis</span><span class="lang-zh">分析工具</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-hero">
+  <span class="shape shape--cookie" aria-hidden="true"></span>
+  <span class="shape shape--clover" aria-hidden="true"></span>
+  <div class="wrap">
+    <div class="crumbs"><a href="./"><span class="lang-en">android-llm-bridge home</span><span class="lang-zh">android-llm-bridge 首页</span></a><span>/</span><span><span class="lang-en">Models working together</span><span class="lang-zh">模型协作</span></span></div>
+    <h1>
+      <span class="lang-en">A big model to <em>think</em>. Small models to <em>watch</em>.</span>
+      <span class="lang-zh">大模型<em>拿主意</em>，小模型<em>盯日志</em>。</span>
+    </h1>
+    <p class="lead">
+      <span class="lang-en">One boot prints far more than a frontier model should read. alb is built so each role can use the model that fits it: the main brain plans and patches, a small model sits next to the log stream, and what passes between them is a finding and a pointer to the raw lines, not the whole log.</span>
+      <span class="lang-zh">板子启动一次打印的东西，远比一个大模型值得读的多。alb 的设计是让每个角色用合适的模型：主脑负责想和改，小模型守在日志旁边，两边之间传的是结论和原文位置，不是整份日志。</span>
+    </p>
+    <ul class="states">
+      <li><span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span><span><span class="lang-en">The main brain (Claude Code, Codex, Cursor or your own model) drives the board over MCP or the CLI, and every log lands in a workspace on disk.</span><span class="lang-zh">主脑（Claude Code、Codex、Cursor 或你自己的模型）经 MCP 或命令行调板子，日志全部落在磁盘上的工作区里。</span></span></li>
+      <li><span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span><span><span class="lang-en">The hub's own assistant and <code>alb chat</code> run on a local model (Ollama, any OpenAI-compatible server) or on Anthropic, with the same board tools.</span><span class="lang-zh">hub 自带的助手和 <code>alb chat</code> 可以跑在本地模型上（Ollama、任何 OpenAI 兼容的服务），也可以接 Anthropic，用的是同一套板子工具。</span></span></li>
+      <li><span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span><span><span class="lang-en">A small model that watches the stream by itself and hands findings to the main brain.</span><span class="lang-zh">小模型自己盯着日志流，把结论交给主脑。</span></span></li>
+      <li><span class="pill pill--design"><span class="lang-en">design only</span><span class="lang-zh">只有设计</span></span><span><span class="lang-en">A model that runs on the board itself.</span><span class="lang-zh">直接跑在板子上的模型。</span></span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="relay">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">The hand-off</span><span class="lang-zh">怎么交接</span></span>
+      <h2><span class="lang-en">The small model reads everything. The big model reads three lines.</span><span class="lang-zh">小模型全量读，大模型只读那几行。</span></h2>
+      <p class="lead"><span class="lang-en">The left column exists today: alb records UART, logcat and dmesg in full. The middle step is the plan: a small model next to the stream that flags what matters, so the main brain pays for findings instead of raw logs and can still open the original lines to check.</span><span class="lang-zh">左边那一列现在就有：alb 把串口、logcat、dmesg 全量录下来。中间那一步是规划：一个守在日志旁边的小模型，把要紧的标出来。主脑花 token 读的是结论，不是原始日志；想核对时，原文随时能打开。</span></p>
+    </div>
+
+    <div class="fig" data-play>
+      <div class="fig__bar">
+        <div class="fig__title"><span class="lang-en">One hand-off, replayed</span><span class="lang-zh">一次交接的回放</span> <span class="tagc"><span class="lang-en">concept · planned</span><span class="lang-zh">概念示意 · 规划中</span></span></div>
+        <div class="fig__ctl">
+          <button class="icon-btn" type="button" data-play-btn="replay" aria-label="Replay" title="Replay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5"/></svg></button>
+          <button class="icon-btn" type="button" data-play-btn="end" aria-label="Skip to the end" title="Skip to the end"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 5 9 7-9 7zM18 5v14"/></svg></button>
+        </div>
+      </div>
+      <div class="fig__progress" aria-hidden="true"><b></b></div>
+
+      <div class="relayfig">
+        <div class="dark">
+          <div class="dark__bar"><i aria-hidden="true"></i><span><span class="lang-en">everything the board says · UART · logcat · dmesg</span><span class="lang-zh">板子打印的全部内容 · 串口 · logcat · dmesg</span></span></div>
+          <div class="hose mono">
+            <div class="hose__in">
+              <div>
+<p>uart   | U-Boot SPL: loading next stage</p>
+<p>uart   | Starting kernel ...</p>
+<p>dmesg  | Booting Linux on physical CPU 0x0</p>
+<p>dmesg  | psci: probing for conduit method</p>
+<p>uart   | mmc0: new high speed MMC card</p>
+<p>dmesg  | EXT4-fs: mounted filesystem</p>
+<p>logcat | I init: starting service 'ueventd'</p>
+<p>dmesg  | wlan: loading driver</p>
+<p class="hot">dmesg  | regulator: supply vdd-io not ready</p>
+<p>logcat | D SurfaceFlinger: display connected</p>
+<p>dmesg  | thermal: trip point crossed</p>
+<p>logcat | I ActivityManager: start proc for service</p>
+<p>uart   | PM: suspend entry (deep)</p>
+<p>uart   | PM: resume from suspend</p>
+<p class="hot">dmesg  | wlan: firmware load timed out</p>
+<p>logcat | W InputDispatcher: channel not responding</p>
+<p class="hot">dmesg  | wlan: resume failed, retrying</p>
+<p>logcat | I WifiService: scan requested</p>
+<p>dmesg  | usb 1-1: new high-speed USB device</p>
+<p>logcat | D AudioFlinger: mixer started</p>
+              </div>
+              <div aria-hidden="true">
+<p>uart   | U-Boot SPL: loading next stage</p>
+<p>uart   | Starting kernel ...</p>
+<p>dmesg  | Booting Linux on physical CPU 0x0</p>
+<p>dmesg  | psci: probing for conduit method</p>
+<p>uart   | mmc0: new high speed MMC card</p>
+<p>dmesg  | EXT4-fs: mounted filesystem</p>
+<p>logcat | I init: starting service 'ueventd'</p>
+<p>dmesg  | wlan: loading driver</p>
+<p class="hot">dmesg  | regulator: supply vdd-io not ready</p>
+<p>logcat | D SurfaceFlinger: display connected</p>
+<p>dmesg  | thermal: trip point crossed</p>
+<p>logcat | I ActivityManager: start proc for service</p>
+<p>uart   | PM: suspend entry (deep)</p>
+<p>uart   | PM: resume from suspend</p>
+<p class="hot">dmesg  | wlan: firmware load timed out</p>
+<p>logcat | W InputDispatcher: channel not responding</p>
+<p class="hot">dmesg  | wlan: resume failed, retrying</p>
+<p>logcat | I WifiService: scan requested</p>
+<p>dmesg  | usb 1-1: new high-speed USB device</p>
+<p>logcat | D AudioFlinger: mixer started</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="relayfig__arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+
+        <div class="panel relaycol">
+          <div class="relaycol__head">
+            <div class="who"><span class="ava ava--watch" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg></span><span><b><span class="lang-en">Log watcher</span><span class="lang-zh">日志哨兵</span></b><small><span class="lang-en">a small model, next to the stream</span><span class="lang-zh">小模型，守在日志旁边</span></small></span></div>
+            <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+          </div>
+          <p class="muted" style="font-size:13.5px"><span class="lang-en">Reads every line as it arrives. Keeps the ones that look wrong.</span><span class="lang-zh">每一行到了就读，只留下看着不对的。</span></p>
+          <ul class="caught mono">
+            <li data-at="1600">dmesg  | regulator: supply vdd-io not ready</li>
+            <li data-at="3400">dmesg  | wlan: firmware load timed out</li>
+            <li data-at="5000">dmesg  | wlan: resume failed, retrying</li>
+          </ul>
+        </div>
+
+        <div class="relayfig__arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+
+        <div class="panel relaycol">
+          <div class="relaycol__head">
+            <div class="who"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><b><span class="lang-en">Main brain</span><span class="lang-zh">主脑</span></b><small><span class="lang-en">your coding agent, next to the code</span><span class="lang-zh">你的编程助手，挨着代码</span></small></span></div>
+            <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+          </div>
+          <div class="bubble" data-at="6400">
+            <b><span class="lang-en">Finding from the watcher</span><span class="lang-zh">哨兵交来的结论</span></b>
+            <ul>
+              <li><span class="lang-en">After resume, the Wi-Fi firmware load times out.</span><span class="lang-zh">唤醒之后，Wi-Fi 固件加载超时。</span></li>
+              <li><span class="lang-en">The same supply warning comes just before it each time.</span><span class="lang-zh">每次前面都有同一条供电告警。</span></li>
+            </ul>
+            <p class="ptr mono"><span class="lang-en">raw lines: marks A and B on the timeline</span><span class="lang-zh">原文：时间轴上的标记 A、B</span></p>
+          </div>
+          <div class="bubble bubble--brain" data-at="8200"><span class="lang-en">I opened mark A and the raw lines agree. I'll check the power-up order in the driver's resume path and rebuild.</span><span class="lang-zh">我打开标记 A 看了原文，对得上。先查驱动 resume 里的上电顺序，然后重新编译。</span></div>
+        </div>
+      </div>
+
+      <div class="panel meter">
+        <div class="meter__row"><span><span class="lang-en">read by the small model</span><span class="lang-zh">小模型读的量</span></span><div class="meter__bar" aria-hidden="true"><b></b></div></div>
+        <div class="meter__row"><span><span class="lang-en">read by the main brain</span><span class="lang-zh">主脑读的量</span></span><div class="meter__bar" aria-hidden="true"><b class="small"></b></div></div>
+      </div>
+      <p class="fig__cap"><span class="lang-en">A concept picture of a planned feature. The log lines are made up and the two bars only show the idea; they are not measurements.</span><span class="lang-zh">规划中功能的概念示意。日志内容是编的；两根条只表达意思，不是测量值。</span></p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tone" id="where">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Where the small model runs</span><span class="lang-zh">小模型放在哪</span></span>
+      <h2><span class="lang-en">Three places for a small model, each closer to the board.</span><span class="lang-zh">小模型有三个位置，一个比一个靠近板子。</span></h2>
+      <p class="lead"><span class="lang-en">The closer it sits, the less has to cross the network and the more it can see by itself. The first place works today; the other two are the plan.</span><span class="lang-zh">放得越近，要过网络的东西越少，它自己能看到的越多。第一个位置现在就能用，后两个是规划。</span></p>
+    </div>
+    <div class="grid grid--3 cards3">
+      <article class="card card--primary">
+        <div class="place" aria-hidden="true"><span class="here"><span class="lang-en">build server</span><span class="lang-zh">编译机</span></span><i></i><span><span class="lang-en">bench PC</span><span class="lang-zh">台架电脑</span></span><i></i><span><span class="lang-en">board</span><span class="lang-zh">板子</span></span></div>
+        <span class="pill pill--partial"><span class="lang-en">partly shipped</span><span class="lang-zh">部分实现</span></span>
+        <h3><span class="lang-en">A local model next to the hub</span><span class="lang-zh">hub 旁边的本地模型</span></h3>
+        <p><span class="lang-en">Today: the hub's assistant and <code>alb chat</code> run on Ollama or any OpenAI-compatible local server and call 35 board tools. An MCP client can also pass one question to the local model with <code>alb_playground_chat</code>. Planned: it reads new logs in the workspace by itself.</span><span class="lang-zh">现在：hub 的助手和 <code>alb chat</code> 可以跑在 Ollama 或任何 OpenAI 兼容的本地服务上，能调 35 个板子工具。MCP 客户端还可以用 <code>alb_playground_chat</code> 把一个问题交给本地模型。规划：让它自己读工作区里新落下的日志。</span></p>
+        <p class="src"><code>src/alb/agent/backends/</code> · <code>src/alb/mcp/executor.py</code> · <code>src/alb/mcp/tools/playground.py</code></p>
+      </article>
+      <article class="card card--uart">
+        <div class="place" aria-hidden="true"><span><span class="lang-en">build server</span><span class="lang-zh">编译机</span></span><i></i><span class="here"><span class="lang-en">bench PC</span><span class="lang-zh">台架电脑</span></span><i></i><span><span class="lang-en">board</span><span class="lang-zh">板子</span></span></div>
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">A field model on the bench PC</span><span class="lang-zh">台架电脑上的现场小模型</span></h3>
+        <p><span class="lang-en">It filters the stream before any of it crosses the network. That matters most when the bench is at another site on a slow link, or when raw logs should not leave the lab.</span><span class="lang-zh">日志还没过网络就先筛一遍。台架在另一个地方、链路又慢的时候，或者原始日志不方便出实验室的时候，最用得上。</span></p>
+        <p class="more"><a href="remote-debug.html"><span class="lang-en">Debugging across two sites →</span><span class="lang-zh">两地调试怎么接 →</span></a></p>
+      </article>
+      <article class="card card--kernel">
+        <div class="place" aria-hidden="true"><span><span class="lang-en">build server</span><span class="lang-zh">编译机</span></span><i></i><span><span class="lang-en">bench PC</span><span class="lang-zh">台架电脑</span></span><i></i><span class="here"><span class="lang-en">board</span><span class="lang-zh">板子</span></span></div>
+        <span class="pill pill--design"><span class="lang-en">design only</span><span class="lang-zh">只有设计</span></span>
+        <h3><span class="lang-en">A model on the board itself</span><span class="lang-zh">板子上的模型</span></h3>
+        <p><span class="lang-en">It can read the board's own state directly and it is still there when the link drops. There is a design and a model survey; no code yet.</span><span class="lang-zh">它能直接读板子自己的状态，连接断了也还在。现在有设计和模型选型，代码还没写。</span></p>
+        <p class="more"><a href="on-device-agent.html"><span class="lang-en">On-device agent design →</span><span class="lang-zh">设备端 Agent 设计 →</span></a><br><a href="on-device-model-selection.html"><span class="lang-en">Model selection →</span><span class="lang-zh">模型选型 →</span></a></p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="today">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">What works today</span><span class="lang-zh">现在能用的</span></span>
+      <h2><span class="lang-en">Two models on one board, set up in two commands.</span><span class="lang-zh">两个模型用同一块板，两条命令配好。</span></h2>
+      <p class="lead"><span class="lang-en">The automatic hand-off is not built, but both seats are. Your coding agent connects over MCP; a local model runs the hub's own assistant, in a terminal or in the web UI.</span><span class="lang-zh">自动交接还没做，但两个位置都已经有了。编程助手经 MCP 接进来；本地模型跑 hub 自带的助手，终端里和网页里都能用。</span></p>
+    </div>
+    <div class="split">
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">main brain · your coding agent</span><span class="lang-zh">主脑 · 你的编程助手</span></span></div>
+<pre class="code"><span class="c"># in your android-llm-bridge checkout</span>
+<span class="p">$</span> claude mcp add alb -- uv run --project "$PWD" alb-mcp
+<span class="c"># or</span>
+<span class="p">$</span> codex mcp add alb -- uv run --project "$PWD" alb-mcp</pre>
+      </div>
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">local model · the hub's assistant</span><span class="lang-zh">本地模型 · hub 自带的助手</span></span></div>
+<pre class="code"><span class="p">$</span> export ALB_OLLAMA_URL=http://&lt;llm-host&gt;:11434
+<span class="p">$</span> export ALB_OLLAMA_MODEL=&lt;model&gt;
+<span class="p">$</span> uv run alb chat      <span class="c"># in a terminal, with the board tools</span>
+<span class="p">$</span> uv run alb-api       <span class="c"># web UI and its assistant at /app</span></pre>
+      </div>
+    </div>
+    <p class="src" style="margin-top:14px"><span class="lang-en">Backends: Ollama, OpenAI-compatible, Anthropic (<code>src/alb/agent/backends/</code>). Settings: <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/configuration.md">configuration.md</a>, <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md">llm-integration.md</a>.</span><span class="lang-zh">后端：Ollama、OpenAI 兼容接口、Anthropic（<code>src/alb/agent/backends/</code>）。配置项见 <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/configuration.md">configuration.md</a> 和 <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md">llm-integration.md</a>。</span></p>
+  </div>
+</section>
+
+<section class="section section--tone">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Keep reading</span><span class="lang-zh">接着看</span></span>
+      <h2><span class="lang-en">Where this is going.</span><span class="lang-zh">接下来往哪走。</span></h2>
+    </div>
+    <div class="next">
+      <a class="card" href="roundtable.html"><span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span><h3><span class="lang-en">The model round table</span><span class="lang-zh">模型圆桌</span></h3><p><span class="lang-en">Several models and you in one thread, working on one bug.</span><span class="lang-zh">几个模型和你在同一个对话里查一个 bug。</span></p></a>
+      <a class="card" href="remote-debug.html"><span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span><h3><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></h3><p><span class="lang-en">The main brain at one site, the board at another.</span><span class="lang-zh">主脑在一个地方，板子在另一个地方。</span></p></a>
+      <a class="card" href="linux-analysis.html"><span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span><h3><span class="lang-en">The Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></h3><p><span class="lang-en">Profilers and tracers, read by a model, drawn in the browser.</span><span class="lang-zh">性能和跟踪工具采数据，模型来读，网页上画出来。</span></p></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="models.html" aria-current="page"><span class="lang-en">Big and small models</span><span class="lang-zh">大小模型协作</span></a></li>
+          <li><a href="roundtable.html"><span class="lang-en">Model round table</span><span class="lang-zh">模型圆桌</span></a></li>
+          <li><a href="remote-debug.html"><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></a></li>
+          <li><a href="linux-analysis.html"><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+<script src="assets/site/play.js" defer></script>
+</body>
+</html>

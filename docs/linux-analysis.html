@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux analysis toolbox (planned) — android-llm-bridge</title>
+<meta name="alb-title-en" content="Linux analysis toolbox (planned) — android-llm-bridge">
+<meta name="alb-title-zh" content="Linux 分析工具箱（规划中）—— android-llm-bridge">
+<meta name="description" content="The planned main line of android-llm-bridge: profiling, scheduler analysis, lock contention, memory leak detection, crash PC backtrace, eBPF and ftrace, network tools and log analysis for anything that runs a Linux kernel, from a dev board to a large server, read by a model and drawn in the web UI.">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/linux-analysis.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="Linux analysis toolbox (planned) — android-llm-bridge">
+<meta property="og:description" content="Planned: profilers, tracers and leak detectors for anything that runs Linux, from a dev board to a big server, read by a model and drawn in the browser.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/linux-analysis.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+  r.classList.add("js");
+})();
+</script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<link rel="stylesheet" href="assets/site/feature.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">How it works</span><span class="lang-zh">原理</span></a>
+      <a href="./#flash"><span class="lang-en">Flashing</span><span class="lang-zh">烧录</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="models.html"><span class="lang-en">Models</span><span class="lang-zh">模型协作</span></a>
+      <a href="remote-debug.html"><span class="lang-en">Remote</span><span class="lang-zh">两地调试</span></a>
+      <a href="linux-analysis.html" aria-current="page"><span class="lang-en">Analysis</span><span class="lang-zh">分析工具</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-hero">
+  <span class="shape shape--cookie" aria-hidden="true"></span>
+  <span class="shape shape--clover" aria-hidden="true"></span>
+  <div class="wrap">
+    <div class="crumbs"><a href="./"><span class="lang-en">android-llm-bridge home</span><span class="lang-zh">android-llm-bridge 首页</span></a><span>/</span><span><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></div>
+    <h1>
+      <span class="lang-en">If it runs a Linux kernel, <em>from a dev board to a big server</em>.</span>
+      <span class="lang-zh">跑 Linux 内核的都能查：<em>从开发板到大型服务器</em>。</span>
+    </h1>
+    <p class="lead">
+      <span class="lang-en">The next main line of work for alb: collect with the tools Linux already has, such as profilers, the scheduler's tracepoints, leak detectors, eBPF and ftrace, network tools and plain logs; let a model read the result; and draw the answer in the browser. Where the CPU time goes, which thread is waiting on which lock, where the memory went, which source line the crash is on.</span>
+      <span class="lang-zh">这是 alb 接下来的主力方向：用 Linux 自己已经有的工具采数据（性能分析、调度器跟踪点、内存泄漏检测、eBPF 和 ftrace、网络工具，还有日志本身），交给模型读，再在网页上把答案画出来。CPU 时间花在哪、哪个线程在等哪把锁、内存去了哪、崩在源码的哪一行。</span>
+    </p>
+    <div class="concept" style="margin-top:26px; max-width:860px">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19zM12 10v5M12 17.5v.5"/></svg>
+      <span><span class="lang-en"><b>Everything on this page is a plan.</b> None of it is in the code yet. The pictures below are concept sketches: the shapes, names and conclusions are invented to show what a view would look like, and none of them is a measurement.</span><span class="lang-zh"><b>这一页全部是规划。</b>代码里还没有。下面的画面是概念示意：图形、名字和结论都是为了说明「这种视图长什么样」编出来的，没有一处是真实测量结果。</span></span>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="bench">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Eight questions</span><span class="lang-zh">八个问题</span></span>
+      <h2><span class="lang-en">Ask the question. Get a picture and a conclusion.</span><span class="lang-zh">问一个问题，拿到一张图和一句结论。</span></h2>
+      <p class="lead"><span class="lang-en">Each question maps to a family of collectors, a view in the web UI and a short conclusion from the model that points back at the data. Pick one on the left.</span><span class="lang-zh">每个问题对应一类采集工具、网页上的一种视图，再加模型给的一句结论，结论能指回数据。在左边选一个看看。</span></p>
+    </div>
+
+    <div class="fig" data-play data-play-loop data-play-rest="view=1;target=board" data-view="1" data-target="board">
+      <div class="fig__bar">
+        <div class="fig__title"><span class="lang-en">What the views could look like</span><span class="lang-zh">这些视图大概长这样</span> <span class="tagc"><span class="lang-en">concept · planned</span><span class="lang-zh">概念示意 · 规划中</span></span></div>
+        <div class="fig__ctl">
+          <button class="icon-btn" type="button" data-play-btn="replay" aria-label="Play through" title="Play through"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5"/></svg></button>
+          <button class="icon-btn" type="button" data-play-btn="end" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M17 6v12"/></svg></button>
+        </div>
+      </div>
+      <i class="cue" data-at="0" data-set="view=1;target=board"></i>
+      <i class="cue" data-at="4200" data-set="view=2;target=server"></i>
+      <i class="cue" data-at="8400" data-set="view=3;target=server"></i>
+      <i class="cue" data-at="12600" data-set="view=4;target=board"></i>
+      <i class="cue" data-at="16800" data-set="view=5;target=board"></i>
+      <i class="cue" data-at="21000" data-set="view=6;target=pc"></i>
+      <i class="cue" data-at="25200" data-set="view=7;target=server"></i>
+      <i class="cue" data-at="29400" data-set="view=8;target=server"></i>
+      <i class="cue" data-at="32400" data-set="view=8"></i>
+
+      <div class="pipe" aria-hidden="true">
+        <div class="pipe__node"><b><span class="lang-en">Collect on the target</span><span class="lang-zh">在目标机上采集</span></b>
+          <div class="targets3"><span data-t="board"><span class="lang-en">dev board</span><span class="lang-zh">开发板</span></span><span data-t="pc">PC</span><span data-t="server"><span class="lang-en">server</span><span class="lang-zh">服务器</span></span></div></div>
+        <div class="pipe__arrow"><div class="rail"></div></div>
+        <div class="pipe__node"><b><span class="lang-en">Workspace</span><span class="lang-zh">工作区</span></b><small><span class="lang-en">raw data, on one clock</span><span class="lang-zh">原始数据，同一个时钟</span></small></div>
+        <div class="pipe__arrow"><div class="rail"></div></div>
+        <div class="pipe__node pipe__node--model"><b><span class="lang-en">A model reads it</span><span class="lang-zh">模型来读</span></b><small><span class="lang-en">and says where to look</span><span class="lang-zh">说出该看哪</span></small></div>
+        <div class="pipe__arrow"><div class="rail"></div></div>
+        <div class="pipe__node"><b><span class="lang-en">A view in the web UI</span><span class="lang-zh">网页上的视图</span></b><small><span class="lang-en">click through to the data</span><span class="lang-zh">能点回原始数据</span></small></div>
+      </div>
+
+      <div class="benchfig">
+        <div class="asks" role="group" aria-label="Questions">
+          <button class="ask" type="button" data-play-set="view=1;target=board"><b><span class="lang-en">Where does the CPU go?</span><span class="lang-zh">CPU 花在哪了？</span></b><small><span class="lang-en">profiling · PC sampling</span><span class="lang-zh">性能分析 · PC 采样</span></small></button>
+          <button class="ask" type="button" data-play-set="view=2;target=server"><b><span class="lang-en">Who runs, who waits?</span><span class="lang-zh">谁占着 CPU，谁在等？</span></b><small><span class="lang-en">scheduler</span><span class="lang-zh">调度器</span></small></button>
+          <button class="ask" type="button" data-play-set="view=3;target=server"><b><span class="lang-en">Which lock is everyone on?</span><span class="lang-zh">线程都堵在哪把锁？</span></b><small><span class="lang-en">concurrency</span><span class="lang-zh">并发</span></small></button>
+          <button class="ask" type="button" data-play-set="view=4;target=board"><b><span class="lang-en">Where did the memory go?</span><span class="lang-zh">内存去哪了？</span></b><small><span class="lang-en">leak detection</span><span class="lang-zh">内存泄漏检测</span></small></button>
+          <button class="ask" type="button" data-play-set="view=5;target=board"><b><span class="lang-en">Which line crashed?</span><span class="lang-zh">崩在哪一行？</span></b><small><span class="lang-en">PC pointer · backtrace</span><span class="lang-zh">PC 指针 · 调用栈回溯</span></small></button>
+          <button class="ask" type="button" data-play-set="view=6;target=pc"><b><span class="lang-en">Why is it slow sometimes?</span><span class="lang-zh">为什么偶尔慢一下？</span></b><small>eBPF · bcc · ftrace</small></button>
+          <button class="ask" type="button" data-play-set="view=7;target=server"><b><span class="lang-en">Where do packets drop?</span><span class="lang-zh">包丢在哪一段？</span></b><small><span class="lang-en">network tools</span><span class="lang-zh">网络工具</span></small></button>
+          <button class="ask" type="button" data-play-set="view=8;target=server"><b><span class="lang-en">When did the logs change?</span><span class="lang-zh">日志从哪开始不对？</span></b><small><span class="lang-en">log analysis</span><span class="lang-zh">日志分析</span></small></button>
+        </div>
+
+        <div class="panel viewport">
+          <!-- 1 flame graph -->
+          <div class="view" data-v="1">
+            <div class="view__head"><h3><span class="lang-en">Where does the CPU go?</span><span class="lang-zh">CPU 花在哪了？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">flame graph from PC samples</span><span class="lang-zh">按 PC 采样画的火焰图</span></span></div>
+            <div class="canvas canvas--bottom" aria-hidden="true">
+              <div class="flame">
+                <div class="flame__row"><span class="hot" style="--w:24%">memcpy</span></div>
+                <div class="flame__row"><span class="hot" style="--w:33%">frame_copy()</span><span class="b" style="--w:11%">crc32</span></div>
+                <div class="flame__row"><span style="--w:46%">encode_frame()</span><span class="b" style="--w:13%">queue_work</span><span class="c" style="--w:9%">irq</span></div>
+                <div class="flame__row"><span style="--w:61%">worker_thread</span><span class="b" style="--w:21%">ui thread</span><span class="c" style="--w:14%">idle</span></div>
+                <div class="flame__row"><span class="c" style="--w:99%">all samples</span></div>
+              </div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">The hot path is the memory copy inside <code>frame_copy()</code>: that is where most samples land. See whether one of the copies can go.</span><span class="lang-zh">热点是 <code>frame_copy()</code> 里的内存拷贝，采样落在这里的最多。先看能不能少拷一次。</span></span></div>
+          </div>
+
+          <!-- 2 scheduler -->
+          <div class="view" data-v="2">
+            <div class="view__head"><h3><span class="lang-en">Who runs, who waits?</span><span class="lang-zh">谁占着 CPU，谁在等？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">scheduler lanes, per core</span><span class="lang-zh">调度泳道，一个核一行</span></span></div>
+            <div class="canvas" aria-hidden="true">
+              <div class="lanes">
+                <div class="sweep"></div>
+                <div class="lane2"><span class="lbl">CPU 0</span><div class="lane2__track"><i class="t-a" style="--w:18%"></i><i class="t-c" style="--w:30%"></i><i class="t-wait" style="--w:14%"></i><i class="t-a" style="--w:16%"></i><i class="t-c" style="--w:22%"></i></div></div>
+                <div class="lane2"><span class="lbl">CPU 1</span><div class="lane2__track"><i class="t-b" style="--w:26%"></i><i class="t-idle" style="--w:20%"></i><i class="t-b" style="--w:34%"></i><i class="t-idle" style="--w:20%"></i></div></div>
+                <div class="lane2"><span class="lbl">CPU 2</span><div class="lane2__track"><i class="t-d" style="--w:12%"></i><i class="t-idle" style="--w:38%"></i><i class="t-d" style="--w:18%"></i><i class="t-idle" style="--w:32%"></i></div></div>
+                <div class="lane2"><span class="lbl">CPU 3</span><div class="lane2__track"><i class="t-idle" style="--w:44%"></i><i class="t-b" style="--w:16%"></i><i class="t-idle" style="--w:40%"></i></div></div>
+              </div>
+              <div class="legend2" style="margin-top:10px"><span><i class="t-a"></i>render</span><span><i class="t-c"></i>compress</span><span><i class="t-b"></i>net-rx</span><span><i class="t-d"></i>logger</span><span><i class="t-wait"></i><span class="lang-en">runnable, waiting for a core</span><span class="lang-zh">能跑，但在等 CPU</span></span></div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en"><code>render</code> keeps queueing behind <code>compress</code> on one core while two other cores sit idle. Both threads are pinned to the same core; move one.</span><span class="lang-zh"><code>render</code> 总是排在 <code>compress</code> 后面等同一个核，另外两个核却闲着。两个线程被绑在了同一个核上，挪开一个。</span></span></div>
+          </div>
+
+          <!-- 3 locks -->
+          <div class="view" data-v="3">
+            <div class="view__head"><h3><span class="lang-en">Which lock is everyone on?</span><span class="lang-zh">线程都堵在哪把锁？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">who waits for whom</span><span class="lang-zh">谁在等谁</span></span></div>
+            <div class="canvas" aria-hidden="true" style="justify-content:center">
+              <div class="locks">
+                <div class="locks__col"><span class="chipn chipn--wait">worker-a</span><span class="chipn chipn--wait">worker-b</span><span class="chipn chipn--wait">worker-c</span><span class="chipn chipn--wait">worker-d</span></div>
+                <div class="lockbox">cache_lock<small><span class="lang-en">one lock</span><span class="lang-zh">同一把锁</span></small></div>
+                <div class="locks__col"><span class="chipn chipn--hold">flusher</span><span class="lbl" style="text-align:center"><span class="lang-en">holds it</span><span class="lang-zh">正拿着它</span></span></div>
+              </div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">The workers are not short of CPU: they are all parked on <code>cache_lock</code>, and the flusher thread holds it across a disk write. The bottleneck is how much this one lock covers.</span><span class="lang-zh">工作线程不是缺 CPU，是都停在 <code>cache_lock</code> 上；刷盘线程拿着它去写磁盘。瓶颈在这把锁管得太宽。</span></span></div>
+          </div>
+
+          <!-- 4 leak -->
+          <div class="view" data-v="4">
+            <div class="view__head"><h3><span class="lang-en">Where did the memory go?</span><span class="lang-zh">内存去哪了？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">growth over time, and who allocated it</span><span class="lang-zh">占用随时间的变化，和是谁分配的</span></span></div>
+            <div class="canvas" aria-hidden="true">
+              <svg class="curve" viewBox="0 0 400 130" preserveAspectRatio="none"><path class="area" d="M0 100L40 96L60 88L100 86L120 74L160 72L180 60L220 58L240 44L280 42L300 28L340 26L360 14L400 12L400 130L0 130Z"/><path class="base" d="M0 104H400"/><path class="leak" d="M0 100L40 96L60 88L100 86L120 74L160 72L180 60L220 58L240 44L280 42L300 28L340 26L360 14L400 12"/></svg>
+              <div class="axis"><span><span class="lang-en">time →</span><span class="lang-zh">时间 →</span></span><span><span class="lang-en">dashed: where it should settle</span><span class="lang-zh">虚线：本该回落到的位置</span></span></div>
+              <div class="rank" style="margin-top:8px">
+                <div class="rank__row"><span class="lbl mono">session_open()</span><div class="rank__bar"><b class="bad" style="--w:82%"></b></div></div>
+                <div class="rank__row"><span class="lbl mono">log_buffer_grow()</span><div class="rank__bar"><b style="--w:24%"></b></div></div>
+                <div class="rank__row"><span class="lbl mono">icon_cache_put()</span><div class="rank__bar"><b style="--w:12%"></b></div></div>
+              </div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">Usage climbs in steps and never comes back down. Nearly all of what is still held was allocated in <code>session_open()</code>; its error path returns without freeing the buffer.</span><span class="lang-zh">占用一级一级往上走，不回落。还没释放的内存几乎都是 <code>session_open()</code> 里分配的：它的出错路径没有释放缓冲区就返回了。</span></span></div>
+          </div>
+
+          <!-- 5 crash -->
+          <div class="view" data-v="5">
+            <div class="view__head"><h3><span class="lang-en">Which line crashed?</span><span class="lang-zh">崩在哪一行？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">from the PC pointer to the source line</span><span class="lang-zh">从 PC 指针到源码行</span></span></div>
+            <div class="canvas" aria-hidden="true" style="justify-content:center">
+              <div class="crash">
+                <div class="crash__frames"><span class="frame top">pc : panel_demo_resume+0x…</span><span class="frame">lr : dpm_run_callback+0x…</span><span class="frame">device_resume+0x…</span><span class="frame">…</span></div>
+                <div class="crash__arrow"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+                <div class="crash__src"><span class="lbl mono">drivers/demo/panel.c</span><span class="srcline">static int panel_demo_resume(struct device *dev)</span><span class="srcline">    struct panel *p = dev_get_drvdata(dev);</span><span class="srcline hit">    gpiod_set_value(p->reset, 1);</span><span class="srcline">    return 0;</span></div>
+              </div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">The PC is on the line that drives the reset pin, and <code>p</code> is NULL there: resume ran before probe had stored the driver data. The symbols were already on the build server, next to the hub.</span><span class="lang-zh">PC 落在拉复位脚的那一行，这里的 <code>p</code> 是空指针：resume 跑在了 probe 存好驱动数据之前。符号文件本来就在编译机上，挨着 hub。</span></span></div>
+          </div>
+
+          <!-- 6 latency -->
+          <div class="view" data-v="6">
+            <div class="view__head"><h3><span class="lang-en">Why is it slow sometimes?</span><span class="lang-zh">为什么偶尔慢一下？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">latency distribution</span><span class="lang-zh">时延分布</span></span></div>
+            <div class="canvas canvas--bottom" aria-hidden="true">
+              <div class="hist"><i style="--h:18%"></i><i style="--h:44%"></i><i style="--h:78%"></i><i style="--h:100%"></i><i style="--h:70%"></i><i style="--h:42%"></i><i style="--h:20%"></i><i style="--h:9%"></i><i style="--h:4%"></i><i style="--h:2%"></i><i style="--h:2%"></i><i class="tail" style="--h:13%"></i><i class="tail" style="--h:8%"></i></div>
+              <div class="axis"><span><span class="lang-en">fast</span><span class="lang-zh">快</span></span><span><span class="lang-en">the red bars are the slow tail</span><span class="lang-zh">红色是慢的那一截长尾</span></span><span><span class="lang-en">slow</span><span class="lang-zh">慢</span></span></div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">Almost every call is fast. The slow ones form a separate bump on the right, and all of them were waiting on the same kind of disk write when traced.</span><span class="lang-zh">绝大多数调用都很快。慢的那些在右边单独鼓起一个包，跟踪下来它们当时都在等同一类磁盘写。</span></span></div>
+          </div>
+
+          <!-- 7 network -->
+          <div class="view" data-v="7">
+            <div class="view__head"><h3><span class="lang-en">Where do packets drop?</span><span class="lang-zh">包丢在哪一段？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">the path, hop by hop</span><span class="lang-zh">一段一段看链路</span></span></div>
+            <div class="canvas" aria-hidden="true" style="justify-content:center; gap:12px">
+              <div class="net">
+                <span class="chipn"><span class="lang-en">this machine</span><span class="lang-zh">本机</span></span>
+                <div class="rail is-fwd"></div>
+                <span class="chipn"><span class="lang-en">switch</span><span class="lang-zh">交换机</span></span>
+                <div class="rail is-bad"></div>
+                <span class="chipn chipn--hold"><span class="lang-en">peer</span><span class="lang-zh">对端</span></span>
+                <span class="tagc net__tag"><span class="lang-en">retransmits here</span><span class="lang-zh">重传都在这一段</span></span>
+              </div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">The first hop is clean. Retransmits only show up between the switch and the peer, so start with that link's negotiated speed and its error counters.</span><span class="lang-zh">第一段是干净的，重传只出现在交换机到对端之间。先查那一段协商出来的速率和错误计数。</span></span></div>
+          </div>
+
+          <!-- 8 logs -->
+          <div class="view" data-v="8">
+            <div class="view__head"><h3><span class="lang-en">When did the logs change?</span><span class="lang-zh">日志从哪开始不对？</span></h3><span class="tagc"><span class="lang-en">sketch</span><span class="lang-zh">示意</span></span><span class="view__tools"><span class="lang-en">kinds of log line, over time</span><span class="lang-zh">每一类日志随时间出现的多少</span></span></div>
+            <div class="canvas" aria-hidden="true">
+              <div class="heat">
+                <div class="heat__row"><span class="lbl"><span class="lang-en">routine start-up lines</span><span class="lang-zh">常规启动打印</span></span><div class="heat__cells"><i style="--o:.9"></i><i style="--o:.7"></i><i style="--o:.3"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i><i style="--o:.2"></i></div></div>
+                <div class="heat__row"><span class="lbl"><span class="lang-en">network reconnects</span><span class="lang-zh">网络重连</span></span><div class="heat__cells"><i></i><i style="--o:.3"></i><i></i><i></i><i style="--o:.3"></i><i></i><i></i><i style="--o:.5"></i><i style="--o:.6"></i><i style="--o:.5"></i><i style="--o:.7"></i><i style="--o:.6"></i><i style="--o:.7"></i><i style="--o:.8"></i><i style="--o:.7"></i><i style="--o:.8"></i></div></div>
+                <div class="heat__row"><span class="lbl"><span class="lang-en">disk write timeouts</span><span class="lang-zh">磁盘写超时</span></span><div class="heat__cells"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="new" style="--o:.5"></i><i class="new" style="--o:.7"></i><i class="new" style="--o:.8"></i><i class="new" style="--o:.9"></i><i class="new" style="--o:.9"></i><i class="new" style="--o:1"></i><i class="new" style="--o:1"></i><i class="new" style="--o:1"></i><i class="new" style="--o:1"></i></div></div>
+                <div class="heat__row"><span class="lbl"><span class="lang-en">watchdog warnings</span><span class="lang-zh">看门狗告警</span></span><div class="heat__cells"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="new" style="--o:.5"></i><i class="new" style="--o:.6"></i><i class="new" style="--o:.8"></i><i class="new" style="--o:.9"></i><i class="new" style="--o:1"></i><i class="new" style="--o:1"></i></div></div>
+              </div>
+              <div class="axis" style="margin-top:6px"><span><span class="lang-en">time →</span><span class="lang-zh">时间 →</span></span><span><span class="lang-en">red: a kind of line not seen before</span><span class="lang-zh">红色：以前没出现过的一类</span></span></div>
+            </div>
+            <div class="verdict"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><span class="lang-en">The first half holds only routine lines. A new kind of timeout starts in the middle, and the watchdog warnings follow it, never the other way round. Open any cell to read the lines behind it.</span><span class="lang-zh">前半段只有常规打印。从中间开始冒出一类以前没有的超时，看门狗告警总是跟在它后面，没有反过来的。点开任何一格都能看到背后的原文。</span></span></div>
+          </div>
+        </div>
+      </div>
+      <p class="fig__cap"><span class="lang-en">Concept sketches of planned views. Function names, thread names, shapes and conclusions are invented; there are deliberately no figures on the axes.</span><span class="lang-zh">规划中视图的概念示意。函数名、线程名、图形和结论都是编的；坐标轴上故意不放数字。</span></p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tone" id="targets">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Not only embedded</span><span class="lang-zh">不只是嵌入式</span></span>
+      <h2><span class="lang-en">The same kernel, three sizes of machine.</span><span class="lang-zh">同一个内核，三种大小的机器。</span></h2>
+      <p class="lead"><span class="lang-en">The collectors come with Linux, so the same questions can be asked of a board on a bench, a PC and a server with many cores. What changes is how alb reaches the machine and which question hurts most.</span><span class="lang-zh">这些采集工具是 Linux 自带的，所以台架上的板子、PC、多核服务器，问的是同一批问题。不同的是 alb 怎么连到这台机器，以及哪个问题最疼。</span></p>
+    </div>
+    <div class="where3 cards3">
+      <article class="card card--uart">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Dev boards and embedded devices</span><span class="lang-zh">开发板和嵌入式设备</span></h3>
+        <p><span class="lang-en">Boot time, suspend and resume, a driver that hogs a core, a crash with only a PC value on the serial console. Reached the way alb reaches boards today: adb, ssh or UART, through the bench agent.</span><span class="lang-zh">启动时间、休眠唤醒、把一个核占满的驱动、串口上只留下一个 PC 值的崩溃。连法和 alb 现在连板子一样：adb、ssh 或串口，经台架 agent。</span></p>
+      </article>
+      <article class="card card--tertiary">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">PCs and workstations</span><span class="lang-zh">PC 和工作站</span></h3>
+        <p><span class="lang-en">A desktop that stutters, a build that is slower than it should be, a peripheral driver under test. Reached over ssh.</span><span class="lang-zh">偶尔卡一下的桌面、慢得不正常的编译、正在调的外设驱动。走 ssh 连。</span></p>
+      </article>
+      <article class="card card--primary">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Large servers</span><span class="lang-zh">大型服务器</span></h3>
+        <p><span class="lang-en">Concurrency problems, finding the system's bottleneck, naming the processes and threads responsible, and turning piles of logs into something you can look at. Reached over ssh; a BMC serial console is on the roadmap.</span><span class="lang-zh">并发问题、找系统瓶颈、定位到是哪些进程和线程、把成堆的日志变成能看的图。走 ssh 连；BMC 网络串口在路线图上。</span></p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="families">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">What goes in the box</span><span class="lang-zh">工具箱里放什么</span></span>
+      <h2><span class="lang-en">Eight families of tools, each with a view.</span><span class="lang-zh">八类工具，每一类配一种视图。</span></h2>
+      <p class="lead"><span class="lang-en">alb will not rewrite these tools. The plan is to start them on the target, bring the raw data back to the workspace, and add the two parts they lack: a model that reads the result, and a view that shows it.</span><span class="lang-zh">alb 不会重写这些工具。计划是在目标机上把它们跑起来，把原始数据收回工作区，再补上它们没有的两样：读结果的模型，和把结果画出来的视图。</span></p>
+    </div>
+    <div class="fam">
+      <article class="card"><h3><span class="lang-en">Profiling and PC sampling</span><span class="lang-zh">性能分析和 PC 采样</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Sample where the program counter is and fold the stacks: which functions the time goes to.</span><span class="lang-zh">定时采样 PC 落在哪、把调用栈叠起来：时间花在了哪些函数上。</span></p><div class="tools"><code>perf</code><code>simpleperf</code><code>flame graph</code></div></article>
+      <article class="card"><h3><span class="lang-en">Scheduler analysis</span><span class="lang-zh">调度器分析</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Scheduling delay, who holds each core, which threads keep getting preempted or migrated.</span><span class="lang-zh">调度延迟、每个核被谁占着、哪些线程老是被抢占或被迁移。</span></p><div class="tools"><code>sched tracepoints</code><code>perf sched</code><code>runqlat</code></div></article>
+      <article class="card"><h3><span class="lang-en">Concurrency and locks</span><span class="lang-zh">并发和锁</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Which lock the threads queue on, who holds it and for how long; time spent off-CPU.</span><span class="lang-zh">线程排在哪把锁上、谁拿着、拿了多久；不在 CPU 上的时间都花在等什么。</span></p><div class="tools"><code>lock tracing</code><code>off-CPU</code><code>futex</code></div></article>
+      <article class="card"><h3><span class="lang-en">Memory leak detection</span><span class="lang-zh">内存泄漏检测</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">What is still allocated and which call path allocated it, in the kernel and in user space.</span><span class="lang-zh">哪些内存还没释放、是哪条调用路径分配的，内核态和用户态都看。</span></p><div class="tools"><code>kmemleak</code><code>KASAN</code><code>memleak</code><code>heap profiling</code></div></article>
+      <article class="card"><h3><span class="lang-en">PC pointer and crash backtrace</span><span class="lang-zh">PC 指针和崩溃回溯</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Turn the PC and the call stack of an oops or a tombstone into file names and line numbers, using the symbols in the build tree.</span><span class="lang-zh">把 oops 或 tombstone 里的 PC 和调用栈，用编译目录里的符号文件换成文件名和行号。</span></p><div class="tools"><code>addr2line</code><code>gdb</code><code>pstore</code><code>kdump</code></div></article>
+      <article class="card"><h3><span class="lang-en">eBPF, bcc and ftrace</span><span class="lang-zh">eBPF、bcc 和 ftrace</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Trace the kernel while it runs: latency distributions, block I/O, system calls, function timelines.</span><span class="lang-zh">在内核运行的时候跟踪它：时延分布、块设备读写、系统调用、函数时间线。</span></p><div class="tools"><code>bcc</code><code>bpftrace</code><code>ftrace</code><code>trace events</code></div></article>
+      <article class="card"><h3><span class="lang-en">Network tools</span><span class="lang-zh">网络工具</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Capture, socket and link statistics, throughput tests, drawn as the path the packets take.</span><span class="lang-zh">抓包、套接字和链路统计、吞吐测试，按包走的路径画出来。</span></p><div class="tools"><code>tcpdump</code><code>ss</code><code>ethtool</code><code>iperf3</code></div></article>
+      <article class="card"><h3><span class="lang-en">Log analysis</span><span class="lang-zh">日志分析</span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3><p><span class="lang-en">Group lines by kind, show how each kind comes and goes over time, flag the kinds that are new.</span><span class="lang-zh">把日志按类型归类，画出每一类随时间的多少，标出新冒出来的类型。</span></p><div class="tools"><code>dmesg</code><code>journald</code><code>logcat</code><code>application logs</code></div></article>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tone" id="base">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">What is already there</span><span class="lang-zh">现在已经有的底子</span></span>
+      <h2><span class="lang-en">The plan stands on three things alb does today.</span><span class="lang-zh">这个规划站在 alb 今天已经做到的三件事上。</span></h2>
+    </div>
+    <div class="grid grid--3 cards3">
+      <article class="card">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">It can already reach the machine</span><span class="lang-zh">机器已经连得上</span></h3>
+        <p><span class="lang-en">adb, ssh and UART are in place, locally or through a bench agent at another site. A collector is one more command sent down the same way.</span><span class="lang-zh">adb、ssh、串口都已经有了，本地能用，经另一个地方的台架 agent 也能用。采集工具只是顺着同一条路多发一条命令。</span></p>
+        <p class="src"><code>src/alb/transport/</code></p>
+      </article>
+      <article class="card">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">One clock for every source</span><span class="lang-zh">所有来源同一个时钟</span></h3>
+        <p><span class="lang-en"><code>alb timeline</code> already lines up UART, logcat and dmesg. A trace that joins the same timeline can be read against what the console said at that moment.</span><span class="lang-zh"><code>alb timeline</code> 已经把串口、logcat、dmesg 排在一起。跟踪数据并进同一条时间轴，就能对着那一刻串口打了什么来读。</span></p>
+        <p class="src"><code>src/alb/capabilities/timeline.py</code></p>
+      </article>
+      <article class="card">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">First numbers and crash records</span><span class="lang-zh">基础数据和崩溃记录</span></h3>
+        <p><span class="lang-en"><code>alb metrics</code> samples CPU, memory, temperature and I/O; <code>alb diag</code> pulls pstore records, tombstones and ANR traces; the web UI draws the curves. These are the Android-side starting points.</span><span class="lang-zh"><code>alb metrics</code> 采 CPU、内存、温度和读写；<code>alb diag</code> 取 pstore 记录、tombstone 和 ANR；网页界面画曲线。这些是安卓这一侧已有的起点。</span></p>
+        <p class="src"><code>src/alb/capabilities/</code> · <code>web/src/features/</code></p>
+      </article>
+    </div>
+    <div class="vendor-cta" style="margin-top:24px; display:flex; flex-wrap:wrap; gap:12px; align-items:center">
+      <a class="btn btn--filled" href="https://github.com/TbusOS/android-llm-bridge/issues"><span class="lang-en">Tell us which one you need first</span><span class="lang-zh">告诉我们你最先想要哪一个</span></a>
+      <a class="btn btn--outlined" href="models.html"><span class="lang-en">How the models share the work</span><span class="lang-zh">模型之间怎么分工</span></a>
+      <a class="btn btn--outlined" href="roundtable.html"><span class="lang-en">The model round table</span><span class="lang-zh">模型圆桌</span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="models.html"><span class="lang-en">Big and small models</span><span class="lang-zh">大小模型协作</span></a></li>
+          <li><a href="roundtable.html"><span class="lang-en">Model round table</span><span class="lang-zh">模型圆桌</span></a></li>
+          <li><a href="remote-debug.html"><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></a></li>
+          <li><a href="linux-analysis.html" aria-current="page"><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+<script src="assets/site/play.js" defer></script>
+</body>
+</html>

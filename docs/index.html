@@ -64,13 +64,13 @@
       <span class="brand__text">android-llm-bridge</span>
     </a>
     <nav class="nav" aria-label="Primary">
-      <a href="#demo"><span class="lang-en">Demo</span><span class="lang-zh">演示</span></a>
       <a href="#topology"><span class="lang-en">How it works</span><span class="lang-zh">原理</span></a>
       <a href="#flash"><span class="lang-en">Flashing</span><span class="lang-zh">烧录</span></a>
       <a href="#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="models.html"><span class="lang-en">Models</span><span class="lang-zh">模型协作</span></a>
+      <a href="remote-debug.html"><span class="lang-en">Remote</span><span class="lang-zh">两地调试</span></a>
+      <a href="linux-analysis.html"><span class="lang-en">Analysis</span><span class="lang-zh">分析工具</span></a>
       <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
-      <a href="#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
-      <a href="#community"><span class="lang-en">Contribute</span><span class="lang-zh">参与</span></a>
       <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
     </nav>
     <div class="topbar__actions">
@@ -1112,39 +1112,39 @@ tool_usb.vt=1a2b:3c4d</pre>
 <section class="section" id="models">
   <div class="wrap">
     <div class="section__head">
-      <span class="eyebrow"><span class="lang-en">Many models, one loop</span><span class="lang-zh">多个模型，一个流程</span></span>
-      <h2><span class="lang-en">A big model to think. Small models to watch.</span><span class="lang-zh">大模型拿主意，小模型盯日志。</span></h2>
-      <p class="lead"><span class="lang-en">A booting board prints far more than a frontier model should read. alb is built so each role can use a different model: the main agent plans and patches, a small local model sits next to the stream, and the two pass findings rather than raw logs.</span><span class="lang-zh">板子启动时打印的东西，远比大模型值得读的多。alb 让每个角色可以用不同的模型：主力助手负责规划和改代码，本地小模型守在日志流旁边，两边之间传的是结论，不是原始日志。</span></p>
+      <span class="eyebrow"><span class="lang-en">More of what alb is for</span><span class="lang-zh">alb 还想做到的</span></span>
+      <h2><span class="lang-en">Models that share the work. Sites far apart. A toolbox on the way.</span><span class="lang-zh">模型分工、两地调试，还有一箱分析工具在路上。</span></h2>
+      <p class="lead"><span class="lang-en">Four pages, each with its own moving picture. Every one says plainly what works today and what is still a plan.</span><span class="lang-zh">四个页面，各有一张会动的图。每一页都写明哪些现在能用，哪些还只是规划。</span></p>
     </div>
-    <div class="flow">
-      <article class="card card--uart">
+    <div class="grid grid--4 explore">
+      <a class="card xcard" href="models.html">
+        <div class="mini mini--relay" aria-hidden="true"><div class="many"><i style="width:92%"></i><i style="width:70%"></i><i style="width:84%"></i><i style="width:58%"></i><i style="width:76%"></i></div><i class="eye"></i><div class="few"><i></i><i style="width:60%"></i></div><i class="brain"></i></div>
+        <span class="pill pill--partial"><span class="lang-en">partly shipped</span><span class="lang-zh">部分实现</span></span>
+        <h3><span class="lang-en">Big model thinks, small model watches</span><span class="lang-zh">大模型拿主意，小模型盯日志</span></h3>
+        <p><span class="lang-en">The main brain next to the code; a small model next to the logs, on the hub, the bench PC or the board itself.</span><span class="lang-zh">主脑挨着代码；小模型守着日志，可以在 hub 旁边、台架电脑上，或者板子上。</span></p>
+        <span class="go"><span class="lang-en">How the hand-off works →</span><span class="lang-zh">看怎么交接 →</span></span>
+      </a>
+      <a class="card xcard" href="remote-debug.html">
+        <div class="mini mini--remote" aria-hidden="true"><i class="sq"></i><i class="wire"></i><i class="sq b"></i></div>
         <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
-        <h3><span class="lang-en">Everything the board says</span><span class="lang-zh">板子打印的全部内容</span></h3>
-        <p><span class="lang-en">UART from the first bootloader line, logcat, dmesg and the bench PC's USB logs, merged on one clock.</span><span class="lang-zh">从 bootloader 第一行开始的串口、logcat、dmesg，加上台架电脑的 USB 日志，按同一个时钟合在一起。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:100%"></b></div>
-        <div class="vol-label"><span class="lang-en">all of it, on disk</span><span class="lang-zh">全部落盘</span></div>
-      </article>
-      <article class="card card--kernel">
+        <h3><span class="lang-en">The brain at site A, the board at site B</span><span class="lang-zh">主脑在 A 地，板子在 B 地</span></h3>
+        <p><span class="lang-en">The bench agent dials out, so the remote site opens no inbound port. LAN, VPN or a TLS reverse proxy.</span><span class="lang-zh">台架 agent 往外拨，远端不用开入站端口。局域网、VPN、带 TLS 的反向代理都行。</span></p>
+        <span class="go"><span class="lang-en">Debugging across two sites →</span><span class="lang-zh">看两地怎么接 →</span></span>
+      </a>
+      <a class="card xcard" href="linux-analysis.html">
+        <div class="mini mini--flame" aria-hidden="true"><div><i class="hot" style="--w:34%"></i></div><div><i class="hot" style="--w:48%"></i><i style="--w:16%"></i></div><div><i style="--w:66%"></i><i style="--w:22%"></i></div><div><i class="c" style="--w:96%"></i></div></div>
+        <span class="pill pill--plan"><span class="lang-en">planned · the next main line</span><span class="lang-zh">规划中 · 后续主力</span></span>
+        <h3><span class="lang-en">A Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></h3>
+        <p><span class="lang-en">Profiling, the scheduler, locks, leaks, crash PC, eBPF and ftrace, network, logs: for dev boards, PCs and big servers.</span><span class="lang-zh">性能分析、调度器、锁、内存泄漏、崩溃 PC、eBPF 和 ftrace、网络、日志：开发板、PC、大型服务器都能用。</span></p>
+        <span class="go"><span class="lang-en">Eight questions, eight views →</span><span class="lang-zh">看八个问题八种视图 →</span></span>
+      </a>
+      <a class="card xcard" href="roundtable.html">
+        <div class="mini mini--table" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i></div>
         <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
-        <h3><span class="lang-en">Field model</span><span class="lang-zh">现场小模型</span></h3>
-        <p><span class="lang-en">A small local model next to the bench reads the whole stream, flags panics, boot stalls and watchdog resets. Cheap, private, always on.</span><span class="lang-zh">台架旁边的本地小模型读完整份日志，标出 panic、启动卡住、看门狗复位。便宜、数据不出内网、可以一直开着。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:100%"></b></div>
-        <div class="vol-label"><span class="lang-en">reads everything</span><span class="lang-zh">全量读</span></div>
-      </article>
-      <article class="card card--job">
-        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
-        <h3><span class="lang-en">Findings</span><span class="lang-zh">结论</span></h3>
-        <p><span class="lang-en">A few lines with timestamps and a pointer back to the raw log in the workspace, so the main model can check any claim.</span><span class="lang-zh">几行带时间戳的结论，附上指回工作区原始日志的位置，主力模型可以逐条核对。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:12%"></b></div>
-        <div class="vol-label"><span class="lang-en">a few lines</span><span class="lang-zh">寥寥几行</span></div>
-      </article>
-      <article class="card card--primary">
-        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
-        <h3><span class="lang-en">Main brain</span><span class="lang-zh">主力大脑</span></h3>
-        <p><span class="lang-en">Your coding agent reads the findings — or the raw log, through <code>alb_log_search</code>, whenever it wants — and decides the next change.</span><span class="lang-zh">你的编程助手读结论 —— 想看原始日志时也可以随时用 <code>alb_log_search</code> 直接查 —— 然后决定下一步怎么改。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:12%"></b></div>
-        <div class="vol-label"><span class="lang-en">reads only what it needs</span><span class="lang-zh">只读需要的</span></div>
-      </article>
+        <h3><span class="lang-en">The model round table</span><span class="lang-zh">模型圆桌</span></h3>
+        <p><span class="lang-en">Several models and you in one thread on one bug, with shared evidence that points back at the raw data.</span><span class="lang-zh">几个模型和你在一个对话里查同一个 bug，证据共用，每一条都能指回原始数据。</span></p>
+        <span class="go"><span class="lang-en">See the concept →</span><span class="lang-zh">看概念示意 →</span></span>
+      </a>
     </div>
     <div class="byo">
       <strong><span class="lang-en">Bring your own model</span><span class="lang-zh">模型随你选</span></strong>
@@ -1353,6 +1353,7 @@ run-agent.bat</pre>
           <li><b><span class="lang-en">Boards that are not Android</span><span class="lang-zh">不是安卓的板子</span></b><span class="s"><span class="lang-en">a bench agent on Linux that runs the Linux build of a vendor tool; telnet over a USB network link</span><span class="lang-zh">Linux 上的台架 agent，跑 Linux 版的厂商工具；USB 网卡上的 telnet</span></span></li>
           <li><b><span class="lang-en">MCP tools for the bench</span><span class="lang-zh">台架相关的 MCP 工具</span></b><span class="s"><span class="lang-en">flash, timeline, port and bench: today these are CLI only</span><span class="lang-zh">烧录、时间轴、端口、台架，现在只有命令行</span></span></li>
           <li><b><span class="lang-en">Field model hand-off</span><span class="lang-zh">现场小模型交接</span></b><span class="s"><span class="lang-en">a local model summarises streams for the main agent</span><span class="lang-zh">本地模型把日志流总结成结论交给主力助手</span></span></li>
+          <li><b><a href="linux-analysis.html"><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></a></b><span class="s"><span class="lang-en">profiling, scheduler, locks, leak detection, crash PC, eBPF and ftrace, network and logs, with views in the web UI; the next main line</span><span class="lang-zh">性能分析、调度器、锁、内存泄漏检测、崩溃 PC、eBPF 和 ftrace、网络、日志，结果在网页上画出来；后续的主力方向</span></span></li>
         </ul>
       </article>
       <article class="card card--kernel">
@@ -1362,6 +1363,7 @@ run-agent.bat</pre>
           <li><b><span class="lang-en">Linux servers</span><span class="lang-zh">Linux 服务器</span></b><span class="s"><span class="lang-en">BMC console, journald, kdump</span><span class="lang-zh">BMC 串口、journald、kdump</span></span></li>
           <li><b><span class="lang-en">Wireless bench</span><span class="lang-zh">无线台架</span></b><span class="s"><span class="lang-en">wireless debugging pairing; boards without cables</span><span class="lang-zh">无线调试配对；不插线的板子</span></span></li>
           <li><b><span class="lang-en">On-device models</span><span class="lang-zh">板上模型</span></b><span class="s"><span class="lang-en">entry points are already in place; no code yet</span><span class="lang-zh">接入口已经留好，代码还没写</span></span></li>
+          <li><b><a href="roundtable.html"><span class="lang-en">Model round table</span><span class="lang-zh">模型圆桌</span></a></b><span class="s"><span class="lang-en">several models and you in one thread in the web UI</span><span class="lang-zh">网页上几个模型和你在同一个对话里</span></span></li>
         </ul>
       </article>
     </div>
@@ -1452,6 +1454,10 @@ run-agent.bat</pre>
         <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
         <ul>
           <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="models.html"><span class="lang-en">Big and small models</span><span class="lang-zh">大小模型协作</span></a></li>
+          <li><a href="roundtable.html"><span class="lang-en">Model round table</span><span class="lang-zh">模型圆桌</span></a></li>
+          <li><a href="remote-debug.html"><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></a></li>
+          <li><a href="linux-analysis.html"><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></a></li>
           <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
           <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
           <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>

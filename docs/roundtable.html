@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The model round table (planned) — android-llm-bridge</title>
+<meta name="alb-title-en" content="The model round table (planned) — android-llm-bridge">
+<meta name="alb-title-zh" content="模型圆桌：几个模型一起查一个 bug（规划中）—— android-llm-bridge">
+<meta name="description" content="A planned web UI screen for android-llm-bridge: the main brain, a log watcher, an on-device model and the analysis tools in one conversation with you, with shared evidence that points back at the raw data. A concept sketch, and what the web assistant does today.">
+<link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/roundtable.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="android-llm-bridge">
+<meta property="og:title" content="The model round table (planned) — android-llm-bridge">
+<meta property="og:description" content="Planned: several models and you in one thread, working on one bug, with shared evidence that points back at the raw data.">
+<meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/roundtable.html">
+<meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f8fafd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/site/favicon.svg" type="image/svg+xml">
+<script>
+(function () {
+  var r = document.documentElement, l = null, t = null;
+  try { l = localStorage.getItem("alb-site-lang"); t = localStorage.getItem("alb-site-theme"); } catch (e) {}
+  if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
+  r.setAttribute("lang", l);
+  if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+  r.classList.add("js");
+})();
+</script>
+<link rel="stylesheet" href="assets/v3/tokens.css">
+<link rel="stylesheet" href="assets/site/site.css">
+<link rel="stylesheet" href="assets/site/feature.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap wrap--wide topbar__inner">
+    <a class="brand" href="./" aria-label="android-llm-bridge home">
+      <img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32">
+      <span class="brand__text">android-llm-bridge</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="./#topology"><span class="lang-en">How it works</span><span class="lang-zh">原理</span></a>
+      <a href="./#flash"><span class="lang-en">Flashing</span><span class="lang-zh">烧录</span></a>
+      <a href="./#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
+      <a href="models.html"><span class="lang-en">Models</span><span class="lang-zh">模型协作</span></a>
+      <a href="remote-debug.html"><span class="lang-en">Remote</span><span class="lang-zh">两地调试</span></a>
+      <a href="linux-analysis.html"><span class="lang-en">Analysis</span><span class="lang-zh">分析工具</span></a>
+      <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
+      <a href="https://github.com/TbusOS/android-llm-bridge/tree/main/docs"><span class="lang-en">Docs</span><span class="lang-zh">文档</span></a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" data-lang-btn>中</button>
+      <button class="icon-btn" type="button" data-theme-btn></button>
+      <a class="btn btn--tonal btn--small" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="btn--gh-label"><span class="lang-en">Star on GitHub</span><span class="lang-zh">GitHub 点星</span></span>
+      </a>
+      <button class="icon-btn menu-btn" type="button" data-menu-btn aria-expanded="false" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-hero">
+  <span class="shape shape--cookie" aria-hidden="true"></span>
+  <span class="shape shape--clover" aria-hidden="true"></span>
+  <div class="wrap">
+    <div class="crumbs"><a href="./"><span class="lang-en">android-llm-bridge home</span><span class="lang-zh">android-llm-bridge 首页</span></a><span>/</span><a href="models.html"><span class="lang-en">Models working together</span><span class="lang-zh">模型协作</span></a><span>/</span><span><span class="lang-en">Round table</span><span class="lang-zh">模型圆桌</span></span> <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></div>
+    <h1>
+      <span class="lang-en">Several models, <em>one thread</em>, one bug.</span>
+      <span class="lang-zh">几个模型，<em>一个对话</em>，查同一个 bug。</span>
+    </h1>
+    <p class="lead">
+      <span class="lang-en">The plan for the web UI: the main brain, a log watcher, a model on the board and the analysis tools sit in one conversation with you. Each says what it saw from where it sits, and the evidence collects in a panel beside the thread, every item pointing back at the raw data.</span>
+      <span class="lang-zh">网页界面的规划：主脑、日志哨兵、板上模型和分析工具，跟你坐在同一个对话里。每一位说的是它在自己那个位置上看到的东西；证据汇总在对话旁边的面板里，每一条都能指回原始数据。</span>
+    </p>
+    <div class="concept" style="margin-top:26px; max-width:860px">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19zM12 10v5M12 17.5v.5"/></svg>
+      <span><span class="lang-en"><b>This is a plan, not a feature.</b> Today the web assistant is one model in one conversation. The window below is a concept sketch of what several models in one thread could look like; the conversation is written by hand.</span><span class="lang-zh"><b>这是规划，不是现有功能。</b>现在的网页助手是一个模型、一个对话。下面的窗口是概念示意，画的是几个模型同在一个对话里大概什么样；对话内容是手写的。</span></span>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="table">
+  <div class="wrap">
+    <div class="fig" data-play>
+      <div class="fig__bar">
+        <div class="fig__title"><span class="lang-en">A debugging session at the round table</span><span class="lang-zh">圆桌上的一次调试</span> <span class="tagc"><span class="lang-en">concept · planned</span><span class="lang-zh">概念示意 · 规划中</span></span></div>
+        <div class="fig__ctl">
+          <button class="icon-btn" type="button" data-play-btn="replay" aria-label="Replay" title="Replay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5"/></svg></button>
+          <button class="icon-btn" type="button" data-play-btn="end" aria-label="Skip to the end" title="Skip to the end"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 5 9 7-9 7zM18 5v14"/></svg></button>
+        </div>
+      </div>
+      <div class="fig__progress" aria-hidden="true"><b></b></div>
+
+      <div class="table">
+        <div class="panel seats">
+          <h3><span class="lang-en">AT THE TABLE</span><span class="lang-zh">桌上坐着</span></h3>
+          <div class="who"><span class="ava" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.5-5.5 7-5.5s6.200 1.900 7 5.500"/></svg></span><span><b><span class="lang-en">You</span><span class="lang-zh">你</span></b><small><span class="lang-en">ask, decide, approve</span><span class="lang-zh">提问、拍板、点头</span></small></span></div>
+          <div class="who"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><span><b><span class="lang-en">Main brain</span><span class="lang-zh">主脑</span></b><small><span class="lang-en">big model · next to the code</span><span class="lang-zh">大模型 · 挨着代码</span></small></span></div>
+          <div class="who"><span class="ava ava--watch" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg></span><span><b><span class="lang-en">Log watcher</span><span class="lang-zh">日志哨兵</span></b><small><span class="lang-en">small local model · next to the logs</span><span class="lang-zh">本地小模型 · 守着日志</span></small></span></div>
+          <div class="who"><span class="ava ava--board" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><span><b><span class="lang-en">On-device model</span><span class="lang-zh">板上模型</span></b><small><span class="lang-en">runs on the board itself</span><span class="lang-zh">就跑在板子上</span></small></span></div>
+          <div class="who"><span class="ava ava--tools" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg></span><span><b><span class="lang-en">Analysis tools</span><span class="lang-zh">分析工具</span></b><small><span class="lang-en">profilers and tracers, with pictures</span><span class="lang-zh">性能和跟踪工具，带图</span></small></span></div>
+        </div>
+
+        <div class="panel thread">
+          <div class="msg" data-at="300"><span class="ava" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.5-5.5 7-5.5s6.200 1.900 7 5.500"/></svg></span><div><div class="msg__name"><span class="lang-en">You</span><span class="lang-zh">你</span></div><div class="msg__body"><span class="lang-en">board-a sometimes fails to rejoin Wi-Fi after suspend. Find out why.</span><span class="lang-zh">board-a 休眠唤醒以后偶尔连不上 Wi-Fi。查一下原因。</span></div></div></div>
+
+          <div class="msg msg--brain" data-at="1700"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><div><div class="msg__name"><span class="lang-en">Main brain</span><span class="lang-zh">主脑</span></div><div class="msg__body"><span class="lang-en">Splitting the work. Watcher: go through the UART and dmesg around the recent resumes and report only what is odd. On-device model: read the interrupt counts at the moment of resume. I'll read the driver's resume path.</span><span class="lang-zh">分一下工。哨兵：把最近几次唤醒前后的串口和 dmesg 过一遍，只报不对劲的。板上模型：读唤醒那一刻的中断计数。我去看驱动的 resume 路径。</span></div></div></div>
+
+          <div class="msg msg--watch" data-at="3800"><span class="ava ava--watch" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg></span><div><div class="msg__name"><span class="lang-en">Log watcher</span><span class="lang-zh">日志哨兵</span> <small><span class="lang-en">local model, bench side</span><span class="lang-zh">本地模型，台架这边</span></small></div><div class="msg__body"><span class="lang-en">Done. In the bad resumes the Wi-Fi firmware load times out, and the same supply warning comes right before it. Raw lines are at marks <span class="mark">A</span> and <span class="mark">B</span> on the timeline.</span><span class="lang-zh">看完了。出问题的那几次，唤醒后 Wi-Fi 固件加载都超时，紧挨着前面都有同一条供电告警。原文在时间轴的标记 <span class="mark">A</span> 和 <span class="mark">B</span>。</span></div></div></div>
+
+          <div class="msg msg--board" data-at="5800"><span class="ava ava--board" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span><div><div class="msg__name"><span class="lang-en">On-device model</span><span class="lang-zh">板上模型</span> <small><span class="lang-en">on board-a</span><span class="lang-zh">在 board-a 上</span></small></div><div class="msg__body"><span class="lang-en">At the moment of resume the Wi-Fi interrupt's count does not move; the other interrupts do. Same device the watcher named. <span class="mark">C</span></span><span class="lang-zh">唤醒那一刻，无线网卡的中断计数没有动，其余中断都在走。和哨兵点到的是同一个设备。<span class="mark">C</span></span></div></div></div>
+
+          <div class="msg msg--tools" data-at="7600"><span class="ava ava--tools" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg></span><div><div class="msg__name"><span class="lang-en">Analysis tools</span><span class="lang-zh">分析工具</span></div><div class="msg__body"><span class="lang-en">Sampled the resume path. Most of the time goes to waiting for the firmware. Picture attached. <span class="mark">D</span></span><span class="lang-zh">对唤醒路径做了采样，时间大多花在等固件上。附图。<span class="mark">D</span></span>
+            <div class="thumb" aria-hidden="true"><div class="flame"><div class="flame__row"><span class="hot" style="--w:52%"></span></div><div class="flame__row"><span class="hot" style="--w:64%"></span><span class="b" style="--w:14%"></span></div><div class="flame__row"><span style="--w:78%"></span><span class="c" style="--w:18%"></span></div></div></div>
+          </div></div></div>
+
+          <div class="msg msg--brain" data-at="9600"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><div><div class="msg__name"><span class="lang-en">Main brain</span><span class="lang-zh">主脑</span></div><div class="msg__body"><span class="lang-en">Four pieces of evidence, one place: on resume the driver loads firmware before its supply is back. Patch: wait for the supply in resume. It is built. Flash it and verify?</span><span class="lang-zh">四条证据指向同一处：唤醒时，驱动在供电恢复之前就去加载固件了。补丁：resume 里先等供电就绪。已经编好，烧进去验证吗？</span></div></div></div>
+
+          <div class="msg" data-at="11400"><span class="ava" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.5-5.5 7-5.5s6.200 1.900 7 5.500"/></svg></span><div><div class="msg__name"><span class="lang-en">You</span><span class="lang-zh">你</span></div><div class="msg__body"><span class="lang-en">Flash it.</span><span class="lang-zh">烧。</span></div></div></div>
+
+          <div class="msg msg--brain" data-at="12600"><span class="ava ava--brain" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg></span><div><div class="msg__name"><span class="lang-en">Main brain</span><span class="lang-zh">主脑</span></div><div class="msg__body"><span class="lang-en">Flashed. Watcher, keep an eye on the next resumes.</span><span class="lang-zh">烧好了。哨兵，接着盯后面的唤醒。</span><br><span class="call">alb flash write boot_a images/board-a/boot.img -y</span></div></div></div>
+
+          <div class="msg msg--watch" data-at="14600"><span class="ava ava--watch" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg></span><div><div class="msg__name"><span class="lang-en">Log watcher</span><span class="lang-zh">日志哨兵</span></div><div class="msg__body"><span class="lang-en">Every resume since the flash: no supply warning, Wi-Fi back each time.</span><span class="lang-zh">烧完之后的每一次唤醒：没有再出现供电告警，Wi-Fi 每次都连上了。</span></div></div></div>
+        </div>
+
+        <div class="panel outp">
+          <h3><span class="lang-en">ANALYSIS OUTPUT</span><span class="lang-zh">分析输出</span></h3>
+          <div class="outp__block"><b><span class="lang-en">Evidence</span><span class="lang-zh">证据</span></b>
+            <ul>
+              <li data-at="4000"><span class="mark">A</span> <span class="mark">B</span> <span class="lang-en">firmware load timeout after a supply warning · watcher</span><span class="lang-zh">供电告警之后固件加载超时 · 哨兵</span></li>
+              <li data-at="6000"><span class="mark">C</span> <span class="lang-en">the Wi-Fi interrupt is silent at resume · on-device model</span><span class="lang-zh">唤醒时无线网卡的中断没有动 · 板上模型</span></li>
+              <li data-at="7800"><span class="mark">D</span> <span class="lang-en">resume time goes to waiting for firmware · analysis tools</span><span class="lang-zh">唤醒的时间花在等固件上 · 分析工具</span></li>
+            </ul>
+          </div>
+          <div class="outp__block" data-at="9800"><b><span class="lang-en">Conclusion</span><span class="lang-zh">结论</span></b><span class="lang-en">On resume the driver loads firmware before its supply is ready.</span><span class="lang-zh">唤醒时，驱动在供电就绪之前就去加载固件。</span></div>
+          <div class="outp__block" data-at="9800"><b><span class="lang-en">Change</span><span class="lang-zh">改动</span></b><span class="lang-en">Wait for the supply in the driver's resume path.</span><span class="lang-zh">在驱动的 resume 路径里先等供电就绪。</span></div>
+          <div class="outp__block" data-at="14800"><b><span class="lang-en">Verified</span><span class="lang-zh">验证</span></b><span class="lang-en">Flashed; the watcher saw no recurrence in the resumes that followed.</span><span class="lang-zh">已烧录；之后的唤醒里哨兵没有再看到这个问题。</span></div>
+          <p class="src"><span class="lang-en">Each mark opens the raw lines or the picture it came from.</span><span class="lang-zh">每个标记都能点开，看到它出自哪几行原文或哪张图。</span></p>
+        </div>
+      </div>
+      <p class="fig__cap"><span class="lang-en">A hand-written concept of a planned screen. No model produced these messages, and the bug, the board and the evidence are invented.</span><span class="lang-zh">规划中界面的概念示意，手写的。这些消息不是模型生成的；bug、板子和证据都是编的。</span></p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tone" id="seats">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">The seats</span><span class="lang-zh">每个位置</span></span>
+      <h2><span class="lang-en">Each one sees something the others cannot.</span><span class="lang-zh">每一位看到的，别的位置看不到。</span></h2>
+      <p class="lead"><span class="lang-en">The point of several models is not more opinions. It is that they sit in different places: next to the code, next to the log stream, on the board, on the profiler.</span><span class="lang-zh">放几个模型进来，不是为了多几份意见，而是因为它们坐的地方不一样：挨着代码、守着日志流、在板子上、在分析工具旁边。</span></p>
+    </div>
+    <div class="grid grid--4 cards4">
+      <article class="card card--primary">
+        <span class="pill pill--today"><span class="lang-en">shipped, on its own</span><span class="lang-zh">已实现（单独用）</span></span>
+        <h3><span class="lang-en">Main brain</span><span class="lang-zh">主脑</span></h3>
+        <p><span class="lang-en">Your coding agent on the build server. It already drives boards over MCP and the CLI: it edits, builds, flashes and reads logs.</span><span class="lang-zh">编译机上你的编程助手。它现在已经能经 MCP 和命令行调板子：改代码、编译、烧录、读日志。</span></p>
+      </article>
+      <article class="card card--uart">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Log watcher</span><span class="lang-zh">日志哨兵</span></h3>
+        <p><span class="lang-en">A small local model that reads the whole stream. The local-model backend exists today; watching by itself and reporting into a shared thread does not.</span><span class="lang-zh">读完整条日志流的本地小模型。接本地模型的后端现在就有；自己盯日志、往共同的对话里汇报，还没有。</span></p>
+      </article>
+      <article class="card card--kernel">
+        <span class="pill pill--design"><span class="lang-en">design only</span><span class="lang-zh">只有设计</span></span>
+        <h3><span class="lang-en">On-device model</span><span class="lang-zh">板上模型</span></h3>
+        <p><span class="lang-en">Reads the board's own counters and files at the moment something happens, without a round trip over the link.</span><span class="lang-zh">事情发生的那一刻，直接读板子自己的计数和文件，不用隔着链路一来一回。</span></p>
+        <p class="more"><a href="on-device-agent.html"><span class="lang-en">The design →</span><span class="lang-zh">看设计 →</span></a></p>
+      </article>
+      <article class="card card--job">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Analysis tools</span><span class="lang-zh">分析工具</span></h3>
+        <p><span class="lang-en">Profilers, tracers and leak detectors that answer with a picture as well as a sentence.</span><span class="lang-zh">性能分析、跟踪、内存泄漏检测这些工具，回答的时候除了一句话还带一张图。</span></p>
+        <p class="more"><a href="linux-analysis.html"><span class="lang-en">The toolbox →</span><span class="lang-zh">看工具箱 →</span></a></p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="today">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Today and later</span><span class="lang-zh">现在和以后</span></span>
+      <h2><span class="lang-en">What the web assistant does now, and what the round table adds.</span><span class="lang-zh">网页助手现在能做什么，圆桌再加什么。</span></h2>
+    </div>
+    <div class="grid grid--2 cards2">
+      <article class="card">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">One model, one conversation</span><span class="lang-zh">一个模型，一个对话</span></h3>
+        <ul>
+          <li><span class="lang-en">An assistant in the web UI that calls 35 board tools while it answers</span><span class="lang-zh">网页界面里的助手，回答时能调 35 个板子工具</span></li>
+          <li><span class="lang-en">Runs on Ollama, an OpenAI-compatible server or Anthropic</span><span class="lang-zh">可以接 Ollama、OpenAI 兼容的服务或 Anthropic</span></li>
+          <li><span class="lang-en">Conversations are saved and can be listed and replayed with <code>alb session</code></span><span class="lang-zh">对话会保存下来，用 <code>alb session</code> 能列出和回放</span></li>
+        </ul>
+        <p class="src"><code>src/alb/api/chat_route.py</code> · <code>src/alb/mcp/executor.py</code> · <code>src/alb/agent/backends/</code></p>
+        <p class="more"><a href="webui-preview.html"><span class="lang-en">See the web UI →</span><span class="lang-zh">看网页界面 →</span></a></p>
+      </article>
+      <article class="card card--filled">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Several models, one thread</span><span class="lang-zh">几个模型，一个对话</span></h3>
+        <ul>
+          <li><span class="lang-en">Each message says which model wrote it and where that model runs</span><span class="lang-zh">每条消息写明是哪个模型说的、它跑在哪</span></li>
+          <li><span class="lang-en">Evidence is a shared list of marks that point back at raw logs and pictures</span><span class="lang-zh">证据是一张大家共用的标记表，每个标记指回原始日志或图</span></li>
+          <li><span class="lang-en">Analysis tools post views into the thread, not only text</span><span class="lang-zh">分析工具往对话里发的是视图，不只是文字</span></li>
+          <li><span class="lang-en">You still decide: anything that changes the board waits for your yes</span><span class="lang-zh">拍板的还是你：会改板子的动作，等你点头</span></li>
+        </ul>
+      </article>
+    </div>
+    <div class="next" style="margin-top:16px">
+      <a class="card" href="models.html"><span class="pill pill--partial"><span class="lang-en">partly shipped</span><span class="lang-zh">部分实现</span></span><h3><span class="lang-en">Big and small models</span><span class="lang-zh">大小模型怎么分工</span></h3><p><span class="lang-en">The hand-off between the watcher and the main brain.</span><span class="lang-zh">哨兵和主脑之间怎么交接。</span></p></a>
+      <a class="card" href="linux-analysis.html"><span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span><h3><span class="lang-en">The Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></h3><p><span class="lang-en">Where the pictures in the thread come from.</span><span class="lang-zh">对话里那些图是从哪来的。</span></p></a>
+      <a class="card" href="remote-debug.html"><span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span><h3><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></h3><p><span class="lang-en">The seats do not have to be in one building.</span><span class="lang-zh">这些位置不用在同一栋楼里。</span></p></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="./"><img class="brand__mark" src="assets/site/favicon.svg" alt="" width="32" height="32"><span>android-llm-bridge</span></a>
+        <p class="muted" style="margin-top:14px; font-size:14px; max-width:320px"><span class="lang-en">An open-source debugging bridge between AI agents and real hardware.</span><span class="lang-zh">AI Agent 和真实硬件之间的开源调试桥。</span></p>
+      </div>
+      <div>
+        <h4><span class="lang-en">Project</span><span class="lang-zh">项目</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge">GitHub</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/CONTRIBUTING.md"><span class="lang-en">Contributing</span><span class="lang-zh">参与贡献</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/LICENSE">Apache 2.0</a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/project-plan.md"><span class="lang-en">Project plan</span><span class="lang-zh">项目计划</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Docs</span><span class="lang-zh">文档</span></h4>
+        <ul>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/install.md"><span class="lang-en">Install</span><span class="lang-zh">安装</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/llm-integration.md"><span class="lang-en">LLM integration</span><span class="lang-zh">接入大模型</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/dial-home-runbook.md"><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></a></li>
+          <li><a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/design-decisions.md"><span class="lang-en">Design decisions</span><span class="lang-zh">设计决策</span></a></li>
+        </ul>
+      </div>
+      <div>
+        <h4><span class="lang-en">Pages</span><span class="lang-zh">页面</span></h4>
+        <ul>
+          <li><a href="webui-preview.html"><span class="lang-en">Web UI gallery</span><span class="lang-zh">网页界面图集</span></a></li>
+          <li><a href="models.html"><span class="lang-en">Big and small models</span><span class="lang-zh">大小模型协作</span></a></li>
+          <li><a href="roundtable.html" aria-current="page"><span class="lang-en">Model round table</span><span class="lang-zh">模型圆桌</span></a></li>
+          <li><a href="remote-debug.html"><span class="lang-en">Debugging across two sites</span><span class="lang-zh">两地调试</span></a></li>
+          <li><a href="linux-analysis.html"><span class="lang-en">Linux analysis toolbox</span><span class="lang-zh">Linux 分析工具箱</span></a></li>
+          <li><a href="on-device-agent.html"><span class="lang-en">On-device agent</span><span class="lang-zh">设备端 Agent</span></a></li>
+          <li><a href="on-device-model-selection.html"><span class="lang-en">On-device model selection</span><span class="lang-zh">设备端模型选型</span></a></li>
+          <li><a href="dev-team.html"><span class="lang-en">How we ship</span><span class="lang-zh">我们怎么交付</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer__fine">
+      <span><span class="lang-en">Product names are trademarks of their owners and are used only to describe compatibility.</span><span class="lang-zh">文中产品名称归各自所有者，仅用于说明兼容性。</span></span>
+      <span>Apache License 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site/site.js" defer></script>
+<script src="assets/site/play.js" defer></script>
+</body>
+</html>
