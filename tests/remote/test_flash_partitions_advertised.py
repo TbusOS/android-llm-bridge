@@ -59,10 +59,13 @@ def _conn(**kw) -> AgentConnection:
 # ── the agent side: the allowlist must leave the machine that owns it ──
 
 
-def test_hello_carries_the_allowlist(monkeypatch):
+def test_hello_reports_no_list_even_with_one_left_in_agent_conf(monkeypatch):
+    """ADR-070: no list limits partition names any more, so none is offered
+    — a picker built from a leftover line would hide partitions the agent
+    accepts."""
     monkeypatch.setattr(agent_mod, "_FLASH_PARTITIONS", frozenset({"cfg", "boot"}))
     hello = json.loads(agent_mod._hello("a", "n", None))
-    assert hello["flash_partitions"] == ["boot", "cfg"], "sorted, so the UI order is stable"
+    assert hello["flash_partitions"] == []
 
 
 def test_hello_reports_empty_when_no_allowlist_is_configured(monkeypatch):
@@ -78,9 +81,9 @@ def test_allowlist_and_hello_cannot_drift(monkeypatch):
     picker offers a name the very same process will refuse."""
     monkeypatch.setattr(agent_mod, "_FLASH_PARTITIONS", frozenset({"cfg"}))
     advertised = json.loads(agent_mod._hello("a", "n", None))["flash_partitions"]
-    assert advertised, "guard: the case only means something when non-empty"
-    for name in advertised:
-        assert agent_mod._partition_allowed(name)
+    assert advertised == [], "empty = any well-formed name"
+    for name in ("cfg", "boot", "vendor_x"):
+        assert agent_mod._partition_allowed(name), name
 
 
 # ── the hub side: carry it, don't invent it ────────────────────────

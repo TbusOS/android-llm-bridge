@@ -44,30 +44,22 @@ log_file=logs/agent.log
 #   fastboot_path=D:\platform-tools\fastboot.exe
 #fastboot_path=
 
-# Partition allowlist for `alb flash write`. Empty = any well-formed name is
-# accepted (names are still shape-checked here: no separators, no spaces, no
-# leading dash, since the name becomes an argv element). Set it when a bench
-# should only ever write a known set — flashing the wrong partition is not
-# undoable and the board may not come back to report it.
-#   flash_partitions=vendor_cfg,boot,dtbo
-#flash_partitions=
-
-# One bench host, several boards swapped on its cable: give each board its
-# own list instead (ADR-063). The board names are the hub's board table
-# names (`alb bench board`); the hub sends the board it has chosen with
-# every job. With any per-board list set:
-#   - a partition op must name a board that has a list here, and the
-#     partition must be on THAT board's list — otherwise FLASH_BOARD_NOT_LISTED
-#     or FLASH_PARTITION_REJECTED, before anything is written;
-#   - flash_partitions above must stay unset (the agent refuses to start);
-#   - an empty per-board line is refused too: dropped, it would widen the
-#     list to any name (or skip the product check).
-# fastboot_product.<board> is what `fastboot getvar product` answers on that
-# board. Set it and every write first asks the device; another board on the
-# cable is refused with FLASH_BOARD_MISMATCH and nothing is written.
-#   flash_partitions.board-a=boot,dtbo,vendor_cfg
+# Which partitions may be written is not set here (ADR-070): a package's
+# own manifest says which partitions it writes and with which file
+# (`alb flash plan --only`), and partition names are only shape-checked
+# (no separators, no spaces, no leading dash — the name becomes an argv
+# element). flash_partitions / flash_partitions.<board> lines from older
+# configs are still read, ignored, and named in the start-up log.
+#
+# Which board is on the cable: fastboot_product.<board> is what
+# `fastboot getvar product` answers on that board (board names are the
+# hub's board table names, `alb bench board`). Once any board has one,
+# every write first asks the device, and is refused — nothing written —
+# when no board is chosen on the hub, when the chosen board has no
+# product here (FLASH_BOARD_NOT_LISTED), or when the answer differs
+# (FLASH_BOARD_MISMATCH). So give EVERY board on this host its product.
 #   fastboot_product.board-a=board_a_product
-#   flash_partitions.board-b=boot_a,boot_b,dtbo_a,dtbo_b
+#   fastboot_product.board-b=board_b_product
 
 # ── Qualcomm 9008 / EDL flashing (optional, ADR-066) ──────────────────
 # For boards that only take an image in Qualcomm's emergency download mode

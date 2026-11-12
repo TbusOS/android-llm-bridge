@@ -427,17 +427,13 @@ def _hello(agent_id: str, name: str, token: str | None) -> str:
         # instead of reading a capability string that had to be kept in
         # step by hand. Fastboot rows are present only when the tool is.
         ops=[spec.describe() for spec in _OPS.values()],
-        # The allowlist travels with the hello because THIS side is the one
-        # that can be sure — the hub cannot know which partitions a given
-        # bench permits, and a UI that guesses offers names the agent will
-        # refuse. Empty list = no allowlist configured = any well-formed name
-        # (the agent still applies its shape check either way), which is a
-        # different statement from "no partitions allowed" and must stay
-        # distinguishable at the far end.
-        flash_partitions=sorted(_FLASH_PARTITIONS),
-        # Per-board lists (ADR-063 phase 2): {board: {"partitions": [...] or
-        # None, "product": "..." or None}}. None = not configured for that
-        # board — never "any", which is what an empty flash_partitions means.
+        # Always empty since ADR-070: no list limits partition names, and a
+        # hub reads an empty list as "any well-formed name" (the agent's
+        # shape check still applies). Sent so a hub that reads the field
+        # keeps working.
+        flash_partitions=[],
+        # {board: {"partitions": None, "product": "..."}}: the boards whose
+        # identity this agent checks before a write (ADR-063 phase 2).
         boards=_boards_view(),
         # Outcome of the last remote update, if any (ADR-060).
         update=_LAST_UPDATE or None,
@@ -823,17 +819,17 @@ class _JobReader:
 # channel is handled far from the arg parsing, and threading the values
 # through every call would be noise.
 _FASTBOOT_PATH = ""
+# `flash_partitions` / `flash_partitions.<board>` (ADR-063 phase 2) are read
+# but no longer limit anything (ADR-070, 2026-11-12): which partitions a
+# package writes is the vendor's manifest's to say, and a hand-kept copy of
+# it here refused a whole debug package for a board whose list had 3 of its
+# 24 partitions. Kept parseable so an agent.conf that has them still starts;
+# the start-up log says they are ignored.
 _FLASH_PARTITIONS: frozenset[str] = frozenset()
-# Per-board lists (ADR-063 phase 2), from `flash_partitions.<board>` and
-# `fastboot_product.<board>` in agent.conf. One bench host, one USB cable,
-# boards swapped on it: a single list had to be the union of every board's
-# partitions, so a name only one board has was accepted for all of them.
-# Any per-board list puts this agent in per-board mode — a partition op must
-# then name a listed board, and the global list may not be set as well.
-# The hub sends the board it has chosen (`alb bench board use`); it is not
-# trusted further than that: the agent checks the name against its own
-# lists, and with a product configured, asks the device who it is.
 _BOARD_PARTITIONS: dict[str, frozenset[str]] = {}
+# `fastboot_product.<board>`: who the board on the cable must say it is
+# before anything is written to it. Once any board has one, every write
+# must name a board that has one (see _check_board_identity).
 _BOARD_PRODUCT: dict[str, str] = {}
 # Where this agent's own log lands (None = file logging off). It is the only
 # file `log-tail agent` will ever read.
@@ -920,60 +916,28 @@ def _oem_allowed(command: str) -> bool:
 
 
 def _partition_allowed(name: str, board: Any = None) -> bool:
-    """Partition names this agent will pass to fastboot.
-
-    Deliberately a shape check plus an optional allowlist, both evaluated
-    HERE. `_PARTITION_RE` alone already stops the dangerous class — a name
-    with a path separator, a space, or a leading dash would otherwise turn
-    into an extra argv element or a path escape once fastboot parses it.
-    `erase` shares the list with `flash`: erasing a partition takes no more
-    authority than rewriting it, and a second list would only be a second
-    thing to keep in step."""
+    """Partition names this agent will pass to fastboot: a shape check only.
+    `_PARTITION_RE` stops the dangerous class — a name with a path
+    separator, a space, or a leading dash would otherwise turn into an extra
+    argv element or a path escape once fastboot parses it. Which partitions
+    a board has is the bootloader's to say (ADR-070)."""
     return _partition_refusal(name, board) is None
 
 
 def _boards_view() -> dict[str, dict[str, Any]]:
-    """What hello, the start-up log and --self-check report per board."""
-    return {
-        b: {
-            "partitions": sorted(_BOARD_PARTITIONS[b]) if b in _BOARD_PARTITIONS else None,
-            "product": _BOARD_PRODUCT.get(b),
-        }
-        for b in sorted(set(_BOARD_PARTITIONS) | set(_BOARD_PRODUCT))
-    }
+    """What hello, the start-up log and --self-check report per board.
+    `partitions` is always None: no list limits the names any more
+    (ADR-070), and a hub reads None as "not configured", never as "none"."""
+    return {b: {"partitions": None, "product": _BOARD_PRODUCT.get(b)} for b in sorted(_BOARD_PRODUCT)}
 
 
 def _partition_refusal(name: str, board: Any = None) -> tuple[str, str] | None:
-    """None when `name` may go to fastboot for `board`; otherwise (code,
-    reason). Code "" means the parameter's own rejection code, and the
-    reason is "" where the old one-line message already says it all.
-
-    In per-board mode a request without a board, or naming a board with no
-    list here, is refused outright (FLASH_BOARD_NOT_LISTED): falling back
-    to "any name" or to the union is exactly what the per-board lists are
-    there to stop."""
+    """None when `name` may go to fastboot; otherwise (code, reason) — code
+    "" means the parameter's own rejection code. `board` is no longer
+    consulted for names (ADR-070); who the board is, is checked by
+    _check_board_identity."""
     if not _PARTITION_RE.match(name):
         return "", ""
-    if not _BOARD_PARTITIONS:
-        if _FLASH_PARTITIONS and name not in _FLASH_PARTITIONS:
-            return "", ""
-        return None
-    listed = ", ".join(sorted(_BOARD_PARTITIONS))
-    if not isinstance(board, str) or not board:
-        return (
-            "FLASH_BOARD_NOT_LISTED",
-            f" — this agent keeps a partition list per board ({listed}) and the "
-            "request names no board; choose one on the hub with `alb bench board use`",
-        )
-    allowed = _BOARD_PARTITIONS.get(board)
-    if allowed is None:
-        return (
-            "FLASH_BOARD_NOT_LISTED",
-            f" — this agent has no partition list for board {board[:64]!r} "
-            f"(lists for: {listed}); add flash_partitions.<board> to agent.conf",
-        )
-    if name not in allowed:
-        return "", f" — not on board {board!r}'s list"
     return None
 
 
@@ -3492,12 +3456,31 @@ async def _check_board_identity(spec: OpSpec, req: Mapping[str, Any], fastboot: 
     on the cable. Someone swaps the cable and forgets `alb bench board use`,
     and every write would go to the other board under the wrong list. One
     ~20 ms query before anything is written closes that."""
-    if not spec.mutates or spec.needs != "fastboot-device":
+    if not spec.mutates or spec.needs != "fastboot-device" or not _BOARD_PRODUCT:
         return
     board = req.get("board")
-    want = _BOARD_PRODUCT.get(board) if isinstance(board, str) else None
+    have = ", ".join(sorted(_BOARD_PRODUCT))
+    # Once any board has a product, a write that cannot be checked is
+    # refused. These refusals used to come from the per-board partition
+    # lists (a request with no board, or a board without a list); with
+    # the lists gone (ADR-070) a forgotten `alb bench board use` would
+    # otherwise write to whatever board is on the cable, unchecked.
+    if not isinstance(board, str) or not board:
+        raise _JobRejected(
+            "FLASH_BOARD_NOT_LISTED",
+            f"this agent checks which board is on the cable before writing "
+            f"(fastboot_product for: {have}) and the request names no board — choose "
+            "one on the hub with `alb bench board use`; nothing was changed",
+        )
+    want = _BOARD_PRODUCT.get(board)
     if not want:
-        return
+        raise _JobRejected(
+            "FLASH_BOARD_NOT_LISTED",
+            f"board {board[:64]!r} has no fastboot_product in agent.conf (set for: {have}), "
+            "so this agent cannot check it is the board on the cable — add "
+            f"fastboot_product.{board[:64]}=<what `alb flash getvar product` answers>; "
+            "nothing was changed",
+        )
     got, text = await _device_product(fastboot)
     if got == want:
         return
@@ -5844,9 +5827,9 @@ def _banner_lines(
             for i, (board, row) in enumerate(boards.items()):
                 product = row.get("product") or "not checked"
                 names = row.get("partitions")
-                count = "no list" if names is None else _plural(len(names), "partition")
+                count = "" if names is None else f"  {_plural(len(names), 'partition'):>13}"
                 label = "  boards    " if i == 0 else " " * 12
-                body.append(f"{label}{board:<{width}}  product {product:<11}  {count:>13}")
+                body.append(f"{label}{board:<{width}}  product {product:<11}{count}".rstrip())
         elif partitions:
             body.append(
                 f"  partitions  {_plural(len(partitions), 'name')}, the same for every board"
@@ -5902,7 +5885,7 @@ def _show_banner(args: argparse.Namespace) -> None:
         build=_BUILD,
         fastboot=_fastboot_path(),
         boards=_boards_view(),
-        partitions=_FLASH_PARTITIONS,
+        partitions=frozenset(),
         edl=(str(edl[0]), str(edl[1])) if edl else None,
         edl_problem=_EDL_PROBLEM,
         tools=sorted(_TOOLS),
@@ -6070,17 +6053,14 @@ def _log_environment(args: argparse.Namespace) -> None:
     # Say it at startup, not at the first failed flash: "no fastboot here" is
     # a five-minute fix on this host and an hour of confusion from the hub.
     if _fastboot_path():
-        if _BOARD_PARTITIONS:
-            allow = "per board"
-        elif _FLASH_PARTITIONS:
-            allow = ",".join(sorted(_FLASH_PARTITIONS))
-        else:
-            allow = "(any well-formed)"
-        _log.info("fastboot: %s · partitions %s", _fastboot_path(), allow, extra=detail)
+        _log.info("fastboot: %s · partitions: any well-formed name", _fastboot_path(), extra=detail)
+        if _FLASH_PARTITIONS or _BOARD_PARTITIONS:
+            _log.warning(
+                "flash_partitions in agent.conf is no longer used (ADR-070): which partitions "
+                "a package writes is its manifest's to say — the lines can be removed"
+            )
         for board, row in _boards_view().items():
-            names = ",".join(row["partitions"]) if row["partitions"] is not None else "(no list)"
-            product = row["product"] or "(not checked)"
-            _log.info("board %s: product %s · partitions %s", board, product, names, extra=detail)
+            _log.info("board %s: product %s", board, row["product"], extra=detail)
     else:
         _log.info(
             "fastboot: not found — this agent will NOT advertise the fastboot "
@@ -6149,15 +6129,6 @@ def _apply_flash_config(args: argparse.Namespace) -> None:
     # would be dropped, and the agent would be back to "any name"; a global
     # list beside per-board ones is either ignored (surprise) or used for
     # requests without a board (the union again).
-    empty = sorted(b for b, names in _BOARD_PARTITIONS.items() if not names)
-    if empty:
-        sys.exit(f"flash_partitions.{empty[0]} lists no partitions — name some, or remove the line")
-    if _BOARD_PARTITIONS and _FLASH_PARTITIONS:
-        sys.exit(
-            "flash_partitions and flash_partitions.<board> are both set — with per-board "
-            "lists, every partition must be on the list of the board it is meant for; "
-            "remove flash_partitions"
-        )
     # A tool line that cannot be right on any host (a missing tool_exe, a bad
     # regex) refuses the start, as an unknown key does; one whose exe or root
     # is absent right now is logged and not offered (ADR-068).

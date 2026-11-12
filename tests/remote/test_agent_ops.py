@@ -162,12 +162,14 @@ def test_partition_kind_rejects_with_the_partition_code(value):
     assert _rejects(p, value) == "FLASH_PARTITION_REJECTED"
 
 
-def test_partition_kind_honours_the_allowlist(monkeypatch):
-    """The row says `partition`; the allowlist it means is this bench's."""
+def test_partition_kind_checks_the_shape_only(monkeypatch):
+    """The row says `partition`: a name fastboot cannot mistake for an
+    option or a path. No list (ADR-070), even if agent.conf still has one."""
     monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"vendor_cfg"}))
     p = _param(name="partition", kind="partition")
     assert p.resolve({"partition": "vendor_cfg"}) == "vendor_cfg"
-    assert _rejects(p, "boot") == "BENCH_PARAM_REJECTED"
+    assert p.resolve({"partition": "boot"}) == "boot"
+    assert _rejects(p, "-boot") == "BENCH_PARAM_REJECTED"
 
 
 @pytest.mark.parametrize("value", ["a", "b"])

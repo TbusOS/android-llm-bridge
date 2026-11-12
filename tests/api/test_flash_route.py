@@ -271,6 +271,15 @@ def test_plan_from_line_resumes_and_the_run_must_use_it_too(monkeypatch: pytest.
     assert ok.status_code == 200 and len(svc.runs) == 1
 
 
+def test_plan_only_reaches_the_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, _PlanService())
+    rel = _workspace_package()
+    with TestClient(create_app()) as c:
+        body = c.post("/api/flash/plan", json={"manifest": rel, "only": ["boot_a"]}).json()
+    assert body["ok"] is True, body["problems"]
+    assert [r["skip"] for r in body["rows"]] == ["", "not in --only", ""]
+
+
 def test_plan_manifest_must_be_in_the_workspace(monkeypatch):
     _install(monkeypatch, _PlanService())
     with TestClient(create_app()) as c:

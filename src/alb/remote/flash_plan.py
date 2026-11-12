@@ -365,7 +365,11 @@ def _split(values: list[str]) -> list[str]:
 
 
 def apply_skips(
-    rows: list[PlanRow], skip: list[str], skip_actions: list[str], from_line: int = 0
+    rows: list[PlanRow],
+    skip: list[str],
+    skip_actions: list[str],
+    from_line: int = 0,
+    only: list[str] | None = None,
 ) -> list[str]:
     """Mark skipped rows; return problems.
 
@@ -377,9 +381,35 @@ def apply_skips(
     `from_line` resumes a plan that stopped: rows before that manifest line
     are skipped, except `getvar` checks — they write nothing, and they are
     what makes sure the board is still the one the package is for. It must
-    name a row (a typo would otherwise resume from somewhere else)."""
+    name a row (a typo would otherwise resume from somewhere else).
+
+    `only` is the other way round (ADR-070): flash / erase rows of the
+    partitions named run, every other flash / erase row is skipped, and
+    rows without a partition (getvar checks, oem, reboots, waits) run as
+    the manifest has them — `--skip-action` drops those. Which image goes
+    with which partition is still the manifest's to say. A name the
+    manifest does not have is a problem, as for `--skip`; with both given,
+    which wins would be a guess, so that is refused too."""
     problems: list[str] = []
     partitions = sorted({r.partition for r in rows if r.partition})
+    picked = _split(only or [])
+    if picked and _split(skip):
+        problems.append(
+            "--only and --skip cannot both be given — --only already leaves out every "
+            "partition it does not name"
+        )
+    elif picked:
+        for name in picked:
+            if not PARTITION_RE.match(name):
+                problems.append(f"--only {_show(name)} is not a well-formed partition name")
+            elif name not in partitions:
+                shown = ", ".join(partitions[:40]) + (" ..." if len(partitions) > 40 else "")
+                problems.append(
+                    f"--only {name} matches no row (partitions in this manifest: {shown})"
+                )
+        for r in rows:
+            if r.partition and r.partition not in picked:
+                r.skip = "not in --only"
     for name in _split(skip):
         if not PARTITION_RE.match(name):
             problems.append(f"--skip {_show(name)} is not a well-formed partition name")
@@ -607,6 +637,7 @@ async def build_plan(
     skip_actions: list[str],
     agent: AgentView | None,
     from_line: int = 0,
+    only: list[str] | None = None,
 ) -> Plan:
     """Parse, resolve, hash and check — the whole plan or its problems.
 
@@ -626,7 +657,7 @@ async def build_plan(
         except UnicodeDecodeError:
             return Plan(name, [], ["the manifest is not UTF-8 text"])
         rows, problems = parse_manifest(text)
-        problems += apply_skips(rows, skip, skip_actions, from_line)
+        problems += apply_skips(rows, skip, skip_actions, from_line, only)
         problems += _resolve_files(rows, manifest.parent, root)
         problems += check_agent(rows, agent)
         return Plan(name, rows, problems, fingerprint(name, rows))

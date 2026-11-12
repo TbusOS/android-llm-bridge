@@ -36,6 +36,10 @@ tags: [permissions, security]
 adb / ssh 推送到 `/system/` 要确认、推到 `/dev/block/` 直接拒绝,adb 重启到 recovery / bootloader 要确认,
 网页终端另有一份名单(任意 `reboot`、`mount rw`、`fastboot flash` 等)要弹框确认。这些都已去掉。
 
+2026-11-12 去掉的还有台架 agent.conf 里的分区名单(`flash_partitions` / `flash_partitions.<board>`,不在名单上的分区不许写)。
+写哪些分区、每个分区用哪个文件,改为以编译产物里厂商自己的烧录清单为准(`alb flash plan --only`,ADR-070)。
+留下的检查只管「烧对板子」:分区名形状、写前核对板子身份(`fastboot_product.<board>`)、台架上多块板同时在 fastboot 就拒绝。
+
 ---
 
 ## 二、代码里还留着什么

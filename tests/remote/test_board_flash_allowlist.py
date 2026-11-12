@@ -83,7 +83,10 @@ def _conf(tmp_path, body: str) -> Path:
     return path
 
 
-def test_per_board_lines_reach_the_lists_hello_and_self_check(tmp_path):
+def test_per_board_lines_are_read_and_only_products_are_reported(tmp_path):
+    """ADR-070: the partition lists are read (an agent.conf that has them
+    still starts) and limit nothing; what is reported per board is the
+    product its identity is checked against."""
     path = _conf(
         tmp_path,
         "flash_partitions.board-a=boot, dtbo\n"
@@ -92,20 +95,15 @@ def test_per_board_lines_reach_the_lists_hello_and_self_check(tmp_path):
         "fastboot_product.board-c=prod_c\n",
     )
     agent._apply_flash_config(agent._parse_args(["--config", str(path)]))
-    assert agent._BOARD_PARTITIONS == {
-        "board-a": frozenset({"boot", "dtbo"}),
-        "board-b": frozenset({"boot_a"}),
-    }
     assert agent._BOARD_PRODUCT == {"board-a": "prod_a", "board-c": "prod_c"}
     view = {
-        "board-a": {"partitions": ["boot", "dtbo"], "product": "prod_a"},
-        "board-b": {"partitions": ["boot_a"], "product": None},
-        # A product without a list: None, which the hub must never read as "any".
+        "board-a": {"partitions": None, "product": "prod_a"},
         "board-c": {"partitions": None, "product": "prod_c"},
     }
     assert agent._boards_view() == view
-    assert json.loads(agent._hello("a", "n", None))["boards"] == view
-    assert agent._FLASH_PARTITIONS == frozenset()
+    hello = json.loads(agent._hello("a", "n", None))
+    assert hello["boards"] == view
+    assert hello["flash_partitions"] == [], "empty = any well-formed name, to every hub"
 
 
 @pytest.mark.parametrize(
@@ -134,25 +132,24 @@ def test_a_wrong_per_board_line_is_a_hard_error(tmp_path, line, why):
 
 
 @pytest.mark.parametrize(
-    ("body", "why"),
+    "body",
     [
-        # The union again, or a list silently ignored: refused.
-        ("flash_partitions=boot\nflash_partitions.board-a=boot\n", "both set"),
-        # Dropped, it would leave the agent on "any name".
-        ("flash_partitions.board-a= , ,\n", "lists no partitions"),
+        "flash_partitions=boot\nflash_partitions.board-a=boot\n",
+        "flash_partitions.board-a= , ,\n",
     ],
 )
-def test_settings_that_would_widen_the_list_stop_the_agent(tmp_path, body, why):
+def test_leftover_list_lines_no_longer_stop_the_agent(tmp_path, body):
+    """These used to refuse the start (a list that would widen to "any
+    name"); with no lists in force there is nothing left to widen."""
     path = _conf(tmp_path, body)
-    with pytest.raises(SystemExit) as e:
-        agent._apply_flash_config(agent._parse_args(["--config", str(path)]))
-    assert why in str(e.value)
+    agent._apply_flash_config(agent._parse_args(["--config", str(path)]))
+    assert agent._partition_allowed("vendor_x")
 
 
 def test_a_refused_setting_leaves_the_running_agent_alone(tmp_path, monkeypatch):
     """Checked before the previous instance is stopped: a bad line must not
     leave the bench with no agent at all."""
-    path = _conf(tmp_path, "flash_partitions=boot\nflash_partitions.board-a=boot\n")
+    path = _conf(tmp_path, "tool_root.vt=/x\n")
     args = agent._parse_args(["--config", str(path)])
     stopped: list[object] = []
 
@@ -168,7 +165,7 @@ def test_a_refused_setting_leaves_the_running_agent_alone(tmp_path, monkeypatch)
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
     try:
-        with pytest.raises(SystemExit, match="both set"):
+        with pytest.raises(SystemExit, match=r"tool_exe\.vt not set"):
             agent.main()
     finally:
         for h in root.handlers[:]:
@@ -249,48 +246,43 @@ async def _run(monkeypatch, wire: bytes, *, product: str = "") -> tuple[_Ws, lis
     return ws, ran, asked
 
 
-async def test_a_partition_op_without_a_board_is_refused(monkeypatch):
-    _per_board(monkeypatch)
-    ws, ran, _ = await _run(monkeypatch, _flash_wire("boot"))
+async def test_with_a_product_set_a_write_naming_no_board_is_refused(monkeypatch):
+    """The per-board lists used to refuse this; with them gone (ADR-070) a
+    forgotten `alb bench board use` would write unchecked to whatever board
+    is on the cable."""
+    _per_board(monkeypatch, lists={}, products={"board-a": "prod_a"})
+    ws, ran, asked = await _run(monkeypatch, _flash_wire("boot"))
     done = ws.done()
     assert (done["ok"], done["code"]) == (False, "FLASH_BOARD_NOT_LISTED")
-    assert "names no board" in done["error"] and "board-a, board-b" in done["error"]
-    assert ran == [] and not ws.accepted(), "refused before a byte of the image"
+    assert "names no board" in done["error"] and "board-a" in done["error"]
+    assert ran == [] and asked == [] and not ws.accepted(), "refused before the image"
 
 
-async def test_a_board_without_a_list_is_refused(monkeypatch):
-    _per_board(monkeypatch)
+async def test_with_a_product_set_a_board_without_one_is_refused(monkeypatch):
+    _per_board(monkeypatch, lists={}, products={"board-a": "prod_a"})
     ws, ran, _ = await _run(monkeypatch, _flash_wire("boot", board="board-z"))
-    assert ws.done()["code"] == "FLASH_BOARD_NOT_LISTED"
-    assert "no partition list for board 'board-z'" in ws.done()["error"]
+    done = ws.done()
+    assert done["code"] == "FLASH_BOARD_NOT_LISTED"
+    assert "fastboot_product.board-z=" in done["error"]
     assert ran == []
 
 
-async def test_another_boards_partition_is_refused(monkeypatch):
-    """The reason for per-board lists: `boot_a` is fine on board-b and must
-    not be written to board-a just because some board has it."""
-    _per_board(monkeypatch)
-    ws, ran, _ = await _run(monkeypatch, _flash_wire("boot_a", board="board-a"))
-    done = ws.done()
-    assert done["code"] == "FLASH_PARTITION_REJECTED"
-    assert "not on board 'board-a'" in done["error"]
-    assert ran == [] and not ws.accepted()
-
-
-async def test_the_boards_own_partition_is_flashed(monkeypatch):
-    _per_board(monkeypatch)
-    ws, ran, _ = await _run(monkeypatch, _flash_wire("boot_a", board="board-b"))
+async def test_any_partition_goes_to_a_board_that_is_checked(monkeypatch):
+    """A leftover list does not narrow it; the product check still runs."""
+    _per_board(monkeypatch, products={"board-a": "prod_a"})
+    ws, ran, asked = await _run(
+        monkeypatch, _flash_wire("vendor_x", board="board-a"), product="prod_a"
+    )
     assert ws.done()["ok"] is True
-    assert ran and ran[0][:3] == ["/opt/fastboot", "flash", "boot_a"]
+    assert ran and ran[0][:3] == ["/opt/fastboot", "flash", "vendor_x"]
+    assert asked == ["/opt/fastboot"]
 
 
-async def test_one_list_for_all_boards_works_as_before(monkeypatch):
-    """No per-board lines: the board in the request changes nothing."""
-    monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"boot"}))
-    ws, ran, _ = await _run(monkeypatch, _flash_wire("boot", board="board-z"))
-    assert ws.done()["ok"] is True and ran
-    ws, ran, _ = await _run(monkeypatch, _flash_wire("dtbo", board="board-z"))
-    assert ws.done()["code"] == "FLASH_PARTITION_REJECTED" and ran == []
+async def test_with_no_product_anywhere_nothing_is_asked_of_the_request(monkeypatch):
+    """A bench that never set a product (one board, say) works as before:
+    no board needed, no query."""
+    ws, ran, asked = await _run(monkeypatch, _flash_wire("boot"))
+    assert ws.done()["ok"] is True and ran and asked == []
 
 
 # ── agent: is the board on the cable the board the job names ───────────
@@ -400,7 +392,11 @@ PER_BOARD = {
         (_Conn(PER_BOARD), "board-a", ["boot", "dtbo"], ""),
         (_Conn(PER_BOARD), None, [], "no bench board is chosen"),
         (_Conn(PER_BOARD), "board-c", [], "no partition list for board 'board-c'"),
-        (_Conn(PER_BOARD), "board-z", [], "it has: board-a, board-b"),
+        # board-z has no product while others do: who it is cannot be checked
+        (_Conn(PER_BOARD), "board-z", [], "no fastboot_product for board 'board-z'"),
+        # a current agent (ADR-070): products only, no lists → any name
+        (_Conn({"board-a": {"partitions": None, "product": "prod_a"}}), "board-a", [], ""),
+        (_Conn({"board-a": {"partitions": None, "product": "prod_a"}}), "board-b", [], "it has: board-a"),
         (_Conn({"board-a": {"partitions": [], "product": None}}), "board-a", [], "is empty"),
         (None, "board-a", [], ""),
     ],
@@ -460,11 +456,11 @@ async def test_no_board_chosen_refuses_a_partition_op_before_any_channel(chosen)
 
 
 async def test_the_chosen_board_rides_with_the_request(chosen):
-    chosen("board-b")
+    chosen("board-a")
     a = _agent(PER_BOARD)
-    r = await FlashService(lambda: a).run_op("erase", {"partition": "boot_a"})
+    r = await FlashService(lambda: a).run_op("erase", {"partition": "boot"})
     assert r.ok, r.error
-    assert a.channel.request() == {"op": "erase", "partition": "boot_a", "board": "board-b"}
+    assert a.channel.request() == {"op": "erase", "partition": "boot", "board": "board-a"}
 
 
 async def test_another_boards_partition_is_refused_on_the_hub(chosen):
@@ -549,9 +545,8 @@ def test_the_real_hello_lands_as_the_hubs_lists(monkeypatch):
         assert p.decode_control(ws.receive_text())["verb"] == p.Verb.HELLO_OK.value
         conn = get_agent_registry().current_agent()
         assert conn is not None and conn.agent_id == "agent-boards"
-        assert conn.boards == {
-            "board-a": {"partitions": ["boot", "dtbo", "vendor_cfg"], "product": "prod_a"},
-            "board-b": {"partitions": ["boot_a", "boot_b"], "product": None},
-        }
-        assert partition_list(conn, "board-b").names == ["boot_a", "boot_b"]
-        assert partition_list(conn, None).problem
+        # ADR-070: products only; the leftover lists are not reported
+        assert conn.boards == {"board-a": {"partitions": None, "product": "prod_a"}}
+        assert partition_list(conn, "board-a") == partition_list(None, None), "any name"
+        assert "no bench board is chosen" in partition_list(conn, None).problem
+        assert "fastboot_product.board-b" in partition_list(conn, "board-b").problem

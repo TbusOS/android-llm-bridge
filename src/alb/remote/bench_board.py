@@ -346,6 +346,31 @@ def partition_list(agent: Any, board: str | None) -> PartitionList:
     if agent is None:
         return PartitionList([])
     boards = getattr(agent, "boards", None) or {}
+    # Who the board is (ADR-070). An agent that checks any board's product
+    # refuses a write naming no board, or a board it cannot check; said
+    # here too, so a flash plan is refused before row 1, not at its first
+    # write.
+    products = sorted(b for b, e in boards.items() if e.get("product"))
+    if products and board is None:
+        return PartitionList(
+            [],
+            "the agent checks which board is on the cable before writing (fastboot_product "
+            f"for {', '.join(products)}) and no bench board is chosen — "
+            "`alb bench board use <name>`",
+            "fastboot_product.<board>",
+            board,
+        )
+    if products and board not in products:
+        return PartitionList(
+            [],
+            f"the agent has no fastboot_product for board {board!r} (it has: "
+            f"{', '.join(products)}), so it cannot check that board is on the cable — add "
+            f"fastboot_product.{board}=<what `alb flash getvar product` answers> to agent.conf",
+            f"fastboot_product.{board}",
+            board,
+        )
+    # Partition lists: agents from before ADR-070 still report and apply
+    # them; a current agent reports none, which reads as "any name".
     listed = sorted(b for b, e in boards.items() if e.get("partitions") is not None)
     if not listed:
         return PartitionList(list(getattr(agent, "flash_partitions", []) or []))

@@ -207,7 +207,7 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 | 操作 | 做什么 | 要板子在 fastboot 里 |
 |---|---|---|
 | `devices` / `getvar` / `oem` / `reboot` / `flash` | 原有的 fastboot 操作，没变 | 是 |
-| `erase` | `fastboot erase <分区>`，分区白名单跟 `flash` 共用（`flash_partitions`） | 是 |
+| `erase` | `fastboot erase <分区>`，分区名检查跟 `flash` 一样 | 是 |
 | `set-active` | `fastboot set_active a` 或 `b`，切启动槽 | 是 |
 | `boot` | `fastboot boot <镜像>`，镜像只进内存、不写分区 | 是 |
 | `usb-list` | 列这台 Windows 上的 USB 设备：名称、VID:PID、序列号、驱动、问题码、接口类型。`fastboot devices` 为空时，用它分清是线没插在这台机器还是驱动没装 | 否 |
@@ -219,7 +219,7 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 两条规矩不变：
 
 - hub 只发结构化字段（操作名 + 参数），**从不发命令行、从不发路径**。argv 在这台
-  机器上按写死的模板拼出来，参数先逐个校验（分区形状 + 白名单、枚举必须一字不差、
+  机器上按写死的模板拼出来，参数先逐个校验（分区名形状、枚举必须一字不差、
   整数有上下限）。
 - `usb-list` 和 `log-tail` 只读本机信息、不碰板子，所以**不占烧录锁** —— 正在烧录
   时也能查。fastboot 类操作一次只跑一个，第二个会被立刻拒绝，不排队。
@@ -227,26 +227,27 @@ agent 连上 hub 时（`hello`）会把自己会做的操作列成一张表报�
 fastboot 没配（见上一节）时，表里只有 `usb-list` / `log-tail` / `agent-update`，hub
 会直接告诉调用方这台不能烧。状态页（http://127.0.0.1:8731）的 `ops` 一行列的就是这张表。
 
-### 几块板轮流接同一根线：按板分名单
+### 几块板接同一台电脑：写之前核对是哪块板
 
-`flash_partitions` 整台 agent 一份，几块板轮流接同一根 USB 线时只能写成并集 ——
-只有一块板有的分区，对另一块也放行。可以改成每块板一份（ADR-063 第二期）：
+不设分区名单（ADR-070，2026-11-12 起）：写哪些分区、每个分区用哪个文件，以厂商的
+烧录清单为准（`alb flash plan --only`），这里只查分区名的形状。旧配置里的
+`flash_partitions` / `flash_partitions.<板>` 还能读，启动日志提示它们不再生效。
+
+要防的是写错板子。给每块板登记它在 fastboot 里报的 product：
 
 ```
-flash_partitions.board-a=boot,dtbo,vendor_cfg
 fastboot_product.board-a=board_a_product
-flash_partitions.board-b=boot_a,boot_b
+fastboot_product.board-b=board_b_product
 ```
 
-板名就是 hub 板子表里的名字（`alb bench board`）。写了按板名单之后：
+板名就是 hub 板子表里的名字（`alb bench board`）。只要登记了任何一块：
 
-- hub 每个作业都带上它选中的板子，分区必须在**那块板**的名单上；没选板、或这块板
-  没有名单，作业在收镜像之前就被拒（`FLASH_BOARD_NOT_LISTED`）。
-- 配了 `fastboot_product.<板>` 的，改设备的作业动手前先跑一次 `fastboot getvar product`，
-  答案对不上就拒（`FLASH_BOARD_MISMATCH`），什么都不写。板名只说「用哪份名单」，
-  不说「线上接的是哪块板」，这一步才说。
-- `flash_partitions` 总名单必须删掉，按板名单不能为空 —— 两种写法都会让名单变宽，
-  agent 拒绝启动，而且在停掉旧实例之前就拒绝。
+- hub 每个作业都带上它选中的板子；没选板、或选的板子没登记 product，作业在收镜像
+  之前就被拒（`FLASH_BOARD_NOT_LISTED`）。所以这台电脑上的**每块板都要登记**。
+- 改设备的作业动手前先跑一次 `fastboot getvar product`，答案对不上就拒
+  （`FLASH_BOARD_MISMATCH`），什么都不写。板名只说「hub 选的是哪块」，不说「线上
+  接的是哪块」，这一步才说。
+- 一块都没登记的台架照旧：不核对，也不要求选板。
 
 ### 高通 9008（EDL）烧录
 

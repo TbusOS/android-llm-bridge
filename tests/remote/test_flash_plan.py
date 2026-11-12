@@ -56,7 +56,9 @@ def _where(root: Path, manifest: Path) -> tuple[str, Path]:
     return str(manifest.relative_to(root)), root.resolve()
 
 
-async def _plan(root: Path, manifest: Path, *, skip=(), skip_actions=("setvar",), agent=FULL_AGENT):
+async def _plan(
+    root: Path, manifest: Path, *, skip=(), skip_actions=("setvar",), agent=FULL_AGENT, only=()
+):
     name, resolved = _where(root, manifest)
     return await build_plan(
         manifest,
@@ -65,6 +67,7 @@ async def _plan(root: Path, manifest: Path, *, skip=(), skip_actions=("setvar",)
         skip=list(skip),
         skip_actions=list(skip_actions),
         agent=agent,
+        only=list(only),
     )
 
 
@@ -563,3 +566,39 @@ async def test_a_wait_row_needs_nothing_from_the_agent_and_can_be_skipped(tmp_pa
         tmp_path / "b", _package(tmp_path / "b", text), skip_actions=("setvar", "wait")
     )
     assert next(r for r in plan2.rows if r.action == "wait").skip == "--skip-action wait"
+
+
+# ── --only: a few partitions, each with the manifest's own image (ADR-070) ──
+
+
+async def test_only_flashes_the_named_partitions_with_the_manifests_images(tmp_path: Path) -> None:
+    plan = await _plan(
+        tmp_path,
+        _package(tmp_path),
+        skip_actions=("setvar",),
+        only=["boot_a", "boot_b"],
+    )
+    assert plan.ok, plan.problems
+    running = [(r.action, r.partition, r.file) for r in plan.rows if r.runs]
+    assert running == [
+        ("reboot-bootloader", "", ""),
+        ("flash", "boot_a", "boot.img"),
+        ("flash", "boot_b", "boot.img"),
+        ("reboot", "", ""),
+    ], "rows without a partition run as written; the image is the manifest's"
+    assert {r.skip for r in plan.rows if r.partition and not r.runs} == {"not in --only"}
+
+
+@pytest.mark.parametrize(
+    ("only", "skip", "why"),
+    [
+        (["boot"], [], "--only boot matches no row (partitions in this manifest: boot_a"),
+        (["-x"], [], "is not a well-formed partition name"),
+        (["boot_a"], ["super"], "--only and --skip cannot both be given"),
+    ],
+)
+async def test_only_refuses_what_it_cannot_match(
+    tmp_path: Path, only: list[str], skip: list[str], why: str
+) -> None:
+    plan = await _plan(tmp_path, _package(tmp_path), only=only, skip=skip)
+    assert not plan.ok and any(why in p for p in plan.problems), plan.problems

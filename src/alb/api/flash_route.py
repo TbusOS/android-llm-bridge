@@ -275,6 +275,9 @@ class PlanBody(BaseModel):
     # Resume a plan that stopped: rows before this manifest line are skipped
     # (getvar checks still run). 0 = from the top.
     from_line: int = Field(0, ge=0, le=100_000)
+    # Flash only these partitions, each with the image the manifest gives it
+    # (ADR-070); rows without a partition run as written. Not with `skip`.
+    only: list[str] = Field(default_factory=list, max_length=128)
 
 
 class PlanRunBody(PlanBody):
@@ -303,6 +306,7 @@ async def _build(body: PlanBody) -> Plan:
         skip_actions=body.skip_actions,
         agent=get_flash_service().agent_view(),
         from_line=body.from_line,
+        only=body.only,
     )
 
 

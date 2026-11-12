@@ -471,6 +471,11 @@ def cmd_plan(
         None, "--skip", help="partition(s) to leave untouched: exact names, comma-separated "
         "or repeated; a name that matches no row refuses the plan"
     ),
+    only: list[str] = typer.Option(
+        None, "--only", help="flash only these partition(s), each with the image the manifest "
+        "gives it; rows without a partition (getvar, oem, reboot, waits) still run — drop them "
+        "with --skip-action. Exact names, comma-separated or repeated; not with --skip"
+    ),
     skip_action: list[str] = typer.Option(
         None, "--skip-action", help="rows without a partition to leave out: setvar, "
         "getvar, oem, reboot-bootloader, reboot, wait (comma-separated or repeated)"
@@ -510,6 +515,8 @@ def cmd_plan(
         "skip": list(skip or []),
         "skip_actions": list(skip_action or []),
     }
+    if only:
+        payload["only"] = list(only)
     if from_line:
         payload["from_line"] = from_line
     plan = _fetch_plan(payload)

@@ -117,10 +117,13 @@ def test_partition_names_rejected(name):
     assert not agent._partition_allowed(name)
 
 
-def test_allowlist_narrows_further(monkeypatch):
+def test_a_leftover_allowlist_no_longer_narrows(monkeypatch):
+    """ADR-070: which partitions a package writes is its manifest's to say.
+    A flash_partitions line still in agent.conf is read and ignored."""
     monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"vendor_cfg"}))
     assert agent._partition_allowed("vendor_cfg")
-    assert not agent._partition_allowed("boot")  # well-formed but not allowed
+    assert agent._partition_allowed("boot")
+    assert not agent._partition_allowed("-boot"), "the shape check stays"
 
 
 def test_empty_allowlist_means_any_well_formed(monkeypatch):
@@ -407,10 +410,9 @@ def test_getvar_has_no_allowlist(monkeypatch):
     would hide variables the device really has — the same defect as the
     hard-coded web partition picker, which offered four names this bench
     refuses. Shape is checked; membership is the device's business."""
-    monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"cfg"}))
-    # the partition allowlist must not leak into variable names
-    assert agent._getvar_allowed("vendor-specific-thing")
-    assert not agent._partition_allowed("vendor-specific-thing")
+    # a name with a colon is a variable, never a partition
+    assert agent._getvar_allowed("partition-size:boot")
+    assert not agent._partition_allowed("partition-size:boot")
 
 
 async def test_getvar_refuses_when_no_device_is_in_fastboot(monkeypatch):
@@ -665,21 +667,28 @@ async def test_erase_rejects_malformed_names_without_running_anything(monkeypatc
     assert ws.done()["code"] == "FLASH_PARTITION_REJECTED"
 
 
-async def test_erase_obeys_the_flash_allowlist(monkeypatch):
-    """Erasing takes no more authority than writing, so it is governed by
-    the same list — a partition that may not be flashed may not be erased."""
+async def test_erase_checks_the_name_shape_like_flash(monkeypatch):
+    """Erasing takes no more authority than writing: the same shape check,
+    and (ADR-070) no list."""
     ran: list[list[str]] = []
 
     async def fake_run(_ws, argv, op=""):
         ran.append(argv)
         return 0, "", ""
 
+    async def yes(_fastboot: str) -> int:
+        return 1
+
     monkeypatch.setattr(agent, "_run_fastboot", fake_run)
+    monkeypatch.setattr(agent, "_device_present", yes)
     monkeypatch.setattr(agent, "_FLASH_PARTITIONS", frozenset({"boot_a"}))
-    ws = _FakeWs(_req(op="erase", partition="misc"))
+    ws = _FakeWs(_req(op="erase", partition="-w"))
     await agent._run_job(ws, _ops())
     assert ran == []
     assert ws.done()["code"] == "FLASH_PARTITION_REJECTED"
+    ws = _FakeWs(_req(op="erase", partition="misc"))
+    await agent._run_job(ws, _ops())
+    assert ran == [["/opt/fastboot", "erase", "misc"]], "a leftover list does not stop it"
 
 
 async def test_erase_refuses_when_no_device_is_in_fastboot(monkeypatch):

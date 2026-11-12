@@ -88,14 +88,16 @@ fastboot_path=D:\platform-tools\fastboot.exe
 
 把路径换成第 1 步记下来的那个。
 
-**可选但推荐** —— 限定这台机器允许写哪些分区：
+**推荐** —— 登记每块板在 fastboot 里报的 product，写分区前核对是不是这块板：
 
 ```
-flash_partitions=vendor_cfg,boot,dtbo
+fastboot_product.board-a=<这块板 fastboot getvar product 的回答>
 ```
 
-留空 = 任何格式合法的分区名都收。为什么建议填：烧错分区**撤不回来**，而且板子可能
-起不来告诉你结果。这份名单是最后一道能拦住手误的闸。
+一台电脑接几块板时，每块都要登记：只要登记了一块，写到没登记的板子上就会被拒。
+不再设分区名单(`flash_partitions`,ADR-070):写哪些分区、用哪个文件，以厂商的
+烧录清单为准(`alb flash plan --only`)。旧配置里的 `flash_partitions` 行可以删，
+不删也能启动，启动日志会提示它不再生效。
 
 格式约定：一行一个 `KEY=VALUE`，不要加引号，注释单独占一行。
 
@@ -132,7 +134,7 @@ fastboot: not found — this agent will NOT advertise the fastboot capability
 | `not found`，`where fastboot` 也没输出 | 这台机器上确实没装 | 回第 1 步装 platform-tools |
 | 启动日志根本没有 `fastboot:` 这一行 | `alb_agent.py` 还是旧版 | 回第 2 步重新拷贝 |
 | agent 启动即退出，报 `agent.conf:N: unknown key 'fastboot_path'` | 同上 —— `alb_agent.py` 是旧版，它的合法键名单里还没有这个键 | 回第 2 步重新拷贝，**配置那行不用删**，拷完直接重启 |
-| 同上，但报的是 `unknown key 'flash_partitions'` | 同上 | 同上 |
+| 同上，但报的是 `unknown key 'flash_partitions'` 或 `'fastboot_product.<板>'` | 同上 | 同上 |
 
 另外确认这一行还在（说明和 hub 的连接正常）：
 
@@ -160,7 +162,7 @@ identity: name=... agent_id=... hub=...
 hub 侧发起烧录时，这台机器上会依次发生：
 
 1. agent 收到一个结构化请求：分区名 + 字节数 + sha256
-2. 分区名过本机的形状检查和白名单；不通过直接拒绝，**不接收任何数据**
+2. 分区名过本机的形状检查;登记了 `fastboot_product` 的，先问板子是谁。不通过直接拒绝，**不接收任何数据**
 3. 镜像流式写进本机临时目录
 4. **核对 sha256** —— 不一致就报错，**一个字节都不会写进设备**
 5. 通过之后才调 `fastboot.exe flash <分区> <临时文件>`

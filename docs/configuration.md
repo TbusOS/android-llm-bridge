@@ -287,9 +287,8 @@ agent 是 `clients/windows-agent/` 里的 `alb_agent.py`,跑在插着板子的 W
 | `status_host` | 状态页绑定的地址。改成别的会让状态页暴露到本机以外 | `127.0.0.1` |
 | `log_file` | 运行日志文件,相对路径相对脚本所在目录;写 `none` 关掉 | 不写日志文件(模板里写的是 `logs/agent.log`) |
 | `fastboot_path` | fastboot 程序路径 | PATH 上的 fastboot;找不到就不提供烧录能力 |
-| `flash_partitions` | 允许 `alb flash write` 写的分区,逗号分隔 | 空:任何格式合法的分区名都收 |
-| `flash_partitions.<board>` | 按板子分开的分区白名单,`<board>` 是 hub 板子表里的名字 | 不设 |
-| `fastboot_product.<board>` | 这块板子 `fastboot getvar product` 应答的值;设了就先核对,不对就拒绝写 | 不设 |
+| `flash_partitions` / `flash_partitions.<board>` | 不再生效(ADR-070):还能读,启动日志提示可以删掉。写哪些分区以厂商的烧录清单为准 | — |
+| `fastboot_product.<board>` | 这块板子 `fastboot getvar product` 应答的值,`<board>` 是 hub 板子表里的名字。任何一块板设了,写分区前就核对:没选板子、选的板子没设、答案不对,都拒绝写 | 不设 |
 | `edl_sahara` | 9008 模式用的 QSaharaServer 路径 | 不设 |
 | `edl_firehose` | 9008 模式用的 fh_loader 路径 | 不设 |
 | `edl_root` | 9008 刷机包所在的目录,hub 只能指定它下面的目录 | 不设 |
@@ -307,7 +306,6 @@ agent 是 `clients/windows-agent/` 里的 `alb_agent.py`,跑在插着板子的 W
 - `#` 只在行首才算注释,值里的 `#` 原样保留。
 - 值两边的一对引号会去掉。空值等于没写,但 `<key>.<board>` 写空值是错误,agent 拒绝启动。
 - 写错键名,agent 拒绝启动,并列出所有合法键名。
-- `flash_partitions` 和任何一个 `flash_partitions.<board>` 同时写,agent 拒绝启动。
 - `edl_sahara` / `edl_firehose` / `edl_root` 三个要一起写。少一个、或路径不存在,9008 的三个操作都不提供,启动日志里写明原因(`_resolve_edl`)。
 - `tool_*.<tool>`(`_resolve_tools`):缺 `tool_exe` 或 `tool_root`、写了相对路径、正则写错、超时不在 1-1700、`tool_usb` 不是 `VID:PID`,agent 拒绝启动;exe 或根目录此刻不存在,启动日志警告,这个工具不提供。用法见 [`clients/windows-agent/README.md`](../clients/windows-agent/README.md)「其它厂商的下载工具」。
 
@@ -432,7 +430,7 @@ note = "左边排针上的调试串口"
 | `serial_baud` | 波特率 | 300 到 12000000 的整数 |
 | `note` | 备注,只用来显示 | 可不写 |
 
-写了别的键、名字或取值不合规定,会报 `BENCH_BOARDS_INVALID`,并指出是哪个文件的哪一条。agent.conf 里 `flash_partitions.<board>` / `fastboot_product.<board>` 的 `<board>` 用的就是这里的名字。
+写了别的键、名字或取值不合规定,会报 `BENCH_BOARDS_INVALID`,并指出是哪个文件的哪一条。agent.conf 里 `fastboot_product.<board>` 的 `<board>` 用的就是这里的名字。
 
 ### 9.4 hub.env
 
