@@ -340,7 +340,7 @@ tool_usage.vt=hold the DL key while powering on; arguments: -p &lt;port&gt; -f &
       <div><dt>36</dt><dd><span class="lang-en">MCP tools</span><span class="lang-zh">个 MCP 工具</span></dd></div>
       <div><dt>28</dt><dd><span class="lang-en">CLI command groups, all with <code>--json</code></span><span class="lang-zh">组命令行命令，都支持 <code>--json</code></span></dd></div>
       <div><dt>98</dt><dd><span class="lang-en">error codes, each with a suggested next step</span><span class="lang-zh">个错误码，每个都带下一步建议</span></dd></div>
-      <div><dt>3,011</dt><dd><span class="lang-en">pytest cases</span><span class="lang-zh">条 pytest 测试</span></dd></div>
+      <div><dt>3,037</dt><dd><span class="lang-en">pytest cases</span><span class="lang-zh">条 pytest 测试</span></dd></div>
     </dl>
     <p class="stats__note"><span class="lang-en">Counted from the code on 2026-11-12.</span><span class="lang-zh">2026-11-12 从代码里数出来的。</span></p>
   </div>
@@ -905,13 +905,13 @@ tool_usage.vt=hold the DL key while powering on; arguments: -p &lt;port&gt; -f &
     <div class="grid grid--3 guard">
       <article class="card">
         <h3><span class="lang-en">What if it flashes the wrong board?</span><span class="lang-zh">烧错板子怎么办？</span></h3>
-        <p><span class="lang-en">Give a board its <code>fastboot_product</code> and alb asks the board <code>getvar product</code> before every write; a different answer writes nothing. With more than one board in fastboot it refuses and lists them. It never picks the first one.</span><span class="lang-zh">给板子配上 <code>fastboot_product</code>，每次写之前 alb 先问板子 <code>getvar product</code>，答得不对就什么都不写。同时有不止一块板在 fastboot 时直接拒绝并列出来，不会默认挑第一块。</span></p>
-        <div class="codes"><code>FLASH_BOARD_MISMATCH</code><code>FLASH_DEVICE_AMBIGUOUS</code></div>
+        <p><span class="lang-en">Give each board its <code>fastboot_product</code> and alb asks the board <code>getvar product</code> before every write; a different answer, no board chosen, or a board with no product writes nothing. With more than one board in fastboot it refuses and lists them. It never picks the first one.</span><span class="lang-zh">给每块板配上 <code>fastboot_product</code>，每次写之前 alb 先问板子 <code>getvar product</code>：答得不对、没选板子、选的板子没配，都什么都不写。同时有不止一块板在 fastboot 时直接拒绝并列出来，不会默认挑第一块。</span></p>
+        <div class="codes"><code>FLASH_BOARD_MISMATCH</code><code>FLASH_BOARD_NOT_LISTED</code><code>FLASH_DEVICE_AMBIGUOUS</code></div>
       </article>
       <article class="card">
         <h3><span class="lang-en">The wrong partition?</span><span class="lang-zh">烧错分区呢？</span></h3>
-        <p><span class="lang-en">A partition allowlist lives in the bench PC's <code>agent.conf</code>, per board if you like. The hub checks the name, then the bench agent checks it again. A name that is not listed is refused.</span><span class="lang-zh">分区白名单写在台架电脑的 <code>agent.conf</code> 里，可以按板子分。名字先在 hub 查一遍，台架 agent 再查一遍，不在名单上的拒绝。</span></p>
-        <div class="codes"><code>FLASH_PARTITION_REJECTED</code></div>
+        <p><span class="lang-en">Which partitions to write, and which file goes to each, come from the vendor's own flashing manifest in your build output — not from a list you keep by hand. <code>--only boot,vbmeta</code> flashes just those, each with the image the manifest pairs it with; a name the manifest does not have is refused.</span><span class="lang-zh">写哪些分区、每个分区用哪个文件，以编译产物里厂商自己的烧录清单为准，不靠手抄一份名单。<code>--only boot,vbmeta</code> 只烧这几个，每个分区用清单里配给它的文件；清单里没有的名字直接拒绝。</span></p>
+        <div class="codes"><code>--only</code><code>FLASH_PARTITION_REJECTED</code></div>
       </article>
       <article class="card">
         <h3><span class="lang-en">A damaged or swapped image?</span><span class="lang-zh">镜像传坏了、被换了？</span></h3>
@@ -920,7 +920,7 @@ tool_usage.vt=hold the DL key while powering on; arguments: -p &lt;port&gt; -f &
       </article>
       <article class="card">
         <h3><span class="lang-en">A package that stops halfway?</span><span class="lang-zh">整包烧到一半停了？</span></h3>
-        <p><span class="lang-en"><code>alb flash plan</code> checks the whole manifest first: one bad row and no row runs. <code>--dry-run</code> prints the plan. A failing row stops the run and reports where; <code>--from-line</code> picks up from there.</span><span class="lang-zh"><code>alb flash plan</code> 先把整份清单查一遍，有一行不对就一行都不跑。<code>--dry-run</code> 只打印计划。中途某一行失败就停下并报出是第几行，之后用 <code>--from-line</code> 接着跑。</span></p>
+        <p><span class="lang-en"><code>alb flash plan</code> checks the whole manifest first: one bad row and no row runs. <code>--dry-run</code> prints the plan; a batch-file pause such as <code>ping -n 5 127.0.0.1</code> is read as a wait. A failing row stops the run and reports where; <code>--from-line</code> picks up from there.</span><span class="lang-zh"><code>alb flash plan</code> 先把整份清单查一遍，有一行不对就一行都不跑。<code>--dry-run</code> 只打印计划；批处理里的 <code>ping -n 5 127.0.0.1</code> 这类停顿读成等待。中途某一行失败就停下并报出是第几行，之后用 <code>--from-line</code> 接着跑。</span></p>
         <div class="codes"><code>--dry-run</code><code>--skip</code><code>--from-line</code></div>
       </article>
       <article class="card">
@@ -930,7 +930,7 @@ tool_usage.vt=hold the DL key while powering on; arguments: -p &lt;port&gt; -f &
       </article>
       <article class="card">
         <h3><span class="lang-en">And when the board doesn't come back?</span><span class="lang-zh">烧完板子没起来，查什么？</span></h3>
-        <p><span class="lang-en">Each job leaves a record directory on the hub. <code>timeline.jsonl</code> holds every line the job printed and every UART line, on one clock, so you can see what the console said around the last write.</span><span class="lang-zh">每个作业在 hub 上留一个记录目录。<code>timeline.jsonl</code> 里是作业的每条输出和串口的每一行，用同一个时钟，最后一次写入前后串口在打什么一看就知道。</span></p>
+        <p><span class="lang-en">Each job leaves a record directory on the hub. <code>timeline.jsonl</code> holds every line the job printed and every UART line, on one clock, so you can see what the console said around the last write. After a reboot to the system it keeps the UART for another 90 s: the first boot is on the record.</span><span class="lang-zh">每个作业在 hub 上留一个记录目录。<code>timeline.jsonl</code> 里是作业的每条输出和串口的每一行，用同一个时钟，最后一次写入前后串口在打什么一看就知道。重启回系统后再接着录 90 秒串口，第一次开机也在记录里。</span></p>
         <div class="codes"><code>alb timeline show &lt;record&gt;</code></div>
       </article>
     </div>
