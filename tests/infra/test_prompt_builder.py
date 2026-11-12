@@ -338,6 +338,29 @@ def test_agent_user_note_names_the_selected_board() -> None:
     assert agent_user_note("auto", device="board-a") is None
 
 
+def test_agent_user_note_ends_by_saying_small_talk_needs_no_tool() -> None:
+    """2026-11-09: on the English page "hi" set off alb_shell and a write-up
+    of the board (2 of 5 runs failed); the same sentence in the system
+    prompt changed nothing, at the end of the note it fixed it."""
+    from alb.infra.prompt_builder import agent_user_note
+
+    en = agent_user_note("en", model="ling3-tiny", context_tokens=16384, device="board-a")
+    assert en is not None
+    assert en.endswith(" The current board is board-a: pass it as the device argument; no need to call "
+                       "alb_status or alb_devices first. For a greeting, thanks or small talk, just reply "
+                       "briefly; no tool needed.)")
+    assert en.count("(") == 1 and en.count(")") == 1
+
+    zh = agent_user_note("zh", model="ling3-tiny", context_tokens=16384, device="board-a")
+    assert zh is not None
+    assert zh.endswith("不用先调 alb_status 或 alb_devices 查。打招呼、道谢或闲聊时简短回答,不用调工具。)")
+    assert zh.count("(") == 1 and zh.count(")") == 1
+
+    # only with the rest of the note: a bare language note stays as it was
+    assert agent_user_note("en") == "(Please answer in English.)"
+    assert agent_user_note("auto", model="ling3-tiny") is None
+
+
 # ─── Model line (2026-11-03: "which model are you" got "I have no model ID") ─
 
 

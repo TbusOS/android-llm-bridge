@@ -286,6 +286,26 @@ _DEVICE_NOTES = {
 }
 
 
+# Last in the note: a greeting is not a job for the board. With the
+# English page Ling-3.0-tiny answered "hi" by running alb_shell and
+# writing up the board state: 2 of 5 runs failed (8 tool calls, or the
+# 4096-token cap after 166 s), the rest took 3-46 s; "hello" and "你好"
+# each cost a tool call first. With this sentence: hi 5/5, hello 3/3,
+# 你好 3/3 answered without a tool in 0.4-1.7 s, and "what's the battery
+# level?" still called alb_battery first 3/3 (2026-11-09). The same
+# sentence in the system prompt changed nothing: the note is what the
+# model reads last. It does not make the model skip tools it needs: with
+# the sentence, board questions in both languages ("hi, what's the battery
+# level?", Android version, free space on /data) called the right tool
+# first 24/24 with the real values in the reply, and "thanks" / "谢谢"
+# after a tool answer got no tool 6/6. In Chinese, without vs with: the
+# same tool 9/9 vs 9/9, 3.4-9.3 s vs 2.7-8.7 s (2026-11-12).
+_SMALL_TALK_NOTES = {
+    "zh": "打招呼、道谢或闲聊时简短回答,不用调工具。",
+    "en": "For a greeting, thanks or small talk, just reply briefly; no tool needed.",
+}
+
+
 def agent_user_note(
     reply_language: str,
     *,
@@ -315,6 +335,8 @@ def agent_user_note(
         parts.append(_DEVICE_NOTES[lang].format(device=device))
     if not parts:
         return base
+    if lang in _SMALL_TALK_NOTES:
+        parts.append(_SMALL_TALK_NOTES[lang])
     # base is "(…)" or "(…)"; put the rest inside the same brackets
     if lang == "zh":
         return f"{base[:-1]}。{''.join(parts)})"
