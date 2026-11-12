@@ -373,6 +373,9 @@ def _row_text(row: dict[str, Any]) -> str:
         return f"getvar {row.get('key')}"
     if action == "oem":
         return f"oem {row.get('command')}"
+    if action == "wait":
+        # The manifest's own pause, e.g. `ping -n 5 127.0.0.1` → 4 s.
+        return f"wait {float(row.get('wait_s') or 0):g} s ({row.get('command')})"
     return action
 
 

@@ -459,3 +459,12 @@ def test_erase_asks_first_and_a_no_sends_nothing(erase_hub: _EraseAgent) -> None
     assert r.exit_code != 0
     assert "cannot be undone" in r.output
     assert erase_hub.opened == []
+
+
+def test_a_wait_row_shows_its_seconds() -> None:
+    """The hub reads `ping -n 5 127.0.0.1` as a 4 s wait; the printed plan
+    must say so, or the dry run hides how long the run will pause."""
+    from alb.cli.flash_cli import _row_text
+
+    row = {"action": "wait", "wait_s": 4.0, "command": "ping -n 5 127.0.0.1"}
+    assert _row_text(row) == "wait 4 s (ping -n 5 127.0.0.1)"
