@@ -1495,6 +1495,95 @@ async def _op_usb_list(spec: OpSpec, _values: Mapping[str, Any]) -> tuple[str, d
     return "", {"devices": devices}
 
 
+# ── more than one board in fastboot (ADR-069 A0) ─────────────────────
+# fastboot without -s opens the first device it finds and says nothing about
+# the others. With two boards in fastboot on this host, a write meant for one
+# lands on the other and reports success. Until a job can name its board
+# (ADR-069 B1), this agent does not guess: more than one board in fastboot →
+# refuse every op that talks to "the" device. Counted from `fastboot devices`
+# AND from the USB listing: a board that has no driver yet, or whose
+# interface another program holds open, is missing from `fastboot devices`
+# on Windows, and it may be the very board the operator meant.
+# Same triple as the hub's usb_modes table (AOSP fastboot's interface filter).
+_FASTBOOT_TRIPLE = "class_ff&subclass_42&prot_03"
+# A sysfs interface entry (`1-3:1.0`) and its device (`1-3`) are one board.
+_SYSFS_INTERFACE_RE = re.compile(r"^(\d+-[\d.]+):\d+\.\d+$")
+
+
+def _fastboot_boards(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The fastboot interfaces in a USB listing, one entry per physical device.
+
+    Windows lists a fastboot interface once: as the device itself, or as
+    its `MI_xx` child when the device is composite (the parent's ids do not
+    carry the child's class). The sysfs listing shows it on the device AND
+    on the interface, so those two fold by the device part of the name."""
+    boards: dict[str, dict[str, Any]] = {}
+    for i, dev in enumerate(devices):
+        ids = [str(c).lower() for c in dev.get("compatible_ids") or []]
+        if not any(_FASTBOOT_TRIPLE in c for c in ids):
+            continue
+        instance = str(dev.get("instance_id") or "") or f"#{i}"
+        m = _SYSFS_INTERFACE_RE.match(instance)
+        boards.setdefault(m.group(1) if m else instance, dev)
+    return list(boards.values())
+
+
+def _usb_board_text(d: Mapping[str, Any]) -> str:
+    """`name (vid:pid, serial …, no driver)` — what an operator needs to tell
+    two boards apart and to see which one fastboot cannot reach."""
+    extra = [f"{d.get('vid')}:{d.get('pid')}"]
+    if d.get("serial"):
+        extra.append(f"serial {d.get('serial')}")
+    if d.get("problem") == 28:
+        extra.append("no driver")
+    elif isinstance(d.get("problem"), int) and d.get("problem"):
+        extra.append(f"driver problem {d.get('problem')}")
+    return f"{d.get('name') or d.get('instance_id') or '?'} ({', '.join(extra)})"
+
+
+async def _fastboot_on_usb() -> list[dict[str, Any]] | None:
+    """Boards in fastboot per this host's USB listing; None when the listing
+    could not be read — then `fastboot devices` alone counts, which still
+    catches two boards that both have a driver."""
+    try:
+        if sys.platform == "win32":
+            devices = await _usb_list_windows(_DEVICE_QUERY_TIMEOUT_S)
+        elif await asyncio.to_thread(_SYSFS_USB_ROOT.is_dir):
+            devices = await asyncio.to_thread(_enumerate_sysfs_usb, _SYSFS_USB_ROOT)
+        else:
+            _log.warning(
+                "no %s: boards in fastboot counted by `fastboot devices` only", _SYSFS_USB_ROOT
+            )
+            return None
+    except _JobRejected as e:
+        _log.warning(
+            "USB listing failed, boards in fastboot counted by `fastboot devices` only: %s",
+            e.message,
+        )
+        return None
+    return _fastboot_boards(devices)
+
+
+async def _refuse_several_in_fastboot(listed: int) -> None:
+    """FLASH_DEVICE_AMBIGUOUS when more than one board is in fastboot.
+    `listed` = how many `fastboot devices` printed (at least 1 here)."""
+    on_usb = await _fastboot_on_usb()
+    count = max(int(listed), len(on_usb or []))
+    if count <= 1:
+        return
+    if on_usb is None:
+        usb = "the USB listing could not be read"
+    else:
+        usb = "the USB listing shows " + "; ".join(_usb_board_text(d) for d in on_usb)
+    raise _JobRejected(
+        "FLASH_DEVICE_AMBIGUOUS",
+        f"{count} boards are in fastboot on this host (`fastboot devices` lists "
+        f"{int(listed)}; {usb}) — fastboot would take whichever it finds first, and this "
+        "agent cannot yet be told which one is meant. Leave only the board to work on in "
+        "fastboot (reboot or unplug the others); nothing was run",
+    )
+
+
 # ── builtin: log-tail ────────────────────────────────────────────────
 # Sources are NAMES, resolved here from this host's config. The hub never
 # sends a path — a job that read "the file the hub names" would read any
@@ -2255,9 +2344,22 @@ def _tool_device_text(d: Mapping[str, Any]) -> str:
     return f"{d.get('name') or d.get('instance_id') or '?'} ({d.get('vid')}:{d.get('pid')})"
 
 
+def _tool_boards(matched: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per physical device. A composite device is listed as the
+    device plus one entry per interface (Windows `MI_xx` children, sysfs
+    `1-3:1.0`), all with the same VID:PID; only the device itself counts."""
+    whole = [d for d in matched if not d.get("interface")]
+    return whole or matched[:1]
+
+
 async def _tool_port(tool: _Tool, requested: str, uses_com: bool) -> str:
     """Check the registered USB device is attached; the COM port it has when
-    an argument asks for {com}. Nothing to check without tool_usb."""
+    an argument asks for {com}. Nothing to check without tool_usb.
+
+    More than one such device and nothing in the request saying which →
+    refused (ADR-069 A0): a tool that finds the device by itself takes
+    whichever it sees first, and the only choice this agent can pass on is
+    a COM port through {com} and port=."""
     if not tool.usb:
         if uses_com:
             raise _JobRejected(
@@ -2275,7 +2377,18 @@ async def _tool_port(tool: _Tool, requested: str, uses_com: bool) -> str:
             f"no USB device {', '.join(tool.usb)} (tool_usb.{tool.name}) is attached to this "
             f"host — attached now: {shown or 'none'}",
         )
+    boards = _tool_boards(matched)
     if not uses_com:
+        if len(boards) > 1:
+            names = "; ".join(_tool_device_text(d) for d in boards)
+            raise _JobRejected(
+                "BENCH_TOOL_DEVICE_AMBIGUOUS",
+                f"{len(boards)} devices {', '.join(tool.usb)} (tool_usb.{tool.name}) are "
+                f"attached to this host ({names}) and the arguments do not say which one: "
+                "the tool would take whichever it finds first. Leave only the board to flash "
+                "in download mode, or, if the tool takes a COM port, pass it as {com} and "
+                "choose with port=; nothing was run",
+            )
         return ""
     ports = sorted(
         {m.group(1) for d in matched if (m := _EDL_COM_RE.search(str(d.get("name") or "")))},
@@ -2296,11 +2409,13 @@ async def _tool_port(tool: _Tool, requested: str, uses_com: bool) -> str:
             f"{requested} is not a port of {', '.join(tool.usb)} on this host "
             f"(its ports here: {', '.join(ports)})",
         )
-    if len(ports) > 1:
+    if len(ports) > 1 or len(boards) > 1:
+        # Two boards and one COM port: the other board has no driver, and
+        # it may be the one meant — taking the only port would be a guess.
         raise _JobRejected(
-            "BENCH_TOOL_ARG_REJECTED",
-            f"{len(ports)} devices {', '.join(tool.usb)} on this host ({', '.join(ports)}) — "
-            "choose one with port=",
+            "BENCH_TOOL_DEVICE_AMBIGUOUS",
+            f"{len(boards)} device(s) {', '.join(tool.usb)} with {len(ports)} COM port(s) on "
+            f"this host ({', '.join(ports)}) — choose one with port=; nothing was run",
         )
     return ports[0]
 
@@ -3213,9 +3328,12 @@ async def _dispatch(data_ws: Any, reader: _JobReader, spec: OpSpec, req: Mapping
         await _run_image_op(data_ws, reader, spec, values, req)
         return
     fastboot = spec.argv[0] if spec.argv else _fastboot_path()
-    if spec.needs == "fastboot-device" and not await _device_present(fastboot):
-        await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
-        return
+    if spec.needs == "fastboot-device":
+        listed = await _device_present(fastboot)
+        if not listed:
+            await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
+            return
+        await _refuse_several_in_fastboot(listed)
     await _check_board_identity(spec, req, fastboot)
     if spec.builtin is not None:
         await data_ws.send(_job_control({"ev": "accepted", "detail": spec.name}))
@@ -3293,8 +3411,9 @@ async def _job_progress(data_ws: Any, phase: str, done: int, total: int, text: s
         )
 
 
-async def _device_present(fastboot: str) -> bool:
-    """Is a board actually in fastboot right now?
+async def _device_present(fastboot: str) -> int:
+    """Is a board actually in fastboot right now? How many `fastboot devices`
+    lists — 0 is "no", more than 1 is refused by the caller (ADR-069 A0).
 
     Everything else here depends on this. `fastboot flash` and
     `fastboot reboot` BLOCK waiting for a device when none is present —
@@ -3324,7 +3443,7 @@ async def _device_present(fastboot: str) -> bool:
     except BaseException:
         await _reap(proc)
         raise
-    return bool(out.decode("utf-8", errors="replace").strip())
+    return sum(1 for line in out.decode("utf-8", errors="replace").splitlines() if line.strip())
 
 
 # `fastboot getvar product` answers on stderr as `product: <value>`; some
@@ -3434,9 +3553,12 @@ async def _run_image_op(
 
     # Check BEFORE accepting the image: streaming megabytes to a bench whose
     # board is not even in fastboot wastes the tunnel and then fails anyway.
-    if spec.needs == "fastboot-device" and not await _device_present(fastboot):
-        await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
-        return
+    if spec.needs == "fastboot-device":
+        listed = await _device_present(fastboot)
+        if not listed:
+            await _job_fail(data_ws, spec.no_device_msg, code="FASTBOOT_NO_DEVICE")
+            return
+        await _refuse_several_in_fastboot(listed)
     await _check_board_identity(spec, req, fastboot)
 
     await data_ws.send(_job_control({"ev": "accepted", "detail": f"receiving {size} bytes"}))

@@ -47,6 +47,16 @@ def _load_agent():
 
 agent = _load_agent()
 
+
+@pytest.fixture(autouse=True)
+def _no_usb_boards(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fastboot ops count the boards in the host's USB listing (ADR-069 A0):
+    an empty listing here, not whatever this test machine has plugged in."""
+    monkeypatch.setattr(agent, "_SYSFS_USB_ROOT", tmp_path_factory.mktemp("usb-none"))
+
+
 LISTS = {"board-a": {"boot", "dtbo", "vendor_cfg"}, "board-b": {"boot_a", "boot_b"}}
 
 

@@ -287,6 +287,16 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "listed, run `alb bench usb` to tell a missing driver from a cable "
         "that is not on the agent host",
     ),
+    # ADR-069 A0: fastboot without -s takes the first device it finds, and
+    # a job cannot name its board yet, so the agent refuses to guess.
+    "FLASH_DEVICE_AMBIGUOUS": ErrorSpec(
+        "FLASH_DEVICE_AMBIGUOUS",
+        "transport",
+        "More than one board is in fastboot on the agent host; nothing was run",
+        "Leave only the board to work on in fastboot — reboot the others to the "
+        "system or unplug them; the error lists the boards found (`alb bench usb` "
+        "shows them too)",
+    ),
     "FLASH_IMAGE_CORRUPT": ErrorSpec(
         "FLASH_IMAGE_CORRUPT",
         "transport",
@@ -626,6 +636,14 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "host, or has no COM port",
         "Put the board into the vendor's download mode; the error lists what is attached — "
         "a device with the right VID:PID but no COM port means its driver is missing",
+    ),
+    "BENCH_TOOL_DEVICE_AMBIGUOUS": ErrorSpec(
+        "BENCH_TOOL_DEVICE_AMBIGUOUS",
+        "transport",
+        "More than one device registered for the tool (tool_usb) is attached to the bench "
+        "host, and the request does not say which; the tool was not started",
+        "Choose one with port= when the tool's arguments use {com}; otherwise leave only "
+        "the board to flash in download mode",
     ),
     "BENCH_TOOL_NOT_STARTED": ErrorSpec(
         "BENCH_TOOL_NOT_STARTED",

@@ -51,13 +51,13 @@ tags: [errors, reference, llm-friendly]
 <!-- BEGIN GENERATED: scripts/gen_errors_doc.py -->
 <!-- 本段由脚本生成,不要手改。改了 src/alb/infra/errors.py 或返回错误码的代码后,运行:uv run python scripts/gen_errors_doc.py -->
 
-登记在 `ERROR_CODES` 里的码共 96 个,按 `category` 分 7 组,每组按码名字母排序。message 和 suggestion 是目录里的默认文字,原样照抄英文:`alb_describe_errors` 返回的就是这两句。
+登记在 `ERROR_CODES` 里的码共 98 个,按 `category` 分 7 组,每组按码名字母排序。message 和 suggestion 是目录里的默认文字,原样照抄英文:`alb_describe_errors` 返回的就是这两句。
 
 另有 61 个码代码里会返回、但没有登记,列在本节最后。
 
 | category | 中文 | 含义 | 码数 | 码名前缀 |
 |---|---|---|---|---|
-| `transport` | 通道与台架 | 到板子的通道(adb / ssh / 串口)出了问题,或经台架 agent 做的操作(fastboot 烧录、9008、agent 更新与启动)失败 | 57 | `ADB_*` `AGENT_*` `BENCH_*` `BOARD_*` `EDL_*` `FASTBOOT_*` `FLASH_*` `PORT_*` `PSTORE_*` `SERIAL_*` `SHELL_*` `SSH_*` `TIMELINE_*` `TRANSPORT_*` |
+| `transport` | 通道与台架 | 到板子的通道(adb / ssh / 串口)出了问题,或经台架 agent 做的操作(fastboot 烧录、9008、agent 更新与启动)失败 | 59 | `ADB_*` `AGENT_*` `BENCH_*` `BOARD_*` `EDL_*` `FASTBOOT_*` `FLASH_*` `PORT_*` `PSTORE_*` `SERIAL_*` `SHELL_*` `SSH_*` `TIMELINE_*` `TRANSPORT_*` |
 | `device` | 对端状态 | 连接本身是通的,是对端(板子或台架主机)的状态或回答不对:USB 未授权、离线、adbd 不肯切 root、板子上的端口没人监听、台架主机上没有启动 agent 的任务 | 14 | `ADB_*` `AGENT_*` `BENCH_*` `BREAKIN_*` `DEVICE_*` `FLASH_*` `PORT_*` |
 | `permission` | 权限 | 被权限策略拦下,或要 root 才能读 | 2 | `PERMISSION_*` `ROOT_*` |
 | `timeout` | 超时 | 在限定时间内没等到预期的输出或状态 | 6 | `ADBD_*` `AGENT_*` `BREAKIN_*` `TIMEOUT_*` |
@@ -66,7 +66,7 @@ tags: [errors, reference, llm-friendly]
 | `system` | 主机环境与 LLM | 主机缺依赖,或 LLM 后端的上下文 / 输出被截断 | 3 | `LLM_*` `SYSTEM_*` |
 | `capability` | 业务层 | `fail()` 不传 category 时的默认值;目录里目前没有这一类的码 | 0 | — |
 
-### transport · 通道与台架(57 个)
+### transport · 通道与台架(59 个)
 
 | Code | 默认 message | 默认 suggestion |
 |---|---|---|
@@ -85,6 +85,7 @@ tags: [errors, reference, llm-friendly]
 | `BENCH_OP_UNKNOWN` | The agent on the bench host has no such op | Run `alb bench ops` to see what this agent offers |
 | `BENCH_PARAM_REJECTED` | A parameter value was refused (wrong type, out of range, or not one of the allowed choices) | Run `alb bench ops` — each op lists its parameters with their kinds and allowed values |
 | `BENCH_TOOL_ARG_REJECTED` | An argument for the vendor tool was refused; the tool was not started | Name files relative to the package (the tool runs in it), or write {pkg}; no drive paths, network paths or '..'; {com} needs tool_usb in agent.conf; the error says which argument and which rule |
+| `BENCH_TOOL_DEVICE_AMBIGUOUS` | More than one device registered for the tool (tool_usb) is attached to the bench host, and the request does not say which; the tool was not started | Choose one with port= when the tool's arguments use {com}; otherwise leave only the board to flash in download mode |
 | `BENCH_TOOL_FAILED` | The vendor tool ran and failed: a line matched tool_fail, its exit code was not 0, or the tool_ok line never appeared | data.judged_by says which; read the output and the files it wrote (record: …/files/) before running it again |
 | `BENCH_TOOL_NOT_STARTED` | The vendor tool could not be started on the bench host | Check tool_exe in the bench agent.conf; a missing DLL or a tool that needs administrator rights fails this way — run it once by hand on the bench host |
 | `BENCH_TOOL_NO_DEVICE` | The USB device registered for the tool (tool_usb) is not attached to the bench host, or has no COM port | Put the board into the vendor's download mode; the error lists what is attached — a device with the right VID:PID but no COM port means its driver is missing |
@@ -107,6 +108,7 @@ tags: [errors, reference, llm-friendly]
 | `FLASH_AGENT_NO_SPACE` | The agent host has too little free temp space to receive the image | Free disk space on the agent host (the image is staged in its temp directory before fastboot runs) — nothing was transferred or written |
 | `FLASH_BOARD_MISMATCH` | The board in fastboot is not the chosen bench board: `fastboot getvar product` answered something other than its fastboot_product in agent.conf, or nothing; nothing was written | Check which board is on the USB cable; switch with `alb bench board use <name>` if the hub has the wrong one chosen |
 | `FLASH_BOARD_NOT_LISTED` | The agent keeps a partition list per board, and none applies: no bench board is chosen, or the agent has no list for the chosen one | Choose the board on the cable with `alb bench board use <name>`, or add flash_partitions.\<board> to agent.conf on the bench host |
+| `FLASH_DEVICE_AMBIGUOUS` | More than one board is in fastboot on the agent host; nothing was run | Leave only the board to work on in fastboot — reboot the others to the system or unplug them; the error lists the boards found (`alb bench usb` shows them too) |
 | `FLASH_FAILED` | fastboot ran but reported a failure | Read the captured fastboot output: a `FAILED (remote: '...')` line is the bootloader's own answer — it refused or could not do the command, which alb passed on as is. Only a failed flash or erase can leave a partition half-written; re-flash that partition before rebooting |
 | `FLASH_IMAGE_CORRUPT` | The image did not survive the transfer intact (digest mismatch) | Retry — nothing was written to the device, the digest is checked before fastboot is invoked |
 | `FLASH_OEM_REJECTED` | The agent refused the oem command before sending it — the text does not have a shape that reaches the board intact | Any oem command is passed on; only these are refused: empty, starting with '-' (fastboot would read it as its own option) or whitespace, control characters, or longer than 256 characters (see _OEM_RE in alb_agent.py). An agent older than 2026-11-05 still only passes at-lock-vboot / at-unlock-vboot — update it with `alb bench agent-update` |

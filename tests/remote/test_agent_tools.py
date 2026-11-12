@@ -567,9 +567,74 @@ async def test_two_download_ports_need_a_choice(bench: _Bench) -> None:
     bench.usb[0] = _usb(_DL_PNP, second)
     ops = bench.ops(tool_usb="1a2b:3c4d")
     ws = await _run(ops, tool="vt", args=["{com}"])
-    assert ws.done()["code"] == "BENCH_TOOL_ARG_REJECTED" and "COM41, COM42" in ws.done()["error"]
+    done = ws.done()
+    assert done["code"] == "BENCH_TOOL_DEVICE_AMBIGUOUS" and "COM41, COM42" in done["error"]
+    assert bench.calls() == []
     ws = await _run(ops, tool="vt", args=["{com}"], port="COM42")
     assert ws.done()["ok"] and bench.calls()[-1]["argv"] == ["COM42"]
+
+
+# ── two boards in download mode (ADR-069 A0) ────────────────────────────
+
+_DL_PNP_2 = {
+    **_DL_PNP,
+    "Name": "Vendor USB Download Port (COM42)",
+    "PNPDeviceID": "USB\\VID_1A2B&PID_3C4D\\7",
+}
+
+
+async def test_two_boards_and_a_tool_that_finds_the_device_itself_is_refused(
+    bench: _Bench,
+) -> None:
+    """No {com}: the tool picks whichever board it sees first. Before
+    ADR-069 A0 this ran — the case that writes the wrong board silently."""
+    bench.usb[0] = _usb(_DL_PNP, _DL_PNP_2)
+    ws = await _run(bench.ops(tool_usb="1a2b:3c4d"), tool="vt", pkg="board-a/v1")
+    done = ws.done()
+    assert done["code"] == "BENCH_TOOL_DEVICE_AMBIGUOUS", done
+    assert "COM41" in done["error"] and "COM42" in done["error"]
+    assert bench.calls() == []
+
+
+async def test_port_without_com_does_not_count_as_a_choice(bench: _Bench) -> None:
+    """port= picks a COM port to fill {com}; a tool not given {com} never
+    sees it, so it chooses nothing."""
+    bench.usb[0] = _usb(_DL_PNP, _DL_PNP_2)
+    ws = await _run(bench.ops(tool_usb="1a2b:3c4d"), tool="vt", pkg="board-a/v1", port="COM41")
+    assert ws.done()["code"] == "BENCH_TOOL_DEVICE_AMBIGUOUS"
+    assert bench.calls() == []
+
+
+async def test_a_composite_device_is_one_board(bench: _Bench) -> None:
+    """Windows lists a composite device as the device plus one `MI_xx`
+    child per interface, all with the same VID:PID."""
+    parent = {**_DL_PNP, "Name": "USB Composite Device", "Service": "usbccgp"}
+    child = {
+        **_DL_PNP,
+        "PNPDeviceID": "USB\\VID_1A2B&PID_3C4D&MI_00\\7&1F&0&0000",
+    }
+    bench.usb[0] = _usb(parent, child)
+    ws = await _run(bench.ops(tool_usb="1a2b:3c4d"), tool="vt", pkg="board-a/v1")
+    assert ws.done()["ok"], ws.done()
+    assert len(bench.calls()) == 1
+
+
+async def test_two_boards_one_without_a_driver_is_still_a_choice_to_make(bench: _Bench) -> None:
+    """One COM port, two boards: the one without a driver may be the one
+    meant, so taking the only port would be a guess."""
+    no_driver = {
+        **_DL_PNP_2,
+        "Name": "Unknown USB Device",
+        "ConfigManagerErrorCode": 28,
+        "Service": None,
+    }
+    bench.usb[0] = _usb(_DL_PNP, no_driver)
+    ops = bench.ops(tool_usb="1a2b:3c4d")
+    ws = await _run(ops, tool="vt", args=["{com}"])
+    assert ws.done()["code"] == "BENCH_TOOL_DEVICE_AMBIGUOUS"
+    assert bench.calls() == []
+    ws = await _run(ops, tool="vt", args=["{com}"], port="COM41")
+    assert ws.done()["ok"] and bench.calls()[-1]["argv"] == ["COM41"]
 
 
 # ── the device and the package ──────────────────────────────────────────
