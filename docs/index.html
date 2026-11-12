@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>android-llm-bridge — give every AI agent a debug cable</title>
-<meta name="alb-title-en" content="android-llm-bridge — give every AI agent a debug cable">
-<meta name="alb-title-zh" content="android-llm-bridge —— 给每个 AI Agent 接上一根调试线">
-<meta name="description" content="Open-source bridge between AI agents and real hardware. Claude Code, Codex, Cursor or your own model drive Android and embedded boards over adb, UART, fastboot and Qualcomm EDL — even when the board sits on a bench PC in another room. MCP server, CLI, HTTP API and a Material 3 web UI.">
+<title>android-llm-bridge — let your AI agent flash the board and read the UART</title>
+<meta name="alb-title-en" content="android-llm-bridge — let your AI agent flash the board and read the UART">
+<meta name="alb-title-zh" content="android-llm-bridge —— 让 AI 自己烧板子、自己看串口">
+<meta name="description" content="Open-source bridge between AI coding agents and real hardware. Claude Code, Codex or Cursor flash, watch and debug Android and embedded boards over adb, UART, fastboot, Qualcomm EDL and your vendor's flash tool, while the board stays plugged into a bench PC. MCP server, CLI, HTTP API and a Material 3 web UI.">
 <link rel="canonical" href="https://doc.tbusos.com/android-llm-bridge/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="android-llm-bridge">
-<meta property="og:title" content="android-llm-bridge — give every AI agent a debug cable">
-<meta property="og:description" content="Let Claude Code, Codex, Cursor or your own model flash, watch and debug real boards over adb, UART, fastboot and EDL — locally or on a remote bench. Open source, Apache 2.0.">
+<meta property="og:title" content="android-llm-bridge — let your AI agent flash the board and read the UART">
+<meta property="og:description" content="Claude Code, Codex and Cursor already edit and build. alb hands them the last metre: adb, the serial console, fastboot, Qualcomm EDL and vendor flash tools, on a board that stays on the bench. Open source, Apache 2.0.">
 <meta property="og:url" content="https://doc.tbusos.com/android-llm-bridge/">
 <meta property="og:image" content="https://doc.tbusos.com/android-llm-bridge/assets/site/og.png">
 <meta property="og:image:width" content="1200">
@@ -27,244 +27,25 @@
   if (!l) l = (navigator.language || "").toLowerCase().indexOf("zh") === 0 ? "zh-CN" : "en";
   r.setAttribute("lang", l);
   if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+  r.classList.add("js");
 })();
 </script>
 <link rel="stylesheet" href="assets/v3/tokens.css">
 <link rel="stylesheet" href="assets/site/site.css">
+<link rel="stylesheet" href="assets/site/home.css">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
   "name": "android-llm-bridge",
   "alternateName": "alb",
-  "description": "Open-source bridge that lets AI agents debug real Android and embedded boards over adb, UART, fastboot and Qualcomm EDL, locally or through a remote bench PC.",
+  "description": "Open-source bridge that lets AI coding agents flash, watch and debug real Android and embedded boards over adb, UART, fastboot, Qualcomm EDL and vendor flash tools, locally or through a remote bench PC.",
   "codeRepository": "https://github.com/TbusOS/android-llm-bridge",
   "programmingLanguage": ["Python", "TypeScript"],
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
   "url": "https://doc.tbusos.com/android-llm-bridge/"
 }
 </script>
-<style>
-  /* ---------- hero ---------- */
-  .hero { position: relative; overflow: hidden; padding: clamp(40px, 7vw, 88px) 0 clamp(56px, 8vw, 104px); }
-  .hero__grid { position: relative; display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 64px); align-items: center; }
-  @media (max-width: 980px) { .hero__grid { grid-template-columns: 1fr; } }
-  .hero__news {
-    display: inline-flex; align-items: center; gap: 10px; padding: 4px 14px 4px 4px; border-radius: 999px;
-    background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
-    font-size: 14px; font-weight: 500; text-decoration: none; max-width: 100%;
-  }
-  .hero__news:hover { background: var(--md-sys-color-surface-container-highest); text-decoration: none; }
-  .hero h1 {
-    margin-top: 24px; font-size: clamp(42px, 6.6vw, 80px); line-height: 1.02; letter-spacing: -2px; font-weight: 520;
-    font-variation-settings: "opsz" 96;
-  }
-  :root:lang(zh) .hero h1 { line-height: 1.16; letter-spacing: 0; font-size: clamp(38px, 5.6vw, 68px); }
-  .hero h1 em { font-style: normal; color: var(--md-sys-color-primary); position: relative; white-space: nowrap; }
-  .hero h1 em::after {
-    content: ""; position: absolute; left: 2%; right: 2%; bottom: .04em; height: .16em; border-radius: 999px; z-index: -1;
-    background: var(--md-sys-color-tertiary-container);
-  }
-  .hero .lead { margin-top: 24px; font-size: clamp(17px, 1.6vw, 20px); line-height: 1.6; color: var(--md-sys-color-on-surface-variant); max-width: 620px; }
-  .hero__cta { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 12px; }
-  .stats { margin: 40px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; max-width: 640px; }
-  .stats div { padding: 14px 16px; border-radius: 20px; background: var(--md-sys-color-surface-container); }
-  .stats dt { font-size: 28px; line-height: 1.1; font-weight: 600; color: var(--md-sys-color-on-surface); font-variant-numeric: tabular-nums; }
-  .stats dd { margin: 4px 0 0; font-size: 13px; line-height: 1.35; color: var(--md-sys-color-on-surface-variant); }
-  @media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
-  .hero .shape--cookie { width: 340px; height: 340px; right: -90px; top: -70px; background: var(--md-sys-color-primary-container); animation: site-spin 90s linear infinite; }
-  .hero .shape--clover { width: 190px; height: 190px; left: -60px; bottom: 40px; background: var(--site-kernel-container); animation: site-spin 120s linear infinite reverse; }
-  .hero .shape--sunny { width: 120px; height: 120px; left: 46%; top: 22px; background: var(--site-job-container); animation: site-spin 70s linear infinite; }
-  .hero .shape--pill { width: 220px; height: 78px; right: 8%; bottom: -24px; background: var(--md-sys-color-tertiary-container); transform: rotate(-18deg); }
-  @media (max-width: 980px) { .hero .shape--sunny { display: none; } .hero .shape--cookie { width: 240px; height: 240px; right: -110px; top: -60px; } }
-
-  /* session card */
-  .session { position: relative; margin: 0; border-radius: 28px; overflow: hidden; background: var(--alb-color-terminal-bg); color: var(--alb-color-terminal-fg);
-    box-shadow: 0 24px 60px -24px rgba(11, 87, 208, .35), var(--md-sys-elevation-level2); }
-  .session__bar { display: flex; align-items: center; gap: 8px; padding: 14px 18px; background: color-mix(in srgb, var(--alb-color-terminal-bg) 80%, #ffffff 6%); }
-  .session__bar i { width: 11px; height: 11px; border-radius: 50%; background: #5f6368; display: block; }
-  .session__bar i:nth-child(1) { background: #f28b82; } .session__bar i:nth-child(2) { background: #fdd663; } .session__bar i:nth-child(3) { background: #81c995; }
-  .session__title { margin-left: 8px; font: 500 12.5px/1 var(--md-ref-typeface-mono); color: var(--alb-color-terminal-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .session__body { padding: 20px 22px 8px; font: 13.5px/1.6 var(--md-ref-typeface-mono); }
-  .session__you { color: #ffffff; }
-  .session__you b { color: var(--alb-color-terminal-prompt); font-weight: 600; margin-right: 6px; }
-  .session__calls { list-style: none; margin: 14px 0 0; padding: 0; }
-  .session__calls li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 7px 0 7px 14px; border-left: 2px solid #3c4043; animation: rise .5s var(--site-ease) backwards; }
-  .session__calls li:nth-child(1) { animation-delay: .25s; } .session__calls li:nth-child(2) { animation-delay: .55s; }
-  .session__calls li:nth-child(3) { animation-delay: .85s; } .session__calls li:nth-child(4) { animation-delay: 1.15s; }
-  .session__calls code { color: var(--alb-color-terminal-accent); background: none; padding: 0; font-size: inherit; overflow-wrap: anywhere; }
-  .session__calls .ok { color: var(--alb-color-terminal-prompt); white-space: nowrap; }
-  .session__calls .hit { color: var(--alb-color-terminal-warn); white-space: nowrap; }
-  .session__answer { margin: 14px 0 0; padding: 14px 16px; border-radius: 16px; background: rgba(168, 199, 250, .1); color: #e8eaed; animation: rise .5s var(--site-ease) 1.5s backwards; font-family: var(--md-ref-typeface-plain); font-size: 14.5px; line-height: 1.55; }
-  .session__answer b { color: var(--alb-color-terminal-accent); }
-  .session figcaption { padding: 10px 22px 18px; font: 12px/1.4 var(--md-ref-typeface-plain); color: var(--alb-color-terminal-muted); }
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
-
-  /* ---------- why ---------- */
-  .why h3 { margin-top: 2px; }
-  .why .card { padding: 26px; }
-  .card__icon--uart { background: var(--site-uart-container); color: var(--site-on-uart-container); }
-  .card__icon--kernel { background: var(--site-kernel-container); color: var(--site-on-kernel-container); }
-  .card__icon--job { background: var(--site-job-container); color: var(--site-on-job-container); }
-  .card__icon--green { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
-
-  /* ---------- topology ---------- */
-  .topo-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-  .topo { margin: 0; border-radius: var(--site-radius-panel); background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); padding: clamp(8px, 1.6vw, 20px); }
-  .topo svg { display: block; width: 100%; height: auto; }
-  .topo .topo__svg--tall { display: none; }
-  @media (max-width: 900px) { .topo .topo__svg--wide { display: none; } .topo .topo__svg--tall { display: block; max-width: 420px; margin: 0 auto; } }
-  .topo .zone { fill: var(--md-sys-color-surface-container-high); stroke: none; }
-  .topo .zone--build { fill: color-mix(in srgb, var(--md-sys-color-primary-container) 50%, var(--md-sys-color-surface-container-low)); }
-  .topo .zone--bench { fill: color-mix(in srgb, var(--site-uart-container) 55%, var(--md-sys-color-surface-container-low)); }
-  .topo .zone--models { fill: color-mix(in srgb, var(--site-kernel-container) 40%, var(--md-sys-color-surface-container-low)); }
-  .topo .box { fill: var(--alb-color-card); stroke: var(--md-sys-color-outline-variant); stroke-width: 1; }
-  .topo .box--hub { fill: var(--md-sys-color-primary); stroke: none; }
-  .topo .chipr { fill: var(--md-sys-color-surface-container-high); stroke: none; }
-  .topo .tag { fill: var(--md-sys-color-tertiary-container); }
-  .topo .tag--plan { fill: var(--md-sys-color-surface-container-highest); }
-  .topo .lblbg { fill: var(--alb-color-card); stroke: var(--md-sys-color-primary); stroke-width: 1.5; }
-  .topo text { font-family: var(--md-ref-typeface-plain); letter-spacing: 0; }
-  .topo .t-zone { font-size: 16px; font-weight: 650; fill: var(--md-sys-color-on-surface); }
-  .topo .t-title { font-size: 15px; font-weight: 600; fill: var(--md-sys-color-on-surface); }
-  .topo .t-sub { font-size: 12.5px; fill: var(--md-sys-color-on-surface-variant); }
-  .topo .t-chip { font-size: 12px; font-weight: 500; fill: var(--md-sys-color-on-surface); }
-  .topo .t-tag { font-size: 11px; font-weight: 600; fill: var(--md-sys-color-on-tertiary-container); }
-  .topo .t-tag--plan { fill: var(--md-sys-color-on-surface-variant); }
-  .topo .t-edge { font-size: 12px; font-weight: 600; fill: var(--md-sys-color-on-surface-variant); }
-  .topo .t-hub { font-size: 21px; font-weight: 700; fill: var(--md-sys-color-on-primary); }
-  .topo .t-on-hub { font-size: 12.5px; fill: var(--md-sys-color-on-primary); }
-  .topo .t-wss { font-size: 13px; font-weight: 700; fill: var(--md-sys-color-primary); }
-  .topo .edge { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 1.8; }
-  .topo .edge--wss { stroke: var(--md-sys-color-primary); stroke-width: 2.4; }
-  .ah { fill: var(--md-sys-color-outline); }
-  .ah--p { fill: var(--md-sys-color-primary); }
-  .topo .plan .box, .topo .plan.box { stroke-dasharray: 6 5; stroke: var(--md-sys-color-outline); fill: var(--md-sys-color-surface-container-lowest); }
-  .topo .plan .zone { fill: none; stroke: var(--md-sys-color-outline); stroke-dasharray: 6 5; }
-  .topo .edge.plan { stroke-dasharray: 6 6; }
-  .topo [data-s], .topo .plan { transition: opacity .35s var(--site-ease); }
-  .topo[data-mode="today"] .plan { opacity: .16; }
-  .topo.is-stepping [data-s]:not(.on) { opacity: .2; }
-  .topo.is-stepping .edge.on { stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-dasharray: 9 7; animation: flow .9s linear infinite; }
-  .topo.is-stepping .box.on, .topo.is-stepping .on > .box { stroke: var(--md-sys-color-primary); stroke-width: 2.5; }
-  .topo.is-stepping .on > .chipr { fill: var(--md-sys-color-primary); }
-  .topo.is-stepping .on > .t-chip { fill: var(--md-sys-color-on-primary); }
-  @keyframes flow { to { stroke-dashoffset: -32; } }
-  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
-  .legend span { display: inline-flex; align-items: center; gap: 8px; }
-  .legend i { width: 28px; height: 0; border-top: 2px solid var(--md-sys-color-outline); display: inline-block; }
-  .legend i.d { border-top-style: dashed; }
-  .legend i.p { border-top: 3px dashed var(--md-sys-color-primary); }
-
-  .loop { margin-top: 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 16px; align-items: stretch; }
-  @media (max-width: 900px) { .loop { grid-template-columns: 1fr; } }
-  .loop__steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-content: start; }
-  .loop__step {
-    display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 14px; border-radius: 18px; cursor: pointer;
-    border: 1px solid var(--md-sys-color-outline-variant); background: var(--alb-color-card); color: var(--md-sys-color-on-surface);
-    font: 500 15px/1.2 var(--md-ref-typeface-plain); text-align: left;
-    transition: background-color .2s var(--site-ease), transform .2s var(--site-ease-spring);
-  }
-  .loop__step:hover { background: var(--md-sys-color-surface-container-high); }
-  .loop__step:active { transform: scale(.97); }
-  .loop__step .n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700;
-    background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
-  .loop__step[aria-pressed="true"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border-color: transparent; }
-  .loop__step[aria-pressed="true"] .n { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
-  .loop__panel { border-radius: 24px; padding: 22px 24px; background: var(--md-sys-color-surface-container); min-height: 168px; display: flex; flex-direction: column; }
-  .loop__panel h3 { font-size: 20px; line-height: 1.3; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .loop__panel p { margin-top: 10px; color: var(--md-sys-color-on-surface-variant); line-height: 1.6; }
-  .loop__nav { margin-top: auto; padding-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
-  @media (max-width: 520px) { .loop__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
-  /* ---------- models ---------- */
-  .flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px; position: relative; }
-  .flow .card { padding: 24px; display: flex; flex-direction: column; }
-  .flow .card:not(:last-child)::after {
-    content: ""; position: absolute; top: 50%; right: -24px; width: 20px; height: 20px; transform: translateY(-50%);
-    background: var(--md-sys-color-primary);
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12h12M13 6l6 6-6 6' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12h12M13 6l6 6-6 6' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
-  }
-  .flow .card .pill { align-self: flex-start; margin-bottom: 14px; }
-  .flow .card h3 { font-size: 20px; }
-  .flow .card .card__foot { margin-top: auto; padding-top: 16px; }
-  .vol { height: 8px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; margin-top: 18px; }
-  .vol b { display: block; height: 100%; border-radius: 999px; background: currentColor; opacity: .7; }
-  .vol-label { margin-top: 6px; font-size: 12.5px; opacity: .85; }
-  @media (max-width: 1000px) {
-    .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .flow .card:nth-child(2)::after { display: none; }
-  }
-  @media (max-width: 640px) {
-    .flow { grid-template-columns: 1fr; gap: 28px; }
-    .flow .card:not(:last-child)::after { display: block; top: auto; bottom: -26px; right: auto; left: 50%; transform: translateX(-50%) rotate(90deg); }
-  }
-  .byo { margin-top: 28px; display: grid; grid-template-columns: auto 1fr; gap: 12px 20px; align-items: center; padding: 20px 24px; border-radius: 24px; background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); }
-  .byo strong { font-weight: 600; }
-  @media (max-width: 720px) { .byo { grid-template-columns: 1fr; } }
-
-  /* ---------- integrations ---------- */
-  .integ { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.3fr); gap: clamp(24px, 4vw, 56px); align-items: start; }
-  @media (max-width: 900px) { .integ { grid-template-columns: 1fr; } }
-  .integ__copy p + p { margin-top: 14px; }
-  .integ__copy p { color: var(--md-sys-color-on-surface-variant); font-size: 17px; line-height: 1.65; }
-  .integ__panel { border-radius: var(--site-radius-panel); background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); padding: 8px 20px 22px; min-width: 0; }
-  .integ__panel .tabpanel p { margin: 12px 2px 0; font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
-  .tools { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .tools code { font-size: 12.5px !important; }
-
-  /* ---------- targets ---------- */
-  .targets .card { display: flex; flex-direction: column; }
-  .targets .card > .pill { align-self: flex-start; }
-  .targets .sub + ul { margin-top: 6px; }
-  .targets .card h3 { margin-top: 12px; }
-  .targets .card ul { font-size: 15px; line-height: 1.5; }
-  .targets .sub { margin-top: 16px; font-size: 12.5px; font-weight: 700; letter-spacing: var(--alb-tracking-caps); text-transform: uppercase; opacity: .8; }
-  :root:lang(zh) .targets .sub { text-transform: none; letter-spacing: 0; }
-
-  /* ---------- web ui ---------- */
-  .shots { border-radius: var(--site-radius-panel); background: var(--md-sys-color-surface-container); padding: 8px clamp(8px, 2vw, 20px) clamp(12px, 2vw, 24px); }
-  .shots .tabpanel { padding-top: 16px; }
-  .shots img { display: block; width: 100%; height: auto; border-radius: 18px; box-shadow: var(--md-sys-elevation-level2); background: var(--md-sys-color-surface-container-high); }
-  .shots .tabpanel p { margin-top: 14px; color: var(--md-sys-color-on-surface-variant); font-size: 15px; }
-
-  /* ---------- quick start ---------- */
-  .steps { display: grid; gap: 12px; }
-  .step { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 16px 32px; align-items: center;
-    padding: 20px 20px 20px 24px; border-radius: var(--site-radius-card); background: var(--alb-color-card); border: 1px solid var(--md-sys-color-outline-variant); }
-  .step__head { display: flex; gap: 16px; align-items: flex-start; }
-  .step__head h3 { font-size: 20px; line-height: 1.3; }
-  .step__head p { margin-top: 6px; color: var(--md-sys-color-on-surface-variant); font-size: 15px; line-height: 1.55; }
-  .steps .num { flex: none; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-weight: 700; }
-  .step .code { font-size: 13px; }
-  @media (max-width: 860px) { .step { grid-template-columns: 1fr; } }
-  .remote { margin-top: 16px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 32px; align-items: center; }
-  @media (max-width: 860px) { .remote { grid-template-columns: 1fr; } }
-
-  /* ---------- roadmap ---------- */
-  .road .card h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .road ul { list-style: none; padding: 0; margin: 16px 0 0; }
-  .road li { padding: 12px 0; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); font-size: 15px; line-height: 1.5; }
-  .road li b { display: block; font-weight: 600; }
-  .road li span.s { display: block; margin-top: 2px; opacity: .8; font-size: 14px; }
-
-  /* ---------- community ---------- */
-  .ext .card { padding: 24px; }
-  .ext code { font-size: 12.5px !important; }
-  .vendor { margin-top: 24px; position: relative; overflow: hidden; border-radius: var(--site-radius-hero); padding: clamp(28px, 5vw, 64px);
-    background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
-  .vendor h2 { color: inherit; font-size: clamp(28px, 3.8vw, 44px); line-height: 1.15; max-width: 760px; }
-  :root:lang(zh) .vendor h2 { line-height: 1.3; }
-  .vendor p { margin-top: 16px; max-width: 680px; font-size: 17.5px; line-height: 1.6; opacity: .95; }
-  .vendor .btn--light { background: var(--md-sys-color-on-primary); color: var(--md-sys-color-primary); }
-  .vendor .btn--ghost { border-color: color-mix(in srgb, var(--md-sys-color-on-primary) 60%, transparent); color: var(--md-sys-color-on-primary); }
-  .vendor .btn--ghost:hover { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
-  .vendor__cta { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; position: relative; }
-  .vendor .shape--cookie { width: 300px; height: 300px; right: -70px; top: -90px; background: color-mix(in srgb, var(--md-sys-color-on-primary) 14%, transparent); }
-  .vendor .shape--clover { width: 170px; height: 170px; right: 18%; bottom: -80px; left: auto; background: color-mix(in srgb, var(--md-sys-color-on-primary) 10%, transparent); }
-</style>
 </head>
 <body>
 <a class="skip" href="#main"><span class="lang-en">Skip to content</span><span class="lang-zh">跳到正文</span></a>
@@ -283,10 +64,10 @@
       <span class="brand__text">android-llm-bridge</span>
     </a>
     <nav class="nav" aria-label="Primary">
-      <a href="#topology"><span class="lang-en">Topology</span><span class="lang-zh">拓扑</span></a>
-      <a href="#models"><span class="lang-en">Models</span><span class="lang-zh">模型</span></a>
+      <a href="#demo"><span class="lang-en">Demo</span><span class="lang-zh">演示</span></a>
+      <a href="#topology"><span class="lang-en">How it works</span><span class="lang-zh">原理</span></a>
+      <a href="#flash"><span class="lang-en">Flashing</span><span class="lang-zh">烧录</span></a>
       <a href="#integrations"><span class="lang-en">Integrations</span><span class="lang-zh">接入</span></a>
-      <a href="#targets"><span class="lang-en">Targets</span><span class="lang-zh">调试对象</span></a>
       <a href="webui-preview.html"><span class="lang-en">Web UI</span><span class="lang-zh">网页界面</span></a>
       <a href="#roadmap"><span class="lang-en">Roadmap</span><span class="lang-zh">路线图</span></a>
       <a href="#community"><span class="lang-en">Contribute</span><span class="lang-zh">参与</span></a>
@@ -316,88 +97,326 @@
     <span class="shape shape--sunny"></span>
     <span class="shape shape--pill"></span>
   </div>
-  <div class="wrap hero__grid">
-    <div>
-      <a class="hero__news" href="webui-preview.html">
-        <span class="pill pill--today"><span class="lang-en">New</span><span class="lang-zh">新</span></span>
-        <span class="lang-en">Web UI v3 and the remote bench are live →</span>
-        <span class="lang-zh">网页界面 v3 和远程台架已上线 →</span>
+  <div class="wrap hero__head">
+    <a class="hero__news" href="#vendor">
+      <span class="pill pill--today"><span class="lang-en">New</span><span class="lang-zh">新</span></span>
+      <span class="lang-en">Your vendor's flash tool, run from Linux →</span>
+      <span class="lang-zh">厂商的烧录工具，也能从 Linux 这边调了 →</span>
+    </a>
+    <h1>
+      <span class="lang-en">Let your AI agent <em>flash the board</em> and <em>read the UART</em>.</span>
+      <span class="lang-zh">让 AI 自己<em>烧板子</em>、<br>自己<em>看串口</em>。</span>
+    </h1>
+    <p class="lead">
+      <span class="lang-en">Claude Code, Codex and Cursor already edit and build. Then they stop and wait for you to carry the image to the bench and paste the log back. alb hands them that last metre: adb, the serial console, fastboot, Qualcomm EDL and your vendor's flash tool, on a board that stays plugged into the bench PC.</span>
+      <span class="lang-zh">Claude Code、Codex、Cursor 已经会改代码、会编译，然后就停下来，等你把镜像拷到台架、再把日志贴回去。alb 把这最后一米也交给它们：adb、串口、fastboot、高通 9008、厂商的烧录工具都能用，板子照旧插在台架电脑上。</span>
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--filled" href="#start">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 12 8-12 8z"/></svg>
+        <span class="lang-en">Get started</span><span class="lang-zh">开始使用</span>
       </a>
-      <h1>
-        <span class="lang-en">Give every AI agent a <em>debug cable</em>.</span>
-        <span class="lang-zh">给每个 AI Agent<br>接上一根<em>调试线</em>。</span>
-      </h1>
-      <p class="lead">
-        <span class="lang-en">alb connects Claude Code, Codex, Cursor — or your own model — to real hardware over adb, UART, fastboot and Qualcomm EDL, even when the board sits on a bench PC in another room. Android today; embedded Linux, kernels and servers next.</span>
-        <span class="lang-zh">alb 让 Claude Code、Codex、Cursor 或你自己的模型，经 adb、串口、fastboot、高通 9008 直接调真实硬件 —— 板子插在另一个房间的台架电脑上也行。现在支持安卓，下一步是嵌入式 Linux、内核和服务器。</span>
-      </p>
-      <div class="hero__cta">
-        <a class="btn btn--filled" href="#start">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 12 8-12 8z"/></svg>
-          <span class="lang-en">Get started</span><span class="lang-zh">开始使用</span>
-        </a>
-        <a class="btn btn--outlined" href="https://github.com/TbusOS/android-llm-bridge">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
-          <span class="lang-en">Star on GitHub</span><span class="lang-zh">在 GitHub 点星</span>
-        </a>
+      <a class="btn btn--outlined" href="https://github.com/TbusOS/android-llm-bridge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>
+        <span class="lang-en">Star on GitHub</span><span class="lang-zh">在 GitHub 点星</span>
+      </a>
+    </div>
+    <ul class="hero__facts">
+      <li><span class="lang-en">Open source, Apache 2.0</span><span class="lang-zh">开源，Apache 2.0</span></li>
+      <li><span class="lang-en">Installs without root</span><span class="lang-zh">安装不要 root</span></li>
+      <li><span class="lang-en">No inbound port on the bench PC</span><span class="lang-zh">台架电脑不用开入站端口</span></li>
+    </ul>
+  </div>
+
+  <div class="wrap wrap--wide">
+    <div class="stage" id="demo">
+      <div class="stage__bar">
+        <div class="stage__tabs" role="tablist" aria-label="Replay">
+          <button class="stage__tab" type="button" role="tab" id="st1" aria-selected="true" data-scn-tab="1"><span class="n">1</span><span><span class="lang-en">Fix a driver</span><span class="lang-zh">改驱动</span></span></button>
+          <button class="stage__tab" type="button" role="tab" id="st2" aria-selected="false" tabindex="-1" data-scn-tab="2"><span class="n">2</span><span><span class="lang-en">Unbrick</span><span class="lang-zh">救砖</span></span></button>
+          <button class="stage__tab" type="button" role="tab" id="st3" aria-selected="false" tabindex="-1" data-scn-tab="3"><span class="n">3</span><span><span class="lang-en">Vendor tool</span><span class="lang-zh">厂商工具</span></span></button>
+        </div>
+        <div class="stage__ctl">
+          <button class="icon-btn" type="button" data-stage="replay" aria-label="Replay" title="Replay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5"/></svg></button>
+          <button class="icon-btn" type="button" data-stage="end" aria-label="Skip to the end" title="Skip to the end"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 5 9 7-9 7zM18 5v14"/></svg></button>
+        </div>
       </div>
-      <dl class="stats">
-        <div><dt>36</dt><dd><span class="lang-en">MCP tools</span><span class="lang-zh">个 MCP 工具</span></dd></div>
-        <div><dt>28</dt><dd><span class="lang-en">CLI command groups</span><span class="lang-zh">组命令行命令</span></dd></div>
-        <div><dt>6</dt><dd><span class="lang-en">ways onto a board</span><span class="lang-zh">种连板方式</span></dd></div>
-        <div><dt>3,200+</dt><dd><span class="lang-en">automated tests</span><span class="lang-zh">条自动化测试</span></dd></div>
-      </dl>
+      <div class="stage__progress" aria-hidden="true"><b></b></div>
+
+      <div class="stage__grid">
+        <!-- ---- the three places ---- -->
+        <div class="scene" data-wire="" data-board="ok" data-tag="" data-now="idle" data-name="a" aria-hidden="true">
+          <div class="scene__row">
+            <div class="node">
+              <div class="node__icon"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="16" height="6.5" rx="1.6"/><path d="M7.5 7.2h.01M7.5 16.8h.01M11 7.2h5M11 16.8h5"/></svg></div>
+              <b><span class="lang-en">Build server</span><span class="lang-zh">编译机</span></b>
+              <span class="sub"><span class="lang-en">AI agent · alb hub</span><span class="lang-zh">AI 助手 · alb hub</span></span>
+            </div>
+            <div class="link"><div class="wire wire--wss"><b>WSS</b></div></div>
+            <div class="node node--bench">
+              <div class="node__icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/></svg></div>
+              <b><span class="lang-en">Bench PC</span><span class="lang-zh">台架电脑</span></b>
+              <span class="sub"><span class="lang-en">bench agent</span><span class="lang-zh">台架 agent</span></span>
+            </div>
+            <div class="link"><div class="wire wire--usb"><b>USB</b></div><div class="wire wire--uart"><b>UART</b></div></div>
+            <div class="node node--board">
+              <div class="node__icon"><svg viewBox="0 0 76 60">
+                <rect class="pcb" x="3" y="6" width="70" height="48" rx="8"/>
+                <path class="pcb-pin" d="M31 19v-4M38 19v-4M45 19v-4M31 41v4M38 41v4M45 41v4M27 24h-4M27 30h-4M27 36h-4M49 24h4M49 30h4M49 36h4"/>
+                <rect class="pcb-chip" x="27" y="19" width="22" height="22" rx="3"/>
+                <rect class="pcb-part" x="9" y="13" width="10" height="6" rx="1.5"/>
+                <rect class="pcb-part" x="9" y="38" width="8" height="10" rx="1.5"/>
+                <rect class="pcb-part" x="58" y="36" width="9" height="12" rx="1.5"/>
+                <circle class="led-glow" cx="62" cy="18" r="8"/>
+                <circle class="led" cx="62" cy="18" r="4"/>
+              </svg></div>
+              <b><span class="nm" data-nm="a">board-a</span><span class="nm" data-nm="b">board-b</span></b>
+              <span class="sub">
+                <span class="st" data-st="ok"><span class="lang-en">booted</span><span class="lang-zh">已启动</span></span>
+                <span class="st" data-st="dark"><span class="lang-en">booted · panel dark</span><span class="lang-zh">已启动 · 屏不亮</span></span>
+                <span class="st" data-st="fastboot">fastboot</span>
+                <span class="st" data-st="boot"><span class="lang-en">booting…</span><span class="lang-zh">启动中…</span></span>
+                <span class="st" data-st="dl"><span class="lang-en">download mode</span><span class="lang-zh">下载模式</span></span>
+              </span>
+            </div>
+          </div>
+          <div class="scene__now">
+            <span class="now" data-now="idle"><span class="lang-en">Idle. The bench agent keeps its connection to the hub open.</span><span class="lang-zh">空闲。台架 agent 一直连着 hub。</span></span>
+            <span class="now" data-now="adb"><span class="lang-en">adb: build server ⇄ board, through the bench agent</span><span class="lang-zh">adb：编译机 ⇄ 板子，经台架 agent</span></span>
+            <span class="now" data-now="img"><span class="lang-en">Image: build server → bench agent → board</span><span class="lang-zh">镜像：编译机 → 台架 agent → 板子</span></span>
+            <span class="now" data-now="fb"><span class="lang-en">fastboot runs on the bench PC, next to the board</span><span class="lang-zh">fastboot 在台架电脑上跑，就在板子旁边</span></span>
+            <span class="now" data-now="log"><span class="lang-en">UART and logs: board → workspace on the build server</span><span class="lang-zh">串口和日志：板子 → 编译机上的工作区</span></span>
+            <span class="now" data-now="tool"><span class="lang-en">The vendor tool runs on the bench PC; its output streams back</span><span class="lang-zh">厂商工具在台架电脑上跑，输出逐行传回来</span></span>
+          </div>
+          <div class="scene__tools">
+            <span class="lbl"><span class="lang-en">bench agent is using</span><span class="lang-zh">台架 agent 正在用</span></span>
+            <span class="tool" data-tool="adb">adb</span>
+            <span class="tool" data-tool="uart">UART</span>
+            <span class="tool" data-tool="fastboot">fastboot</span>
+            <span class="tool" data-tool="edl"><span class="lang-en">EDL 9008</span><span class="lang-zh">高通 9008</span></span>
+            <span class="tool" data-tool="vendor"><span class="lang-en">vendor tool</span><span class="lang-zh">厂商工具</span></span>
+          </div>
+        </div>
+
+        <!-- ---- the agent's terminal ---- -->
+        <div class="pane pane--term">
+          <div class="pane__bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span><span class="lang-en">build-server:~/kernel · AI coding agent</span><span class="lang-zh">build-server:~/kernel · AI 编程助手</span></span></div>
+          <div class="pane__body">
+
+            <div class="scn" data-scn="1" role="tabpanel" aria-labelledby="st1">
+              <i class="cue" data-at="0" data-set="board=ok;wire=;tag=;now=idle;name=a"></i>
+              <p class="ln ln--you" data-at="200"><span class="lang-en">The panel stays dark after my DTS change. Flash the new boot image to board-a and find out why.</span><span class="lang-zh">改完 DTS 屏不亮了。把新的 boot 镜像烧到 board-a，查一下原因。</span></p>
+              <p class="ln ln--cmd" data-at="1300">alb power reboot bootloader</p>
+              <i class="cue" data-at="1300" data-set="wire=wss usb;tag=adb;now=adb"></i>
+              <i class="cue" data-at="2100" data-set="board=fastboot;wire=;tag=fastboot;now=fb"></i>
+              <p class="ln ln--cmd" data-at="2400">alb flash write boot_a images/board-a/boot.img -y</p>
+              <i class="cue" data-at="2500" data-set="wire=wss usb;now=img"></i>
+              <p class="ln" data-at="3300">  transfer: 41943040/41943040 bytes (100%)</p>
+              <p class="ln ln--ok" data-at="4000">[ok] 7.9s</p>
+              <p class="ln" data-at="4100">  record: …/flash/…/timeline.jsonl (job + UART, one timeline)</p>
+              <i class="cue" data-at="4100" data-set="wire=;now=fb"></i>
+              <p class="ln ln--cmd" data-at="4900">alb timeline capture -d 45 --no-logcat --no-dmesg &amp;</p>
+              <p class="ln" data-at="5300">capturing uart for 45s …</p>
+              <p class="ln ln--cmd" data-at="5600">alb flash reboot</p>
+              <i class="cue" data-at="5700" data-set="board=boot;wire=uart wss-up;tag=uart adb;now=log"></i>
+              <p class="ln" data-at="8100">…/timeline/capture-…
+  uart       1873 lines</p>
+              <i class="cue" data-at="8100" data-set="board=dark;wire=;tag="></i>
+              <p class="ln ln--cmd" data-at="8900">alb timeline show …/capture-… --grep panel-demo</p>
+              <p class="ln ln--hit" data-at="9500">   +3.412s uart   | [    1.205377] panel-demo 1-0038: failed to get reset gpio: -2
+   +3.413s uart   | [    1.205941] panel-demo: probe of 1-0038 failed with error -2</p>
+              <p class="ln ln--say" data-at="10700"><span class="lang-en"><b>Found it.</b> The driver asks for <code>reset-gpios</code>; your DTS says <code>reset-gpio</code>, so probe returns -2. I've fixed the DTS and I'm rebuilding.</span><span class="lang-zh"><b>找到了。</b>驱动要的属性是 <code>reset-gpios</code>，你的 DTS 里写成了 <code>reset-gpio</code>，所以 probe 返回 -2。DTS 已经改好，正在重新编译。</span></p>
+              <p class="ln ln--round" data-at="12000"><span class="lang-en">↻ round 2: build → reboot bootloader → flash write → flash reboot</span><span class="lang-zh">↻ 第 2 轮：编译 → reboot bootloader → flash write → flash reboot</span></p>
+              <i class="cue" data-at="12000" data-set="board=fastboot;wire=wss usb;tag=fastboot;now=img"></i>
+              <i class="cue" data-at="13000" data-set="board=boot;wire=uart wss-up;tag=uart adb;now=log"></i>
+              <p class="ln ln--cmd" data-at="13900">alb shell "dmesg | grep panel-demo"</p>
+              <p class="ln ln--ok" data-at="14500">[    1.204901] panel-demo 1-0038: panel enabled</p>
+              <i class="cue" data-at="14500" data-set="board=ok;wire=;tag=;now=idle"></i>
+              <p class="ln ln--say" data-at="15300"><span class="lang-en"><b>Round 2: probe passes.</b> Two rounds, and you never touched the bench PC.</span><span class="lang-zh"><b>第 2 轮 probe 通过了。</b>两轮下来，你没有碰过台架电脑。</span></p>
+            </div>
+
+            <div class="scn" data-scn="2" role="tabpanel" aria-labelledby="st2" hidden>
+              <i class="cue" data-at="0" data-set="board=fastboot;wire=;tag=;now=idle;name=a"></i>
+              <p class="ln ln--you" data-at="200"><span class="lang-en">board-a is boot-looping and gone from adb. I've held the key so it now sits in fastboot. Reflash the whole v12 package, but leave userdata alone.</span><span class="lang-zh">board-a 反复重启，adb 里看不到了。我已经按住按键让它停在 fastboot。把 v12 整包重烧一遍，userdata 不要动。</span></p>
+              <p class="ln ln--cmd" data-at="1300">alb flash status</p>
+              <i class="cue" data-at="1300" data-set="wire=wss;tag=fastboot;now=fb"></i>
+              <p class="ln ln--ok" data-at="1900">[ok] ready</p>
+              <p class="ln" data-at="2000">        board board-a · partitions boot_a, dtbo_a, vendor_boot_a, vbmeta_a, super, misc</p>
+              <p class="ln ln--cmd" data-at="2800">alb flash plan images/board-a/v12/flash.txt --skip userdata --dry-run</p>
+              <p class="ln" data-at="3500">plan: images/board-a/v12/flash.txt · 9 rows · run 8 · skip 1
+  line  row                             decision
+     1  getvar product                  run
+     2  flash boot_a boot.img           run
+     …</p>
+              <p class="ln ln--hit" data-at="3900">     7  flash userdata userdata.img     skip (--skip userdata)</p>
+              <p class="ln" data-at="4100">     …
+  fingerprint: 5d0e9a41…</p>
+              <p class="ln ln--ok" data-at="4500">[dry-run] plan is valid; nothing was run</p>
+              <p class="ln ln--cmd" data-at="5300">alb flash plan images/board-a/v12/flash.txt --skip userdata -y</p>
+              <i class="cue" data-at="5400" data-set="wire=wss usb;now=img"></i>
+              <p class="ln" data-at="5900">[1/8] line 1: getvar product</p>
+              <p class="ln" data-at="6400">[2/8] line 2: flash boot_a boot.img</p>
+              <p class="ln" data-at="6900">  …</p>
+              <p class="ln" data-at="7500">[8/8] line 9: reboot</p>
+              <p class="ln ln--ok" data-at="8200">[ok] plan finished · 9 rows · ran 8 · skipped 1 · 141.3s</p>
+              <p class="ln" data-at="8300">  skipped line 7: flash userdata userdata.img (--skip userdata)
+  record: …/flash/…/timeline.jsonl (job + UART, one timeline)</p>
+              <i class="cue" data-at="8300" data-set="board=boot;wire=uart wss-up;tag=uart;now=log"></i>
+              <p class="ln ln--cmd" data-at="9800">alb power wait-boot</p>
+              <i class="cue" data-at="9800" data-set="wire=wss usb-up;tag=adb;now=adb"></i>
+              <i class="cue" data-at="10800" data-set="board=ok;wire=;tag=;now=idle"></i>
+              <p class="ln ln--say" data-at="11000"><span class="lang-en"><b>The board is up and userdata was not touched.</b> Every row of this flash, with the UART at the same moment, is in the record above.</span><span class="lang-zh"><b>板子起来了，userdata 没有动。</b>这次烧录每一行的输出，连同同一时刻的串口，都在上面那份记录里。</span></p>
+            </div>
+
+            <div class="scn" data-scn="3" role="tabpanel" aria-labelledby="st3" hidden>
+              <i class="cue" data-at="0" data-set="board=dl;wire=;tag=;now=idle;name=b"></i>
+              <p class="ln ln--you" data-at="200"><span class="lang-en">board-b doesn't do fastboot — only the vendor's download tool, and that only runs on Windows. It's in download mode now. Flash v12.</span><span class="lang-zh">board-b 不走 fastboot，只能用厂商的下载工具，而且只有 Windows 版。板子已经进了下载模式，把 v12 烧进去。</span></p>
+              <p class="ln ln--cmd" data-at="1300">alb flash tools</p>
+              <i class="cue" data-at="1300" data-set="wire=wss;tag=vendor;now=tool"></i>
+              <p class="ln" data-at="2000">vt  D:\tools\vt\vt_flash.exe
+    packages under D:\flash\packages · runs in the package directory · time limit 1500s
+    success: exit code 0 and /Download OK/ · failure: /FAILED|ERROR/</p>
+              <p class="ln ln--ok" data-at="2400">    USB 1a2b:3c4d: attached — COM7</p>
+              <p class="ln" data-at="2500">    usage:
+      hold the DL key while powering on; arguments: -p &lt;port&gt; -f &lt;image&gt;</p>
+              <p class="ln ln--cmd" data-at="3500">alb flash tool vt --pkg board-b/v12 -y -- -p {com} -f update.img</p>
+              <i class="cue" data-at="3600" data-set="wire=wss usb;now=tool"></i>
+              <p class="ln" data-at="4300">  …</p>
+              <p class="ln ln--ok" data-at="6000">[ok] 96.4s</p>
+              <p class="ln" data-at="6100">  judged by: exit_code+ok_pattern
+  files the tool wrote — kept in …/flash/…/files:
+    vt_flash.log (18.2 KiB)
+  record: …/flash/…/timeline.jsonl (job + UART, one timeline)</p>
+              <i class="cue" data-at="6100" data-set="wire=;tag=;now=idle"></i>
+              <p class="ln ln--say" data-at="7000"><span class="lang-en"><b>Flashed.</b> Success was judged by the rule registered on the bench: exit code 0 and <code>Download OK</code> in the output. The tool's own log came back with the record.</span><span class="lang-zh"><b>烧完了。</b>成败按台架上登记的规则判：退出码是 0，而且输出里出现了 <code>Download OK</code>。工具自己写的日志也跟记录一起收回来了。</span></p>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ---- what the board (or the bench) says ---- -->
+        <div class="pane pane--side">
+          <div class="pane__bar"><i class="live" aria-hidden="true"></i>
+            <span class="scn" data-scn="1">UART · board-a · 115200</span>
+            <span class="scn" data-scn="2" hidden>UART · board-a · 115200</span>
+            <span class="scn" data-scn="3" hidden><span class="lang-en">bench PC · agent.conf</span><span class="lang-zh">台架电脑 · agent.conf</span></span>
+          </div>
+          <div class="pane__body">
+            <div class="scn" data-scn="1">
+              <p class="ln" data-at="6000">[    0.000000] Booting Linux on physical CPU 0x0</p>
+              <p class="ln" data-at="6400">[    1.204815] panel-demo 1-0038: supply vdd not found, using dummy regulator</p>
+              <p class="ln ln--bad" data-at="6800">[    1.205377] panel-demo 1-0038: failed to get reset gpio: -2</p>
+              <p class="ln ln--bad" data-at="7100">[    1.205941] panel-demo: probe of 1-0038 failed with error -2</p>
+              <p class="ln" data-at="7600">[    6.871120] init: starting service 'surfaceflinger'...</p>
+              <p class="ln ln--round" data-at="13100"><span class="lang-en">— round 2 —</span><span class="lang-zh">—— 第 2 轮 ——</span></p>
+              <p class="ln" data-at="13300">[    0.000000] Booting Linux on physical CPU 0x0</p>
+              <p class="ln ln--ok" data-at="13700">[    1.204901] panel-demo 1-0038: panel enabled</p>
+            </div>
+            <div class="scn" data-scn="2" hidden>
+              <p class="ln ln--bad" data-at="300">[    2.871120] Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)</p>
+              <p class="ln" data-at="500">[    2.871544] Rebooting in 5 seconds..</p>
+              <p class="ln ln--hit" data-at="800">fastboot: waiting for host</p>
+              <p class="ln ln--round" data-at="8500"><span class="lang-en">— after the flash —</span><span class="lang-zh">—— 烧完以后 ——</span></p>
+              <p class="ln" data-at="8700">[    0.000000] Booting Linux on physical CPU 0x0</p>
+              <p class="ln ln--ok" data-at="9100">[    2.911207] VFS: Mounted root (ext4 filesystem) readonly on device 254:0.</p>
+              <p class="ln" data-at="9500">[    6.302144] init: starting service 'adbd'...</p>
+            </div>
+            <div class="scn" data-scn="3" hidden>
+              <p class="ln" data-at="300"><span class="lang-en"># registered once, by whoever owns the bench PC</span><span class="lang-zh"># 台架电脑的主人登记一次</span></p>
+              <p class="ln ln--ok" data-at="500">tool_exe.vt=D:\tools\vt\vt_flash.exe
+tool_root.vt=D:\flash\packages</p>
+              <p class="ln" data-at="700">tool_ok.vt=Download OK
+tool_fail.vt=FAILED|ERROR
+tool_usb.vt=1a2b:3c4d
+tool_usage.vt=hold the DL key while powering on; arguments: -p &lt;port&gt; -f &lt;image&gt;</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="stage__cap"><span class="lang-en">An illustrative replay. The commands and output formats are alb's; the boards, the driver and the log lines are made up, and output is shortened.</span><span class="lang-zh">示意回放。命令和输出格式是 alb 的；板子、驱动和日志内容是编的，输出有删节。</span></p>
     </div>
 
-    <figure class="session">
-      <div class="session__bar" aria-hidden="true"><i></i><i></i><i></i><span class="session__title">build-server:~/kernel — AI coding agent</span></div>
-      <div class="session__body">
-        <p class="session__you"><b>›</b><span class="lang-en">The new kernel hangs on the bench board. Flash it and tell me why.</span><span class="lang-zh">新内核在台架那块板子上卡住了，烧进去查一下原因。</span></p>
-        <ol class="session__calls">
-          <li><code>make bootimage -j"$(nproc)"</code><span class="ok">✓ <span class="lang-en">built</span><span class="lang-zh">编译完成</span></span></li>
-          <li><code>alb flash write boot boot.img -y</code><span class="ok">✓ <span class="lang-en">via bench agent</span><span class="lang-zh">经台架 agent</span></span></li>
-          <li><code>alb timeline capture -d 90</code><span class="ok">✓ uart · logcat · dmesg</span></li>
-          <li><code>alb log search "Kernel panic|Unable to handle"</code><span class="hit">2 <span class="lang-en">hits</span><span class="lang-zh">处命中</span></span></li>
-        </ol>
-        <p class="session__answer">
-          <span class="lang-en"><b>Found it.</b> The board panics 4.2 s after power-on, inside the display driver's probe: a NULL pointer read. I've added the missing check and I'm rebuilding.</span>
-          <span class="lang-zh"><b>找到了。</b>板子上电 4.2 秒后在显示驱动的 probe 里崩溃：读了空指针。我已经补上判空，正在重新编译。</span>
-        </p>
-      </div>
-      <figcaption><span class="lang-en">Illustrative session. The commands are real alb commands.</span><span class="lang-zh">示意会话，里面的命令都是 alb 的真实命令。</span></figcaption>
-    </figure>
+    <dl class="stats">
+      <div><dt>36</dt><dd><span class="lang-en">MCP tools</span><span class="lang-zh">个 MCP 工具</span></dd></div>
+      <div><dt>28</dt><dd><span class="lang-en">CLI command groups, all with <code>--json</code></span><span class="lang-zh">组命令行命令，都支持 <code>--json</code></span></dd></div>
+      <div><dt>98</dt><dd><span class="lang-en">error codes, each with a suggested next step</span><span class="lang-zh">个错误码，每个都带下一步建议</span></dd></div>
+      <div><dt>3,011</dt><dd><span class="lang-en">pytest cases</span><span class="lang-zh">条 pytest 测试</span></dd></div>
+    </dl>
+    <p class="stats__note"><span class="lang-en">Counted from the code on 2026-11-12.</span><span class="lang-zh">2026-11-12 从代码里数出来的。</span></p>
   </div>
 </section>
 
-<!-- ============================== WHY ============================== -->
-<section class="section section--tone why" id="why">
+<!-- ============================== BY HAND / WITH ALB ============================== -->
+<section class="section section--tone" id="loop">
   <div class="wrap">
     <div class="section__head">
-      <span class="eyebrow"><span class="lang-en">Why a bridge</span><span class="lang-zh">为什么要一座桥</span></span>
-      <h2><span class="lang-en">Command lines were built for people. alb is built for models.</span><span class="lang-zh">命令行是给人用的，alb 是给模型用的。</span></h2>
-      <p class="lead"><span class="lang-en">An agent typing raw adb gets free text, an English error line and a context window full of logcat. alb turns the same work into tool calls with structured answers.</span><span class="lang-zh">让 Agent 直接敲 adb，拿回来的是自由文本、一行英文报错和塞满上下文的 logcat。alb 把同样的事变成工具调用，返回结构化结果。</span></p>
+      <span class="eyebrow"><span class="lang-en">What it saves you</span><span class="lang-zh">省掉的是什么</span></span>
+      <h2><span class="lang-en">Until now, every round went through your hands.</span><span class="lang-zh">以前每一轮，都要从你手上过一遍。</span></h2>
+      <p class="lead"><span class="lang-en">The agent works on the build server. The board sits on a bench PC, because that is where the USB cable and the vendor's Windows tools are. Between the two there has been one link: you.</span><span class="lang-zh">AI 助手在编译机上干活；板子插在台架电脑上，因为 USB 线和厂商的 Windows 工具都在那边。两头之间一直只有一条通路：你。</span></p>
     </div>
-    <div class="grid grid--4">
-      <article class="card">
-        <div class="card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 4H6a2 2 0 0 0-2 2v4l-2 2 2 2v4a2 2 0 0 0 2 2h2M16 4h2a2 2 0 0 1 2 2v4l2 2-2 2v4a2 2 0 0 1-2 2h-2"/></svg></div>
-        <h3><span class="lang-en">Structured answers</span><span class="lang-zh">结构化结果</span></h3>
-        <p><span class="lang-en">Every tool returns <code>{ok, data, error, artifacts}</code>. Errors carry a code and a suggestion the model can act on.</span><span class="lang-zh">每个工具都返回 <code>{ok, data, error, artifacts}</code>。出错时带错误码和处理建议，模型能照着做下一步。</span></p>
-      </article>
-      <article class="card">
-        <div class="card__icon card__icon--uart" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h11M4 14h16M4 18h8"/></svg></div>
-        <h3><span class="lang-en">Logs stay out of context</span><span class="lang-zh">日志不进上下文</span></h3>
-        <p><span class="lang-en">Captures land in a workspace on disk. The model searches them and reads the lines it needs instead of swallowing the whole stream.</span><span class="lang-zh">抓到的日志落在工作区。模型先搜索，再读需要的那几行，不用把整份日志吞进去。</span></p>
-      </article>
-      <article class="card">
-        <div class="card__icon card__icon--kernel" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v15M12 3l-2.5 3h5zM12 14l-4-3V8M12 12l4-3V7"/><circle cx="12" cy="19.5" r="1.8"/></svg></div>
-        <h3><span class="lang-en">One command, any link</span><span class="lang-zh">一条命令，哪种连接都行</span></h3>
-        <p><span class="lang-en"><code>alb shell</code> works over adb, ssh or the serial console. alb picks the link per command, so the model doesn't juggle three toolsets.</span><span class="lang-zh"><code>alb shell</code> 走 adb、ssh 或串口都能用，alb 按命令自动选连接，模型不用记三套工具。</span></p>
-      </article>
-      <article class="card">
-        <div class="card__icon card__icon--green" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
-        <h3><span class="lang-en">Safe for the bench PC</span><span class="lang-zh">台架电脑是安全的</span></h3>
-        <p><span class="lang-en">Board commands run as typed. The PC the board is plugged into only runs operations listed in its agent's operation table.</span><span class="lang-zh">板子上的命令照原样执行；插着板子的那台电脑，只执行台架 agent 操作表里登记过的操作。</span></p>
-      </article>
+
+    <div class="relay">
+      <div class="lane">
+        <div class="lane__title">
+          <h3><span class="lang-en">By hand</span><span class="lang-zh">手工</span></h3>
+          <span><span class="lang-en">you are in the path four times per round</span><span class="lang-zh">每一轮你要经手四次</span></span>
+        </div>
+        <ol class="lane__flow">
+          <li><span class="hop"><span class="lang-en">AI edits, builds</span><span class="lang-zh">AI 改代码、编译</span></span></li>
+          <li><span class="hop hop--you"><span class="lang-en">you copy the image over</span><span class="lang-zh">你把镜像拷过去</span></span></li>
+          <li><span class="hop hop--you"><span class="lang-en">you run the flash tool</span><span class="lang-zh">你开烧录工具</span></span></li>
+          <li><span class="hop"><span class="lang-en">board</span><span class="lang-zh">板子</span></span></li>
+          <li><span class="hop hop--you"><span class="lang-en">you watch the serial terminal</span><span class="lang-zh">你盯着串口终端</span></span></li>
+          <li><span class="hop hop--you"><span class="lang-en">you paste the log back</span><span class="lang-zh">你把日志贴回去</span></span></li>
+          <li><span class="hop"><span class="lang-en">AI reads it</span><span class="lang-zh">AI 读日志</span></span></li>
+        </ol>
+      </div>
+      <div class="lane lane--alb">
+        <div class="lane__title">
+          <h3><span class="lang-en">With alb</span><span class="lang-zh">用 alb</span></h3>
+          <span><span class="lang-en">the agent goes round by itself; you read the conclusion</span><span class="lang-zh">AI 自己走完一轮，你看结论</span></span>
+        </div>
+        <ol class="lane__flow">
+          <li><span class="hop"><span class="lang-en">AI edits, builds</span><span class="lang-zh">AI 改代码、编译</span></span></li>
+          <li><span class="hop hop--alb">alb flash</span></li>
+          <li><span class="hop"><span class="lang-en">board</span><span class="lang-zh">板子</span></span></li>
+          <li><span class="hop hop--alb">alb timeline · alb serial</span></li>
+          <li><span class="hop"><span class="lang-en">AI searches the log, patches</span><span class="lang-zh">AI 搜日志、打补丁</span></span></li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="cmp">
+      <div class="cmp__row cmp__head">
+        <div><span class="lang-en">In one round</span><span class="lang-zh">一轮里的事</span></div>
+        <div><span class="lang-en">By hand</span><span class="lang-zh">手工</span></div>
+        <div><span class="lang-en">With alb</span><span class="lang-zh">用 alb</span></div>
+      </div>
+      <div class="cmp__row">
+        <div><span class="lang-en">Get the image to the board</span><span class="lang-zh">把镜像送到板子旁边</span></div>
+        <div><span class="who"><span class="lang-en">By hand:</span><span class="lang-zh">手工：</span></span><span class="lang-en">A network share, scp or a USB stick, then find the file on the bench PC.</span><span class="lang-zh">共享盘、scp 或 U 盘，再到台架电脑上找到那个文件。</span></div>
+        <div><span class="who">alb:</span><span class="lang-en"><code>alb flash write</code> sends it down the agent's own connection. The hub and the bench agent each check its sha256.</span><span class="lang-zh"><code>alb flash write</code> 顺着 agent 自己连过来的那条连接传下去，hub 和台架 agent 各核一次 sha256。</span></div>
+      </div>
+      <div class="cmp__row">
+        <div><span class="lang-en">Flash</span><span class="lang-zh">烧录</span></div>
+        <div><span class="who"><span class="lang-en">By hand:</span><span class="lang-zh">手工：</span></span><span class="lang-en">Walk or remote-desktop to the bench PC and drive fastboot or the vendor tool there.</span><span class="lang-zh">走过去或远程桌面登到台架电脑，在那边敲 fastboot 或点厂商工具。</span></div>
+        <div><span class="who">alb:</span><span class="lang-en"><code>alb flash write</code> for one partition, <code>alb flash plan</code> for a whole package, <code>alb flash tool</code> for a vendor tool.</span><span class="lang-zh">烧一个分区用 <code>alb flash write</code>，整包用 <code>alb flash plan</code>，厂商工具用 <code>alb flash tool</code>。</span></div>
+      </div>
+      <div class="cmp__row">
+        <div><span class="lang-en">See the boot</span><span class="lang-zh">看启动过程</span></div>
+        <div><span class="who"><span class="lang-en">By hand:</span><span class="lang-zh">手工：</span></span><span class="lang-en">Keep a serial terminal open and hope the scrollback is long enough.</span><span class="lang-zh">开着串口终端等，指望回滚缓冲够长。</span></div>
+        <div><span class="who">alb:</span><span class="lang-en"><code>alb timeline capture</code> records UART, logcat and dmesg on one clock, into files on the build server.</span><span class="lang-zh"><code>alb timeline capture</code> 把串口、logcat、dmesg 按同一个时钟录下来，存成编译机上的文件。</span></div>
+      </div>
+      <div class="cmp__row">
+        <div><span class="lang-en">Give the log to the AI</span><span class="lang-zh">把日志交给 AI</span></div>
+        <div><span class="who"><span class="lang-en">By hand:</span><span class="lang-zh">手工：</span></span><span class="lang-en">Select, copy, paste into the chat. The context window fills with boot noise.</span><span class="lang-zh">选中、复制、贴进对话，上下文被启动打印占满。</span></div>
+        <div><span class="who">alb:</span><span class="lang-en">The agent runs <code>alb log search</code> or <code>alb timeline show --grep</code> and reads only the lines that match.</span><span class="lang-zh">AI 自己跑 <code>alb log search</code> 或 <code>alb timeline show --grep</code>，只读命中的那几行。</span></div>
+      </div>
+      <div class="cmp__row">
+        <div><span class="lang-en">Remember what was flashed</span><span class="lang-zh">记住这次烧了什么</span></div>
+        <div><span class="who"><span class="lang-en">By hand:</span><span class="lang-zh">手工：</span></span><span class="lang-en">A note somewhere, if anyone wrote one.</span><span class="lang-zh">有人记了才有，记在哪也说不准。</span></div>
+        <div><span class="who">alb:</span><span class="lang-en">Every job that changes the board leaves a record directory: the job's output and the UART, on one timeline.</span><span class="lang-zh">每个会改板子的作业都留一个记录目录：作业输出和串口，排在同一条时间轴上。</span></div>
+      </div>
     </div>
   </div>
 </section>
@@ -406,7 +425,7 @@
 <section class="section" id="topology">
   <div class="wrap">
     <div class="section__head">
-      <span class="eyebrow"><span class="lang-en">Topology</span><span class="lang-zh">整体拓扑</span></span>
+      <span class="eyebrow"><span class="lang-en">How it is wired</span><span class="lang-zh">东西都放在哪</span></span>
       <h2><span class="lang-en">The brain sits with your code. Agents sit with your boards.</span><span class="lang-zh">大脑跟代码放在一起，agent 跟着板子走。</span></h2>
       <p class="lead"><span class="lang-en">The AI coding agent and the alb hub run on the build server, next to the source tree and the CPUs. A small bench agent on each PC with boards dials out to the hub, so nobody opens a port on the bench. Follow one debugging loop below, or switch to what ships today.</span><span class="lang-zh">AI 编程助手和 alb hub 跑在编译机上，挨着源码树和 CPU。每台插着板子的电脑上跑一个小小的台架 agent，由它主动连回 hub，台架这边不用开任何端口。下面可以一步步走一遍调试流程，也可以切到「现在已实现」只看已经做好的部分。</span></p>
     </div>
@@ -427,7 +446,7 @@
       <!-- ===== wide layout (desktop) ===== -->
       <svg class="topo__svg--wide" viewBox="0 0 1200 712" role="img" aria-labelledby="topoT topoD">
         <title id="topoT">alb topology: build server, bench PCs, boards and models</title>
-        <desc id="topoD">Your laptop reaches the build server over ssh and HTTP. On the build server an AI coding agent edits and builds code and drives the alb hub over MCP or the CLI. Bench PCs run a bench agent that dials out to the hub over WebSocket and reaches boards over USB and UART: adb, fastboot, Qualcomm EDL and the serial console. A planned flash station, a planned field model at the bench, planned on-device models and planned Linux server targets are drawn dashed.</desc>
+        <desc id="topoD">Your laptop reaches the build server over ssh and HTTP. On the build server an AI coding agent edits and builds code and drives the alb hub over MCP or the CLI. Bench PCs run a bench agent that dials out to the hub over WebSocket and reaches boards over USB and UART: adb, fastboot, Qualcomm EDL, registered vendor flash tools and the serial console. A planned flash station, a planned field model at the bench, planned on-device models and planned Linux server targets are drawn dashed.</desc>
 
         <!-- models shelf -->
         <rect class="zone zone--models" x="214" y="20" width="962" height="96" rx="24"/>
@@ -542,11 +561,12 @@
           <text class="t-title lang-en" x="716" y="243">bench agent</text>
           <text class="t-title lang-zh" x="716" y="243">台架 agent</text>
         </g>
-        <g data-s="4"><rect class="chipr" x="700" y="268" width="52" height="22" rx="7"/><text class="t-chip" x="726" y="283" text-anchor="middle">UART</text></g>
-        <g data-s="4"><rect class="chipr" x="758" y="268" width="44" height="22" rx="7"/><text class="t-chip" x="780" y="283" text-anchor="middle">adb</text></g>
-        <g data-s="3"><rect class="chipr" x="808" y="268" width="72" height="22" rx="7"/><text class="t-chip" x="844" y="283" text-anchor="middle">fastboot</text></g>
-        <g data-s="3"><rect class="chipr" x="700" y="296" width="80" height="22" rx="7"/><text class="t-chip" x="740" y="311" text-anchor="middle">EDL 9008</text></g>
-        <g data-s="4"><rect class="chipr" x="786" y="296" width="104" height="22" rx="7"/><text class="t-chip lang-en" x="838" y="311" text-anchor="middle">Windows logs</text><text class="t-chip lang-zh" x="838" y="311" text-anchor="middle">Windows 日志</text></g>
+        <g data-s="4"><rect class="chipr" x="700" y="268" width="48" height="22" rx="7"/><text class="t-chip" x="724" y="283" text-anchor="middle">UART</text></g>
+        <g data-s="4"><rect class="chipr" x="754" y="268" width="40" height="22" rx="7"/><text class="t-chip" x="774" y="283" text-anchor="middle">adb</text></g>
+        <g data-s="3"><rect class="chipr" x="800" y="268" width="68" height="22" rx="7"/><text class="t-chip" x="834" y="283" text-anchor="middle">fastboot</text></g>
+        <g data-s="3"><rect class="chipr" x="874" y="268" width="44" height="22" rx="7"/><text class="t-chip lang-en" x="896" y="283" text-anchor="middle">EDL</text><text class="t-chip lang-zh" x="896" y="283" text-anchor="middle">9008</text></g>
+        <g data-s="3"><rect class="chipr" x="700" y="296" width="96" height="22" rx="7"/><text class="t-chip lang-en" x="748" y="311" text-anchor="middle">vendor tools</text><text class="t-chip lang-zh" x="748" y="311" text-anchor="middle">厂商工具</text></g>
+        <g data-s="4"><rect class="chipr" x="802" y="296" width="104" height="22" rx="7"/><text class="t-chip lang-en" x="854" y="311" text-anchor="middle">Windows logs</text><text class="t-chip lang-zh" x="854" y="311" text-anchor="middle">Windows 日志</text></g>
         <g class="plan" data-s="5">
           <rect class="box" x="700" y="332" width="218" height="54" rx="12"/>
           <text class="t-title lang-en" x="716" y="354">field model</text>
@@ -712,7 +732,8 @@
         <g data-s="4"><rect class="chipr" x="82" y="774" width="44" height="22" rx="7"/><text class="t-chip" x="104" y="789" text-anchor="middle">adb</text></g>
         <g data-s="3"><rect class="chipr" x="132" y="774" width="72" height="22" rx="7"/><text class="t-chip" x="168" y="789" text-anchor="middle">fastboot</text></g>
         <g data-s="3"><rect class="chipr" x="210" y="774" width="80" height="22" rx="7"/><text class="t-chip" x="250" y="789" text-anchor="middle">EDL 9008</text></g>
-        <g data-s="4"><rect class="chipr" x="24" y="802" width="104" height="22" rx="7"/><text class="t-chip lang-en" x="76" y="817" text-anchor="middle">Windows logs</text><text class="t-chip lang-zh" x="76" y="817" text-anchor="middle">Windows 日志</text></g>
+        <g data-s="3"><rect class="chipr" x="24" y="802" width="96" height="22" rx="7"/><text class="t-chip lang-en" x="72" y="817" text-anchor="middle">vendor tools</text><text class="t-chip lang-zh" x="72" y="817" text-anchor="middle">厂商工具</text></g>
+        <g data-s="4"><rect class="chipr" x="126" y="802" width="104" height="22" rx="7"/><text class="t-chip lang-en" x="178" y="817" text-anchor="middle">Windows logs</text><text class="t-chip lang-zh" x="178" y="817" text-anchor="middle">Windows 日志</text></g>
         <g class="plan" data-s="5">
           <rect class="box" x="24" y="832" width="312" height="48" rx="12"/>
           <text class="t-title lang-en" x="40" y="852">field model</text>
@@ -795,7 +816,7 @@
         </div>
         <div data-panel="3" hidden>
           <h3><span class="lang-en">3 · alb flashes the board on the bench</span><span class="lang-zh">3 · alb 把镜像烧到台架上的板子</span> <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span></h3>
-          <p><span class="lang-en"><code>alb flash</code> hands the image to the hub; the hub sends it down the bench agent's own outbound connection; the agent runs fastboot or Qualcomm EDL next to the board. A dedicated flash station is planned.</span><span class="lang-zh"><code>alb flash</code> 把镜像交给 hub,hub 顺着台架 agent 自己连过来的那条连接发下去，agent 在板子旁边跑 fastboot 或高通 9008。专门的烧录机还在规划中。</span></p>
+          <p><span class="lang-en"><code>alb flash</code> hands the image to the hub; the hub sends it down the bench agent's own outbound connection; the agent runs fastboot, Qualcomm EDL or a registered vendor tool next to the board. A dedicated flash station is planned.</span><span class="lang-zh"><code>alb flash</code> 把镜像交给 hub，hub 顺着台架 agent 自己连过来的那条连接发下去，agent 在板子旁边跑 fastboot、高通 9008 或登记过的厂商工具。专门的烧录机还在规划中。</span></p>
         </div>
         <div data-panel="4" hidden>
           <h3><span class="lang-en">4 · The bench streams logs back</span><span class="lang-zh">4 · 台架把日志传回来</span> <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span></h3>
@@ -819,58 +840,208 @@
   </div>
 </section>
 
-<!-- ============================== MODELS ============================== -->
-<section class="section section--tone" id="models">
+<!-- ============================== RESCUE LADDER ============================== -->
+<section class="section section--tone" id="links">
   <div class="wrap">
     <div class="section__head">
-      <span class="eyebrow"><span class="lang-en">Many models, one loop</span><span class="lang-zh">多个模型，一个流程</span></span>
-      <h2><span class="lang-en">A big model to think. Small models to watch.</span><span class="lang-zh">大模型拿主意，小模型盯日志。</span></h2>
-      <p class="lead"><span class="lang-en">A booting board prints far more than a frontier model should read. alb is built so each role can use a different model: the main agent plans and patches, a small local model sits next to the stream, and the two pass findings rather than raw logs.</span><span class="lang-zh">板子启动时打印的东西，远比大模型值得读的多。alb 让每个角色可以用不同的模型：主力助手负责规划和改代码，本地小模型守在日志流旁边，两边之间传的是结论，不是原始日志。</span></p>
+      <span class="eyebrow"><span class="lang-en">Ways in</span><span class="lang-zh">怎么进板子</span></span>
+      <h2><span class="lang-en">However dead the board is, there is still a way in.</span><span class="lang-zh">板子死到哪一步，都还有一条路能进去。</span></h2>
+      <p class="lead"><span class="lang-en">adb is the everyday path, and the first one to disappear. Below it sit the serial console, fastboot and the download modes. alb drives every one of them through the same bench agent, so the agent on the build server can keep working after adb is gone.</span><span class="lang-zh">日常用 adb，它也是最先没的那个。往下还有串口、fastboot 和各家的下载模式。这些 alb 都经同一个台架 agent 来操作，所以 adb 没了以后，编译机上的 AI 助手还能接着干。</span></p>
     </div>
-    <div class="flow">
-      <article class="card card--uart">
-        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
-        <h3><span class="lang-en">Everything the board says</span><span class="lang-zh">板子打印的全部内容</span></h3>
-        <p><span class="lang-en">UART from the first bootloader line, logcat, dmesg and the bench PC's USB logs, merged on one clock.</span><span class="lang-zh">从 bootloader 第一行开始的串口、logcat、dmesg，加上台架电脑的 USB 日志，按同一个时钟合在一起。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:100%"></b></div>
-        <div class="vol-label"><span class="lang-en">all of it, on disk</span><span class="lang-zh">全部落盘</span></div>
+    <ol class="ladder">
+      <li class="rung rung--1">
+        <div>
+          <h3><span class="lang-en">The system is up</span><span class="lang-zh">系统起来了</span></h3>
+          <p class="d"><span class="lang-en">Everyday work: apps, logs, crashes, files.</span><span class="lang-zh">日常调试：应用、日志、崩溃、文件。</span></p>
+        </div>
+        <div class="ways"><span class="way">adb</span><span class="way">ssh</span><span class="way">UART</span></div>
+        <div class="rung__cmds"><code>alb shell</code><code>alb logcat</code><code>alb diag bugreport</code><code>alb ui screenshot</code><code>alb fs pull</code><code>alb port open</code></div>
+      </li>
+      <li class="rung rung--2">
+        <div>
+          <h3><span class="lang-en">It boots, but adb never shows up</span><span class="lang-zh">能启动，但 adb 一直不出现</span></h3>
+          <p class="d"><span class="lang-en">Stuck on the boot animation, or adbd is off.</span><span class="lang-zh">卡在开机画面，或者 adbd 没开。</span></p>
+        </div>
+        <div class="ways"><span class="way way--off">adb</span><span class="way">UART</span></div>
+        <div class="rung__cmds"><code>alb serial shell</code><code>alb serial capture</code><code>alb timeline capture</code><code>alb power reboot</code></div>
+      </li>
+      <li class="rung rung--3">
+        <div>
+          <h3><span class="lang-en">Kernel panic, or a boot loop</span><span class="lang-zh">内核崩溃，或反复重启</span></h3>
+          <p class="d"><span class="lang-en">Only the serial console sees it happen.</span><span class="lang-zh">只有串口看得到崩溃现场。</span></p>
+        </div>
+        <div class="ways"><span class="way way--off">adb</span><span class="way">UART</span></div>
+        <div class="rung__cmds"><code>alb_uart_watch_panic</code><code>alb serial capture</code><code>alb timeline show --grep</code><code>alb diag pstore</code></div>
+      </li>
+      <li class="rung rung--4">
+        <div>
+          <h3><span class="lang-en">No system, but the bootloader answers</span><span class="lang-zh">系统进不去，bootloader 还活着</span></h3>
+          <p class="d"><span class="lang-en">Stop in U-Boot, or reflash from fastboot.</span><span class="lang-zh">停在 U-Boot，或者从 fastboot 重烧。</span></p>
+        </div>
+        <div class="ways"><span class="way way--off">adb</span><span class="way">UART</span><span class="way">fastboot</span></div>
+        <div class="rung__cmds"><code>alb serial break-in</code><code>alb flash getvar</code><code>alb flash write</code><code>alb flash plan --skip userdata</code></div>
+      </li>
+      <li class="rung rung--5">
+        <div>
+          <h3><span class="lang-en">The bootloader is gone too</span><span class="lang-zh">bootloader 也没了</span></h3>
+          <p class="d"><span class="lang-en">What is left is the SoC's own download mode.</span><span class="lang-zh">剩下的只有芯片自带的下载模式。</span></p>
+        </div>
+        <div class="ways"><span class="way way--off">adb</span><span class="way way--off">fastboot</span><span class="way"><span class="lang-en">Qualcomm EDL 9008</span><span class="lang-zh">高通 9008</span></span><span class="way"><span class="lang-en">vendor tool</span><span class="lang-zh">厂商工具</span></span></div>
+        <div class="rung__cmds"><code>alb bench usb</code><code>alb bench run edl-sahara</code><code>alb bench run edl-program</code><code>alb flash tool</code></div>
+      </li>
+    </ol>
+    <p class="ladder__note"><span class="lang-en">One thing alb does not do yet: it has no hand on the power button. Getting a board into fastboot or a download mode when software cannot do it still means a key press, a jumper or a power cycle by a person at the bench.</span><span class="lang-zh">有一件事 alb 现在做不了：它够不着电源和按键。软件进不了 fastboot 或下载模式的时候，还得有人在台架前按键、短接或断电重启。</span></p>
+  </div>
+</section>
+
+<!-- ============================== GUARD RAILS ============================== -->
+<section class="section" id="flash">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Remote flashing</span><span class="lang-zh">远程烧录</span></span>
+      <h2><span class="lang-en">Before you let an AI flash a board, you would ask these.</span><span class="lang-zh">把烧录交给 AI 之前，你会先问这几件事。</span></h2>
+      <p class="lead"><span class="lang-en">Each answer is a check that runs before anything is written. A refusal comes back as an error code with a suggestion, so the agent can correct itself instead of trying again blind.</span><span class="lang-zh">下面每一条都是写板子之前会跑的检查。被拒绝时返回的是错误码加处理建议，AI 能照着改，不会闭着眼再试一遍。</span></p>
+    </div>
+    <div class="grid grid--3 guard">
+      <article class="card">
+        <h3><span class="lang-en">What if it flashes the wrong board?</span><span class="lang-zh">烧错板子怎么办？</span></h3>
+        <p><span class="lang-en">Give a board its <code>fastboot_product</code> and alb asks the board <code>getvar product</code> before every write; a different answer writes nothing. With more than one board in fastboot it refuses and lists them. It never picks the first one.</span><span class="lang-zh">给板子配上 <code>fastboot_product</code>，每次写之前 alb 先问板子 <code>getvar product</code>，答得不对就什么都不写。同时有不止一块板在 fastboot 时直接拒绝并列出来，不会默认挑第一块。</span></p>
+        <div class="codes"><code>FLASH_BOARD_MISMATCH</code><code>FLASH_DEVICE_AMBIGUOUS</code></div>
       </article>
-      <article class="card card--kernel">
-        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
-        <h3><span class="lang-en">Field model</span><span class="lang-zh">现场小模型</span></h3>
-        <p><span class="lang-en">A small local model next to the bench reads the whole stream, flags panics, boot stalls and watchdog resets. Cheap, private, always on.</span><span class="lang-zh">台架旁边的本地小模型读完整份日志，标出 panic、启动卡住、看门狗复位。便宜、数据不出内网、可以一直开着。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:100%"></b></div>
-        <div class="vol-label"><span class="lang-en">reads everything</span><span class="lang-zh">全量读</span></div>
+      <article class="card">
+        <h3><span class="lang-en">The wrong partition?</span><span class="lang-zh">烧错分区呢？</span></h3>
+        <p><span class="lang-en">A partition allowlist lives in the bench PC's <code>agent.conf</code>, per board if you like. The hub checks the name, then the bench agent checks it again. A name that is not listed is refused.</span><span class="lang-zh">分区白名单写在台架电脑的 <code>agent.conf</code> 里，可以按板子分。名字先在 hub 查一遍，台架 agent 再查一遍，不在名单上的拒绝。</span></p>
+        <div class="codes"><code>FLASH_PARTITION_REJECTED</code></div>
       </article>
-      <article class="card card--job">
-        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
-        <h3><span class="lang-en">Findings</span><span class="lang-zh">结论</span></h3>
-        <p><span class="lang-en">A few lines with timestamps and a pointer back to the raw log in the workspace, so the main model can check any claim.</span><span class="lang-zh">几行带时间戳的结论，附上指回工作区原始日志的位置，主力模型可以逐条核对。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:12%"></b></div>
-        <div class="vol-label"><span class="lang-en">a few lines</span><span class="lang-zh">寥寥几行</span></div>
+      <article class="card">
+        <h3><span class="lang-en">A damaged or swapped image?</span><span class="lang-zh">镜像传坏了、被换了？</span></h3>
+        <p><span class="lang-en">The hub hashes the image, and the bench agent hashes what arrived; a mismatch stops before the write. For a package, the plan you confirmed is recomputed just before it runs, so a file changed in between is caught.</span><span class="lang-zh">hub 先算镜像的 sha256，台架 agent 收完再算一次，对不上就不写。整包烧录时，确认过的计划在开跑前重算一遍，中间被改过的文件会被发现。</span></p>
+        <div class="codes"><code>FLASH_IMAGE_CORRUPT</code></div>
       </article>
-      <article class="card card--primary">
-        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
-        <h3><span class="lang-en">Main brain</span><span class="lang-zh">主力大脑</span></h3>
-        <p><span class="lang-en">Your coding agent reads the findings — or the raw log, through <code>alb_log_search</code>, whenever it wants — and decides the next change.</span><span class="lang-zh">你的编程助手读结论 —— 想看原始日志时也可以随时用 <code>alb_log_search</code> 直接查 —— 然后决定下一步怎么改。</span></p>
-        <div class="vol" aria-hidden="true"><b style="width:12%"></b></div>
-        <div class="vol-label"><span class="lang-en">reads only what it needs</span><span class="lang-zh">只读需要的</span></div>
+      <article class="card">
+        <h3><span class="lang-en">A package that stops halfway?</span><span class="lang-zh">整包烧到一半停了？</span></h3>
+        <p><span class="lang-en"><code>alb flash plan</code> checks the whole manifest first: one bad row and no row runs. <code>--dry-run</code> prints the plan. A failing row stops the run and reports where; <code>--from-line</code> picks up from there.</span><span class="lang-zh"><code>alb flash plan</code> 先把整份清单查一遍，有一行不对就一行都不跑。<code>--dry-run</code> 只打印计划。中途某一行失败就停下并报出是第几行，之后用 <code>--from-line</code> 接着跑。</span></p>
+        <div class="codes"><code>--dry-run</code><code>--skip</code><code>--from-line</code></div>
+      </article>
+      <article class="card">
+        <h3><span class="lang-en">Two agents flashing at once?</span><span class="lang-zh">两个 AI 同时烧？</span></h3>
+        <p><span class="lang-en">One job that changes a board runs at a time. The second is refused at once, not queued, so nothing starts later behind your back.</span><span class="lang-zh">会改板子的作业一次只跑一个。第二个立刻被拒绝，不排队，不会过一会儿在你不知道的时候开始跑。</span></p>
+        <div class="codes"><code>FASTBOOT_BUSY</code></div>
+      </article>
+      <article class="card">
+        <h3><span class="lang-en">And when the board doesn't come back?</span><span class="lang-zh">烧完板子没起来，查什么？</span></h3>
+        <p><span class="lang-en">Each job leaves a record directory on the hub. <code>timeline.jsonl</code> holds every line the job printed and every UART line, on one clock, so you can see what the console said around the last write.</span><span class="lang-zh">每个作业在 hub 上留一个记录目录。<code>timeline.jsonl</code> 里是作业的每条输出和串口的每一行，用同一个时钟，最后一次写入前后串口在打什么一看就知道。</span></p>
+        <div class="codes"><code>alb timeline show &lt;record&gt;</code></div>
       </article>
     </div>
-    <div class="byo">
-      <strong><span class="lang-en">Bring your own model</span><span class="lang-zh">模型随你选</span></strong>
-      <div class="chips">
-        <span class="chip">Anthropic API</span>
-        <span class="chip"><span class="lang-en">OpenAI-compatible: vLLM · LM Studio · OpenRouter</span><span class="lang-zh">OpenAI 兼容：vLLM · LM Studio · OpenRouter</span></span>
-        <span class="chip">Ollama</span>
-        <span class="chip"><span class="lang-en">on-device (planned)</span><span class="lang-zh">板上模型（规划中）</span></span>
+    <p class="guard__note"><span class="lang-en"><b>What these checks are for.</b> They stop mistakes: a mistyped partition, the wrong cable, a stale image. They are not a security boundary. Commands on the board itself run as typed, and the hub's web UI and HTTP API have no login, so keep the hub on a network you trust. <a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/flash.md">Read the flashing guide →</a></span><span class="lang-zh"><b>这些检查防的是什么。</b>防的是误操作：分区名敲错、线插错板子、镜像是旧的。它们不是安全边界。板子上的命令照原样执行；hub 的网页和 HTTP 接口没有登录，hub 要放在你信得过的网络里。<a href="https://github.com/TbusOS/android-llm-bridge/blob/main/docs/flash.md">看烧录文档 →</a></span></p>
+  </div>
+</section>
+
+<!-- ============================== VENDOR TOOL ============================== -->
+<section class="section section--tone" id="vendor">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Vendor flash tools</span><span class="lang-zh">厂商烧录工具</span></span>
+      <h2><span class="lang-en">Your SoC vendor's tool: register it on the bench, run it from Linux.</span><span class="lang-zh">芯片厂商的烧录工具：在台架上登记一次，就能从 Linux 这边调。</span></h2>
+      <p class="lead"><span class="lang-en">Not every board speaks fastboot, and most vendor download tools only ship for Windows. alb does not try to understand them. The owner of the bench PC names the tool in <code>agent.conf</code>; from then on its own arguments pass straight through, and its output lands on the same timeline as the UART.</span><span class="lang-zh">不是每块板都走 fastboot，厂商的下载工具又大多只有 Windows 版。alb 不去理解这些工具：台架电脑的主人在 <code>agent.conf</code> 里登记工具，之后工具自己的参数原样转发，输出和串口排在同一条时间轴上。</span></p>
+    </div>
+    <div class="vend">
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">bench PC · agent.conf</span><span class="lang-zh">台架电脑 · agent.conf</span></span><span><span class="lang-en">two lines are required</span><span class="lang-zh">必填的只有两行</span></span></div>
+<pre class="code"><span class="g">tool_exe.vt=D:\tools\vt\vt_flash.exe</span>
+<span class="g">tool_root.vt=D:\flash\packages</span>
+<span class="c"># optional: how to tell success from failure</span>
+tool_ok.vt=Download OK
+tool_fail.vt=FAILED|ERROR
+<span class="c"># optional: the board's USB id in download mode</span>
+tool_usb.vt=1a2b:3c4d</pre>
       </div>
+      <div class="vend__arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">build server · the tool's own arguments after <b>--</b></span><span class="lang-zh">编译机 · <b>--</b> 后面是工具自己的参数</span></span></div>
+<pre class="code"><span class="c"># what is registered, and is the board attached</span>
+<span class="p">$</span> alb flash tools
+<span class="p">$</span> alb flash tool vt --pkg board-b/v12 -- -p {com} -f update.img
+<span class="g">[ok] 96.4s</span>
+  judged by: exit_code+ok_pattern
+  files the tool wrote — kept in …/flash/…/files:
+    vt_flash.log (18.2 KiB)
+  record: …/flash/…/timeline.jsonl (job + UART, one timeline)</pre>
+      </div>
+    </div>
+    <div class="grid grid--3 vend__facts">
+      <article class="card">
+        <h3><span class="lang-en">Arguments pass through</span><span class="lang-zh">参数原样转发</span></h3>
+        <p><span class="lang-en">Write them the way the vendor's manual does. The tool runs in the package directory, not through <code>cmd.exe</code>. <code>{com}</code> becomes the board's COM port and <code>{pkg}</code> the package path.</span><span class="lang-zh">照厂商文档的写法写。工具在包目录里运行，不经过 <code>cmd.exe</code>。<code>{com}</code> 会换成板子的 COM 口，<code>{pkg}</code> 换成包目录的路径。</span></p>
+      </article>
+      <article class="card">
+        <h3><span class="lang-en">The bench PC stays yours</span><span class="lang-zh">台架电脑还是你的</span></h3>
+        <p><span class="lang-en">Only registered tools can run, and the hub never sends a program name or a path. Arguments holding a drive path, a network path or <code>..</code> are refused, so a mistyped path cannot reach files outside the package.</span><span class="lang-zh">只有登记过的工具能跑，hub 不发程序名也不发路径。参数里带盘符路径、网络路径或 <code>..</code> 的会被拒绝，路径敲错也碰不到包目录以外的文件。</span></p>
+      </article>
+      <article class="card">
+        <h3><span class="lang-en">It says who judged the result</span><span class="lang-zh">写明成败是谁判的</span></h3>
+        <p><span class="lang-en">Some tools exit 0 after a failed download. The result names what was looked at: your success pattern, your failure pattern, or the exit code alone. With only the exit code, it tells you to verify on the board.</span><span class="lang-zh">有的工具下载失败了退出码也是 0。结果里写明看的是什么：你登记的成功标志、失败标志，还是只看了退出码。只看了退出码时，会提醒你到板上核对。</span></p>
+      </article>
+    </div>
+    <p class="ladder__note"><span class="lang-en">Today the bench agent that runs these tools is the Windows one, and fastboot and Qualcomm EDL have dedicated operations with stricter checks. Running a Linux build of a vendor tool on the machine the board is plugged into is planned.</span><span class="lang-zh">现在跑这些工具的是 Windows 上的台架 agent；fastboot 和高通 9008 另有专用操作，检查更严。板子插在 Linux 上时用 Linux 版厂商工具，还在规划中。</span></p>
+  </div>
+</section>
+
+<!-- ============================== WHY ============================== -->
+<section class="section why" id="why">
+  <div class="wrap">
+    <div class="section__head">
+      <span class="eyebrow"><span class="lang-en">Built for models</span><span class="lang-zh">给模型用的</span></span>
+      <h2><span class="lang-en">Command lines were built for people. alb is built for models.</span><span class="lang-zh">命令行是给人用的，alb 是给模型用的。</span></h2>
+      <p class="lead"><span class="lang-en">An agent typing raw adb gets free text and one English error line, and has to guess what to do next. alb answers the same question with a structure it can act on.</span><span class="lang-zh">让 AI 直接敲 adb，拿回来的是自由文本和一行英文报错，下一步只能猜。同一件事，alb 返回的是它能照着做的结构。</span></p>
+    </div>
+    <div class="duo">
+      <div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">raw adb</span><span class="lang-zh">直接用 adb</span></span></div>
+<pre class="code"><span class="p">$</span> adb -s BOARD-A shell getprop ro.build.type
+<span class="e">adb: device 'BOARD-A' not found</span>
+<span class="c"># exit code 1. Unplugged? Rebooting?
+# In fastboot? The agent has to guess.</span></pre>
+      </div>
+      <div class="cpanel">
+        <div class="cpanel__bar"><span>alb --json</span></div>
+<pre class="code"><span class="p">$</span> alb --json shell "getprop ro.build.type"
+{
+  "ok": false,
+  "data": null,
+  "error": {
+    "code": "<span class="w">DEVICE_NOT_FOUND</span>",
+    "message": "Specified device serial not found",
+    "suggestion": "<span class="g">Run: alb devices</span>",
+    "category": "device"
+  },
+  "artifacts": []
+}</pre>
+      </div>
+    </div>
+    <div class="grid grid--3">
+      <article class="card">
+        <div class="card__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 4H6a2 2 0 0 0-2 2v4l-2 2 2 2v4a2 2 0 0 0 2 2h2M16 4h2a2 2 0 0 1 2 2v4l2 2-2 2v4a2 2 0 0 1-2 2h-2"/></svg></div>
+        <h3><span class="lang-en">One shape for every answer</span><span class="lang-zh">所有返回一个结构</span></h3>
+        <p><span class="lang-en">Every tool returns <code>{ok, data, error, artifacts}</code>. An error carries a code and a suggestion; <code>alb_describe_errors</code> lists them all.</span><span class="lang-zh">每个工具都返回 <code>{ok, data, error, artifacts}</code>。出错时带错误码和处理建议，<code>alb_describe_errors</code> 能列出全部错误码。</span></p>
+      </article>
+      <article class="card">
+        <div class="card__icon card__icon--uart" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h11M4 14h16M4 18h8"/></svg></div>
+        <h3><span class="lang-en">Logs stay out of the context window</span><span class="lang-zh">日志不进上下文</span></h3>
+        <p><span class="lang-en">Captures land in a workspace on disk. The model searches them and reads the lines it needs instead of swallowing the whole stream.</span><span class="lang-zh">抓到的日志落在磁盘上的工作区里。模型先搜索，再读需要的那几行，不用把整份日志吞进去。</span></p>
+      </article>
+      <article class="card">
+        <div class="card__icon card__icon--kernel" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v15M12 3l-2.5 3h5zM12 14l-4-3V8M12 12l4-3V7"/><circle cx="12" cy="19.5" r="1.8"/></svg></div>
+        <h3><span class="lang-en">One command, any link</span><span class="lang-zh">一条命令，哪种连接都行</span></h3>
+        <p><span class="lang-en"><code>alb shell</code> works over adb, ssh or the serial console, and <code>alb power reboot</code> falls back to the serial console when adb sees no device.</span><span class="lang-zh"><code>alb shell</code> 走 adb、ssh 或串口都能用；adb 里找不到设备时，<code>alb power reboot</code> 会自动改走串口。</span></p>
+      </article>
     </div>
   </div>
 </section>
 
 <!-- ============================== INTEGRATIONS ============================== -->
-<section class="section" id="integrations">
+<section class="section section--tone" id="integrations">
   <div class="wrap">
     <div class="integ">
       <div class="integ__copy">
@@ -879,7 +1050,7 @@
           <h2><span class="lang-en">Works with the agent you already use.</span><span class="lang-zh">接进你已经在用的 AI 工具。</span></h2>
         </div>
         <p><span class="lang-en">alb is an MCP server, so any agent that speaks MCP can drive a board. The same business layer sits behind MCP, the CLI and the HTTP API — a fix lands in all three at once.</span><span class="lang-zh">alb 是一个 MCP server，任何支持 MCP 的 Agent 都能用它调板子。MCP、命令行、HTTP 接口背后是同一套业务代码，修一处三边同时生效。</span></p>
-        <p><span class="lang-en">Your agent can also just run <code>alb</code> in a shell: every command takes <code>--json</code>, and <code>alb describe</code> prints the whole schema for a model to read.</span><span class="lang-zh">Agent 也可以直接在 shell 里跑 <code>alb</code>：每个命令都支持 <code>--json</code>,<code>alb describe</code> 会把完整的工具说明打印出来给模型读。</span></p>
+        <p><span class="lang-en">Your agent can also just run <code>alb</code> in a shell: every command takes <code>--json</code>, and <code>alb describe</code> prints the whole schema for a model to read. Flashing, the merged timeline and the bench operations are CLI commands today, not MCP tools yet: the agent runs them in its shell with <code>--yes</code>.</span><span class="lang-zh">Agent 也可以直接在 shell 里跑 <code>alb</code>：每个命令都支持 <code>--json</code>，<code>alb describe</code> 会把完整的工具说明打印出来给模型读。烧录、合并时间轴和台架操作现在是命令行命令，还没有做成 MCP 工具，Agent 在自己的 shell 里带 <code>--yes</code> 跑。</span></p>
         <div class="tools" aria-label="Some of the MCP tools">
           <code>alb_devices</code><code>alb_shell</code><code>alb_logcat</code><code>alb_dmesg</code><code>alb_uart_capture</code><code>alb_uart_watch_panic</code><code>alb_log_search</code><code>alb_tombstone_pull</code><code>alb_anr_pull</code><code>alb_ui_screenshot</code><code>alb_metrics_snapshot</code><code>alb_wait_boot</code>
         </div>
@@ -937,41 +1108,58 @@
   </div>
 </section>
 
-<!-- ============================== LINKS ============================== -->
-<section class="section section--tone" id="links">
+<!-- ============================== MODELS ============================== -->
+<section class="section" id="models">
   <div class="wrap">
     <div class="section__head">
-      <span class="eyebrow"><span class="lang-en">Connections</span><span class="lang-zh">连接方式</span></span>
-      <h2><span class="lang-en">Six ways onto a board — including the ones that still work after a crash.</span><span class="lang-zh">六种连到板子的方式 —— 包括死机以后还能用的那几种。</span></h2>
-      <p class="lead"><span class="lang-en">adb is the everyday path. When the board won't boot, the serial console, fastboot and EDL are what's left, and alb drives all of them through the same bench agent.</span><span class="lang-zh">日常用 adb。板子起不来的时候，剩下能用的是串口、fastboot 和 9008,alb 经同一个台架 agent 都能操作。</span></p>
+      <span class="eyebrow"><span class="lang-en">Many models, one loop</span><span class="lang-zh">多个模型，一个流程</span></span>
+      <h2><span class="lang-en">A big model to think. Small models to watch.</span><span class="lang-zh">大模型拿主意，小模型盯日志。</span></h2>
+      <p class="lead"><span class="lang-en">A booting board prints far more than a frontier model should read. alb is built so each role can use a different model: the main agent plans and patches, a small local model sits next to the stream, and the two pass findings rather than raw logs.</span><span class="lang-zh">板子启动时打印的东西，远比大模型值得读的多。alb 让每个角色可以用不同的模型：主力助手负责规划和改代码，本地小模型守在日志流旁边，两边之间传的是结论，不是原始日志。</span></p>
     </div>
-    <div class="table-wrap">
-      <table class="t">
-        <thead>
-          <tr>
-            <th><span class="lang-en">Link</span><span class="lang-zh">连接</span></th>
-            <th><span class="lang-en">Best for</span><span class="lang-zh">适合</span></th>
-            <th class="c"><span class="lang-en">Boot log</span><span class="lang-zh">启动日志</span></th>
-            <th class="c"><span class="lang-en">Bootloader</span><span class="lang-zh">bootloader</span></th>
-            <th class="c"><span class="lang-en">No network needed</span><span class="lang-zh">不需要网络</span></th>
-            <th class="c"><span class="lang-en">Through a bench PC</span><span class="lang-zh">经台架电脑</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td><b>adb · USB</b></td><td><span class="lang-en">everyday Android work</span><span class="lang-zh">日常安卓调试</span></td><td class="c no">—</td><td class="c no">—</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
-          <tr><td><b>adb · Wi-Fi</b></td><td><span class="lang-en">cable-free sessions</span><span class="lang-zh">不插线调试</span></td><td class="c no">—</td><td class="c no">—</td><td class="c no">—</td><td class="c"><span class="lang-en">direct</span><span class="lang-zh">直连</span></td></tr>
-          <tr><td><b>ssh</b></td><td><span class="lang-en">Linux boards running sshd: rsync, tmux</span><span class="lang-zh">跑 sshd 的 Linux 板子：rsync、tmux</span></td><td class="c no">—</td><td class="c no">—</td><td class="c no">—</td><td class="c"><span class="lang-en">direct</span><span class="lang-zh">直连</span></td></tr>
-          <tr><td><b>UART</b></td><td><span class="lang-en">bring-up, U-Boot, kernel panics</span><span class="lang-zh">bring-up、U-Boot、内核崩溃</span></td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
-          <tr><td><b>fastboot</b></td><td><span class="lang-en">flash partitions, getvar, oem</span><span class="lang-zh">烧分区、getvar、oem</span></td><td class="c no">—</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
-          <tr><td><b><span class="lang-en">Qualcomm EDL (9008)</span><span class="lang-zh">高通 9008(EDL)</span></b></td><td><span class="lang-en">full flash when nothing else boots</span><span class="lang-zh">什么都起不来时整包烧录</span></td><td class="c no">—</td><td class="c"><span class="lang-en">below it</span><span class="lang-zh">比它更底层</span></td><td class="c yes">✓</td><td class="c yes">✓</td></tr>
-        </tbody>
-      </table>
+    <div class="flow">
+      <article class="card card--uart">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">Everything the board says</span><span class="lang-zh">板子打印的全部内容</span></h3>
+        <p><span class="lang-en">UART from the first bootloader line, logcat, dmesg and the bench PC's USB logs, merged on one clock.</span><span class="lang-zh">从 bootloader 第一行开始的串口、logcat、dmesg，加上台架电脑的 USB 日志，按同一个时钟合在一起。</span></p>
+        <div class="vol" aria-hidden="true"><b style="width:100%"></b></div>
+        <div class="vol-label"><span class="lang-en">all of it, on disk</span><span class="lang-zh">全部落盘</span></div>
+      </article>
+      <article class="card card--kernel">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Field model</span><span class="lang-zh">现场小模型</span></h3>
+        <p><span class="lang-en">A small local model next to the bench reads the whole stream, flags panics, boot stalls and watchdog resets. Cheap, private, always on.</span><span class="lang-zh">台架旁边的本地小模型读完整份日志，标出 panic、启动卡住、看门狗复位。便宜、数据不出内网、可以一直开着。</span></p>
+        <div class="vol" aria-hidden="true"><b style="width:100%"></b></div>
+        <div class="vol-label"><span class="lang-en">reads everything</span><span class="lang-zh">全量读</span></div>
+      </article>
+      <article class="card card--job">
+        <span class="pill pill--plan"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span>
+        <h3><span class="lang-en">Findings</span><span class="lang-zh">结论</span></h3>
+        <p><span class="lang-en">A few lines with timestamps and a pointer back to the raw log in the workspace, so the main model can check any claim.</span><span class="lang-zh">几行带时间戳的结论，附上指回工作区原始日志的位置，主力模型可以逐条核对。</span></p>
+        <div class="vol" aria-hidden="true"><b style="width:12%"></b></div>
+        <div class="vol-label"><span class="lang-en">a few lines</span><span class="lang-zh">寥寥几行</span></div>
+      </article>
+      <article class="card card--primary">
+        <span class="pill pill--today"><span class="lang-en">shipped</span><span class="lang-zh">已实现</span></span>
+        <h3><span class="lang-en">Main brain</span><span class="lang-zh">主力大脑</span></h3>
+        <p><span class="lang-en">Your coding agent reads the findings — or the raw log, through <code>alb_log_search</code>, whenever it wants — and decides the next change.</span><span class="lang-zh">你的编程助手读结论 —— 想看原始日志时也可以随时用 <code>alb_log_search</code> 直接查 —— 然后决定下一步怎么改。</span></p>
+        <div class="vol" aria-hidden="true"><b style="width:12%"></b></div>
+        <div class="vol-label"><span class="lang-en">reads only what it needs</span><span class="lang-zh">只读需要的</span></div>
+      </article>
+    </div>
+    <div class="byo">
+      <strong><span class="lang-en">Bring your own model</span><span class="lang-zh">模型随你选</span></strong>
+      <div class="chips">
+        <span class="chip">Anthropic API</span>
+        <span class="chip"><span class="lang-en">OpenAI-compatible: vLLM · LM Studio · OpenRouter</span><span class="lang-zh">OpenAI 兼容：vLLM · LM Studio · OpenRouter</span></span>
+        <span class="chip">Ollama</span>
+        <span class="chip"><span class="lang-en">on-device (planned)</span><span class="lang-zh">板上模型（规划中）</span></span>
+      </div>
     </div>
   </div>
 </section>
 
 <!-- ============================== TARGETS ============================== -->
-<section class="section" id="targets">
+<section class="section section--tone" id="targets">
   <div class="wrap">
     <div class="section__head">
       <span class="eyebrow"><span class="lang-en">Targets</span><span class="lang-zh">调试对象</span></span>
@@ -1093,26 +1281,35 @@
           <h3><span class="lang-en">Install</span><span class="lang-zh">安装</span></h3>
           <p><span class="lang-en">Clones the repo and builds an isolated Python environment inside your home directory.</span><span class="lang-zh">克隆仓库，在家目录里建一个独立的 Python 环境。</span></p>
         </div></div>
+<div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">Linux · bash</span><span class="lang-zh">Linux · bash</span></span><button class="copy" type="button" data-copy="git clone https://github.com/TbusOS/android-llm-bridge\ncd android-llm-bridge\n./scripts/install.sh"><span class="copy__a"><span class="lang-en">Copy</span><span class="lang-zh">复制</span></span><span class="copy__b"><span class="lang-en">Copied</span><span class="lang-zh">已复制</span></span></button></div>
 <pre class="code">git clone https://github.com/TbusOS/android-llm-bridge
 cd android-llm-bridge
 ./scripts/install.sh</pre>
+      </div>
       </article>
       <article class="step">
         <div class="step__head"><span class="num">2</span><div>
           <h3><span class="lang-en">Find your board</span><span class="lang-zh">找到板子</span></h3>
           <p><span class="lang-en"><code>doctor</code> checks every outside tool alb needs; <code>devices</code> lists what it can reach.</span><span class="lang-zh"><code>doctor</code> 检查 alb 用到的外部工具，<code>devices</code> 列出能连上的板子。</span></p>
         </div></div>
+<div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">in the checkout</span><span class="lang-zh">在仓库目录里</span></span><button class="copy" type="button" data-copy="uv run alb doctor\nuv run alb devices\nuv run alb shell &quot;uname -a&quot;"><span class="copy__a"><span class="lang-en">Copy</span><span class="lang-zh">复制</span></span><span class="copy__b"><span class="lang-en">Copied</span><span class="lang-zh">已复制</span></span></button></div>
 <pre class="code">uv run alb doctor
 uv run alb devices
 uv run alb shell "uname -a"</pre>
+      </div>
       </article>
       <article class="step">
         <div class="step__head"><span class="num">3</span><div>
           <h3><span class="lang-en">Hand it to your agent</span><span class="lang-zh">交给你的 Agent</span></h3>
-          <p><span class="lang-en">Register the MCP server once and your agent sees all 36 tools.</span><span class="lang-zh">登记一次 MCP server,Agent 就能看到全部 36 个工具。</span></p>
+          <p><span class="lang-en">Register the MCP server once and your agent sees all 36 tools.</span><span class="lang-zh">登记一次 MCP server，Agent 就能看到全部 36 个工具。</span></p>
         </div></div>
+<div class="cpanel">
+        <div class="cpanel__bar"><span><span class="lang-en">Claude Code · or Codex below</span><span class="lang-zh">Claude Code · Codex 见下一行</span></span><button class="copy" type="button" data-copy="claude mcp add alb -- uv run --project &quot;$PWD&quot; alb-mcp"><span class="copy__a"><span class="lang-en">Copy</span><span class="lang-zh">复制</span></span><span class="copy__b"><span class="lang-en">Copied</span><span class="lang-zh">已复制</span></span></button></div>
 <pre class="code">claude mcp add alb -- uv run --project "$PWD" alb-mcp
 <span class="c"># or: codex mcp add alb -- uv run --project "$PWD" alb-mcp</span></pre>
+      </div>
       </article>
     </div>
     <div class="card card--filled remote">
@@ -1144,27 +1341,27 @@ run-agent.bat</pre>
         <h3><span class="lang-en">Shipped</span><span class="lang-zh">已实现</span> <span class="pill pill--today">2026</span></h3>
         <ul>
           <li><b><span class="lang-en">Core</span><span class="lang-zh">核心</span></b><span class="s"><span class="lang-en">adb, ssh and UART transports with per-command routing; CLI and MCP server</span><span class="lang-zh">adb、ssh、串口三种传输，按命令自动选；命令行和 MCP server</span></span></li>
-          <li><b><span class="lang-en">Web and chat</span><span class="lang-zh">网页和对话</span></b><span class="s"><span class="lang-en">HTTP / WebSocket API; assistant on Ollama, OpenAI-compatible or Anthropic</span><span class="lang-zh">HTTP / WebSocket 接口；助手可接 Ollama、OpenAI 兼容接口或 Anthropic</span></span></li>
-          <li><b><span class="lang-en">Web UI v3</span><span class="lang-zh">网页界面 v3</span></b><span class="s"><span class="lang-en">Material 3, English and Chinese, light and dark</span><span class="lang-zh">Material 3，中英文，深浅色</span></span></li>
-          <li><b><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></b><span class="s"><span class="lang-en">dial-home agent, fastboot, Qualcomm EDL, U-Boot break-in, merged timeline, remote agent update</span><span class="lang-zh">主动拨回的 agent、fastboot、高通 9008、停在 U-Boot、合并时间轴、远程更新 agent</span></span></li>
+          <li><b><span class="lang-en">Remote bench</span><span class="lang-zh">远程台架</span></b><span class="s"><span class="lang-en">dial-home agent, U-Boot break-in, merged timeline, remote agent update and start</span><span class="lang-zh">主动拨回的 agent、停在 U-Boot、合并时间轴、远程更新和拉起 agent</span></span></li>
+          <li><b><span class="lang-en">Remote flashing</span><span class="lang-zh">远程烧录</span></b><span class="s"><span class="lang-en">fastboot by partition or by manifest, Qualcomm EDL, registered vendor tools; refuses when several boards are in fastboot</span><span class="lang-zh">fastboot 单分区和按清单整包、高通 9008、登记的厂商工具；多块板同时在 fastboot 时拒绝</span></span></li>
+          <li><b><span class="lang-en">Web UI v3 and assistant</span><span class="lang-zh">网页界面 v3 和助手</span></b><span class="s"><span class="lang-en">Material 3, English and Chinese, light and dark; assistant on Ollama, OpenAI-compatible or Anthropic</span><span class="lang-zh">Material 3，中英文，深浅色；助手可接 Ollama、OpenAI 兼容接口或 Anthropic</span></span></li>
         </ul>
       </article>
       <article class="card card--job">
         <h3><span class="lang-en">Next</span><span class="lang-zh">接下来</span> <span class="pill pill--next"><span class="lang-en">planned</span><span class="lang-zh">规划中</span></span></h3>
         <ul>
-          <li><b><span class="lang-en">Several bench PCs per hub</span><span class="lang-zh">一个 hub 管多台台架电脑</span></b><span class="s"><span class="lang-en">a log desk and a flash station; boards on many desks</span><span class="lang-zh">抓日志的一台、烧录的一台；板子分散在多张桌子上</span></span></li>
+          <li><b><span class="lang-en">Several boards, several serial ports</span><span class="lang-zh">多块板、多个串口</span></b><span class="s"><span class="lang-en">one table of boards; a board with several UARTs is being built now, then flashing a named board while others are attached</span><span class="lang-zh">一张板子表；一块板多个串口正在做，之后是多块板同时接着时烧指定的那块</span></span></li>
+          <li><b><span class="lang-en">Boards that are not Android</span><span class="lang-zh">不是安卓的板子</span></b><span class="s"><span class="lang-en">a bench agent on Linux that runs the Linux build of a vendor tool; telnet over a USB network link</span><span class="lang-zh">Linux 上的台架 agent，跑 Linux 版的厂商工具；USB 网卡上的 telnet</span></span></li>
+          <li><b><span class="lang-en">MCP tools for the bench</span><span class="lang-zh">台架相关的 MCP 工具</span></b><span class="s"><span class="lang-en">flash, timeline, port and bench: today these are CLI only</span><span class="lang-zh">烧录、时间轴、端口、台架，现在只有命令行</span></span></li>
           <li><b><span class="lang-en">Field model hand-off</span><span class="lang-zh">现场小模型交接</span></b><span class="s"><span class="lang-en">a local model summarises streams for the main agent</span><span class="lang-zh">本地模型把日志流总结成结论交给主力助手</span></span></li>
-          <li><b><span class="lang-en">MCP tools for the bench</span><span class="lang-zh">台架相关的 MCP 工具</span></b><span class="s"><span class="lang-en">flash, timeline, port and bench — today these are CLI only</span><span class="lang-zh">烧录、时间轴、端口、台架 —— 现在只有命令行</span></span></li>
-          <li><b><span class="lang-en">More download modes</span><span class="lang-zh">更多下载模式</span></b><span class="s"><span class="lang-en">other SoC vendors' flash tools, when boards and command-line tools are available</span><span class="lang-zh">其他芯片厂商的烧录工具，有板子和命令行工具时就做</span></span></li>
         </ul>
       </article>
       <article class="card card--kernel">
         <h3><span class="lang-en">Later</span><span class="lang-zh">更远</span> <span class="pill pill--plan"><span class="lang-en">ideas</span><span class="lang-zh">设想</span></span></h3>
         <ul>
+          <li><b><span class="lang-en">Several bench PCs per hub</span><span class="lang-zh">一个 hub 管多台台架电脑</span></b><span class="s"><span class="lang-en">a log desk and a flash station; boards on many desks</span><span class="lang-zh">抓日志的一台、烧录的一台；板子分散在多张桌子上</span></span></li>
           <li><b><span class="lang-en">Linux servers</span><span class="lang-zh">Linux 服务器</span></b><span class="s"><span class="lang-en">BMC console, journald, kdump</span><span class="lang-zh">BMC 串口、journald、kdump</span></span></li>
           <li><b><span class="lang-en">Wireless bench</span><span class="lang-zh">无线台架</span></b><span class="s"><span class="lang-en">wireless debugging pairing; boards without cables</span><span class="lang-zh">无线调试配对；不插线的板子</span></span></li>
           <li><b><span class="lang-en">On-device models</span><span class="lang-zh">板上模型</span></b><span class="s"><span class="lang-en">entry points are already in place; no code yet</span><span class="lang-zh">接入口已经留好，代码还没写</span></span></li>
-          <li><b><span class="lang-en">Vendor plugins</span><span class="lang-zh">厂商插件</span></b><span class="s"><span class="lang-en">ship support for your board or tool without forking</span><span class="lang-zh">不用 fork 就能加上自家板子或工具的支持</span></span></li>
         </ul>
       </article>
     </div>
@@ -1202,7 +1399,7 @@ run-agent.bat</pre>
       <article class="card">
         <div class="card__icon card__icon--kernel" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
         <h3><span class="lang-en">A download mode</span><span class="lang-zh">新的下载模式</span></h3>
-        <p><span class="lang-en">Your SoC's flash tool, wired up the way Qualcomm EDL is: find the port, send the loader, write by manifest.</span><span class="lang-zh">你家芯片的烧录工具，照高通 9008 的做法接进来：找端口、送 loader、按清单写。</span></p>
+        <p><span class="lang-en">Start with no code: register the tool in <code>agent.conf</code>. When it deserves stricter checks, give it dedicated operations, the way Qualcomm EDL has them.</span><span class="lang-zh">先不用写代码：在 <code>agent.conf</code> 里登记工具就能用。想要更严的检查，再照高通 9008 的做法给它写专用操作。</span></p>
         <p><code>src/alb/remote/</code></p>
       </article>
     </div>
@@ -1269,42 +1466,6 @@ run-agent.bat</pre>
 </footer>
 
 <script src="assets/site/site.js" defer></script>
-<script>
-(function () {
-  "use strict";
-  var fig = document.getElementById("topo");
-  if (!fig) return;
-  var stepBtns = Array.prototype.slice.call(document.querySelectorAll(".loop__step"));
-  var panels = Array.prototype.slice.call(document.querySelectorAll(".loop__panel [data-panel]"));
-  var parts = Array.prototype.slice.call(fig.querySelectorAll("[data-s]"));
-  var current = 0;
-
-  function show(n) {
-    current = n;
-    fig.classList.toggle("is-stepping", n > 0);
-    parts.forEach(function (el) {
-      var list = (el.getAttribute("data-s") || "").split(/\s+/);
-      el.classList.toggle("on", n > 0 && list.indexOf(String(n)) !== -1);
-    });
-    stepBtns.forEach(function (b) { b.setAttribute("aria-pressed", String(Number(b.dataset.step) === n)); });
-    panels.forEach(function (p) { p.hidden = Number(p.dataset.panel) !== n; });
-  }
-  stepBtns.forEach(function (b) { b.addEventListener("click", function () { show(Number(b.dataset.step)); }); });
-  document.querySelectorAll("[data-loop]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      var a = b.dataset.loop;
-      if (a === "reset") show(0);
-      else if (a === "next") show(current >= 6 ? 1 : current + 1);
-      else show(current <= 1 ? 6 : current - 1);
-    });
-  });
-  document.querySelectorAll(".seg [data-mode]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      fig.setAttribute("data-mode", b.dataset.mode);
-      document.querySelectorAll(".seg [data-mode]").forEach(function (o) { o.setAttribute("aria-pressed", String(o === b)); });
-    });
-  });
-})();
-</script>
+<script src="assets/site/home.js" defer></script>
 </body>
 </html>
