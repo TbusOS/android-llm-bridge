@@ -341,7 +341,7 @@ def log_search(
     ctx: typer.Context,
     pattern: str = typer.Argument(...),
     path: Path | None = typer.Option(None, "--path"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
     max_matches: int = typer.Option(200, "--max"),
     since: str | None = typer.Option(
         None,

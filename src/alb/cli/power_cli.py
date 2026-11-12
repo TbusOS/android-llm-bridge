@@ -19,7 +19,7 @@ def cmd_reboot(
     wait: bool = typer.Option(True, "--wait-boot/--no-wait-boot"),
     timeout: int = typer.Option(180, "--timeout"),
     allow_dangerous: bool = typer.Option(False, "--allow-dangerous"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Reboot device. Modes: normal | recovery | bootloader | fastboot | sideload.
 
@@ -55,7 +55,7 @@ def cmd_reboot(
 def cmd_wait_boot(
     ctx: typer.Context,
     timeout: int = typer.Option(180, "--timeout"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Wait until sys.boot_completed=1."""
     t = get_transport(ctx, device_serial=device)
@@ -65,7 +65,7 @@ def cmd_wait_boot(
 
 @app.command("battery")
 def cmd_battery(
-    ctx: typer.Context, device: str | None = typer.Option(None, "--device")
+    ctx: typer.Context, device: str | None = typer.Option(None, "--device", "-d")
 ) -> None:
     """Query battery state."""
     t = get_transport(ctx, device_serial=device)
@@ -78,7 +78,7 @@ def cmd_sleep_wake(
     ctx: typer.Context,
     cycles: int = typer.Option(1, "--cycles"),
     hold: int = typer.Option(5, "--hold"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Trigger N sleep/wake cycles for power regression."""
     t = get_transport(ctx, device_serial=device)

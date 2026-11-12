@@ -56,10 +56,20 @@ ACTIONS: dict[str, int] = {
     "reboot": 0,
 }
 
+# Waits. A vendor manifest is often a Windows batch file, and batch has no
+# sleep: `ping -n 5 127.0.0.1` (5 echoes, one a second → about 4 s) and
+# `timeout /t 4` are how it pauses between steps — e.g. between two groups
+# of images written to the same chip (2026-11-12, a vendor debug package).
+# Read as a wait row run on the hub; nothing is sent to the agent.
+MAX_WAIT_S = 600
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+# Trailing redirections a batch line adds to silence the command.
+_REDIRECT_RE = re.compile(r"^(?:[12]?>>?(?:nul|&[12])?|nul)$", re.IGNORECASE)
+
 # Actions that carry no partition, so `--skip <partition>` cannot reach them.
 # flash / erase are deliberately NOT here: skipping "every flash row" by
 # action is never what anyone means, and a partition skip says exactly which.
-SKIPPABLE_ACTIONS = ("setvar", "getvar", "oem", "reboot-bootloader", "reboot")
+SKIPPABLE_ACTIONS = ("setvar", "getvar", "oem", "reboot-bootloader", "reboot", "wait")
 
 # Actions no agent can execute. AOSP fastboot has no `setvar` command (its
 # command dispatch rejects it as unknown), so a row asking for one can only be
@@ -102,6 +112,7 @@ class PlanRow:
     key: str = ""  # setvar / getvar variable name
     value: str = ""
     command: str = ""  # oem
+    wait_s: float = 0.0  # wait
     path: Path | None = None  # resolved image, flash rows that run
     size: int = 0
     md5: str = ""
@@ -128,6 +139,8 @@ class PlanRow:
             return f"getvar {self.key}"
         if self.action == "oem":
             return f"oem {self.command}"
+        if self.action == "wait":
+            return f"wait {self.wait_s:g} s ({self.command})"
         return self.action
 
     def as_dict(self) -> dict[str, Any]:
@@ -139,6 +152,7 @@ class PlanRow:
             "key": self.key,
             "value": self.value,
             "command": self.command,
+            "wait_s": self.wait_s,
             "size": self.size,
             "md5": self.md5,
             "sha256": self.sha256,
@@ -236,6 +250,43 @@ class PlanResult:
 # ── parsing (pure) ──────────────────────────────────────────────────────
 
 
+def _wait_seconds(tokens: list[str]) -> tuple[float, str] | None:
+    """(seconds, problem) when the line is a wait idiom, else None.
+
+    `ping -n N <loopback>` → N-1 s (the first echo goes out at once, then
+    one a second); `timeout /t N [/nobreak]` → N s; `sleep N` → N s."""
+    words = [t for t in tokens if not _REDIRECT_RE.match(t)]
+    tool = words[0].lower().removesuffix(".exe")
+    if tool not in ("ping", "timeout", "sleep"):
+        return None
+    args = [w.lower() for w in words[1:]]
+    count: str | None = None
+    if tool == "ping":
+        hosts = [a for a in args if not a.startswith("-")]
+        if "-n" in args and args.index("-n") + 1 < len(args):
+            count = args[args.index("-n") + 1]
+            hosts.remove(count)
+        if count is None or len(hosts) != 1 or hosts[0] not in _LOCAL_HOSTS:
+            return 0.0, "only `ping -n <count> 127.0.0.1` is understood (a wait)"
+    elif tool == "timeout":
+        if "/t" in args and args.index("/t") + 1 < len(args):
+            count = args[args.index("/t") + 1]
+        if count is None or set(args) - {"/t", count, "/nobreak"}:
+            return 0.0, "only `timeout /t <seconds> [/nobreak]` is understood (a wait)"
+    else:
+        count = args[0] if len(args) == 1 else None
+        if count is None:
+            return 0.0, "only `sleep <seconds>` is understood (a wait)"
+    try:
+        n = float(count)
+    except ValueError:
+        return 0.0, f"{_show(count)} is not a number of seconds"
+    seconds = max(n - 1, 0.0) if tool == "ping" else n
+    if not 0 <= seconds <= MAX_WAIT_S:
+        return 0.0, f"a wait of {seconds:g} s is outside 0-{MAX_WAIT_S} s"
+    return seconds, ""
+
+
 def parse_manifest(text: str) -> tuple[list[PlanRow], list[str]]:
     """Rows plus every problem found — all of them, not just the first, so
     one dry run is enough to fix a manifest.
@@ -253,6 +304,16 @@ def parse_manifest(text: str) -> tuple[list[PlanRow], list[str]]:
         if len(rows) >= MAX_ROWS:
             problems.append(f"more than {MAX_ROWS} rows — this does not look like a manifest")
             break
+        wait = _wait_seconds(tokens)
+        if wait is not None:
+            seconds, why = wait
+            if why:
+                problems.append(f"line {no}: {why}, got {_show(raw.strip())}")
+                continue
+            rows.append(
+                PlanRow(line=no, action="wait", wait_s=seconds, command=" ".join(tokens))
+            )
+            continue
         if len(tokens) < 2:
             problems.append(f"line {no}: expected '<tool> <action> [args]', got {_show(raw)}")
             continue
@@ -428,7 +489,19 @@ def fingerprint(manifest: str, rows: list[PlanRow]) -> str:
     """Digest of everything a confirmation is a confirmation OF: each row,
     its decision, and the bytes of each image that runs."""
     body = [
-        [r.line, r.action, r.partition, r.file, r.key, r.value, r.command, r.size, r.sha256, r.skip]
+        [
+            r.line,
+            r.action,
+            r.partition,
+            r.file,
+            r.key,
+            r.value,
+            r.command,
+            r.size,
+            r.sha256,
+            r.skip,
+        ]
+        + ([r.wait_s] if r.action == "wait" else [])
         for r in rows
     ]
     blob = json.dumps({"manifest": manifest, "rows": body}, sort_keys=True).encode()
@@ -450,6 +523,22 @@ def _digests(path: Path) -> tuple[int, str, str]:
             md5.update(chunk)
             sha.update(chunk)
     return size, md5.hexdigest(), sha.hexdigest()
+
+
+def confine(root: Path, rel: str) -> Path | None:
+    """`rel` under `root`, judged on the path as WRITTEN (`..` folded, no
+    symlink followed), or None when it climbs out. The one rule for what a
+    flash may read: a manifest, an image named on the command line, an
+    image a manifest names (see `_locate` for why symlinks are read through).
+    A leading `/` is taken as the workspace's, not the filesystem's."""
+    if "\x00" in rel:
+        return None
+    candidate = Path(os.path.normpath(root / rel.lstrip("/")))
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
 
 
 def _locate(row: PlanRow, base: Path, root: Path) -> tuple[Path | None, str]:

@@ -67,8 +67,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from alb.api.schema import API_VERSION
-from alb.remote.flash import REBOOT_WAIT_S, FlashEvent, get_flash_service
-from alb.remote.flash_plan import Plan, build_plan
+from alb.remote.flash import (
+    REBOOT_WAIT_S,
+    UART_AFTER_MAX_S,
+    UART_AFTER_REBOOT_S,
+    FlashEvent,
+    get_flash_service,
+)
+from alb.remote.flash_plan import Plan, build_plan, confine
 from alb.remote.flash_timeline import JOB_DIR_RE
 from alb.remote.protocol import JobEvent
 
@@ -88,6 +94,12 @@ class FlashBody(BaseModel):
 
 class RebootBody(BaseModel):
     target: str = Field("", max_length=32, description='"" = back to the system')
+    uart_after_s: float = Field(
+        UART_AFTER_REBOOT_S,
+        ge=0.0,
+        le=UART_AFTER_MAX_S,
+        description="keep recording the UART this long after a reboot to the system",
+    )
 
 
 @router.get("/status")
@@ -95,15 +107,30 @@ async def flash_status() -> dict[str, Any]:
     return {"v": API_VERSION, "ok": True, **get_flash_service().status()}
 
 
+def _resolve_flash_input(rel: str) -> Path:
+    """A workspace-relative path a flash reads (an image, a manifest), or 400.
+
+    Inside the workspace on the path as written; a symlink in it is read
+    through, as for the images a manifest names (flash_plan.confine). A
+    package is 1-2 GB and lives in the build tree or a firmware archive: a
+    directory linked into the workspace is how it gets flashed without a
+    copy per build (2026-11-12, a vendor package linked from the build tree
+    was refused with "path escapes workspace"). Only someone with a shell
+    on the hub host can make that link — uploads write regular files and
+    refuse a target that resolves out of the workspace. Downloads and
+    uploads keep the stricter files-route rule."""
+    from alb.infra.workspace import workspace_root
+
+    path = confine(workspace_root().resolve(), rel)
+    if path is None:
+        # L-051: no echo of the rejected path.
+        raise HTTPException(status_code=400, detail="path escapes workspace")
+    return path
+
+
 def _resolve_image(rel: str) -> Path:
-    """Map a workspace-relative path to a real file, or 400.
-
-    Delegates to the files route's resolver so this endpoint inherits the
-    same traversal hardening rather than growing a second, subtly different
-    copy of it (L-035)."""
-    from alb.api.files_route import _resolve_workspace_path
-
-    path = _resolve_workspace_path(rel)
+    """Map a workspace-relative path to a real file, or 400."""
+    path = _resolve_flash_input(rel)
     if not path.is_file():
         raise HTTPException(status_code=400, detail=f"no such image in the workspace: {rel}")
     return path
@@ -224,7 +251,12 @@ async def flash_oem(body: OemBody) -> StreamingResponse:
 @router.post("/reboot")
 async def flash_reboot(body: RebootBody) -> StreamingResponse:
     service = get_flash_service()
-    return await _stream(lambda cb: service.reboot(body.target, on_event=cb))
+    # Only a boot to the system has a first boot worth keeping; bootloader /
+    # recovery targets return as before.
+    after = body.uart_after_s if body.target == "" else 0.0
+    return await _stream(
+        lambda cb: service.reboot(body.target, uart_after_s=after, on_event=cb)
+    )
 
 
 @router.post("/flash")
@@ -251,13 +283,14 @@ class PlanRunBody(PlanBody):
     # nothing.
     fingerprint: str = Field(..., min_length=64, max_length=64)
     reboot_wait_s: float = Field(REBOOT_WAIT_S, ge=10.0, le=600.0)
+    # Used only when the last row that ran is `reboot` (to the system).
+    uart_after_s: float = Field(UART_AFTER_REBOOT_S, ge=0.0, le=UART_AFTER_MAX_S)
 
 
 async def _build(body: PlanBody) -> Plan:
-    from alb.api.files_route import _resolve_workspace_path
     from alb.infra.workspace import workspace_root
 
-    manifest = _resolve_workspace_path(body.manifest)
+    manifest = _resolve_flash_input(body.manifest)
     if not manifest.is_file():
         raise HTTPException(
             status_code=400, detail=f"no such manifest in the workspace: {body.manifest}"
@@ -300,7 +333,12 @@ async def flash_plan_run(body: PlanRunBody) -> StreamingResponse:
         )
     service = get_flash_service()
     return await _stream(
-        lambda cb: service.run_plan(plan, reboot_wait_s=body.reboot_wait_s, on_event=cb)
+        lambda cb: service.run_plan(
+            plan,
+            reboot_wait_s=body.reboot_wait_s,
+            uart_after_s=body.uart_after_s,
+            on_event=cb,
+        )
     )
 
 

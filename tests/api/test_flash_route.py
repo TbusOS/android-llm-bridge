@@ -9,6 +9,7 @@ line-by-line must see movement while a partition is being written.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -28,6 +29,7 @@ class _FakeService:
         self.result = result
         self.events = events or []
         self.calls: list[tuple] = []
+        self.uart_after: list[float] = []
 
     def status(self):
         return {"available": True, "busy": False, "job": ""}
@@ -35,7 +37,8 @@ class _FakeService:
     async def devices(self, *, on_event=None):
         return self._run(("devices",), on_event)
 
-    async def reboot(self, target="", *, on_event=None):
+    async def reboot(self, target="", *, uart_after_s=0.0, on_event=None):
+        self.uart_after.append(uart_after_s)
         return self._run(("reboot", target), on_event)
 
     async def oem(self, command, *, on_event=None):
@@ -130,7 +133,10 @@ def test_reboot_passes_the_target(monkeypatch):
     with TestClient(create_app()) as c:
         c.post("/api/flash/reboot", json={"target": "bootloader"})
         c.post("/api/flash/reboot", json={})
-    assert svc.calls == [("reboot", "bootloader"), ("reboot", "")]
+        c.post("/api/flash/reboot", json={"uart_after_s": 0})
+    assert svc.calls == [("reboot", "bootloader"), ("reboot", ""), ("reboot", "")]
+    # The first boot is kept on the record by default; bootloader is no boot.
+    assert svc.uart_after == [0.0, 90.0, 0.0]
 
 
 def test_unknown_image_is_rejected_before_any_job(monkeypatch):
@@ -196,10 +202,11 @@ class _PlanService:
 
         return AgentView(caps=_PLAN_CAPS, partitions=self.partitions, ops=new_agent_ops())
 
-    async def run_plan(self, plan, *, reboot_wait_s, on_event=None):
+    async def run_plan(self, plan, *, reboot_wait_s, uart_after_s=0.0, on_event=None):
         from alb.remote.flash_plan import PlanResult
 
         self.runs.append((plan, reboot_wait_s))
+        self.uart_after = uart_after_s
         if on_event:
             step = "line 1: flash boot_a <- boot.img"
             on_event(FlashEvent(phase="step", done=1, total=3, text=step))
@@ -269,6 +276,31 @@ def test_plan_manifest_must_be_in_the_workspace(monkeypatch):
     with TestClient(create_app()) as c:
         assert c.post("/api/flash/plan", json={"manifest": "../../etc/passwd"}).status_code == 400
         assert c.post("/api/flash/plan", json={"manifest": "not-there.txt"}).status_code == 400
+
+
+def test_a_package_directory_linked_into_the_workspace_is_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A 1-2 GB package lives in the build tree; a link to its directory is
+    how it gets flashed without a copy per build. Before 2026-11-12 the
+    manifest in such a directory was refused ("path escapes workspace")
+    while the images next to it were read through links all along."""
+    from alb.infra.workspace import workspace_root
+
+    build_out = tmp_path / "build-tree" / "out"
+    build_out.mkdir(parents=True)
+    (build_out / "boot.img").write_bytes(b"B" * 64)
+    (build_out / "flash.txt").write_text(_PLAN_MANIFEST, encoding="utf-8")
+    (workspace_root() / "images").mkdir(parents=True)
+    (workspace_root() / "images" / "pkg").symlink_to(build_out, target_is_directory=True)
+    _install(monkeypatch, _PlanService())
+    with TestClient(create_app()) as c:
+        body = c.post("/api/flash/plan", json={"manifest": "images/pkg/flash.txt"}).json()
+        assert body["ok"] is True, body["problems"]
+        assert body["rows"][0]["size"] == 64
+        # still no way out on the written path
+        bad = c.post("/api/flash/plan", json={"manifest": "images/pkg/../../../x.txt"})
+        assert bad.status_code == 400
 
 
 def test_plan_run_needs_the_fingerprint(monkeypatch):

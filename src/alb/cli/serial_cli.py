@@ -57,7 +57,7 @@ def cmd_send(
     ctx: typer.Context,
     text: str = typer.Argument(..., help="Text to send (newline appended)."),
     no_newline: bool = typer.Option(False, "--no-newline", help="Skip the trailing newline."),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Send a raw string over UART (no prompt waiting, no execution check)."""
     t = _force_serial(ctx, device)
@@ -119,7 +119,7 @@ def cmd_break_in(
         "--prompt-wait",
         help="Seconds after the match to keep typing and wait for the prompt.",
     ),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
     adb_device: str | None = typer.Option(
         None, "--adb-device", help="adb serial for --reboot adb (default: the profile's device)."
     ),
@@ -240,7 +240,7 @@ def cmd_shell(
     ctx: typer.Context,
     cmd: str = typer.Argument(..., help="Command to run over serial shell."),
     timeout: int = typer.Option(30, "--timeout"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Execute a shell command via UART (prompt-based, best-effort)."""
     t = _force_serial(ctx, device)
@@ -251,7 +251,7 @@ def cmd_shell(
 @app.command("health")
 def cmd_health(
     ctx: typer.Context,
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Check serial connectivity + endpoint info."""
     t = _force_serial(ctx, device)
@@ -290,7 +290,7 @@ def cmd_learn(
             "shell_user. The label ends up in the generated TOML snippet."
         ),
     ),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Auto-derive a prompt regex from the live board.
 
@@ -373,7 +373,7 @@ def cmd_probe(
     ctx: typer.Context,
     device: str | None = typer.Option(
         None,
-        "--device",
+        "--device", "-d",
         help=(
             "Local serial path (/dev/ttyUSB0 …). If omitted and the current "
             "transport is TCP/ser2net, an actionable hint is printed instead "
@@ -549,7 +549,7 @@ def cmd_probe(
 @app.command("status")
 def cmd_status(
     ctx: typer.Context,
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
     tail: int = typer.Option(
         400,
         "--tail",

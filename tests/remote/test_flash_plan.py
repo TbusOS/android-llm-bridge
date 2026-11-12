@@ -514,3 +514,52 @@ def test_fingerprint_covers_the_decision_not_just_the_rows():
     run = fingerprint("m", rows)
     rows[0].skip = "--skip boot_a"
     assert fingerprint("m", rows) != run
+
+
+# ── waits (a vendor manifest is often a Windows batch file) ─────────────
+
+
+@pytest.mark.parametrize(
+    ("line", "seconds"),
+    [
+        ("ping -n 5 127.0.0.1", 4.0),  # 5 echoes, the first at once: ~4 s
+        ("ping 127.0.0.1 -n 3 >nul", 2.0),
+        ("PING.EXE -n 1 localhost", 0.0),
+        ("timeout /t 4", 4.0),
+        ("timeout /t 10 /nobreak > nul", 10.0),
+        ("sleep 2", 2.0),
+    ],
+)
+def test_batch_waits_become_wait_rows(line: str, seconds: float) -> None:
+    rows, problems = parse_manifest(f"tool flash boot boot.img\n{line}\ntool reboot\n")
+    assert problems == []
+    assert [r.action for r in rows] == ["flash", "wait", "reboot"]
+    assert rows[1].wait_s == seconds and rows[1].line == 2
+    assert rows[1].describe().startswith(f"wait {seconds:g} s")
+
+
+@pytest.mark.parametrize(
+    ("line", "why"),
+    [
+        ("ping -n 5 10.1.2.3", "only `ping -n <count> 127.0.0.1`"),
+        ("ping 127.0.0.1", "only `ping -n <count> 127.0.0.1`"),
+        ("timeout /t x", "is not a number"),
+        ("timeout 4", "only `timeout /t"),
+        ("sleep 9999", "outside 0-600"),
+    ],
+)
+def test_a_wait_that_cannot_be_read_is_a_problem_not_a_guess(line: str, why: str) -> None:
+    _, problems = parse_manifest(f"{line}\n")
+    assert len(problems) == 1 and why in problems[0] and problems[0].startswith("line 1:")
+
+
+async def test_a_wait_row_needs_nothing_from_the_agent_and_can_be_skipped(tmp_path: Path) -> None:
+    text = MANIFEST.replace("tool reboot-bootloader\n", "ping -n 5 127.0.0.1\n")
+    plan = await _plan(tmp_path, _package(tmp_path, text))
+    assert plan.ok, plan.problems
+    wait = next(r for r in plan.rows if r.action == "wait")
+    assert wait.runs and wait.wait_s == 4.0
+    plan2 = await _plan(
+        tmp_path / "b", _package(tmp_path / "b", text), skip_actions=("setvar", "wait")
+    )
+    assert next(r for r in plan2.rows if r.action == "wait").skip == "--skip-action wait"

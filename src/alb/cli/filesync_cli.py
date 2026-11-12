@@ -20,7 +20,7 @@ def cmd_push(
     local: Path = typer.Argument(...),
     remote: str = typer.Argument(...),
     verify: bool = typer.Option(False, "--verify"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Push a local file to the device."""
     t = get_transport(ctx, device_serial=device)
@@ -33,7 +33,7 @@ def cmd_pull(
     ctx: typer.Context,
     remote: str = typer.Argument(...),
     local: Path | None = typer.Argument(None),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Pull from device to local (defaults to workspace/.../pulls/)."""
     t = get_transport(ctx, device_serial=device)
@@ -47,7 +47,7 @@ def cmd_rsync(
     local_dir: Path = typer.Argument(...),
     remote_dir: str = typer.Argument(...),
     delete: bool = typer.Option(False, "--delete", help="rsync --delete (mirror mode)"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Incremental directory sync (requires ssh transport)."""
     t = get_transport(ctx, override="ssh", device_serial=device)

@@ -34,7 +34,7 @@ alb flash write ──HTTP──> 查参数、开记录、排队一个 ──作
 | `alb flash status` | agent 连上没有、是否在忙、现在能不能写分区 | — | 否 |
 | `alb flash devices` | 台架上的 `fastboot devices` | — | 否 |
 | `alb flash getvar [名字]` | `fastboot getvar`,不写名字等于 `getvar all` | fastboot | 否 |
-| `alb flash reboot [目标]` | 离开 fastboot;不写目标就回系统,或 `bootloader` / `fastboot` / `recovery` | fastboot | 改,不确认 |
+| `alb flash reboot [目标]` | 离开 fastboot;不写目标就回系统,或 `bootloader` / `fastboot` / `recovery`。回系统时记录里接着录 `--uart-after` 秒串口(默认 90,0 立刻返回) | fastboot | 改,不确认 |
 | `alb flash oem <命令>` | `fastboot oem <命令>`,命令原样发给 bootloader | fastboot | 是 |
 | `alb flash write <分区> <镜像>` | 写一个分区 | fastboot | 是 |
 | `alb flash erase <分区>` | 擦一个分区 | fastboot | 是 |
@@ -107,13 +107,15 @@ tool reboot-bootloader
 | `getvar` | 名字 | 当检查用:板子回 FAILED 就停,后面的不跑 |
 | `oem` | 命令 | |
 | `reboot-bootloader` | — | 重启回 fastboot,等板子重新出现(`--reboot-wait` 秒,默认 120) |
-| `reboot` | — | |
+| `reboot` | — | 回系统。这是最后一行时,记录里接着录 `--uart-after` 秒串口(默认 90,0 不录),留下烧完后的第一次开机 |
 | `setvar` | 键 值 | fastboot 没有这个命令,必须用 `--skip-action setvar` 跳过,整份才会通过 |
+| 等待 | — | Windows 批处理里的等待写法:`ping -n N 127.0.0.1` 等 N-1 秒(第一个包立刻发,之后每秒一个),`timeout /t N` 等 N 秒,`sleep N` 等 N 秒,行尾的 `>nul` 不影响。在 hub 上等,不发给台架;`--skip-action wait` 可跳过 |
 
 - **整份先查,有一处不对就一行都不跑**:动作不认识、镜像不存在、分区名不合规、`--skip` 的名字一行都没匹配上、台架 agent 会拒的分区。
 - 查过后打印计划、确认一次,然后在一次占锁里按顺序跑完,中间别人插不进来;第一行失败就停,结果列出跑了哪些、停在第几行。
 - `--skip <分区>`:不碰这些分区,逗号分隔或写多次,名字要一字不差。`--skip-action <动作>`:跳过没有分区的那几类行。
 - `--from-line N`:上次停在中间,从清单第 N 行接着跑;前面的 `getvar` 检查照样跑。
+- 清单和镜像都要在 hub 的 alb 工作目录里,按写出来的路径算;工作目录里的软链接照读。整包常有一两 GB,不用每版复制一份:在工作目录里建一个链接指向编译仓的输出目录(`ln -s <编译仓>/out/fastboot workspace/flash-images/board-a/v12`),清单写 `flash-images/board-a/v12/flash.txt`。`..` 跳出工作目录照样拒绝。
 - 确认后、开跑前,hub 会重算一遍计划,镜像在这期间被改过就拒绝,保证跑的就是你确认的那一版。
 
 ## 其它厂商的下载工具:tools / tool

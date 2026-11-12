@@ -91,6 +91,11 @@ SEND_FAILED_GRACE_S = 5.0
 # "back". That last one exists because a fast reboot can leave and return
 # between two polls — never seen gone is not proof it never left.
 REBOOT_WAIT_S = 120.0
+# How long the record keeps the UART after the board is rebooted to the
+# system (a single reboot, or a plan whose last row is `reboot`): the first
+# boot after a flash. 0 turns it off.
+UART_AFTER_REBOOT_S = 90.0
+UART_AFTER_MAX_S = 600.0
 REBOOT_POLL_S = 1.0
 REBOOT_SETTLE_S = 5.0
 
@@ -381,6 +386,7 @@ class FlashService:
         image: Path | None = None,
         label: str = "",
         on_event: EventSink | None = None,
+        uart_after_s: float = 0.0,
     ) -> FlashResult:
         """Run one op from the connected agent's table.
 
@@ -439,10 +445,13 @@ class FlashService:
             request=request,
             on_event=on_event,
             after_request=after_request,
-            record=spec.record != "none",
-            watch_uart=spec.record == "uart",
+            # Asked to keep the UART after it (a reboot): record it from the
+            # start whatever the table says, so the record has one clock.
+            record=spec.record != "none" or uart_after_s > 0,
+            watch_uart=spec.record == "uart" or uart_after_s > 0,
             exclusive=spec.exclusive,
             need_fastboot=spec.group == "fastboot" or spec.needs == "fastboot-device",
+            uart_after_s=uart_after_s,
         )
         if name == "usb-list" and result.ok:
             from alb.remote.usb_modes import annotate
@@ -468,14 +477,28 @@ class FlashService:
             on_event=on_event,
         )
 
-    async def reboot(self, target: str = "", *, on_event: EventSink | None = None) -> FlashResult:
+    async def reboot(
+        self,
+        target: str = "",
+        *,
+        uart_after_s: float = 0.0,
+        on_event: EventSink | None = None,
+    ) -> FlashResult:
         """`fastboot reboot [target]`. With no target this is the way back to
         the system — the direct remedy for a board alb itself pushed into
-        fastboot and could not previously get out of. Records events but no
-        UART: the command returns in ~0.1 s, long before the board has said
-        anything worth correlating; the boot log belongs to a capture."""
+        fastboot and could not previously get out of.
+
+        The command returns in ~0.1 s, long before the board has said
+        anything. With `uart_after_s` the record keeps the UART for that long
+        after it: the first boot after a flash is the log most wanted when
+        the flash went wrong (2026-11-12), and a capture started by hand
+        afterwards misses its first seconds."""
         return await self.run_op(
-            "reboot", {"target": target}, label=f"reboot {target or 'normal'}", on_event=on_event
+            "reboot",
+            {"target": target},
+            label=f"reboot {target or 'normal'}",
+            on_event=on_event,
+            uart_after_s=uart_after_s,
         )
 
     async def devices(self, *, on_event: EventSink | None = None) -> FlashResult:
@@ -519,6 +542,7 @@ class FlashService:
         plan: Plan,
         *,
         reboot_wait_s: float = REBOOT_WAIT_S,
+        uart_after_s: float = 0.0,
         on_event: EventSink | None = None,
     ) -> PlanResult:
         """Run every row of a checked plan, in order, under ONE hold of the lock.
@@ -587,6 +611,18 @@ class FlashService:
                 for row in plan.rows:
                     if row.status == "pending":
                         row.status = "not-run" if row.runs else "skipped"
+                ran = [r for r in plan.rows if r.status == "ok"]
+                if (
+                    result.ok
+                    and uart_after_s > 0
+                    and timeline is not None
+                    and ran
+                    and ran[-1].action == "reboot"
+                ):
+                    # The plan ended by booting the board: its first boot is
+                    # the log most wanted when the package was bad.
+                    self._current = f"{label}: recording the UART after the reboot"
+                    await _record_after(sink, uart_after_s)
                 result.duration_s = time.monotonic() - started
                 return _finish(result, timeline)
             finally:
@@ -599,6 +635,12 @@ class FlashService:
         self, row: PlanRow, sink: EventSink | None, reboot_wait_s: float
     ) -> FlashResult:
         label = row.describe()
+        if row.action == "wait":
+            # The manifest's own pause (`ping -n 5 127.0.0.1`): nothing goes to
+            # the agent, the board just gets the time the vendor tool gave it.
+            started = time.monotonic()
+            await asyncio.sleep(row.wait_s)
+            return FlashResult(ok=True, rc=0, duration_s=time.monotonic() - started)
         if row.action == "flash" and row.path is not None:
             image = row.path
 
@@ -705,6 +747,7 @@ class FlashService:
         watch_uart: bool = True,
         exclusive: bool = True,
         need_fastboot: bool = True,
+        uart_after_s: float = 0.0,
     ) -> FlashResult:
         refused = self._refusal(need_fastboot=need_fastboot, exclusive=exclusive)
         if refused is not None:
@@ -723,7 +766,11 @@ class FlashService:
                 result = await self._step(
                     request, sink, after_request, label=label, on_file=_file_sink(timeline)
                 )
-                return _finish(result, timeline)
+                result = _finish(result, timeline)
+                if result.ok and timeline is not None and uart_after_s > 0:
+                    self._current = f"{label}: recording the UART after the reboot"
+                    await _record_after(sink, uart_after_s)
+                return result
             finally:
                 self._current = ""
                 if timeline is not None:
@@ -1002,6 +1049,13 @@ async def _open_timeline(
     except Exception as e:
         _log.warning("flash timeline unavailable (continuing without it): %s", e)
         return None
+
+
+async def _record_after(sink: EventSink | None, seconds: float) -> None:
+    """Keep the record (and its UART) open after a reboot, saying so."""
+    _say(sink, "wait", 0, 0, f"recording the UART for {seconds:.0f}s after the reboot")
+    await asyncio.sleep(seconds)
+    _say(sink, "wait", 0, 0, "done recording the UART")
 
 
 def _say(sink: EventSink | None, phase: str, done: int, total: int, text: str) -> None:

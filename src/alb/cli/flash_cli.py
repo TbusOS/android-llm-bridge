@@ -44,6 +44,11 @@ app = typer.Typer(help="Flash / fastboot via the connected device agent.")
 # the CLI lie about an operation that is still happening.
 _READ_TIMEOUT_S = 40 * 60.0
 _CONNECT_TIMEOUT_S = 10.0
+# The hub's defaults for keeping the UART after a reboot to the system
+# (alb.remote.flash.UART_AFTER_REBOOT_S / UART_AFTER_MAX_S). Repeated, not
+# imported: this CLI talks HTTP and does not load the hub's modules.
+UART_AFTER_REBOOT_S = 90.0
+UART_AFTER_MAX_S = 600.0
 
 
 def hub_url() -> str:
@@ -281,10 +286,18 @@ def cmd_getvar(
 @app.command("reboot")
 def cmd_reboot(
     target: str = typer.Argument("", help="empty = back to the system; or bootloader/recovery"),
+    uart_after: float = typer.Option(
+        UART_AFTER_REBOOT_S,
+        "--uart-after",
+        help="back to the system: keep recording the UART this many seconds after the "
+        "reboot, so the record holds the first boot (0 = return at once)",
+        min=0,
+        max=UART_AFTER_MAX_S,
+    ),
 ) -> None:
     """Leave fastboot. With no argument this reboots the board back into the
     system — the way out of the state `alb power reboot fastboot` puts it in."""
-    _report(_run_job("reboot", {"target": target}))
+    _report(_run_job("reboot", {"target": target, "uart_after_s": uart_after}))
 
 
 @app.command("oem")
@@ -460,7 +473,7 @@ def cmd_plan(
     ),
     skip_action: list[str] = typer.Option(
         None, "--skip-action", help="rows without a partition to leave out: setvar, "
-        "getvar, oem, reboot-bootloader, reboot (comma-separated or repeated)"
+        "getvar, oem, reboot-bootloader, reboot, wait (comma-separated or repeated)"
     ),
     from_line: int = typer.Option(
         0, "--from-line", help="resume a plan that stopped: skip the rows before this manifest "
@@ -470,6 +483,14 @@ def cmd_plan(
     reboot_wait: float = typer.Option(
         120.0, "--reboot-wait", help="seconds to wait for the board to return to fastboot "
         "after reboot-bootloader (10-600)"
+    ),
+    uart_after: float = typer.Option(
+        UART_AFTER_REBOOT_S,
+        "--uart-after",
+        help="when the last row reboots the board to the system: keep recording the UART "
+        "this many seconds after it, so the record holds the first boot (0 = off)",
+        min=0,
+        max=UART_AFTER_MAX_S,
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirmation"),
 ) -> None:
@@ -514,6 +535,7 @@ def cmd_plan(
         **payload,
         "fingerprint": plan.get("fingerprint"),
         "reboot_wait_s": reboot_wait,
+        "uart_after_s": uart_after,
     }
     _report_plan(_run_job("plan/run", run_payload, render=_render_plan_progress))
 

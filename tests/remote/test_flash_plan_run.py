@@ -466,3 +466,100 @@ async def test_a_getvar_answer_is_still_passed_through_untouched() -> None:
     result = await FlashService(lambda: bench).getvar("partition-size:cfg")
     assert result.ok and result.code == ""
     assert "partition-size:cfg: 0x0" in result.stderr
+
+
+async def test_a_wait_row_pauses_the_plan_and_sends_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ping -n 5 127.0.0.1` in a vendor manifest: the board gets its pause,
+    the agent gets no request for it."""
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    bench = _Bench()
+    text = MANIFEST.replace("tool reboot-bootloader\n", "ping -n 5 127.0.0.1\n")
+    plan = await _plan(tmp_path, bench, text=text, skip_actions=("setvar",))
+    assert plan.ok, plan.problems
+    result = await FlashService(lambda: bench).run_plan(plan)
+    assert result.ok, result.error
+    assert 4.0 in slept
+    assert all(op != "wait" for op, _ in _asked(bench))
+    assert next(r for r in result.rows if r.action == "wait").status == "ok"
+
+
+# ── the first boot after a flash is kept on the record ─────────────────
+
+
+@pytest.fixture
+def after(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Seconds the record was kept open after a reboot (no real waiting)."""
+    kept: list[float] = []
+
+    async def fake(_sink: object, seconds: float) -> None:
+        kept.append(seconds)
+
+    monkeypatch.setattr(flash_mod, "_record_after", fake)
+    return kept
+
+
+async def test_a_plan_ending_in_reboot_keeps_the_uart_after_it(
+    tmp_path: Path, after: list[float]
+) -> None:
+    bench = _Bench()
+    plan = await _plan(tmp_path, bench)  # MANIFEST ends with `tool reboot`
+    result = await FlashService(lambda: bench).run_plan(plan, uart_after_s=90)
+    assert result.ok, result.error
+    assert after == [90]
+
+
+@pytest.mark.parametrize(
+    ("text", "skip_actions"),
+    [
+        (MANIFEST.replace("tool reboot\n", ""), ("setvar", "reboot-bootloader")),
+        (MANIFEST, ("setvar", "reboot-bootloader", "reboot")),  # the reboot skipped
+    ],
+)
+async def test_no_boot_at_the_end_no_extra_recording(
+    tmp_path: Path, after: list[float], text: str, skip_actions: tuple[str, ...]
+) -> None:
+    bench = _Bench()
+    plan = await _plan(tmp_path, bench, text=text, skip_actions=skip_actions)
+    assert plan.ok, plan.problems
+    assert (await FlashService(lambda: bench).run_plan(plan, uart_after_s=90)).ok
+    assert after == []
+
+
+async def test_a_failed_plan_returns_at_once(tmp_path: Path, after: list[float]) -> None:
+    bench = _Bench()
+    bench.fail_partition = "boot_b"
+    plan = await _plan(tmp_path, bench)
+    result = await FlashService(lambda: bench).run_plan(plan, uart_after_s=90)
+    assert not result.ok and after == []
+
+
+async def test_a_reboot_to_the_system_records_the_uart_and_keeps_it(
+    after: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench = _Bench()
+    svc = FlashService(lambda: bench)
+    opened: list[dict[str, bool]] = []
+    real_open = flash_mod._open_timeline
+
+    async def spy(
+        label: str, request: dict[str, object], *, enabled: bool, watch_uart: bool
+    ) -> object:
+        opened.append({"enabled": enabled, "watch_uart": watch_uart})
+        return await real_open(label, request, enabled=enabled, watch_uart=watch_uart)
+
+    monkeypatch.setattr(flash_mod, "_open_timeline", spy)
+    result = await svc.reboot("", uart_after_s=60)
+    plain = await svc.reboot("")
+    assert result.ok and plain.ok
+    assert opened[0] == {"enabled": True, "watch_uart": True}, "UART on the record from the start"
+    assert opened[1]["watch_uart"] is False, "without it, as before"
+    assert after == [60]

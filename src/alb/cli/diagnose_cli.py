@@ -24,7 +24,7 @@ app = typer.Typer(help="Diagnostic data collection.")
 @app.command("pstore")
 def cmd_pstore(
     ctx: typer.Context,
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Previous boot's crash record: /sys/fs/pstore/* (ramoops), else /proc/last_kmsg.
 
@@ -69,7 +69,7 @@ def _print_pstore(ctx: typer.Context, result: Result[Any]) -> None:
 @app.command("bugreport")
 def cmd_bugreport(
     ctx: typer.Context,
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
     output: str | None = typer.Option(
         None,
         "--output",
@@ -86,7 +86,7 @@ def cmd_bugreport(
 
 @app.command("devinfo")
 def cmd_devinfo(
-    ctx: typer.Context, device: str | None = typer.Option(None, "--device")
+    ctx: typer.Context, device: str | None = typer.Option(None, "--device", "-d")
 ) -> None:
     """Composite device info."""
     t = get_transport(ctx, device_serial=device)
@@ -102,7 +102,7 @@ app.add_typer(anr_app, name="anr")
 def cmd_anr_pull(
     ctx: typer.Context,
     clear_after: bool = typer.Option(False, "--clear-after"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Pull ANR files from /data/anr/."""
     t = get_transport(ctx, device_serial=device)
@@ -118,7 +118,7 @@ app.add_typer(tombstone_app, name="tombstone")
 def cmd_tombstone_pull(
     ctx: typer.Context,
     limit: int = typer.Option(10, "--limit"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Pull tombstone files from /data/tombstones/."""
     t = get_transport(ctx, device_serial=device)

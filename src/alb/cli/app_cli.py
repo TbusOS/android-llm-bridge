@@ -48,7 +48,7 @@ def cmd_uninstall(
     package: str = typer.Argument(...),
     keep_data: bool = typer.Option(False, "--keep-data"),
     allow_dangerous: bool = typer.Option(False, "--allow-dangerous"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Uninstall a package."""
     t = get_transport(ctx, device_serial=device)
@@ -66,7 +66,7 @@ def cmd_uninstall(
 def cmd_start(
     ctx: typer.Context,
     component: str = typer.Argument(...),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Start an app or activity."""
     t = get_transport(ctx, device_serial=device)
@@ -78,7 +78,7 @@ def cmd_start(
 def cmd_stop(
     ctx: typer.Context,
     package: str = typer.Argument(...),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Force-stop a package."""
     t = get_transport(ctx, device_serial=device)
@@ -91,7 +91,7 @@ def cmd_list(
     ctx: typer.Context,
     filter: str | None = typer.Option(None, "--filter"),  # noqa: A002
     system: bool = typer.Option(False, "--system", help="Include system apps"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """List installed packages."""
     t = get_transport(ctx, device_serial=device)
@@ -105,7 +105,7 @@ def cmd_list(
 def cmd_info(
     ctx: typer.Context,
     package: str = typer.Argument(...),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Show version / install time / permissions for a package."""
     t = get_transport(ctx, device_serial=device)
@@ -118,7 +118,7 @@ def cmd_clear_data(
     ctx: typer.Context,
     package: str = typer.Argument(...),
     allow_dangerous: bool = typer.Option(False, "--allow-dangerous"),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Clear app data (destructive)."""
     t = get_transport(ctx, device_serial=device)

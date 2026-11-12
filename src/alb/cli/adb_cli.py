@@ -21,7 +21,7 @@ _TIMEOUT_HELP = "Seconds to wait for adbd to come back after it restarts (bounde
 def cmd_root(
     ctx: typer.Context,
     timeout: float = typer.Option(15.0, "--timeout", help=_TIMEOUT_HELP),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Restart adbd as root and verify `id -u` == 0 (became / already / refused)."""
     t = get_transport(ctx, device_serial=device)
@@ -33,7 +33,7 @@ def cmd_root(
 def cmd_unroot(
     ctx: typer.Context,
     timeout: float = typer.Option(15.0, "--timeout", help=_TIMEOUT_HELP),
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """Restart adbd as the shell user and verify `id -u` != 0."""
     t = get_transport(ctx, device_serial=device)
@@ -44,7 +44,7 @@ def cmd_unroot(
 @app.command("remount")
 def cmd_remount(
     ctx: typer.Context,
-    device: str | None = typer.Option(None, "--device"),
+    device: str | None = typer.Option(None, "--device", "-d"),
 ) -> None:
     """`adb remount` — output verbatim; outcome: remounted / needs_reboot / failed.
 

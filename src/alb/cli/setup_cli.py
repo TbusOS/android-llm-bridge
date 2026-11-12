@@ -279,7 +279,7 @@ def setup_ssh(
 def setup_serial(
     tcp_host: str = typer.Option("localhost", "--tcp-host"),
     tcp_port: int = typer.Option(9001, "--tcp-port"),
-    device: str | None = typer.Option(None, "--device", help="Local /dev/ttyUSB0 etc."),
+    device: str | None = typer.Option(None, "--device", "-d", help="Local /dev/ttyUSB0 etc."),
     baud: int = typer.Option(115200, "--baud"),
     save: bool = typer.Option(
         False,
