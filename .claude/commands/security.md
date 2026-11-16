@@ -28,7 +28,7 @@ argument-hint: [范围：commit / 模块 / 全局]
      按你 prompt 里的 5 维（中立 / OWASP / 凭证 / 输入校验 / 文件 IO）
      跑，比 /review 内同名 agent 更彻底：
 
-     - 自动跑 ./scripts/check_sensitive_words.sh --all
+     - 自动跑 ./scripts/check_sensitive_words.sh --require-private --all
      - 自动跑 ./scripts/check_offline_purity.sh
      - 全仓 grep dangerouslySetInnerHTML / shell=True / api[_-]key
      - 历史豁免视角：检查每个发现是否在 lessons.md / decisions.md 有

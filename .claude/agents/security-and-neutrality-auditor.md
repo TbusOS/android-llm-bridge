@@ -1,6 +1,6 @@
 ---
 name: security-and-neutrality-auditor
-description: 合规层 —— 敏感词（PAX/RK/内网IP）/ OWASP / XSS / dangerouslySetInnerHTML / 命令注入 / 凭证泄露 / 开源中立。只读，能跑 grep + check_sensitive_words.sh。
+description: 合规层 —— 敏感词(公司名 / 客户芯片型号 / 内网地址等,真实值在私有词表)/ OWASP / XSS / dangerouslySetInnerHTML / 命令注入 / 凭证泄露 / 开源中立。只读，能跑 grep + check_sensitive_words.sh。
 tools: Read, Grep, Bash
 ---
 
@@ -16,7 +16,7 @@ tools: Read, Grep, Bash
 
 1. `CLAUDE.md`（项目根）—— 禁用词清单 / 中立性规则（**这是硬性 ABSOLUTE**）
 2. `.claude/knowledge/lessons.md` —— 历史敏感词翻车记录
-3. `.claude/knowledge/decisions.md` —— 是否有"为什么用 dangerouslySetInnerHTML"等 ADR
+3. `docs/design-decisions.md` —— 是否有"为什么用 dangerouslySetInnerHTML"等 ADR
 4. `.claude/knowledge/review-feedback.md` —— 过往被驳回的安全建议
 
 ## 自动 grep checklist · 来自历史 lesson · 每次必跑
@@ -79,20 +79,23 @@ ALB_WORKSPACE=/tmp/ws alb session show ../etc
 
 ### 1. 项目级中立性（CLAUDE.md ABSOLUTE 禁用词）
 
-绝对禁止出现：
+绝对禁止出现的是下面这几类,具体的值不写在仓库里(写了就等于公开了):
 
-```
-pax  PAX  paxsz  paxsz.com  com.pax
-rk3576  RK3576  rk-sdk  RK SDK  rockchip-sdk
-zhangbh   (短内部 handle，词边界匹配)
-/home/zhangbh  /home/<any-real-username>/<project>
-10.0.25.*  172.16.*  (任何 RFC1918 内部 IP)
-```
+- 雇主 / 公司名、品牌词、它们的域名和包名前缀
+- 客户专用的 SoC 型号、厂商 SDK 名
+- 内部用户名、真实用户名
+- 真实家目录下的绝对路径(`/home/<user>/…`、`/Users/<user>/…`)
+- 机器名(`<笔记本>.local`、编译服务器名)
+- 实际在用的私有网络地址和网段
+- 板子序列号、实例号、token
 
-例外：`skyzhangbinghua` 是合法 GitHub 公开 maintainer 身份（在 LICENSE
-/ pyproject 里允许）。
+真实的值在维护者的私有词表里(`$DHANDS_SENSITIVE_WORDS_FILE`,默认
+`~/.config/devicehands/sensitive-words.txt`),跟着私有仓库走,不进公开仓库。
 
-跑：`./scripts/check_sensitive_words.sh --all`（exit 0 才算过）
+例外:`skyzhangbinghua` 是合法 GitHub 公开 maintainer 身份(在 LICENSE
+/ pyproject 里允许)。
+
+跑:`./scripts/check_sensitive_words.sh --require-private --all`(exit 0 才算过;没有私有词表时 exit 2,说明只跑了通用规则,这时结论不算数)
 
 ### 2. OWASP Top 10 / 通用 web 安全
 

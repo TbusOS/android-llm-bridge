@@ -25,7 +25,7 @@ argument-hint: [diff-range，默认 HEAD~1]
      prompt: |
      评审 git diff <range>。范围：<file 列表>。
      按你 prompt 里的 5 维（中立 / OWASP / 凭证 / 输入校验 / 文件 IO）跑。
-     先跑 `./scripts/check_sensitive_words.sh --all` 和
+     先跑 `./scripts/check_sensitive_words.sh --require-private --all` 和
      `./scripts/check_offline_purity.sh`。
      输出 ≤ 8 条 + 是否阻塞 ship 结论。
 
